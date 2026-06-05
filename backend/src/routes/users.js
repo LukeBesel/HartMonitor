@@ -1,0 +1,97 @@
+const express = require('express');
+const { v4: uuidv4 } = require('uuid');
+const db = require('../db');
+const { requireAuth, requireRole, hashPassword } = require('../middleware/auth');
+
+const router = express.Router();
+
+const VALID_ROLES = ['developer', 'manager', 'supervisor', 'operator', 'viewer'];
+
+// All user management requires developer role
+router.use(requireAuth, requireRole('manager'));
+
+// ─── GET / — list users ───────────────────────────────────────────────────────
+
+router.get('/', (req, res) => {
+  const users = db.prepare(`
+    SELECT id, email, display_name, role, is_active, last_login, created_at, updated_at
+    FROM users ORDER BY CASE role
+      WHEN 'developer' THEN 1 WHEN 'manager' THEN 2 WHEN 'supervisor' THEN 3
+      WHEN 'operator' THEN 4 ELSE 5 END, display_name
+  `).all();
+  res.json(users);
+});
+
+// ─── POST / — create user ─────────────────────────────────────────────────────
+
+router.post('/', requireRole('developer'), (req, res) => {
+  const { email, display_name, password, role = 'viewer' } = req.body;
+  if (!email || !display_name || !password) return res.status(400).json({ error: 'email, display_name, and password required' });
+  if (!VALID_ROLES.includes(role)) return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
+  if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+
+  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase().trim());
+  if (existing) return res.status(409).json({ error: 'A user with that email already exists' });
+
+  const id = uuidv4();
+  db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role) VALUES (?, ?, ?, ?, ?)`)
+    .run(id, email.toLowerCase().trim(), display_name, hashPassword(password), role);
+  const user = db.prepare('SELECT id, email, display_name, role, is_active, created_at FROM users WHERE id = ?').get(id);
+  res.status(201).json(user);
+});
+
+// ─── GET /:id — get user ──────────────────────────────────────────────────────
+
+router.get('/:id', (req, res) => {
+  const user = db.prepare('SELECT id, email, display_name, role, is_active, last_login, created_at FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'Not found' });
+  res.json(user);
+});
+
+// ─── PUT /:id — update user ───────────────────────────────────────────────────
+
+router.put('/:id', requireRole('developer'), (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'Not found' });
+
+  const { email, display_name, role, is_active, password } = req.body;
+  if (role && !VALID_ROLES.includes(role)) return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
+
+  const updates = {
+    email: email ? email.toLowerCase().trim() : user.email,
+    display_name: display_name ?? user.display_name,
+    role: role ?? user.role,
+    is_active: is_active !== undefined ? (is_active ? 1 : 0) : user.is_active,
+    password_hash: password ? hashPassword(password) : user.password_hash,
+  };
+
+  // Can't deactivate the last developer
+  if (updates.is_active === 0 || (updates.role !== 'developer' && user.role === 'developer')) {
+    const devCount = db.prepare("SELECT COUNT(*) as c FROM users WHERE role = 'developer' AND is_active = 1 AND id != ?").get(req.params.id).c;
+    if (devCount === 0) return res.status(409).json({ error: 'Cannot deactivate the last developer account' });
+  }
+
+  db.prepare(`UPDATE users SET email=?, display_name=?, role=?, is_active=?, password_hash=?, updated_at=datetime('now') WHERE id=?`)
+    .run(updates.email, updates.display_name, updates.role, updates.is_active, updates.password_hash, req.params.id);
+
+  if (password) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(req.params.id);
+
+  res.json(db.prepare('SELECT id, email, display_name, role, is_active, last_login, created_at, updated_at FROM users WHERE id = ?').get(req.params.id));
+});
+
+// ─── DELETE /:id — delete user ────────────────────────────────────────────────
+
+router.delete('/:id', requireRole('developer'), (req, res) => {
+  if (req.params.id === req.user.id) return res.status(409).json({ error: 'Cannot delete your own account' });
+  const user = db.prepare('SELECT role FROM users WHERE id = ?').get(req.params.id);
+  if (!user) return res.status(404).json({ error: 'Not found' });
+  if (user.role === 'developer') {
+    const devCount = db.prepare("SELECT COUNT(*) as c FROM users WHERE role = 'developer' AND is_active = 1").get().c;
+    if (devCount <= 1) return res.status(409).json({ error: 'Cannot delete the last developer account' });
+  }
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+  res.json({ success: true });
+});
+
+module.exports = router;

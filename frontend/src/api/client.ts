@@ -1,10 +1,25 @@
 const BASE = '/api';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...options?.headers },
-    ...options,
-  });
+  const token = localStorage.getItem('hm_token');
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  if (options?.headers) Object.assign(headers, options.headers);
+
+  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+
+  if (res.status === 401) {
+    const err = await res.json().catch(() => ({ code: 'INVALID_TOKEN' }));
+    if (err.code === 'INVALID_TOKEN' || err.code === 'NO_TOKEN') {
+      localStorage.removeItem('hm_token');
+      localStorage.removeItem('hm_user');
+      if (!window.location.pathname.startsWith('/login')) {
+        window.location.href = '/login';
+      }
+    }
+    throw Object.assign(new Error(err.message || err.error || 'Not authenticated'), { status: 401, data: err });
+  }
+
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw Object.assign(new Error(err.message || err.error || 'Request failed'), { status: res.status, data: err });
@@ -184,4 +199,27 @@ export const api = {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';
     return `${BASE}/export/${type}${qs}`;
   },
+
+  // ── Auth
+  login: (email: string, password: string) =>
+    fetch(`${BASE}/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    }).then(async res => {
+      const data = await res.json();
+      if (!res.ok) throw Object.assign(new Error(data.error || 'Login failed'), { status: res.status });
+      return data;
+    }),
+  logout: () => request<any>('/auth/logout', { method: 'POST' }),
+  getMe: () => request<any>('/auth/me'),
+  changePassword: (current_password: string, new_password: string) =>
+    request<any>('/auth/change-password', { method: 'PUT', body: JSON.stringify({ current_password, new_password }) }),
+
+  // ── Users
+  getUsers: () => request<any[]>('/users'),
+  getUser: (id: string) => request<any>(`/users/${id}`),
+  createUser: (data: any) => request<any>('/users', { method: 'POST', body: JSON.stringify(data) }),
+  updateUser: (id: string, data: any) => request<any>(`/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteUser: (id: string) => request<any>(`/users/${id}`, { method: 'DELETE' }),
 };

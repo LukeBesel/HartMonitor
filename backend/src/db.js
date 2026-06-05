@@ -279,6 +279,30 @@ db.exec(`
   );
 `);
 
+// ─── Auth tables ──────────────────────────────────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id TEXT PRIMARY KEY,
+    email TEXT UNIQUE NOT NULL,
+    display_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'viewer' CHECK(role IN ('developer','manager','supervisor','operator','viewer')),
+    is_active INTEGER NOT NULL DEFAULT 1,
+    last_login TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT UNIQUE NOT NULL,
+    expires_at TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+`);
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function isoOffset(days, hours = 8) {
@@ -801,8 +825,29 @@ function seedDashboard() {
     .run(uuidv4(), 'Production Overview', 'Daily production KPIs and throughput tracking', JSON.stringify(cards));
 }
 
+// ─── Seed: users ──────────────────────────────────────────────────────────────
+
+function seedUsers() {
+  if (db.prepare('SELECT COUNT(*) as c FROM users').get().c > 0) return;
+  const crypto = require('crypto');
+  function hashPw(password) {
+    const salt = crypto.randomBytes(16).toString('hex');
+    const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+    return `${salt}:${hash}`;
+  }
+  const users = [
+    { id: uuidv4(), email: 'admin@hartmonitor.demo',    display_name: 'Admin User',      password: 'Admin123!',    role: 'developer' },
+    { id: uuidv4(), email: 'manager@hartmonitor.demo',  display_name: 'Sarah Manager',   password: 'Manager123',   role: 'manager'   },
+    { id: uuidv4(), email: 'operator@hartmonitor.demo', display_name: 'Bob Operator',    password: 'Operator123',  role: 'operator'  },
+    { id: uuidv4(), email: 'demo@hartmonitor.demo',     display_name: 'Demo User',       password: 'demo',         role: 'viewer'    },
+  ];
+  const ins = db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role) VALUES (?, ?, ?, ?, ?)`);
+  for (const u of users) ins.run(u.id, u.email, u.display_name, hashPw(u.password), u.role);
+}
+
 // ─── Run all seeds ────────────────────────────────────────────────────────────
 
+seedUsers();
 seedPlan();
 seedCompanySettings();
 const appData     = seedAppData();

@@ -16,14 +16,21 @@ import {
   Star,
   Zap,
   AlertCircle,
+  Users,
+  Plus,
+  Trash2,
+  Edit2,
+  X,
+  Key,
 } from 'lucide-react';
 import { useTheme, THEME_PRESETS, Theme } from '../context/ThemeContext';
 import { usePlan } from '../context/PlanContext';
+import { useAuth } from '../context/AuthContext';
 import { api } from '../api/client';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type TabId = 'company' | 'plan' | 'theme' | 'export';
+type TabId = 'company' | 'plan' | 'theme' | 'export' | 'users' | 'account';
 
 interface CompanyForm {
   company_name: string;
@@ -951,6 +958,388 @@ function ExportTab() {
   );
 }
 
+// ─── Tab 5: Users & Permissions ───────────────────────────────────────────────
+
+const ROLE_OPTIONS = ['developer', 'manager', 'supervisor', 'operator', 'viewer'];
+const ROLE_COLORS: Record<string, string> = {
+  developer: 'bg-purple-100 text-purple-700',
+  manager:   'bg-blue-100 text-blue-700',
+  supervisor:'bg-cyan-100 text-cyan-700',
+  operator:  'bg-green-100 text-green-700',
+  viewer:    'bg-gray-100 text-gray-600',
+};
+
+function UserModal({ user, onClose, onSaved }: {
+  user: any | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const isEdit = !!user;
+  const [form, setForm] = useState({
+    email: user?.email ?? '',
+    display_name: user?.display_name ?? '',
+    role: user?.role ?? 'viewer',
+    password: '',
+    is_active: user?.is_active ?? 1,
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    setForm(f => ({ ...f, [k]: e.target.value }));
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setSaving(true);
+    try {
+      const payload: any = { email: form.email, display_name: form.display_name, role: form.role };
+      if (!isEdit) payload.password = form.password;
+      else if (form.password) payload.password = form.password;
+      if (isEdit) payload.is_active = form.is_active;
+      if (isEdit) await api.updateUser(user.id, payload);
+      else await api.createUser(payload);
+      onSaved();
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Failed to save user');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h3 className="font-semibold text-gray-800">{isEdit ? 'Edit User' : 'New User'}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Display Name</label>
+            <input className="input-field w-full" value={form.display_name} onChange={set('display_name')} required placeholder="Jane Smith" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Email</label>
+            <input type="email" className="input-field w-full" value={form.email} onChange={set('email')} required placeholder="jane@company.com" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Role</label>
+            <select className="input-field w-full" value={form.role} onChange={set('role')}>
+              {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              {isEdit ? 'New Password (leave blank to keep)' : 'Password'}
+            </label>
+            <input
+              type="password"
+              className="input-field w-full"
+              value={form.password}
+              onChange={set('password')}
+              required={!isEdit}
+              placeholder={isEdit ? 'Leave blank to keep current' : 'Min 6 characters'}
+              minLength={form.password ? 6 : undefined}
+            />
+          </div>
+          {isEdit && (
+            <div className="flex items-center gap-3">
+              <label className="text-xs font-medium text-gray-700">Active</label>
+              <button type="button"
+                onClick={() => setForm(f => ({ ...f, is_active: f.is_active ? 0 : 1 }))}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${form.is_active ? 'bg-blue-600' : 'bg-gray-200'}`}>
+                <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${form.is_active ? 'translate-x-6' : 'translate-x-1'}`} />
+              </button>
+            </div>
+          )}
+          {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={saving} className="btn-primary flex-1">
+              {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create User'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function UsersTab() {
+  const { user: currentUser, isAtLeast } = useAuth();
+  const [users, setUsers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modalUser, setModalUser] = useState<any | null | false>(false); // false=closed, null=new, obj=edit
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    api.getUsers()
+      .then(setUsers)
+      .catch(() => setUsers([]))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, []);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ message, type });
+    toastTimer.current = setTimeout(() => setToast(null), 3000);
+  };
+
+  const handleDelete = async (id: string, name: string) => {
+    if (!confirm(`Delete user "${name}"? This cannot be undone.`)) return;
+    setDeletingId(id);
+    try {
+      await api.deleteUser(id);
+      showToast(`User "${name}" deleted`);
+      load();
+    } catch (err: any) {
+      showToast(err.message || 'Failed to delete user', 'error');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const canManage = isAtLeast('developer');
+
+  return (
+    <div className="max-w-3xl space-y-6">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-sm text-gray-600">Manage who has access and what they can do.</p>
+        </div>
+        {canManage && (
+          <button onClick={() => setModalUser(null)} className="btn-primary flex items-center gap-2">
+            <Plus size={15} /> Add User
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="text-center py-12 text-gray-400 text-sm">Loading users…</div>
+      ) : (
+        <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50">
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Name</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Email</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Role</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Status</th>
+                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Last Login</th>
+                {canManage && <th className="px-4 py-3" />}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {users.map(u => (
+                <tr key={u.id} className={`${!u.is_active ? 'opacity-50' : ''} hover:bg-gray-50/50`}>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                        style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-dark))' }}>
+                        {u.display_name?.[0]?.toUpperCase()}
+                      </div>
+                      <div>
+                        <div className="font-medium text-gray-800">{u.display_name}</div>
+                        {u.id === currentUser?.id && <div className="text-[10px] text-blue-500">You</div>}
+                      </div>
+                    </div>
+                  </td>
+                  <td className="px-4 py-3 text-gray-600">{u.email}</td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${ROLE_COLORS[u.role] ?? 'bg-gray-100 text-gray-600'}`}>
+                      {u.role}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <span className={`text-xs font-medium ${u.is_active ? 'text-emerald-600' : 'text-gray-400'}`}>
+                      {u.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-gray-500 text-xs">
+                    {u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}
+                  </td>
+                  {canManage && (
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-1 justify-end">
+                        <button onClick={() => setModalUser(u)}
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+                          <Edit2 size={13} />
+                        </button>
+                        {u.id !== currentUser?.id && (
+                          <button
+                            onClick={() => handleDelete(u.id, u.display_name)}
+                            disabled={deletingId === u.id}
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Role permissions matrix */}
+      <div>
+        <h3 className="text-sm font-semibold text-gray-800 mb-3">Role Permissions</h3>
+        <div className="rounded-xl border border-gray-200 overflow-hidden bg-white text-xs">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50">
+                <th className="px-4 py-2.5 text-left font-semibold text-gray-500">Permission</th>
+                {ROLE_OPTIONS.map(r => (
+                  <th key={r} className="px-3 py-2.5 text-center font-semibold text-gray-500 capitalize">{r}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {[
+                { label: 'View dashboards & apps', levels: [1,1,1,1,1] },
+                { label: 'Run production apps', levels: [1,1,1,1,0] },
+                { label: 'Manager view & analytics', levels: [1,1,1,0,0] },
+                { label: 'OEE & step metrics', levels: [1,1,1,0,0] },
+                { label: 'Inventory & quality', levels: [1,1,1,0,0] },
+                { label: 'Purchasing & vendors', levels: [1,1,1,0,0] },
+                { label: 'Create / edit apps', levels: [1,1,0,0,0] },
+                { label: 'Company settings', levels: [1,1,0,0,0] },
+                { label: 'Manage users', levels: [1,0,0,0,0] },
+                { label: 'Delete & admin actions', levels: [1,0,0,0,0] },
+              ].map(row => (
+                <tr key={row.label} className="hover:bg-gray-50/50">
+                  <td className="px-4 py-2.5 text-gray-700">{row.label}</td>
+                  {row.levels.map((allowed, i) => (
+                    <td key={i} className="px-3 py-2.5 text-center">
+                      {allowed
+                        ? <span className="text-emerald-500 font-bold">✓</span>
+                        : <span className="text-gray-200">—</span>}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {modalUser !== false && (
+        <UserModal user={modalUser} onClose={() => setModalUser(false)} onSaved={load} />
+      )}
+      {toast && <Toast message={toast.message} type={toast.type} onDismiss={() => setToast(null)} />}
+    </div>
+  );
+}
+
+// ─── Tab 6: Account / Change Password ─────────────────────────────────────────
+
+function AccountTab() {
+  const { user } = useAuth();
+  const [form, setForm] = useState({ current_password: '', new_password: '', confirm: '' });
+  const [saving, setSaving] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [error, setError] = useState('');
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ message, type });
+    toastTimer.current = setTimeout(() => setToast(null), 3500);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (form.new_password !== form.confirm) { setError('New passwords do not match'); return; }
+    if (form.new_password.length < 6) { setError('New password must be at least 6 characters'); return; }
+    setSaving(true);
+    try {
+      await api.changePassword(form.current_password, form.new_password);
+      setForm({ current_password: '', new_password: '', confirm: '' });
+      showToast('Password changed successfully');
+    } catch (err: any) {
+      setError(err.message || 'Failed to change password');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="max-w-lg space-y-6">
+      <div className="card p-6">
+        <SectionHeader title="Profile" subtitle="Your account information" />
+        <div className="flex items-center gap-4">
+          <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white text-xl font-bold shadow"
+            style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-dark))' }}>
+            {user?.display_name?.[0]?.toUpperCase()}
+          </div>
+          <div>
+            <div className="font-semibold text-gray-800">{user?.display_name}</div>
+            <div className="text-sm text-gray-500">{user?.email}</div>
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full mt-1 inline-block ${ROLE_COLORS[user?.role ?? ''] ?? 'bg-gray-100 text-gray-600'}`}>
+              {user?.role}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div className="card p-6">
+        <SectionHeader title="Change Password" subtitle="Update your login password" />
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Current Password</label>
+            <input
+              type="password"
+              className="input-field w-full"
+              value={form.current_password}
+              onChange={e => setForm(f => ({ ...f, current_password: e.target.value }))}
+              required
+              placeholder="Enter current password"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">New Password</label>
+            <input
+              type="password"
+              className="input-field w-full"
+              value={form.new_password}
+              onChange={e => setForm(f => ({ ...f, new_password: e.target.value }))}
+              required
+              placeholder="Min 6 characters"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Confirm New Password</label>
+            <input
+              type="password"
+              className="input-field w-full"
+              value={form.confirm}
+              onChange={e => setForm(f => ({ ...f, confirm: e.target.value }))}
+              required
+              placeholder="Repeat new password"
+            />
+          </div>
+          {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+          <button type="submit" disabled={saving} className="btn-primary w-full flex items-center justify-center gap-2">
+            {saving ? <><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Saving…</> : <><Key size={14} />Change Password</>}
+          </button>
+        </form>
+      </div>
+
+      {toast && <Toast message={toast.message} type={toast.type} onDismiss={() => setToast(null)} />}
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
@@ -961,7 +1350,18 @@ const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
 ];
 
 export default function SettingsPage() {
-  const [activeTab, setActiveTab] = useState<TabId>('company');
+  const { isAtLeast } = useAuth();
+  const [activeTab, setActiveTab] = useState<TabId>('account');
+
+  const ALL_TABS: { id: TabId; label: string; icon: React.ReactNode; minRole?: string }[] = [
+    { id: 'account',  label: 'My Account',    icon: <Key size={15} /> },
+    { id: 'company',  label: 'Company',        icon: <Building2 size={15} />,  minRole: 'manager' },
+    { id: 'plan',     label: 'Plan & Billing', icon: <CreditCard size={15} />, minRole: 'manager' },
+    { id: 'theme',    label: 'Visual Theme',   icon: <Palette size={15} /> },
+    { id: 'export',   label: 'Data Export',    icon: <Download size={15} /> },
+    { id: 'users',    label: 'Users & Access', icon: <Users size={15} />,      minRole: 'manager' },
+  ];
+  const TABS = ALL_TABS.filter(t => !t.minRole || isAtLeast(t.minRole as any));
 
   return (
     <div className="p-6 bg-[#f8fafc] min-h-full">
@@ -974,13 +1374,13 @@ export default function SettingsPage() {
           <Settings size={18} />
         </div>
         <div>
-          <h1 className="text-xl font-bold text-gray-900 tracking-tight">Company Settings</h1>
-          <p className="text-xs text-gray-500 mt-0.5">Manage your organisation, plan, and appearance</p>
+          <h1 className="text-xl font-bold text-gray-900 tracking-tight">Settings</h1>
+          <p className="text-xs text-gray-500 mt-0.5">Manage your account, organisation, and appearance</p>
         </div>
       </div>
 
       {/* Tab nav */}
-      <div className="flex gap-1 mb-6 bg-white border border-gray-200 rounded-xl p-1 w-fit shadow-sm">
+      <div className="flex gap-1 mb-6 bg-white border border-gray-200 rounded-xl p-1 w-fit shadow-sm flex-wrap">
         {TABS.map((tab) => {
           const active = activeTab === tab.id;
           return (
@@ -1003,10 +1403,12 @@ export default function SettingsPage() {
 
       {/* Tab content */}
       <div>
-        {activeTab === 'company' && <CompanyTab />}
-        {activeTab === 'plan' && <PlanTab />}
-        {activeTab === 'theme' && <ThemeTab />}
-        {activeTab === 'export' && <ExportTab />}
+        {activeTab === 'account'  && <AccountTab />}
+        {activeTab === 'company'  && <CompanyTab />}
+        {activeTab === 'plan'     && <PlanTab />}
+        {activeTab === 'theme'    && <ThemeTab />}
+        {activeTab === 'export'   && <ExportTab />}
+        {activeTab === 'users'    && <UsersTab />}
       </div>
     </div>
   );

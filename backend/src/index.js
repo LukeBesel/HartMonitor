@@ -17,6 +17,9 @@ const purchasingRouter   = require('./routes/purchasing');
 const qualityRouter      = require('./routes/quality');
 const configRouter       = require('./routes/config');
 const exportRouter       = require('./routes/export');
+const authRouter         = require('./routes/auth');
+const usersRouter        = require('./routes/users');
+const { requireAuth }    = require('./middleware/auth');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -24,6 +27,8 @@ const PORT = process.env.PORT || 3001;
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
+app.use('/api/auth',          authRouter);  // public
+app.use('/api',               requireAuth); // protect everything below
 app.use('/api/apps',          appsRouter);
 app.use('/api/completions',   completionsRouter);
 app.use('/api/tables',        tablesRouter);
@@ -39,6 +44,7 @@ app.use('/api/purchasing',    purchasingRouter);
 app.use('/api/quality',       qualityRouter);
 app.use('/api/config',        configRouter);
 app.use('/api/export',        exportRouter);
+app.use('/api/users',         usersRouter);
 
 const frontendDist = path.join(__dirname, '..', '..', 'frontend', 'dist');
 app.use(express.static(frontendDist));
