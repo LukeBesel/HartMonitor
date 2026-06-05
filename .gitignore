@@ -1,0 +1,6 @@
+node_modules/
+frontend/dist/
+backend/mes.db
+*.db-shm
+*.db-wal
+.DS_Store

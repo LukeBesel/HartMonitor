@@ -1,0 +1,49 @@
+const express = require('express');
+const { v4: uuidv4 } = require('uuid');
+const db = require('../db');
+
+const router = express.Router();
+
+router.get('/', (req, res) => {
+  const { limit = 50, status } = req.query;
+  let query = 'SELECT * FROM completions';
+  const params = [];
+  if (status) { query += ' WHERE status = ?'; params.push(status); }
+  query += ' ORDER BY started_at DESC LIMIT ?';
+  params.push(parseInt(limit));
+  const completions = db.prepare(query).all(...params);
+  res.json(completions.map(c => ({ ...c, data: JSON.parse(c.data), step_times: JSON.parse(c.step_times) })));
+});
+
+router.post('/', (req, res) => {
+  const { app_id, station_id, operator_name = 'Unknown' } = req.body;
+  if (!app_id) return res.status(400).json({ error: 'app_id required' });
+  const app = db.prepare('SELECT name FROM apps WHERE id = ?').get(app_id);
+  if (!app) return res.status(404).json({ error: 'App not found' });
+  const id = uuidv4();
+  db.prepare('INSERT INTO completions (id, app_id, app_name, station_id, operator_name) VALUES (?, ?, ?, ?, ?)')
+    .run(id, app_id, app.name, station_id || null, operator_name);
+  const completion = db.prepare('SELECT * FROM completions WHERE id = ?').get(id);
+  res.status(201).json({ ...completion, data: JSON.parse(completion.data), step_times: JSON.parse(completion.step_times) });
+});
+
+router.put('/:id', (req, res) => {
+  const { status, data, step_times } = req.body;
+  const completion = db.prepare('SELECT * FROM completions WHERE id = ?').get(req.params.id);
+  if (!completion) return res.status(404).json({ error: 'Not found' });
+
+  const updates = {
+    status: status ?? completion.status,
+    data: data !== undefined ? JSON.stringify(data) : completion.data,
+    step_times: step_times !== undefined ? JSON.stringify(step_times) : completion.step_times,
+    completed_at: status === 'completed' ? new Date().toISOString() : completion.completed_at,
+  };
+
+  db.prepare('UPDATE completions SET status=?, data=?, step_times=?, completed_at=? WHERE id=?')
+    .run(updates.status, updates.data, updates.step_times, updates.completed_at, req.params.id);
+
+  const updated = db.prepare('SELECT * FROM completions WHERE id = ?').get(req.params.id);
+  res.json({ ...updated, data: JSON.parse(updated.data), step_times: JSON.parse(updated.step_times) });
+});
+
+module.exports = router;
