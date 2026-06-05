@@ -1,12 +1,12 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
-import { App, Step, Widget, WidgetType } from '../types';
+import { App, Step, Widget, WidgetType, ProductType } from '../types';
 import {
-  Save, Play, Globe, ChevronLeft, Plus, Trash2, GripVertical,
+  Save, Globe, ChevronLeft, Plus, Trash2, GripVertical,
   Type, AlignLeft, Image, MousePointer, TextCursor, Hash,
   List, CheckSquare, Timer, TrendingUp, CheckCheck, Minus,
-  PenTool, Eye, Settings, X, ChevronUp, ChevronDown, Loader2
+  PenTool, Eye, Settings, X, ChevronDown, Loader2, Tag
 } from 'lucide-react';
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor,
@@ -67,6 +67,8 @@ export default function AppBuilder() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [rightTab, setRightTab] = useState<'widget' | 'step'>('widget');
+  const [showTypesModal, setShowTypesModal] = useState(false);
+  const [productTypes, setProductTypes] = useState<ProductType[]>([]);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -74,7 +76,10 @@ export default function AppBuilder() {
   );
 
   useEffect(() => {
-    if (id) api.getApp(id).then(setApp);
+    if (id) {
+      api.getApp(id).then(setApp);
+      api.getProductTypes(id).then(setProductTypes);
+    }
   }, [id]);
 
   const save = useCallback(async (appData: App) => {
@@ -191,6 +196,7 @@ export default function AppBuilder() {
   }
 
   return (
+    <>
     <div className="flex flex-col h-screen bg-gray-100">
       {/* Top bar */}
       <div className="bg-white border-b border-gray-200 px-4 py-2.5 flex items-center gap-3 flex-shrink-0">
@@ -215,6 +221,12 @@ export default function AppBuilder() {
               <Eye size={13} /> Preview
             </Link>
           )}
+          <button
+            onClick={() => setShowTypesModal(true)}
+            className="btn-secondary text-xs"
+          >
+            <Tag size={13} /> Types {productTypes.length > 0 && <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full text-[10px] ml-0.5">{productTypes.length}</span>}
+          </button>
           <button
             onClick={() => save(app)}
             disabled={saving}
@@ -385,6 +397,177 @@ export default function AppBuilder() {
                 <p className="text-xs">Select a widget to edit its properties</p>
               </div>
             )}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {/* Product Types Modal */}
+    {showTypesModal && app && (
+      <ProductTypesModal
+        app={app}
+        productTypes={productTypes}
+        onClose={() => setShowTypesModal(false)}
+        onUpdate={setProductTypes}
+      />
+    )}
+    </>
+  );
+}
+
+// ── Product Types Modal ────────────────────────────────────────────────────────
+
+function ProductTypesModal({ app, productTypes, onClose, onUpdate }: {
+  app: App;
+  productTypes: ProductType[];
+  onClose: () => void;
+  onUpdate: (pts: ProductType[]) => void;
+}) {
+  const [editing, setEditing] = useState<ProductType | null>(null);
+  const [newName, setNewName] = useState('');
+  const [newDesc, setNewDesc] = useState('');
+  const [newOverrides, setNewOverrides] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+
+  const resetForm = () => { setEditing(null); setNewName(''); setNewDesc(''); setNewOverrides({}); };
+
+  const startEdit = (pt: ProductType) => {
+    setEditing(pt);
+    setNewName(pt.name);
+    setNewDesc(pt.description);
+    const ov: Record<string, string> = {};
+    for (const [k, v] of Object.entries(pt.takt_overrides)) ov[k] = String(v);
+    setNewOverrides(ov);
+  };
+
+  const handleSave = async () => {
+    if (!newName.trim()) return;
+    setSaving(true);
+    try {
+      const overrides: Record<string, number> = {};
+      for (const [k, v] of Object.entries(newOverrides)) {
+        if (v.trim()) overrides[k] = Number(v);
+      }
+      let updated: ProductType;
+      if (editing) {
+        updated = await api.updateProductType(editing.id, { name: newName.trim(), description: newDesc.trim(), takt_overrides: overrides });
+        onUpdate(productTypes.map(p => p.id === editing.id ? updated : p));
+      } else {
+        const created = await api.createProductType({ app_id: app.id, name: newName.trim(), description: newDesc.trim(), takt_overrides: overrides });
+        onUpdate([...productTypes, created]);
+      }
+      resetForm();
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (pt: ProductType) => {
+    if (!confirm(`Delete product type "${pt.name}"?`)) return;
+    await api.deleteProductType(pt.id);
+    onUpdate(productTypes.filter(p => p.id !== pt.id));
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <Tag size={18} className="text-purple-600" />
+            <h2 className="text-lg font-bold text-gray-900">Product Types</h2>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400"><X size={18} /></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          <p className="text-xs text-gray-500">
+            Define product types with per-step takt time overrides. Operators select a type when starting the app.
+          </p>
+
+          {/* Existing types */}
+          {productTypes.length > 0 && (
+            <div className="space-y-2">
+              {productTypes.map(pt => (
+                <div key={pt.id} className="border border-gray-200 rounded-xl p-3 flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="font-semibold text-gray-900 text-sm">{pt.name}</div>
+                    {pt.description && <div className="text-xs text-gray-500 truncate">{pt.description}</div>}
+                    {Object.keys(pt.takt_overrides).length > 0 && (
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {Object.entries(pt.takt_overrides).map(([idx, secs]) => {
+                          const stepName = app.steps[Number(idx)]?.name || `Step ${Number(idx) + 1}`;
+                          return (
+                            <span key={idx} className="text-xs bg-purple-50 text-purple-700 border border-purple-200 px-1.5 py-0.5 rounded-full">
+                              {stepName}: {Math.floor(Number(secs)/60)}m{Number(secs)%60 ? `${Number(secs)%60}s` : ''}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button onClick={() => startEdit(pt)} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400 text-xs">Edit</button>
+                    <button onClick={() => handleDelete(pt)} className="p-1.5 hover:bg-red-50 rounded-lg text-red-400"><Trash2 size={14} /></button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Add / Edit form */}
+          <div className="border-2 border-dashed border-gray-200 rounded-xl p-4 space-y-3">
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+              {editing ? `Editing: ${editing.name}` : 'Add Product Type'}
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
+                <input className="input-field" value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. Model A, Standard, Deluxe" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
+                <input className="input-field" value={newDesc} onChange={e => setNewDesc(e.target.value)} placeholder="Optional description" />
+              </div>
+            </div>
+            {app.steps.length > 0 && (
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-2">Takt Time Overrides (leave blank to use step default)</label>
+                <div className="space-y-1.5">
+                  {app.steps.map((step, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <span className="text-xs text-gray-600 w-32 flex-shrink-0 truncate">{idx+1}. {step.name}</span>
+                      <input
+                        type="number"
+                        className="input-field flex-1 text-xs py-1.5"
+                        placeholder={step.takt_time_seconds ? `Default: ${step.takt_time_seconds}s` : 'No default'}
+                        value={newOverrides[idx] ?? ''}
+                        onChange={e => setNewOverrides(prev => {
+                          const next = { ...prev };
+                          if (e.target.value) next[idx] = e.target.value;
+                          else delete next[idx];
+                          return next;
+                        })}
+                        min={0}
+                      />
+                      <span className="text-xs text-gray-400 flex-shrink-0">seconds</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleSave}
+                disabled={!newName.trim() || saving}
+                className="btn-success text-xs"
+              >
+                {saving ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
+                {editing ? 'Update Type' : 'Add Type'}
+              </button>
+              {editing && (
+                <button onClick={resetForm} className="btn-secondary text-xs">Cancel</button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -672,7 +855,32 @@ function StepProperties({ step, onUpdate }: { step: Step; onUpdate: (u: (s: Step
       <Field label="Step Name">
         <input className="input-field" value={step.name} onChange={e => onUpdate(s => ({ ...s, name: e.target.value }))} />
       </Field>
-      <div className="text-xs text-gray-400">
+      <Field label="Takt Time (seconds)">
+        <div className="space-y-1">
+          <input
+            type="number"
+            className="input-field"
+            placeholder="0 = no limit"
+            value={step.takt_time_seconds || ''}
+            onChange={e => onUpdate(s => ({ ...s, takt_time_seconds: e.target.value ? parseInt(e.target.value) : undefined }))}
+            min={0}
+          />
+          {step.takt_time_seconds ? (
+            <div className="text-xs text-blue-600 font-medium">
+              ⏱ {Math.floor(step.takt_time_seconds / 60)}m {step.takt_time_seconds % 60}s — operator sees alert if exceeded
+            </div>
+          ) : (
+            <div className="text-xs text-gray-400">Set a takt time to show operators a flashing alert when exceeded</div>
+          )}
+        </div>
+      </Field>
+      <Field label="Step Description">
+        <textarea className="input-field resize-none text-xs" rows={2}
+          value={step.description || ''}
+          placeholder="Optional notes for this step..."
+          onChange={e => onUpdate(s => ({ ...s, description: e.target.value }))} />
+      </Field>
+      <div className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
         {step.widgets.length} widget{step.widgets.length !== 1 ? 's' : ''}
       </div>
     </div>
