@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "robinhood": {
+      "type": "http",
+      "url": "https://agent.robinhood.com/mcp/trading",
+      "headers": {
+        "Authorization": "Bearer ${ROBINHOOD_AGENT_TOKEN}"
+      }
+    }
+  }
+}
