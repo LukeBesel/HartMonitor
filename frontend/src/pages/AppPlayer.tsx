@@ -27,6 +27,7 @@ export default function AppPlayer() {
   const [loading, setLoading] = useState(true);
   const [taktExceededSteps, setTaktExceededSteps] = useState<number[]>([]);
   const [flashPhase, setFlashPhase] = useState(false);
+  const [validationError, setValidationError] = useState<string | null>(null);
 
   useEffect(() => {
     if (id) {
@@ -103,8 +104,26 @@ export default function AppPlayer() {
     setStepTimes(prev => ({ ...prev, [stepIdx]: elapsed }));
   }, [stepStartTime]);
 
+  const getMissingRequiredFields = (stepIdx: number): string[] => {
+    const step = app?.steps[stepIdx];
+    if (!step) return [];
+    return step.widgets
+      .filter(w => (w.type === 'text-input' || w.type === 'number-input') && w.config.required)
+      .filter(w => {
+        const val = formData[w.config.variableName || w.id];
+        return val === undefined || val === null || val === '';
+      })
+      .map(w => w.label || 'This field');
+  };
+
   const goNext = () => {
     if (!app) return;
+    const missing = getMissingRequiredFields(currentStepIdx);
+    if (missing.length > 0) {
+      setValidationError(`Please fill in required field${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}`);
+      return;
+    }
+    setValidationError(null);
     recordStepTime(currentStepIdx);
     setCurrentStepIdx(i => i + 1);
     setStepStartTime(Date.now());
@@ -112,6 +131,7 @@ export default function AppPlayer() {
   };
 
   const goPrev = () => {
+    setValidationError(null);
     recordStepTime(currentStepIdx);
     setCurrentStepIdx(i => Math.max(0, i - 1));
     setStepStartTime(Date.now());
@@ -120,6 +140,12 @@ export default function AppPlayer() {
 
   const complete = async () => {
     if (!completionId || !app) return;
+    const missing = getMissingRequiredFields(currentStepIdx);
+    if (missing.length > 0) {
+      setValidationError(`Please fill in required field${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}`);
+      return;
+    }
+    setValidationError(null);
     recordStepTime(currentStepIdx);
     const finalStepTimes = { ...stepTimes, [currentStepIdx]: Math.round((Date.now() - stepStartTime) / 1000) };
     await api.updateCompletion(completionId, {
@@ -137,7 +163,10 @@ export default function AppPlayer() {
     setStatus('abandoned');
   };
 
-  const updateField = (key: string, value: any) => setFormData(prev => ({ ...prev, [key]: value }));
+  const updateField = (key: string, value: any) => {
+    setFormData(prev => ({ ...prev, [key]: value }));
+    setValidationError(null);
+  };
 
   if (loading) return (
     <div className="flex items-center justify-center h-screen bg-gray-950">
@@ -390,6 +419,12 @@ export default function AppPlayer() {
               </div>
             )}
           </div>
+          {validationError && (
+            <div className="flex items-center gap-2 px-4 py-3 bg-red-900/40 border border-red-700 rounded-xl text-red-300 text-sm font-medium">
+              <AlertCircle size={16} className="flex-shrink-0" />
+              {validationError}
+            </div>
+          )}
           {currentStep?.widgets.map(widget => (
             <PlayerWidget
               key={widget.id}

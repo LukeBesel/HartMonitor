@@ -161,21 +161,19 @@ export default function Layout() {
         </nav>
 
         <div className="p-2 border-t border-white/10 flex-shrink-0 space-y-0.5">
-          {isAtLeast('manager') && (
-            <NavLink
-              to="/settings"
-              title={collapsed ? 'Settings' : undefined}
-              className={({ isActive }) =>
-                `flex items-center rounded-xl text-sm font-medium text-gray-500 hover:text-white hover:bg-white/8 transition-all ${
-                  collapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
-                } ${isActive ? 'text-white' : ''}`
-              }
-              style={({ isActive }) => isActive ? { backgroundColor: 'var(--nav-active)' } : {}}
-            >
-              <Settings size={15} className="flex-shrink-0" />
-              {!collapsed && 'Settings'}
-            </NavLink>
-          )}
+          <NavLink
+            to="/settings"
+            title={collapsed ? 'Settings' : undefined}
+            className={({ isActive }) =>
+              `flex items-center rounded-xl text-sm font-medium text-gray-500 hover:text-white hover:bg-white/8 transition-all ${
+                collapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
+              } ${isActive ? 'text-white' : ''}`
+            }
+            style={({ isActive }) => isActive ? { backgroundColor: 'var(--nav-active)' } : {}}
+          >
+            <Settings size={15} className="flex-shrink-0" />
+            {!collapsed && 'Settings'}
+          </NavLink>
 
           <button
             onClick={() => setCollapsed(c => !c)}
@@ -210,12 +208,10 @@ export default function Layout() {
                     <div className="text-xs font-semibold text-gray-800 truncate">{user?.display_name}</div>
                     <div className="text-[11px] text-gray-500 truncate">{user?.email}</div>
                   </div>
-                  {isAtLeast('manager') && (
-                    <NavLink to="/settings" onClick={() => setUserMenuOpen(false)}
-                      className="flex items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors w-full">
-                      <Settings size={14} />Account Settings
-                    </NavLink>
-                  )}
+                  <NavLink to="/settings" onClick={() => setUserMenuOpen(false)}
+                    className="flex items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors w-full">
+                    <Settings size={14} />Account Settings
+                  </NavLink>
                   <button onClick={handleLogout}
                     className="flex items-center gap-2.5 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors w-full">
                     <LogOut size={14} />Sign Out
