@@ -866,14 +866,9 @@ export default function Quality() {
               <p className="text-sm text-gray-500 mt-0.5">Track and resolve non-conformance reports</p>
             </div>
             <div className="flex items-center gap-2">
-              <a
-                href={api.exportURL('ncrs')}
-                className="btn-secondary"
-                target="_blank"
-                rel="noopener noreferrer"
-              >
+              <button onClick={() => api.downloadExport('ncrs')} className="btn-secondary">
                 <Download size={14} /> Export CSV
-              </a>
+              </button>
               <button className="btn-danger" onClick={() => setShowCreate(true)}>
                 <Plus size={14} /> New NCR
               </button>

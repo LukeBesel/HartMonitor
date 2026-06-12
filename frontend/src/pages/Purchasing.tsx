@@ -885,8 +885,6 @@ function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
     load();
   }
 
-  const exportURL = '/api/purchasing/orders/export';
-
   const amountColor = (po: PurchaseOrder) => {
     if (po.status === 'received') return 'text-emerald-600';
     if (po.status === 'partial') return 'text-amber-600';
@@ -922,7 +920,7 @@ function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
               onChange={e => setSearch(e.target.value)}
             />
           </div>
-          <button className="btn-secondary" onClick={() => window.open(exportURL, '_blank')}>
+          <button className="btn-secondary" onClick={() => api.downloadExport('purchase-orders')}>
             <Download className="w-4 h-4" /> Export CSV
           </button>
           <button className="btn-primary" onClick={() => setShowCreate(true)}>

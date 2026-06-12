@@ -235,10 +235,30 @@ export interface QualitySummary {
 
 export type PlanTier = 'free' | 'pro' | 'enterprise';
 
+export interface TierPricing {
+  name: string; monthly_price: number | null;
+  app_limit: number; dashboard_limit: number; features: string[];
+}
+
+export interface AddonPricing {
+  name: string; monthly_price: number; description: string;
+}
+
+export interface BillingRecord {
+  id: string; type: 'tier_change' | 'app_slot' | 'dashboard_slot' | 'refund';
+  description: string; quantity: number; unit_price: number; amount: number;
+  recurring: number; created_at: string;
+}
+
 export interface Plan {
   id: number; tier: PlanTier; app_limit: number; dashboard_limit: number;
+  extra_app_slots: number; extra_dashboard_slots: number;
+  effective_app_limit: number; effective_dashboard_limit: number;
+  monthly_total: number;
   app_count: number; dashboard_count: number; completion_count: number;
-  features: string[]; all_features: Record<string, string[]>;
+  features: string[];
+  pricing: { tiers: Record<PlanTier, TierPricing>; addons: Record<'app_slot' | 'dashboard_slot', AddonPricing> };
+  billing_history: BillingRecord[];
   created_at: string; updated_at: string;
 }
 

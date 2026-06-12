@@ -724,7 +724,7 @@ export default function Inventory() {
             <MapPin size={14} />
             Locations
           </button>
-          <button onClick={() => window.open(api.exportURL('inventory'), '_blank')} className="btn-secondary">
+          <button onClick={() => api.downloadExport('inventory')} className="btn-secondary">
             <Download size={14} />
             Export CSV
           </button>

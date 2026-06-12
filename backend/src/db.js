@@ -279,6 +279,26 @@ db.exec(`
   );
 `);
 
+// ─── Migrations: plan (à-la-carte add-on slots) ──────────────────────────────
+
+const planCols = db.prepare('PRAGMA table_info(plan)').all().map(r => r.name);
+if (!planCols.includes('extra_app_slots'))       db.exec('ALTER TABLE plan ADD COLUMN extra_app_slots INTEGER NOT NULL DEFAULT 0');
+if (!planCols.includes('extra_dashboard_slots')) db.exec('ALTER TABLE plan ADD COLUMN extra_dashboard_slots INTEGER NOT NULL DEFAULT 0');
+if (!planCols.includes('billing_email'))         db.exec("ALTER TABLE plan ADD COLUMN billing_email TEXT DEFAULT ''");
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS billing_history (
+    id TEXT PRIMARY KEY,
+    type TEXT NOT NULL CHECK(type IN ('tier_change','app_slot','dashboard_slot','refund')),
+    description TEXT NOT NULL,
+    quantity INTEGER NOT NULL DEFAULT 1,
+    unit_price REAL NOT NULL DEFAULT 0,
+    amount REAL NOT NULL DEFAULT 0,
+    recurring INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+`);
+
 // ─── Auth tables ──────────────────────────────────────────────────────────────
 
 db.exec(`

@@ -6,6 +6,8 @@ import {
   Plus, Play, Edit3, Trash2, Search, CheckCircle,
   Clock, FileText, MoreVertical, Globe, Lock, Copy
 } from 'lucide-react';
+import UpgradeModal from '../components/shared/UpgradeModal';
+import { usePlan } from '../context/PlanContext';
 
 export default function AppsLibrary() {
   const [apps, setApps] = useState<App[]>([]);
@@ -13,6 +15,8 @@ export default function AppsLibrary() {
   const [showCreate, setShowCreate] = useState(false);
   const [newApp, setNewApp] = useState({ name: '', description: '' });
   const [loading, setLoading] = useState(true);
+  const [limitReason, setLimitReason] = useState<string | null>(null);
+  const { refresh: refreshPlan } = usePlan();
   const navigate = useNavigate();
 
   const load = () => api.getApps().then(setApps).finally(() => setLoading(false));
@@ -20,10 +24,20 @@ export default function AppsLibrary() {
 
   const handleCreate = async () => {
     if (!newApp.name.trim()) return;
-    const app = await api.createApp(newApp);
-    setShowCreate(false);
-    setNewApp({ name: '', description: '' });
-    navigate(`/apps/${app.id}/build`);
+    try {
+      const app = await api.createApp(newApp);
+      setShowCreate(false);
+      setNewApp({ name: '', description: '' });
+      refreshPlan();
+      navigate(`/apps/${app.id}/build`);
+    } catch (err: any) {
+      if (err.status === 402) {
+        setShowCreate(false);
+        setLimitReason(err.message);
+      } else {
+        alert(err.message || 'Failed to create app');
+      }
+    }
   };
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
@@ -138,6 +152,15 @@ export default function AppsLibrary() {
             </div>
           </div>
         </div>
+      )}
+
+      {limitReason && (
+        <UpgradeModal
+          feature="app"
+          reason={limitReason}
+          onClose={() => setLimitReason(null)}
+          onPurchased={() => setShowCreate(true)}
+        />
       )}
     </div>
   );

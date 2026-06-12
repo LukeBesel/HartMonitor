@@ -15,15 +15,16 @@ router.post('/', (req, res) => {
   const { name, description = '', cards = [] } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
 
-  // Plan limit check
+  // Plan limit check — base tier limit plus purchased add-on slots
   const plan = db.prepare('SELECT * FROM plan WHERE id = 1').get();
-  if (plan && plan.tier === 'free' && plan.dashboard_limit > 0) {
+  if (plan && plan.dashboard_limit >= 0) {
+    const effectiveLimit = plan.dashboard_limit + (plan.extra_dashboard_slots || 0);
     const count = db.prepare('SELECT COUNT(*) as c FROM dashboards').get().c;
-    if (count >= plan.dashboard_limit) {
+    if (count >= effectiveLimit) {
       return res.status(402).json({
         error: 'plan_limit',
-        message: `Your free plan is limited to ${plan.dashboard_limit} dashboards. Upgrade to Pro for unlimited dashboards.`,
-        limit: plan.dashboard_limit, current: count,
+        message: `Your plan is limited to ${effectiveLimit} dashboards. Upgrade to Pro for unlimited dashboards, or purchase a custom dashboard slot.`,
+        limit: effectiveLimit, current: count,
       });
     }
   }

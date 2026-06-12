@@ -3,6 +3,8 @@ import { useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Dashboard } from '../types';
 import { LayoutGrid, Plus, Trash2, Edit, Clock, BarChart3, RefreshCw } from 'lucide-react';
+import UpgradeModal from '../components/shared/UpgradeModal';
+import { usePlan } from '../context/PlanContext';
 
 export default function Dashboards() {
   const navigate = useNavigate();
@@ -12,6 +14,8 @@ export default function Dashboards() {
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [saving, setSaving] = useState(false);
+  const [limitReason, setLimitReason] = useState<string | null>(null);
+  const { refresh: refreshPlan } = usePlan();
 
   const load = () => {
     setLoading(true);
@@ -25,7 +29,15 @@ export default function Dashboards() {
     setSaving(true);
     try {
       const d = await api.createDashboard({ name: newName.trim(), description: newDesc.trim(), cards: [] });
+      refreshPlan();
       navigate(`/dashboards/${d.id}/edit`);
+    } catch (err: any) {
+      if (err.status === 402) {
+        setCreating(false);
+        setLimitReason(err.message);
+      } else {
+        alert(err.message || 'Failed to create dashboard');
+      }
     } finally {
       setSaving(false);
     }
@@ -147,6 +159,15 @@ export default function Dashboards() {
             </div>
           ))}
         </div>
+      )}
+
+      {limitReason && (
+        <UpgradeModal
+          feature="dashboard"
+          reason={limitReason}
+          onClose={() => setLimitReason(null)}
+          onPurchased={() => setCreating(true)}
+        />
       )}
     </div>
   );

@@ -191,13 +191,33 @@ export const api = {
   getCompanySettings: () => request<any>('/config'),
   updateCompanySettings: (data: any) => request<any>('/config', { method: 'PUT', body: JSON.stringify(data) }),
   getPlan: () => request<any>('/config/plan'),
-  updatePlan: (data: { tier?: string; app_limit?: number; dashboard_limit?: number }) =>
+  updatePlan: (data: { tier?: string }) =>
     request<any>('/config/plan', { method: 'PUT', body: JSON.stringify(data) }),
+  purchaseAddon: (type: 'app_slot' | 'dashboard_slot', quantity = 1) =>
+    request<any>('/config/plan/purchase', { method: 'POST', body: JSON.stringify({ type, quantity }) }),
+  removeAddon: (type: 'app_slot' | 'dashboard_slot', quantity = 1) =>
+    request<any>('/config/plan/addon', { method: 'DELETE', body: JSON.stringify({ type, quantity }) }),
 
-  // ── Export (returns download URL — open in new tab or anchor)
-  exportURL: (type: string, params?: Record<string, string>) => {
+  // ── Export — authenticated download via fetch + blob (Bearer header required)
+  downloadExport: async (type: string, params?: Record<string, string>) => {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';
-    return `${BASE}/export/${type}${qs}`;
+    const token = localStorage.getItem('hm_token');
+    const res = await fetch(`${BASE}/export/${type}${qs}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new Error(`Export failed (${res.status})`);
+    const disposition = res.headers.get('Content-Disposition') || '';
+    const match = disposition.match(/filename="?([^";]+)"?/);
+    const filename = match?.[1] || `${type}-export.${type === 'all' ? 'json' : 'csv'}`;
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   },
 
   // ── Auth
