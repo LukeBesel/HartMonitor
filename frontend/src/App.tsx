@@ -47,8 +47,8 @@ export default function App() {
           <BrowserRouter>
             <Routes>
               <Route path="/login" element={<Login />} />
-              <Route path="/play/:id" element={<AppPlayer />} />
-              <Route path="/operator" element={<OperatorPortal />} />
+              <Route path="/play/:id" element={<ProtectedRoute><AppPlayer /></ProtectedRoute>} />
+              <Route path="/operator" element={<ProtectedRoute><OperatorPortal /></ProtectedRoute>} />
               <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
                 <Route index element={<Dashboard />} />
                 <Route path="apps" element={<AppsLibrary />} />
