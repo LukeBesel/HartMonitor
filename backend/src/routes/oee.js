@@ -212,3 +212,4 @@ router.get('/analytics/trend', (req, res) => {
 });
 
 module.exports = router;
+module.exports.calcOEE = calcOEE;

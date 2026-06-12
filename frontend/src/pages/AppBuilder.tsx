@@ -780,14 +780,28 @@ function WidgetProperties({ widget, onUpdate, onUpdateConfig }: {
               onChange={e => onUpdateConfig({ options: e.target.value.split('\n').filter(Boolean) })}
             />
           </Field>
+          <Field label="Required">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={!!config.required} onChange={e => onUpdateConfig({ required: e.target.checked })} className="rounded" />
+              <span className="text-sm text-gray-600">Required field</span>
+            </label>
+          </Field>
         </>
       )}
 
       {/* Checkbox */}
       {widget.type === 'checkbox' && (
-        <Field label="Variable Name">
-          <input className="input-field font-mono text-xs" value={config.variableName || ''} onChange={e => onUpdateConfig({ variableName: e.target.value })} />
-        </Field>
+        <>
+          <Field label="Variable Name">
+            <input className="input-field font-mono text-xs" value={config.variableName || ''} onChange={e => onUpdateConfig({ variableName: e.target.value })} />
+          </Field>
+          <Field label="Required">
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={!!config.required} onChange={e => onUpdateConfig({ required: e.target.checked })} className="rounded" />
+              <span className="text-sm text-gray-600">Must be checked to proceed</span>
+            </label>
+          </Field>
+        </>
       )}
 
       {/* Timer */}

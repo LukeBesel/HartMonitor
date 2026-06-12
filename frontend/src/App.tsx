@@ -10,6 +10,8 @@ import Analytics from './pages/Analytics';
 import Stations from './pages/Stations';
 import Schedule from './pages/Schedule';
 import PlantView from './pages/PlantView';
+import DepartmentView from './pages/DepartmentView';
+import StationView from './pages/StationView';
 import ManagerView from './pages/ManagerView';
 import CompletionDetail from './pages/CompletionDetail';
 import AppHistory from './pages/AppHistory';
@@ -58,8 +60,10 @@ export default function App() {
                 <Route path="tables/:id" element={<TableDetail />} />
                 <Route path="analytics" element={<Analytics />} />
                 <Route path="stations" element={<Stations />} />
+                <Route path="stations/:id" element={<StationView />} />
                 <Route path="schedule" element={<Schedule />} />
                 <Route path="plant" element={<PlantView />} />
+                <Route path="departments/:id" element={<DepartmentView />} />
                 <Route path="manager" element={<ManagerView />} />
                 <Route path="step-metrics" element={<StepMetrics />} />
                 <Route path="capacity" element={<CapacityPlanning />} />

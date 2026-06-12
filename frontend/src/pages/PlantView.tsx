@@ -27,7 +27,9 @@ interface PlantViewData {
     work_orders_total: number;
   };
   department_performance: Array<{
+    id: string;
     department: string;
+    color: string;
     completion_count: number;
     avg_cycle_time: number;
     takt_time: number;
@@ -176,7 +178,7 @@ export default function PlantView() {
       ) : (
         <>
           {/* KPI Row */}
-          <div className="grid grid-cols-6 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
             <KPICard
               icon={<CheckCircle2 size={18} className="text-green-600" />}
               bg="bg-green-50"
@@ -237,10 +239,10 @@ export default function PlantView() {
                 const barColor = dept.status === 'on_track' ? 'bg-green-500' : dept.status === 'at_risk' ? 'bg-amber-500' : 'bg-red-500';
                 const onTrackPct = dept.total_count > 0 ? Math.round((dept.on_track_count / dept.total_count) * 100) : 0;
                 return (
-                  <div key={dept.department} className={`bg-white rounded-xl border border-gray-200 shadow-sm p-4 border-l-4 ${departmentBorderColor(dept.status)}`}>
+                  <Link key={dept.id || dept.department} to={`/departments/${dept.id}`} className={`block bg-white rounded-xl border border-gray-200 shadow-sm p-4 border-l-4 hover:shadow-md hover:border-gray-300 transition-all ${departmentBorderColor(dept.status)}`}>
                     <div className="flex items-start justify-between mb-3">
                       <div>
-                        <div className="font-semibold text-gray-900">{dept.department}</div>
+                        <div className="font-semibold text-gray-900 flex items-center gap-1">{dept.department} <ChevronRight size={14} className="text-gray-300" /></div>
                         <div className="text-2xl font-bold text-gray-900 mt-1">{dept.completion_count}</div>
                         <div className="text-xs text-gray-500">completions today</div>
                       </div>
@@ -264,7 +266,7 @@ export default function PlantView() {
                         <span>{dept.on_track_count} / {dept.total_count} WOs</span>
                       </div>
                     </div>
-                  </div>
+                  </Link>
                 );
               })}
             </div>

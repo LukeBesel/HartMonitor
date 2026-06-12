@@ -1,6 +1,7 @@
 const express = require('express');
 const db = require('../db');
 const { calcScheduleStatus } = require('./workorders');
+const { calcOEE } = require('./oee');
 
 const router = express.Router();
 
@@ -203,12 +204,16 @@ router.get('/plant-view', (req, res) => {
   `).get();
   const avgCycleTime = ctRow?.avg_minutes ? Math.round(ctRow.avg_minutes) : 0;
 
-  const pfRows = db.prepare("SELECT data FROM completions WHERE status='completed' LIMIT 1000").all();
+  // Pass rate over the last 7 days, counting only completions with explicit QC results
+  const pfRows = db.prepare(`
+    SELECT data FROM completions
+    WHERE status='completed' AND completed_at >= datetime('now', '-7 days')
+  `).all();
   let pass = 0, fail = 0;
   for (const row of pfRows) {
     const vals = Object.values(JSON.parse(row.data));
     if (vals.some(v => v === 'Fail')) fail++;
-    else pass++;
+    else if (vals.some(v => v === 'Pass')) pass++;
   }
   const passRate = (pass + fail) > 0 ? Math.round((pass / (pass + fail)) * 100) : 0;
 
@@ -231,7 +236,8 @@ router.get('/plant-view', (req, res) => {
     ? Math.round(((woSummary.on_track + woSummary.completed) / adherenceBase) * 100)
     : 0;
 
-  // Department performance
+  // Department performance. A completion belongs to its work order's department,
+  // falling back to its station's department when it ran without a work order.
   const depts = db.prepare('SELECT * FROM departments').all();
   const departmentPerformance = depts.map(dept => {
     const deptWOs = allWOs.filter(wo => wo.department_id === dept.id);
@@ -239,15 +245,19 @@ router.get('/plant-view', (req, res) => {
     const completionCountToday = db.prepare(`
       SELECT COUNT(*) as c
       FROM completions c
-      JOIN work_orders wo ON wo.id = c.work_order_id
-      WHERE wo.department_id = ? AND c.status = 'completed' AND date(c.completed_at) = date('now')
+      LEFT JOIN work_orders wo ON wo.id = c.work_order_id
+      LEFT JOIN stations st    ON st.id = c.station_id
+      WHERE COALESCE(wo.department_id, st.department_id) = ?
+        AND c.status = 'completed' AND date(c.completed_at) = date('now')
     `).get(dept.id).c;
 
     const ctDept = db.prepare(`
       SELECT AVG((julianday(c.completed_at) - julianday(c.started_at)) * 24 * 60) as avg_minutes
       FROM completions c
-      JOIN work_orders wo ON wo.id = c.work_order_id
-      WHERE wo.department_id = ? AND c.status = 'completed' AND c.completed_at IS NOT NULL
+      LEFT JOIN work_orders wo ON wo.id = c.work_order_id
+      LEFT JOIN stations st    ON st.id = c.station_id
+      WHERE COALESCE(wo.department_id, st.department_id) = ?
+        AND c.status = 'completed' AND c.completed_at IS NOT NULL
     `).get(dept.id);
     const avgCycleDept = ctDept?.avg_minutes ? Math.round(ctDept.avg_minutes) : 0;
 
@@ -259,7 +269,9 @@ router.get('/plant-view', (req, res) => {
     const taktTime = taktTimes.length ? Math.round((taktTimes.reduce((s, t) => s + t, 0) / taktTimes.length) * 10) / 10 : 0;
 
     return {
+      id:               dept.id,
       department:       dept.name,
+      color:            dept.color,
       completion_count: completionCountToday,
       avg_cycle_time:   avgCycleDept,
       takt_time:        taktTime,
@@ -303,7 +315,8 @@ router.get('/plant-view', (req, res) => {
       d.name AS department_name
     FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
-    LEFT JOIN departments d  ON d.id  = wo.department_id
+    LEFT JOIN stations st    ON st.id = c.station_id
+    LEFT JOIN departments d  ON d.id  = COALESCE(wo.department_id, st.department_id)
     ORDER BY datetime(COALESCE(c.completed_at, c.started_at)) DESC
     LIMIT 15
   `).all().map(c => {
@@ -559,6 +572,192 @@ router.get('/completion/:id', (req, res) => {
     cycle_time_minutes: cycleTimeMinutes,
     app_name:         app?.name || completion.app_name,
     work_order:       workOrder,
+  });
+});
+
+// ─── GET /department/:id — live drill-down for one department ────────────────
+
+router.get('/department/:id', (req, res) => {
+  const dept = db.prepare('SELECT * FROM departments WHERE id = ?').get(req.params.id);
+  if (!dept) return res.status(404).json({ error: 'Department not found' });
+
+  // Completions attribute to a department via their work order, falling back
+  // to their station's department when run without a work order.
+  const DEPT_COMPLETION_JOIN = `
+    FROM completions c
+    LEFT JOIN work_orders wo ON wo.id = c.work_order_id
+    LEFT JOIN stations st    ON st.id = c.station_id
+    WHERE COALESCE(wo.department_id, st.department_id) = ?
+  `;
+
+  const completedToday = db.prepare(`SELECT COUNT(*) as c ${DEPT_COMPLETION_JOIN} AND c.status='completed' AND date(c.completed_at)=date('now')`).get(dept.id).c;
+  const activeNow      = db.prepare(`SELECT COUNT(*) as c ${DEPT_COMPLETION_JOIN} AND c.status='in_progress'`).get(dept.id).c;
+
+  const ctRow = db.prepare(`
+    SELECT AVG((julianday(c.completed_at) - julianday(c.started_at)) * 24 * 60) as avg_minutes
+    ${DEPT_COMPLETION_JOIN} AND c.status='completed' AND c.completed_at IS NOT NULL
+  `).get(dept.id);
+  const avgCycleTime = ctRow?.avg_minutes ? Math.round(ctRow.avg_minutes) : 0;
+
+  const pfRows = db.prepare(`SELECT c.data ${DEPT_COMPLETION_JOIN} AND c.status='completed' AND c.completed_at >= datetime('now', '-7 days')`).all(dept.id);
+  let pass = 0, fail = 0;
+  for (const row of pfRows) {
+    const vals = Object.values(JSON.parse(row.data));
+    if (vals.some(v => v === 'Fail')) fail++;
+    else if (vals.some(v => v === 'Pass')) pass++;
+  }
+  const passRate = (pass + fail) > 0 ? Math.round((pass / (pass + fail)) * 100) : 0;
+
+  // Work orders for this department
+  const workOrders = db.prepare(`
+    SELECT wo.*, a.name AS app_name
+    FROM work_orders wo
+    LEFT JOIN apps a ON a.id = wo.app_id
+    WHERE wo.department_id = ? AND wo.status != 'cancelled'
+    ORDER BY wo.scheduled_end ASC
+  `).all(dept.id).map(wo => ({
+    ...wo,
+    schedule_status: calcScheduleStatus(wo),
+    completion_pct: wo.quantity > 0 ? Math.round((wo.quantity_completed / wo.quantity) * 100) : 0,
+  }));
+  const wosOnTrack = workOrders.filter(wo => ['on_track', 'completed'].includes(wo.schedule_status)).length;
+
+  // Stations in this department with live state
+  const stations = db.prepare('SELECT * FROM stations WHERE department_id = ? ORDER BY name').all(dept.id).map(st => {
+    const activeCompletion = db.prepare(`
+      SELECT id, operator_name, app_name, started_at
+      FROM completions WHERE station_id = ? AND status = 'in_progress'
+      ORDER BY datetime(started_at) DESC LIMIT 1
+    `).get(st.id) || null;
+    const currentApp = st.current_app_id ? db.prepare('SELECT name FROM apps WHERE id = ?').get(st.current_app_id) : null;
+    return {
+      id: st.id,
+      name: st.name,
+      location: st.location,
+      status: st.status,
+      current_status: st.current_status || 'idle',
+      current_status_since: st.current_status_since,
+      current_app_id: st.current_app_id,
+      current_app_name: currentApp?.name || null,
+      active_completion: activeCompletion,
+      oee: calcOEE(st),
+    };
+  });
+
+  const hourlyThroughput = db.prepare(`
+    SELECT strftime('%Y-%m-%dT%H:00:00', c.completed_at) as hour, COUNT(*) as count
+    ${DEPT_COMPLETION_JOIN} AND c.status='completed' AND c.completed_at >= datetime('now', '-24 hours')
+    GROUP BY strftime('%Y-%m-%dT%H:00:00', c.completed_at)
+    ORDER BY hour ASC
+  `).all(dept.id);
+
+  const recentCompletions = db.prepare(`
+    SELECT c.id, c.app_name, c.operator_name, c.status, c.started_at, c.completed_at, st.name AS station_name
+    ${DEPT_COMPLETION_JOIN}
+    ORDER BY datetime(COALESCE(c.completed_at, c.started_at)) DESC
+    LIMIT 15
+  `).all(dept.id).map(c => {
+    const end = c.completed_at ? new Date(c.completed_at) : new Date();
+    return {
+      ...c,
+      completed_at: c.completed_at || c.started_at,
+      duration_minutes: Math.round(((end - new Date(c.started_at)) / 60000) * 10) / 10,
+    };
+  });
+
+  res.json({
+    department: {
+      id: dept.id, name: dept.name, color: dept.color,
+      manager_name: dept.manager_name, description: dept.description,
+      headcount: dept.headcount || 0,
+    },
+    kpis: {
+      completed_today: completedToday,
+      active_now:      activeNow,
+      pass_rate:       passRate,
+      avg_cycle_time:  avgCycleTime,
+      wos_on_track:    wosOnTrack,
+      wos_total:       workOrders.length,
+    },
+    stations,
+    work_orders:        workOrders,
+    hourly_throughput:  hourlyThroughput,
+    recent_completions: recentCompletions,
+  });
+});
+
+// ─── GET /station/:id — live drill-down for one station ──────────────────────
+
+router.get('/station/:id', (req, res) => {
+  const st = db.prepare(`
+    SELECT s.*, d.name AS department_name, d.color AS department_color
+    FROM stations s LEFT JOIN departments d ON d.id = s.department_id
+    WHERE s.id = ?
+  `).get(req.params.id);
+  if (!st) return res.status(404).json({ error: 'Station not found' });
+
+  const activeCompletion = db.prepare(`
+    SELECT c.id, c.operator_name, c.app_name, c.app_id, c.started_at, c.work_order_id,
+           wo.work_order_number, wo.part_name
+    FROM completions c
+    LEFT JOIN work_orders wo ON wo.id = c.work_order_id
+    WHERE c.station_id = ? AND c.status = 'in_progress'
+    ORDER BY datetime(c.started_at) DESC LIMIT 1
+  `).get(st.id) || null;
+
+  const currentApp = st.current_app_id ? db.prepare('SELECT id, name FROM apps WHERE id = ?').get(st.current_app_id) : null;
+
+  const recentCompletions = db.prepare(`
+    SELECT c.id, c.app_name, c.operator_name, c.status, c.started_at, c.completed_at, c.data,
+           wo.work_order_number
+    FROM completions c
+    LEFT JOIN work_orders wo ON wo.id = c.work_order_id
+    WHERE c.station_id = ?
+    ORDER BY datetime(COALESCE(c.completed_at, c.started_at)) DESC
+    LIMIT 20
+  `).all(st.id).map(c => {
+    const end = c.completed_at ? new Date(c.completed_at) : new Date();
+    const vals = Object.values(JSON.parse(c.data || '{}'));
+    const qc = vals.some(v => v === 'Fail') ? 'fail' : vals.some(v => v === 'Pass') ? 'pass' : null;
+    return {
+      id: c.id,
+      app_name: c.app_name,
+      operator_name: c.operator_name,
+      status: c.status,
+      work_order_number: c.work_order_number,
+      completed_at: c.completed_at || c.started_at,
+      duration_minutes: Math.round(((end - new Date(c.started_at)) / 60000) * 10) / 10,
+      qc_result: qc,
+    };
+  });
+
+  const recentEvents = db.prepare(`
+    SELECT * FROM machine_events
+    WHERE station_id = ?
+    ORDER BY datetime(started_at) DESC
+    LIMIT 20
+  `).all(st.id);
+
+  res.json({
+    station: {
+      id: st.id,
+      name: st.name,
+      description: st.description,
+      location: st.location,
+      status: st.status,
+      current_status: st.current_status || 'idle',
+      current_status_since: st.current_status_since,
+      department_id: st.department_id,
+      department_name: st.department_name,
+      department_color: st.department_color,
+      planned_hours_per_day: st.planned_hours_per_day,
+      ideal_cycle_seconds: st.ideal_cycle_seconds,
+    },
+    current_app:       currentApp,
+    active_completion: activeCompletion,
+    oee:               calcOEE(st),
+    recent_completions: recentCompletions,
+    recent_events:      recentEvents,
   });
 });
 

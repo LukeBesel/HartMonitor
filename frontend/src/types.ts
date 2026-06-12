@@ -66,6 +66,9 @@ export interface Station {
   id: string; name: string; description: string; location: string;
   status: 'active' | 'inactive' | 'maintenance';
   current_app_id: string | null; completion_count: number; created_at: string;
+  department_id?: string | null;
+  department_name?: string | null;
+  department_color?: string | null;
 }
 
 export interface Department {

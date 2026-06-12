@@ -4,25 +4,36 @@ const db = require('../db');
 
 const router = express.Router();
 
+const STATION_SELECT = `
+  SELECT s.*, d.name AS department_name, d.color AS department_color
+  FROM stations s
+  LEFT JOIN departments d ON d.id = s.department_id
+`;
+
+function withCount(station) {
+  return {
+    ...station,
+    completion_count: db.prepare('SELECT COUNT(*) as c FROM completions WHERE station_id = ?').get(station.id).c,
+  };
+}
+
 router.get('/', (req, res) => {
-  const stations = db.prepare('SELECT * FROM stations ORDER BY name').all();
-  res.json(stations.map(s => ({
-    ...s,
-    completion_count: db.prepare('SELECT COUNT(*) as c FROM completions WHERE station_id = ?').get(s.id).c
-  })));
+  const stations = db.prepare(STATION_SELECT + ' ORDER BY s.name').all();
+  res.json(stations.map(withCount));
 });
 
 router.post('/', (req, res) => {
-  const { name, description = '', location = '' } = req.body;
+  const { name, description = '', location = '', department_id = null } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
   const id = uuidv4();
-  db.prepare('INSERT INTO stations (id, name, description, location) VALUES (?, ?, ?, ?)').run(id, name, description, location);
-  const station = db.prepare('SELECT * FROM stations WHERE id = ?').get(id);
+  db.prepare('INSERT INTO stations (id, name, description, location, department_id) VALUES (?, ?, ?, ?, ?)')
+    .run(id, name, description, location, department_id || null);
+  const station = db.prepare(STATION_SELECT + ' WHERE s.id = ?').get(id);
   res.status(201).json({ ...station, completion_count: 0 });
 });
 
 router.put('/:id', (req, res) => {
-  const { name, description, location, status, current_app_id } = req.body;
+  const { name, description, location, status, current_app_id, department_id } = req.body;
   const station = db.prepare('SELECT * FROM stations WHERE id = ?').get(req.params.id);
   if (!station) return res.status(404).json({ error: 'Not found' });
   const updates = {
@@ -31,11 +42,12 @@ router.put('/:id', (req, res) => {
     location: location ?? station.location,
     status: status ?? station.status,
     current_app_id: current_app_id !== undefined ? current_app_id : station.current_app_id,
+    department_id: department_id !== undefined ? (department_id || null) : station.department_id,
   };
-  db.prepare('UPDATE stations SET name=?, description=?, location=?, status=?, current_app_id=? WHERE id=?')
-    .run(updates.name, updates.description, updates.location, updates.status, updates.current_app_id, req.params.id);
-  const updated = db.prepare('SELECT * FROM stations WHERE id = ?').get(req.params.id);
-  res.json({ ...updated, completion_count: db.prepare('SELECT COUNT(*) as c FROM completions WHERE station_id = ?').get(req.params.id).c });
+  db.prepare('UPDATE stations SET name=?, description=?, location=?, status=?, current_app_id=?, department_id=? WHERE id=?')
+    .run(updates.name, updates.description, updates.location, updates.status, updates.current_app_id, updates.department_id, req.params.id);
+  const updated = db.prepare(STATION_SELECT + ' WHERE s.id = ?').get(req.params.id);
+  res.json(withCount(updated));
 });
 
 router.delete('/:id', (req, res) => {

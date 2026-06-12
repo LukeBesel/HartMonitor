@@ -141,6 +141,21 @@ db.exec(`
   );
 `);
 
+// ─── Migrations: stations → departments, department headcount ────────────────
+
+if (!stationCols.includes('department_id'))
+  db.exec('ALTER TABLE stations ADD COLUMN department_id TEXT REFERENCES departments(id) ON DELETE SET NULL');
+
+const deptCols = db.prepare('PRAGMA table_info(departments)').all().map(r => r.name);
+if (!deptCols.includes('headcount')) db.exec('ALTER TABLE departments ADD COLUMN headcount INTEGER DEFAULT 0');
+
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_stations_department    ON stations(department_id);
+  CREATE INDEX IF NOT EXISTS idx_completions_station    ON completions(station_id);
+  CREATE INDEX IF NOT EXISTS idx_completions_work_order ON completions(work_order_id);
+  CREATE INDEX IF NOT EXISTS idx_completions_completed  ON completions(status, completed_at);
+`);
+
 // ─── ERP / Inventory tables ───────────────────────────────────────────────────
 
 db.exec(`
@@ -877,5 +892,26 @@ const invData     = seedInventory();
 seedVendorsAndPOs(invData);
 seedNCRs(appData, invData?.itemIds);
 seedDashboard();
+
+// ─── Backfill: assign seeded stations to departments, default headcounts ─────
+// Runs on every boot so existing databases pick these up too.
+
+{
+  const deptByName = {};
+  for (const d of db.prepare('SELECT id, name FROM departments').all()) deptByName[d.name] = d.id;
+
+  const stationDeptMap = {
+    'Assembly Station A1': 'Assembly',
+    'QC Inspection Bench': 'Quality Control',
+  };
+  const setDept = db.prepare('UPDATE stations SET department_id = ? WHERE name = ? AND department_id IS NULL');
+  for (const [stationName, deptName] of Object.entries(stationDeptMap)) {
+    if (deptByName[deptName]) setDept.run(deptByName[deptName], stationName);
+  }
+
+  const defaultHeadcounts = { 'Assembly': 4, 'Quality Control': 2, 'Packaging': 2, 'Maintenance': 1 };
+  const setHeadcount = db.prepare('UPDATE departments SET headcount = ? WHERE name = ? AND (headcount IS NULL OR headcount = 0)');
+  for (const [deptName, hc] of Object.entries(defaultHeadcounts)) setHeadcount.run(hc, deptName);
+}
 
 module.exports = db;

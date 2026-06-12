@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
-import { Station, App } from '../types';
+import { Station, App, Department } from '../types';
 import { Plus, Trash2, Monitor, Edit3, X, Check, Play, MapPin, Activity } from 'lucide-react';
 
 const STATUS_COLORS: Record<Station['status'], string> = {
@@ -13,29 +13,31 @@ const STATUS_COLORS: Record<Station['status'], string> = {
 export default function Stations() {
   const [stations, setStations] = useState<Station[]>([]);
   const [apps, setApps] = useState<App[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [form, setForm] = useState({ name: '', description: '', location: '' });
+  const [form, setForm] = useState({ name: '', description: '', location: '', department_id: '' });
   const [editForm, setEditForm] = useState<Partial<Station>>({});
 
-  const load = () => Promise.all([api.getStations(), api.getApps()]).then(([s, a]) => {
+  const load = () => Promise.all([api.getStations(), api.getApps(), api.getDepartments()]).then(([s, a, d]) => {
     setStations(s);
     setApps(a.filter((a: App) => a.status === 'published'));
+    setDepartments(d);
   });
 
   useEffect(() => { load(); }, []);
 
   const handleCreate = async () => {
     if (!form.name.trim()) return;
-    await api.createStation(form);
+    await api.createStation({ ...form, department_id: form.department_id || null });
     setShowCreate(false);
-    setForm({ name: '', description: '', location: '' });
+    setForm({ name: '', description: '', location: '', department_id: '' });
     load();
   };
 
   const handleEdit = (station: Station) => {
     setEditingId(station.id);
-    setEditForm({ name: station.name, description: station.description, location: station.location, status: station.status, current_app_id: station.current_app_id });
+    setEditForm({ name: station.name, description: station.description, location: station.location, status: station.status, current_app_id: station.current_app_id, department_id: station.department_id });
   };
 
   const handleSaveEdit = async (id: string) => {
@@ -97,11 +99,19 @@ export default function Stations() {
                       {isEditing ? (
                         <input className="input-field py-1 text-sm font-semibold" value={editForm.name || ''} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} />
                       ) : (
-                        <h3 className="font-semibold text-gray-900">{station.name}</h3>
+                        <Link to={`/stations/${station.id}`} className="font-semibold text-gray-900 hover:text-blue-600 transition-colors">{station.name}</Link>
                       )}
-                      <span className={`inline-flex text-xs font-medium px-2 py-0.5 rounded-full mt-0.5 ${STATUS_COLORS[station.status]}`}>
-                        {station.status}
-                      </span>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className={`inline-flex text-xs font-medium px-2 py-0.5 rounded-full ${STATUS_COLORS[station.status]}`}>
+                          {station.status}
+                        </span>
+                        {station.department_name && !isEditing && (
+                          <span className="inline-flex text-xs font-medium px-2 py-0.5 rounded-full"
+                            style={{ backgroundColor: (station.department_color || '#6b7280') + '22', color: station.department_color || '#6b7280' }}>
+                            {station.department_name}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <div className="flex gap-1">
@@ -123,6 +133,10 @@ export default function Stations() {
                   <div className="space-y-2">
                     <input className="input-field text-sm" placeholder="Description" value={editForm.description || ''} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} />
                     <input className="input-field text-sm" placeholder="Location" value={editForm.location || ''} onChange={e => setEditForm(f => ({ ...f, location: e.target.value }))} />
+                    <select className="input-field text-sm w-full" value={editForm.department_id || ''} onChange={e => setEditForm(f => ({ ...f, department_id: e.target.value || null }))}>
+                      <option value="">No department</option>
+                      {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                    </select>
                     <div className="flex gap-2">
                       <select className="input-field text-sm flex-1" value={editForm.status || 'active'} onChange={e => setEditForm(f => ({ ...f, status: e.target.value as Station['status'] }))}>
                         <option value="active">Active</option>
@@ -158,7 +172,7 @@ export default function Stations() {
                         <div className="text-sm font-medium text-gray-800">{assignedApp.name}</div>
                       </div>
                       <Link
-                        to={`/play/${assignedApp.id}`}
+                        to={`/play/${assignedApp.id}?station=${station.id}`}
                         target="_blank"
                         className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white rounded-lg text-xs font-medium hover:bg-blue-700 transition-colors"
                       >
@@ -195,6 +209,13 @@ export default function Stations() {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Location</label>
                 <input className="input-field" placeholder="e.g. Building A, Floor 2" value={form.location} onChange={e => setForm(f => ({ ...f, location: e.target.value }))} />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Department</label>
+                <select className="input-field" value={form.department_id} onChange={e => setForm(f => ({ ...f, department_id: e.target.value }))}>
+                  <option value="">No department</option>
+                  {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                </select>
               </div>
             </div>
             <div className="flex gap-2 p-5 border-t border-gray-200">

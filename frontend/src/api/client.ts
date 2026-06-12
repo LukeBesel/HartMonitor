@@ -96,6 +96,8 @@ export const api = {
   getQualityData: (days?: number) => request<any[]>(`/analytics/quality?days=${days ?? 30}`),
   getManagerView: () => request<any>('/analytics/manager-view'),
   getPlantView: () => request<any>('/analytics/plant-view'),
+  getDepartmentView: (id: string) => request<any>(`/analytics/department/${id}`),
+  getStationView: (id: string) => request<any>(`/analytics/station/${id}`),
   getCompletionDetail: (id: string) => request<any>(`/analytics/completion/${id}`),
   getStepMetrics: (appId: string, days?: number) => request<any>(`/analytics/step-metrics/${appId}?days=${days ?? 90}`),
   getCapacity: () => request<any>('/analytics/capacity'),
