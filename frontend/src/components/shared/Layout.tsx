@@ -64,7 +64,7 @@ export default function Layout() {
           ) : (
             <div
               className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg"
-              style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-dark))' }}
+              style={{ background: 'linear-gradient(135deg, var(--accent), var(--secondary))' }}
             >
               <Activity size={18} className="text-white" />
             </div>
@@ -175,7 +175,7 @@ export default function Layout() {
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl hover:bg-white/8 transition-all"
               >
                 <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                  style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-dark))' }}>
+                  style={{ background: 'linear-gradient(135deg, var(--accent), var(--secondary))' }}>
                   {user?.display_name?.[0]?.toUpperCase() ?? '?'}
                 </div>
                 <div className="flex-1 min-w-0 text-left">

@@ -62,7 +62,7 @@ export default function LeaderboardTV() {
       <div className="flex items-center justify-between px-10 py-6 border-b border-white/10">
         <div className="flex items-center gap-3">
           <div className="w-11 h-11 rounded-2xl flex items-center justify-center"
-            style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-dark))' }}>
+            style={{ background: 'linear-gradient(135deg, var(--accent), var(--secondary))' }}>
             <Trophy size={22} />
           </div>
           <div>

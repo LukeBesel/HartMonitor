@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api/client';
+import { api, AnalyticsFilters } from '../api/client';
 import { AnalyticsOverview } from '../types';
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis,
   Tooltip, ResponsiveContainer, CartesianGrid, Legend, PieChart, Pie, Cell
 } from 'recharts';
-import { TrendingUp, CheckCircle, Clock, Users, Activity, BarChart2 } from 'lucide-react';
+import { TrendingUp, CheckCircle, Clock, Users, Activity, BarChart2, Filter, X } from 'lucide-react';
 
 const COLORS = ['#22c55e', '#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6'];
 const DAYS_OPTIONS = [7, 14, 30, 90];
@@ -19,14 +19,30 @@ export default function Analytics() {
   const [quality, setQuality] = useState<any[]>([]);
   const [days, setDays] = useState(30);
 
-  const load = (d: number) => {
+  // ── Filters ──
+  const [apps, setApps] = useState<any[]>([]);
+  const [productTypes, setProductTypes] = useState<any[]>([]);
+  const [appId, setAppId] = useState('');
+  const [productTypeId, setProductTypeId] = useState('');
+
+  // Load apps once for the filter dropdown
+  useEffect(() => { api.getApps().then(setApps).catch(() => setApps([])); }, []);
+
+  // When the selected app changes, reload its product types and reset the part filter
+  useEffect(() => {
+    setProductTypeId('');
+    if (!appId) { setProductTypes([]); return; }
+    api.getProductTypes(appId).then(setProductTypes).catch(() => setProductTypes([]));
+  }, [appId]);
+
+  const load = (d: number, filters: AnalyticsFilters) => {
     Promise.all([
-      api.getOverview(),
-      api.getThroughput(d),
-      api.getCycleTimes(d),
-      api.getOperatorPerformance(),
-      api.getAppPerformance(),
-      api.getQualityData(d),
+      api.getOverview(filters),
+      api.getThroughput(d, filters),
+      api.getCycleTimes(d, filters),
+      api.getOperatorPerformance(filters),
+      api.getAppPerformance(filters),
+      api.getQualityData(d, filters),
     ]).then(([ov, tp, ct, ops, ap, q]) => {
       setOverview(ov);
       setThroughput(tp);
@@ -37,7 +53,12 @@ export default function Analytics() {
     });
   };
 
-  useEffect(() => { load(days); }, [days]);
+  useEffect(() => {
+    load(days, { app_id: appId || undefined, product_type_id: productTypeId || undefined });
+  }, [days, appId, productTypeId]);
+
+  const hasFilters = !!appId || !!productTypeId;
+  const clearFilters = () => { setAppId(''); setProductTypeId(''); };
 
   const qualityPieData = overview ? [
     { name: 'Pass', value: overview.passRate },
@@ -63,6 +84,50 @@ export default function Analytics() {
               {d}d
             </button>
           ))}
+        </div>
+      </div>
+
+      {/* Filter bar */}
+      <div className="card p-3 flex flex-wrap items-center gap-3">
+        <div className="flex items-center gap-1.5 text-sm font-medium text-gray-500">
+          <Filter size={15} /> Filters
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500">App</label>
+          <select
+            className="input-field text-sm py-1.5 min-w-[12rem]"
+            value={appId}
+            onChange={e => setAppId(e.target.value)}
+          >
+            <option value="">All Apps</option>
+            {apps.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-gray-500">Part Type</label>
+          <select
+            className="input-field text-sm py-1.5 min-w-[12rem] disabled:opacity-50 disabled:cursor-not-allowed"
+            value={productTypeId}
+            onChange={e => setProductTypeId(e.target.value)}
+            disabled={!appId || productTypes.length === 0}
+            title={!appId ? 'Select an app first' : productTypes.length === 0 ? 'This app has no part types' : ''}
+          >
+            <option value="">{!appId ? 'Select an app first' : productTypes.length === 0 ? 'No part types' : 'All Part Types'}</option>
+            {productTypes.map(pt => <option key={pt.id} value={pt.id}>{pt.name}</option>)}
+          </select>
+        </div>
+        {hasFilters && (
+          <button
+            onClick={clearFilters}
+            className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800 px-2 py-1.5 rounded-lg hover:bg-gray-100 transition-colors"
+          >
+            <X size={13} /> Clear
+          </button>
+        )}
+        <div className="ml-auto text-xs text-gray-400">
+          {hasFilters
+            ? `Showing ${apps.find(a => a.id === appId)?.name ?? 'all apps'}${productTypeId ? ` · ${productTypes.find(p => p.id === productTypeId)?.name}` : ''}`
+            : 'Showing all production data'}
         </div>
       </div>
 

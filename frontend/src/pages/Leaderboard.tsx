@@ -106,7 +106,7 @@ function ChampionCard({ board }: { board: LeaderboardBoard }) {
   if (!champ) return null;
   return (
     <div className="flex-shrink-0 w-64 rounded-xl p-4 text-white shadow-lg"
-      style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-dark))' }}>
+      style={{ background: 'linear-gradient(135deg, var(--accent), var(--secondary))' }}>
       <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wider text-white/70 mb-2">
         <Crown size={12} />
         {boardTitle(board)}

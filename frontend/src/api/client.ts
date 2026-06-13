@@ -2,6 +2,22 @@ import type { DailyBrief, LeaderboardResponse, LeaderboardPeriod } from '../type
 
 const BASE = '/api';
 
+export interface AnalyticsFilters {
+  app_id?: string;
+  product_type_id?: string;
+}
+
+// Build a query string from analytics filters plus any extra params, omitting
+// empty values. Returns e.g. "?days=30&app_id=abc" or "" when nothing is set.
+function filterQS(f?: AnalyticsFilters, extra?: Record<string, string | number>): string {
+  const qs = new URLSearchParams();
+  if (extra) for (const [k, v] of Object.entries(extra)) qs.set(k, String(v));
+  if (f?.app_id) qs.set('app_id', f.app_id);
+  if (f?.product_type_id) qs.set('product_type_id', f.product_type_id);
+  const s = qs.toString();
+  return s ? `?${s}` : '';
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const token = localStorage.getItem('hm_token');
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -90,13 +106,13 @@ export const api = {
   deleteProductType: (id: string) => request<any>(`/product-types/${id}`, { method: 'DELETE' }),
 
   // ── Analytics
-  getOverview: () => request<any>('/analytics/overview'),
+  getOverview: (f?: AnalyticsFilters) => request<any>(`/analytics/overview${filterQS(f)}`),
   getDailyBrief: () => request<DailyBrief>('/analytics/daily-brief'),
-  getThroughput: (days?: number) => request<any[]>(`/analytics/throughput?days=${days ?? 30}`),
-  getCycleTimes: (days?: number) => request<any[]>(`/analytics/cycle-times?days=${days ?? 30}`),
-  getOperatorPerformance: () => request<any[]>('/analytics/operator-performance'),
-  getAppPerformance: () => request<any[]>('/analytics/app-performance'),
-  getQualityData: (days?: number) => request<any[]>(`/analytics/quality?days=${days ?? 30}`),
+  getThroughput: (days?: number, f?: AnalyticsFilters) => request<any[]>(`/analytics/throughput${filterQS(f, { days: days ?? 30 })}`),
+  getCycleTimes: (days?: number, f?: AnalyticsFilters) => request<any[]>(`/analytics/cycle-times${filterQS(f, { days: days ?? 30 })}`),
+  getOperatorPerformance: (f?: AnalyticsFilters) => request<any[]>(`/analytics/operator-performance${filterQS(f)}`),
+  getAppPerformance: (f?: AnalyticsFilters) => request<any[]>(`/analytics/app-performance${filterQS(f)}`),
+  getQualityData: (days?: number, f?: AnalyticsFilters) => request<any[]>(`/analytics/quality${filterQS(f, { days: days ?? 30 })}`),
   getManagerView: () => request<any>('/analytics/manager-view'),
   getPlantView: () => request<any>('/analytics/plant-view'),
   getDepartmentView: (id: string) => request<any>(`/analytics/department/${id}`),

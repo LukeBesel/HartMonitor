@@ -172,8 +172,9 @@ function computeCardData(card, companyId) {
       if (groupBy === 'app') {
         const rows = db.prepare(`
           SELECT app_name as label, COUNT(*) as value FROM completions
-          WHERE company_id = ? AND status='completed' GROUP BY app_name ORDER BY value DESC LIMIT 10
-        `).all(companyId);
+          WHERE company_id = ? AND status='completed'${appFilter}
+          GROUP BY app_name ORDER BY value DESC LIMIT 10
+        `).all(companyId, ...appParams);
         return { data: rows };
       }
       if (groupBy === 'quality') {
@@ -183,13 +184,15 @@ function computeCardData(card, companyId) {
         return { data: [{ label: 'Pass', value: pass }, { label: 'Fail', value: fail }] };
       }
       if (groupBy === 'department') {
+        const appFilterC = card.app_id ? ' AND c.app_id = ?' : '';
         const rows = db.prepare(`
           SELECT d.name as label, COUNT(c.id) as value
           FROM completions c
-          JOIN work_orders wo ON wo.id = c.work_order_id
-          JOIN departments d ON d.id = wo.department_id
-          WHERE c.company_id = ? AND c.status='completed' GROUP BY d.name ORDER BY value DESC
-        `).all(companyId);
+          JOIN work_orders wo ON wo.id = c.work_order_id AND wo.company_id = c.company_id
+          JOIN departments d ON d.id = wo.department_id AND d.company_id = c.company_id
+          WHERE c.company_id = ? AND c.status='completed'${appFilterC}
+          GROUP BY d.name ORDER BY value DESC
+        `).all(companyId, ...appParams);
         return { data: rows };
       }
       return { data: [] };
@@ -228,12 +231,13 @@ function computeCardData(card, companyId) {
 
     case 'table': {
       const limit = card.limit || 10;
+      const appFilterC = card.app_id ? ' AND c.app_id = ?' : '';
       const rows = db.prepare(`
         SELECT c.id, c.app_name, c.operator_name, c.started_at, c.completed_at,
           c.status, c.work_order_id, w.work_order_number
         FROM completions c
         LEFT JOIN work_orders w ON w.id = c.work_order_id
-        WHERE c.company_id = ? ${appFilter}
+        WHERE c.company_id = ?${appFilterC}
         ORDER BY c.started_at DESC LIMIT ?
       `).all(companyId, ...appParams, limit);
       return { rows };

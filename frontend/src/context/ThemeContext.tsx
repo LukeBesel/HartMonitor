@@ -5,18 +5,22 @@ export interface Theme {
   accentDark: string;
   accentLight: string;
   sidebarBg: string;
+  /** Secondary brand colour — drives the end-stop of branded gradients. */
+  secondary: string;
+  secondaryDark: string;
+  secondaryLight: string;
   name: string;
 }
 
 export const THEME_PRESETS: Theme[] = [
-  { name: 'blue',   accent: '#3b82f6', accentDark: '#2563eb', accentLight: '#eff6ff', sidebarBg: '#0a1628' },
-  { name: 'indigo', accent: '#6366f1', accentDark: '#4f46e5', accentLight: '#eef2ff', sidebarBg: '#0f0e2b' },
-  { name: 'purple', accent: '#8b5cf6', accentDark: '#7c3aed', accentLight: '#f5f3ff', sidebarBg: '#170a2d' },
-  { name: 'teal',   accent: '#14b8a6', accentDark: '#0d9488', accentLight: '#f0fdfa', sidebarBg: '#041e1c' },
-  { name: 'green',  accent: '#10b981', accentDark: '#059669', accentLight: '#f0fdf4', sidebarBg: '#04200f' },
-  { name: 'orange', accent: '#f59e0b', accentDark: '#d97706', accentLight: '#fffbeb', sidebarBg: '#1c1003' },
-  { name: 'rose',   accent: '#f43f5e', accentDark: '#e11d48', accentLight: '#fff1f2', sidebarBg: '#200508' },
-  { name: 'slate',  accent: '#64748b', accentDark: '#475569', accentLight: '#f8fafc', sidebarBg: '#0f172a' },
+  { name: 'blue',   accent: '#3b82f6', accentDark: '#2563eb', accentLight: '#eff6ff', sidebarBg: '#0a1628', secondary: '#6366f1', secondaryDark: '#4f46e5', secondaryLight: '#eef2ff' },
+  { name: 'indigo', accent: '#6366f1', accentDark: '#4f46e5', accentLight: '#eef2ff', sidebarBg: '#0f0e2b', secondary: '#8b5cf6', secondaryDark: '#7c3aed', secondaryLight: '#f5f3ff' },
+  { name: 'purple', accent: '#8b5cf6', accentDark: '#7c3aed', accentLight: '#f5f3ff', sidebarBg: '#170a2d', secondary: '#d946ef', secondaryDark: '#c026d3', secondaryLight: '#fdf4ff' },
+  { name: 'teal',   accent: '#14b8a6', accentDark: '#0d9488', accentLight: '#f0fdfa', sidebarBg: '#041e1c', secondary: '#06b6d4', secondaryDark: '#0891b2', secondaryLight: '#ecfeff' },
+  { name: 'green',  accent: '#10b981', accentDark: '#059669', accentLight: '#f0fdf4', sidebarBg: '#04200f', secondary: '#14b8a6', secondaryDark: '#0d9488', secondaryLight: '#f0fdfa' },
+  { name: 'orange', accent: '#f59e0b', accentDark: '#d97706', accentLight: '#fffbeb', sidebarBg: '#1c1003', secondary: '#f97316', secondaryDark: '#ea580c', secondaryLight: '#fff7ed' },
+  { name: 'rose',   accent: '#f43f5e', accentDark: '#e11d48', accentLight: '#fff1f2', sidebarBg: '#200508', secondary: '#ec4899', secondaryDark: '#db2777', secondaryLight: '#fdf2f8' },
+  { name: 'slate',  accent: '#64748b', accentDark: '#475569', accentLight: '#f8fafc', sidebarBg: '#0f172a', secondary: '#0ea5e9', secondaryDark: '#0284c7', secondaryLight: '#f0f9ff' },
 ];
 
 const LS_KEY = 'hm_theme';
@@ -48,23 +52,54 @@ function mix(hex: string, target: [number, number, number], amount: number): str
 const BLACK: [number, number, number] = [0, 0, 0];
 const WHITE: [number, number, number] = [255, 255, 255];
 
-// Build a full Theme from a single accent color, deriving the rest of the palette.
-export function buildCustomTheme(accent: string): Theme {
+// Build a full Theme from an accent color (and optional secondary), deriving
+// the rest of the palette. If no secondary is given it defaults to the accent.
+export function buildCustomTheme(accent: string, secondary?: string): Theme {
+  const sec = secondary || accent;
   return {
     name: 'custom',
     accent,
     accentDark: mix(accent, BLACK, 0.2),
     accentLight: mix(accent, WHITE, 0.92),
     sidebarBg: mix(accent, BLACK, 0.9),
+    secondary: sec,
+    secondaryDark: mix(sec, BLACK, 0.2),
+    secondaryLight: mix(sec, WHITE, 0.92),
+  };
+}
+
+// Return a copy of `base` with a new secondary colour (and derived shades),
+// keeping the accent palette intact. Used by the secondary colour picker.
+export function applySecondary(base: Theme, secondary: string): Theme {
+  return {
+    ...withSecondary(base),
+    secondary,
+    secondaryDark: mix(secondary, BLACK, 0.2),
+    secondaryLight: mix(secondary, WHITE, 0.92),
+  };
+}
+
+// Backfill secondary fields for themes saved before secondary colours existed.
+function withSecondary(t: Theme): Theme {
+  if (t.secondary) return t;
+  return {
+    ...t,
+    secondary: t.accent,
+    secondaryDark: t.accentDark,
+    secondaryLight: t.accentLight,
   };
 }
 
 function applyTheme(theme: Theme) {
+  const t = withSecondary(theme);
   const root = document.documentElement;
-  root.style.setProperty('--accent', theme.accent);
-  root.style.setProperty('--accent-dark', theme.accentDark);
-  root.style.setProperty('--accent-light', theme.accentLight);
-  root.style.setProperty('--sidebar-bg', theme.sidebarBg);
+  root.style.setProperty('--accent', t.accent);
+  root.style.setProperty('--accent-dark', t.accentDark);
+  root.style.setProperty('--accent-light', t.accentLight);
+  root.style.setProperty('--sidebar-bg', t.sidebarBg);
+  root.style.setProperty('--secondary', t.secondary);
+  root.style.setProperty('--secondary-dark', t.secondaryDark);
+  root.style.setProperty('--secondary-light', t.secondaryLight);
 }
 
 function isValidTheme(t: any): t is Theme {
@@ -79,7 +114,7 @@ function loadTheme(): Theme {
       // New format: full theme object stored as JSON (presets + custom colors)
       try {
         const parsed = JSON.parse(saved);
-        if (isValidTheme(parsed)) return parsed;
+        if (isValidTheme(parsed)) return withSecondary(parsed);
       } catch {
         // Old format: just the preset name as a plain string
         const found = THEME_PRESETS.find(t => t.name === saved);

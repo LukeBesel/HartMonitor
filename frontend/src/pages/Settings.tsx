@@ -27,7 +27,7 @@ import {
   PanelLeft,
   RotateCcw,
 } from 'lucide-react';
-import { useTheme, THEME_PRESETS, Theme, buildCustomTheme } from '../context/ThemeContext';
+import { useTheme, THEME_PRESETS, Theme, buildCustomTheme, applySecondary } from '../context/ThemeContext';
 import { usePlan } from '../context/PlanContext';
 import { useAuth } from '../context/AuthContext';
 import { useBranding } from '../context/BrandingContext';
@@ -884,8 +884,9 @@ function ThemeTab() {
           })}
         </div>
 
-        {/* Custom accent color */}
-        <div className="mt-4 flex items-center gap-3">
+        {/* Custom accent + secondary colors */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Primary / accent */}
           <label
             className={`relative flex items-center gap-2 px-3 py-2 rounded-xl border-2 cursor-pointer transition-all hover:shadow-sm ${
               theme.name === 'custom' ? 'shadow-md' : 'border-gray-100 hover:border-gray-200'
@@ -894,19 +895,43 @@ function ThemeTab() {
           >
             <div
               className="w-8 h-8 rounded-lg border border-gray-200 flex-shrink-0"
-              style={{ backgroundColor: theme.name === 'custom' ? theme.accent : '#ffffff' }}
+              style={{ backgroundColor: theme.accent }}
             />
-            <span className="text-[11px] font-medium text-gray-600">
-              {theme.name === 'custom' ? `Custom — ${theme.accent}` : 'Pick a custom colour…'}
-            </span>
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold text-gray-700">Primary colour</div>
+              <div className="text-[10px] text-gray-400 truncate">{theme.accent}</div>
+            </div>
             <input
               type="color"
               className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-              value={theme.name === 'custom' ? theme.accent : '#3b82f6'}
-              onChange={(e) => setTheme(buildCustomTheme(e.target.value))}
+              value={theme.accent}
+              onChange={(e) => setTheme(buildCustomTheme(e.target.value, theme.secondary))}
+            />
+          </label>
+
+          {/* Secondary */}
+          <label
+            className="relative flex items-center gap-2 px-3 py-2 rounded-xl border-2 border-gray-100 hover:border-gray-200 cursor-pointer transition-all hover:shadow-sm"
+          >
+            <div
+              className="w-8 h-8 rounded-lg border border-gray-200 flex-shrink-0"
+              style={{ background: `linear-gradient(135deg, ${theme.accent}, ${theme.secondary})` }}
+            />
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold text-gray-700">Secondary colour</div>
+              <div className="text-[10px] text-gray-400 truncate">{theme.secondary}</div>
+            </div>
+            <input
+              type="color"
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              value={theme.secondary}
+              onChange={(e) => setTheme(applySecondary(theme, e.target.value))}
             />
           </label>
         </div>
+        <p className="text-xs text-gray-400 mt-2">
+          The secondary colour shapes branded gradients — logos, avatars, leaderboard cards, and upgrade banners.
+        </p>
       </div>
 
       {/* Additional settings */}
@@ -936,12 +961,21 @@ function ThemeTab() {
 
       {/* Live Preview Strip */}
       <div>
-        <SectionHeader title="Live Preview" subtitle="How accent colour looks across UI elements" />
+        <SectionHeader title="Live Preview" subtitle="How your colours look across UI elements" />
         <div className="rounded-xl border border-gray-100 overflow-hidden">
-          <div className="px-4 py-2 bg-gray-50 text-xs font-medium text-gray-400 border-b border-gray-100">
-            {PRESET_LABELS[theme.name] ?? theme.name} — {theme.accent}
+          <div className="px-4 py-2 bg-gray-50 text-xs font-medium text-gray-400 border-b border-gray-100 flex items-center gap-2">
+            <span>{PRESET_LABELS[theme.name] ?? theme.name}</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: theme.accent }} />{theme.accent}</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: theme.secondary }} />{theme.secondary}</span>
           </div>
           <div className="p-4 flex flex-wrap items-center gap-3 bg-white">
+            {/* Branded gradient (uses both colours) */}
+            <div
+              className="w-10 h-10 rounded-xl shadow-sm flex-shrink-0"
+              style={{ background: `linear-gradient(135deg, ${theme.accent}, ${theme.secondary})` }}
+              title="Branded gradient (primary → secondary)"
+            />
+
             {/* Primary button */}
             <button
               className="px-4 py-2 rounded-lg text-white text-sm font-medium shadow-sm"
@@ -1091,13 +1125,15 @@ const EXPORT_CARDS: ExportCard[] = [
   },
 ];
 
-function ExportCardItem({ card }: { card: ExportCard }) {
+function ExportCardItem({ card, onError }: { card: ExportCard; onError: (m: string) => void }) {
   const [downloading, setDownloading] = useState(false);
 
   const handleDownload = async () => {
     setDownloading(true);
     try {
       await api.downloadExport(card.type, card.params);
+    } catch (err: any) {
+      onError(err?.message || `Failed to export ${card.title}`);
     } finally {
       setDownloading(false);
     }
@@ -1139,11 +1175,21 @@ function ExportCardItem({ card }: { card: ExportCard }) {
 
 function ExportTab() {
   const [bundleDownloading, setBundleDownloading] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ message, type });
+    toastTimer.current = setTimeout(() => setToast(null), 4000);
+  };
 
   const handleBundle = async () => {
     setBundleDownloading(true);
     try {
       await api.downloadExport('all');
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to export data bundle', 'error');
     } finally {
       setBundleDownloading(false);
     }
@@ -1160,7 +1206,7 @@ function ExportTab() {
       {/* 2×3 grid */}
       <div className="grid grid-cols-2 gap-4">
         {EXPORT_CARDS.map((card) => (
-          <ExportCardItem key={card.type} card={card} />
+          <ExportCardItem key={card.type} card={card} onError={(m) => showToast(m, 'error')} />
         ))}
       </div>
 
@@ -1198,6 +1244,8 @@ function ExportTab() {
           )}
         </button>
       </div>
+
+      {toast && <Toast message={toast.message} type={toast.type} onDismiss={() => setToast(null)} />}
     </div>
   );
 }
@@ -1386,7 +1434,7 @@ function UsersTab() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2.5">
                       <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                        style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-dark))' }}>
+                        style={{ background: 'linear-gradient(135deg, var(--accent), var(--secondary))' }}>
                         {u.display_name?.[0]?.toUpperCase()}
                       </div>
                       <div>
@@ -1523,7 +1571,7 @@ function AccountTab() {
         <SectionHeader title="Profile" subtitle="Your account information" />
         <div className="flex items-center gap-4">
           <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white text-xl font-bold shadow"
-            style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-dark))' }}>
+            style={{ background: 'linear-gradient(135deg, var(--accent), var(--secondary))' }}>
             {user?.display_name?.[0]?.toUpperCase()}
           </div>
           <div>
