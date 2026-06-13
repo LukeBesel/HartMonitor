@@ -579,6 +579,8 @@ function PlanTab() {
   const [checkout, setCheckout] = useState<CheckoutItem | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [billingMode, setBillingMode] = useState<'demo' | 'test' | 'live'>('demo');
+  const [redirecting, setRedirecting] = useState(false);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -586,7 +588,61 @@ function PlanTab() {
     toastTimer.current = setTimeout(() => setToast(null), 4000);
   };
 
+  // Detect whether real Stripe payments are enabled on this deployment.
+  useEffect(() => {
+    api.getBillingConfig().then(c => setBillingMode(c.mode)).catch(() => setBillingMode('demo'));
+  }, []);
+
+  // Handle return from Stripe Checkout (?checkout=success|cancel).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get('checkout');
+    if (!result) return;
+    if (result === 'success') { showToast('Payment successful — your plan is now active.'); refresh(); }
+    else if (result === 'cancel') showToast('Checkout canceled — no charge was made.', 'error');
+    params.delete('checkout');
+    const qs = params.toString();
+    window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const isLive = billingMode !== 'demo';
+
+  // Route a purchase either to real Stripe Checkout or the demo modal.
+  const startPurchase = async (item: CheckoutItem) => {
+    if (!isLive) { setCheckout(item); return; }
+    setRedirecting(true);
+    try {
+      const { url } = await api.createCheckout(
+        item.kind === 'tier'
+          ? { tier: item.tier }
+          : { addon: item.addonType, quantity: item.quantity }
+      );
+      window.location.href = url;
+    } catch (err: any) {
+      showToast(err.message || 'Could not start checkout', 'error');
+      setRedirecting(false);
+    }
+  };
+
+  const handleManageBilling = async () => {
+    setRedirecting(true);
+    try {
+      const { url } = await api.createBillingPortal();
+      window.location.href = url;
+    } catch (err: any) {
+      showToast(err.message || 'Could not open billing portal', 'error');
+      setRedirecting(false);
+    }
+  };
+
   const handleDowngrade = async () => {
+    // With live billing, cancel through Stripe so we never keep charging a
+    // customer whose DB plan says "free".
+    if (isLive && (plan as any)?.stripe_subscription_id) {
+      showToast('Manage or cancel your subscription in the billing portal.');
+      return handleManageBilling();
+    }
     if (!confirm('Downgrade to Free? You will lose unlimited capacity (existing data is kept).')) return;
     try {
       await api.updatePlan({ tier: 'free' });
@@ -598,6 +654,10 @@ function PlanTab() {
   };
 
   const handleRemoveAddon = async (type: 'app_slot' | 'dashboard_slot') => {
+    if (isLive && (plan as any)?.stripe_subscription_id) {
+      showToast('Adjust add-on subscriptions in the billing portal.');
+      return handleManageBilling();
+    }
     try {
       await api.removeAddon(type, 1);
       refresh();
@@ -618,6 +678,17 @@ function PlanTab() {
 
   return (
     <div className="space-y-8 max-w-3xl">
+      {billingMode === 'demo' && (
+        <div className="flex items-start gap-2.5 text-xs bg-blue-50 text-blue-800 rounded-xl px-3.5 py-2.5 border border-blue-100">
+          <AlertCircle size={15} className="flex-shrink-0 mt-0.5" />
+          <span>
+            <strong>Demo billing.</strong> Upgrades apply instantly without charge. To accept real
+            payments that pay out to your bank, set a Stripe secret key (and webhook secret) on the
+            server — checkout then switches to Stripe automatically.
+          </span>
+        </div>
+      )}
+
       {/* Current Plan Card */}
       <div className={`rounded-2xl p-6 text-white relative overflow-hidden ${
         isEnterprise ? 'bg-gradient-to-br from-purple-700 to-indigo-800'
@@ -632,9 +703,21 @@ function PlanTab() {
         <div className="relative">
           <div className="flex items-start justify-between mb-4">
             <div>
-              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-white/20 inline-flex items-center gap-1">
-                {isPro && <span>✦</span>} {plan.tier.charAt(0).toUpperCase() + plan.tier.slice(1)} Plan
-              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-white/20 inline-flex items-center gap-1">
+                  {isPro && <span>✦</span>} {plan.tier.charAt(0).toUpperCase() + plan.tier.slice(1)} Plan
+                </span>
+                {billingMode === 'live' && (
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-400/30 text-emerald-50 inline-flex items-center gap-1">
+                    <Check size={10} /> Live payments
+                  </span>
+                )}
+                {billingMode === 'test' && (
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-400/30 text-amber-50">
+                    Stripe test mode
+                  </span>
+                )}
+              </div>
               <h2 className="text-2xl font-bold mt-1.5">
                 ${plan.monthly_total ?? 0}<span className="text-base font-normal text-white/70">/month</span>
               </h2>
@@ -677,12 +760,20 @@ function PlanTab() {
             </div>
           </div>
 
-          {isPro && !isEnterprise && (
-            <button onClick={handleDowngrade}
-              className="mt-4 text-xs text-white/60 hover:text-white/90 underline underline-offset-2 transition-colors">
-              Downgrade to Free
-            </button>
-          )}
+          <div className="mt-4 flex items-center gap-4">
+            {isPro && !isEnterprise && (
+              <button onClick={handleDowngrade}
+                className="text-xs text-white/60 hover:text-white/90 underline underline-offset-2 transition-colors">
+                Downgrade to Free
+              </button>
+            )}
+            {isLive && (plan as any).stripe_subscription_id && (
+              <button onClick={handleManageBilling} disabled={redirecting}
+                className="text-xs font-medium text-white/90 hover:text-white inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 transition-colors disabled:opacity-60">
+                <CreditCard size={13} /> Manage Billing
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -698,14 +789,14 @@ function PlanTab() {
               addonType="app_slot"
               addon={addons.app_slot}
               owned={plan.extra_app_slots ?? 0}
-              onPurchase={(qty) => setCheckout({ kind: 'addon', addonType: 'app_slot', name: addons.app_slot.name, quantity: qty, unitPrice: addons.app_slot.monthly_price })}
+              onPurchase={(qty) => startPurchase({ kind: 'addon', addonType: 'app_slot', name: addons.app_slot.name, quantity: qty, unitPrice: addons.app_slot.monthly_price })}
               onRemove={() => handleRemoveAddon('app_slot')}
             />
             <AddonCard
               addonType="dashboard_slot"
               addon={addons.dashboard_slot}
               owned={plan.extra_dashboard_slots ?? 0}
-              onPurchase={(qty) => setCheckout({ kind: 'addon', addonType: 'dashboard_slot', name: addons.dashboard_slot.name, quantity: qty, unitPrice: addons.dashboard_slot.monthly_price })}
+              onPurchase={(qty) => startPurchase({ kind: 'addon', addonType: 'dashboard_slot', name: addons.dashboard_slot.name, quantity: qty, unitPrice: addons.dashboard_slot.monthly_price })}
               onRemove={() => handleRemoveAddon('dashboard_slot')}
             />
           </div>
@@ -764,9 +855,10 @@ function PlanTab() {
                     <button onClick={handleDowngrade} className="btn-secondary w-full text-sm py-2">Downgrade</button>
                   ) : (
                     <button
-                      onClick={() => setCheckout({ kind: 'tier', tier: 'pro', name: 'Pro Plan', quantity: 1, unitPrice: t.monthly_price ?? 0 })}
-                      className="btn-primary w-full text-sm py-2">
-                      Upgrade to Pro
+                      onClick={() => startPurchase({ kind: 'tier', tier: 'pro', name: 'Pro Plan', quantity: 1, unitPrice: t.monthly_price ?? 0 })}
+                      disabled={redirecting}
+                      className="btn-primary w-full text-sm py-2 disabled:opacity-60">
+                      {redirecting ? 'Redirecting…' : 'Upgrade to Pro'}
                     </button>
                   )}
                 </div>
@@ -1643,7 +1735,11 @@ const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
 
 export default function SettingsPage() {
   const { isAtLeast } = useAuth();
-  const [activeTab, setActiveTab] = useState<TabId>('account');
+  const [activeTab, setActiveTab] = useState<TabId>(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    const valid: TabId[] = ['account', 'company', 'plan', 'theme', 'sidebar', 'export', 'users'];
+    return (tab && valid.includes(tab as TabId)) ? (tab as TabId) : 'account';
+  });
 
   const ALL_TABS: { id: TabId; label: string; icon: React.ReactNode; minRole?: string }[] = [
     { id: 'account',  label: 'My Account',    icon: <Key size={15} /> },

@@ -219,6 +219,12 @@ export const api = {
   removeAddon: (type: 'app_slot' | 'dashboard_slot', quantity = 1) =>
     request<any>('/config/plan/addon', { method: 'DELETE', body: JSON.stringify({ type, quantity }) }),
 
+  // ── Real payments (Stripe) — fall back to demo flow when not configured
+  getBillingConfig: () => request<{ configured: boolean; mode: 'demo' | 'test' | 'live' }>('/config/plan/billing-config'),
+  createCheckout: (payload: { tier?: string; addon?: 'app_slot' | 'dashboard_slot'; quantity?: number }) =>
+    request<{ url: string }>('/config/plan/checkout', { method: 'POST', body: JSON.stringify(payload) }),
+  createBillingPortal: () => request<{ url: string }>('/config/plan/portal', { method: 'POST' }),
+
   // ── Export — authenticated download via fetch + blob (Bearer header required)
   downloadExport: async (type: string, params?: Record<string, string>) => {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';

@@ -11,5 +11,18 @@ export default defineConfig({
         changeOrigin: true,
       }
     }
-  }
+  },
+  build: {
+    rollupOptions: {
+      output: {
+        // Split large, rarely-changing vendor libraries into their own cacheable
+        // chunks so the main bundle stays small and recharts only loads with the
+        // chart pages.
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'charts': ['recharts'],
+        },
+      },
+    },
+  },
 })

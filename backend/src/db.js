@@ -300,6 +300,10 @@ const planCols = db.prepare('PRAGMA table_info(plan)').all().map(r => r.name);
 if (!planCols.includes('extra_app_slots'))       db.exec('ALTER TABLE plan ADD COLUMN extra_app_slots INTEGER NOT NULL DEFAULT 0');
 if (!planCols.includes('extra_dashboard_slots')) db.exec('ALTER TABLE plan ADD COLUMN extra_dashboard_slots INTEGER NOT NULL DEFAULT 0');
 if (!planCols.includes('billing_email'))         db.exec("ALTER TABLE plan ADD COLUMN billing_email TEXT DEFAULT ''");
+// Stripe billing linkage (populated only when real payments are configured)
+if (!planCols.includes('stripe_customer_id'))     db.exec('ALTER TABLE plan ADD COLUMN stripe_customer_id TEXT');
+if (!planCols.includes('stripe_subscription_id')) db.exec('ALTER TABLE plan ADD COLUMN stripe_subscription_id TEXT');
+if (!planCols.includes('subscription_status'))    db.exec("ALTER TABLE plan ADD COLUMN subscription_status TEXT DEFAULT ''");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS billing_history (
