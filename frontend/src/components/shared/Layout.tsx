@@ -8,7 +8,7 @@ import { usePlan } from '../../context/PlanContext';
 import { useAuth } from '../../context/AuthContext';
 import { useBranding } from '../../context/BrandingContext';
 import { useNavPrefs } from '../../context/NavPrefsContext';
-import { NAV } from '../../config/navigation';
+import { PINNED_ITEMS, SECTIONS, ALL_WORKSPACE_ICON, NavItem } from '../../config/navigation';
 import NotificationBell from './NotificationBell';
 
 function ProBadge() {
@@ -19,15 +19,78 @@ function ProBadge() {
   );
 }
 
+function WorkspacePill({ label, icon: Icon, active, onClick }: {
+  label: string; icon: React.ElementType; active: boolean; onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold whitespace-nowrap transition-all ${
+        active ? 'bg-white/15 text-white shadow-sm' : 'text-gray-400 hover:text-white hover:bg-white/8'
+      }`}
+    >
+      <Icon size={12} className="flex-shrink-0" />
+      <span>{label}</span>
+    </button>
+  );
+}
+
 export default function Layout() {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('hm_sidebar') === 'collapsed');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const { isFree } = usePlan();
   const { user, logout, isAtLeast } = useAuth();
   const { companyName, logoUrl } = useBranding();
-  const { isItemHidden, isGroupCollapsed, toggleGroup } = useNavPrefs();
+  const { isItemHidden, isSectionHidden, focus, setFocus } = useNavPrefs();
   const [logoError, setLogoError] = useState(false);
   const navigate = useNavigate();
+
+  // Sections the user has kept enabled in Settings.
+  const enabledSections = SECTIONS.filter(s => !isSectionHidden(s.id));
+  // The focused workspace falls back to "all" if its section was turned off.
+  const effectiveFocus = (focus !== 'all' && enabledSections.some(s => s.id === focus)) ? focus : 'all';
+  const visibleSections = effectiveFocus === 'all'
+    ? enabledSections
+    : enabledSections.filter(s => s.id === effectiveFocus);
+
+  const canShow = (item: NavItem) => {
+    if (item.minRole && !isAtLeast(item.minRole as any)) return false;
+    if (!item.pinned && isItemHidden(item.to)) return false;
+    return true;
+  };
+
+  const renderItem = (item: NavItem) => {
+    const { to, icon: Icon, label, exact, proOnly } = item;
+    const isLocked = proOnly && isFree;
+    return (
+      <NavLink
+        key={to}
+        to={to}
+        end={exact}
+        title={collapsed ? label : undefined}
+        className={({ isActive }) =>
+          `flex items-center rounded-xl text-sm font-medium transition-all ${
+            collapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
+          } ${
+            isLocked
+              ? 'text-gray-600 hover:text-gray-500 hover:bg-white/5'
+              : isActive
+                ? 'text-white shadow-sm'
+                : 'text-gray-400 hover:text-white hover:bg-white/8'
+          }`
+        }
+        style={({ isActive }) => (!isLocked && isActive) ? { backgroundColor: 'var(--nav-active)' } : {}}
+      >
+        <Icon size={15} className="flex-shrink-0" />
+        {!collapsed && (
+          <>
+            <span className="flex-1">{label}</span>
+            {isLocked && <ProBadge />}
+          </>
+        )}
+      </NavLink>
+    );
+  };
 
   useEffect(() => {
     localStorage.setItem('hm_sidebar', collapsed ? 'collapsed' : 'open');
@@ -81,59 +144,48 @@ export default function Layout() {
           )}
         </Link>
 
+        {/* Workspace switcher — focus the sidebar on one area at a time */}
+        {!collapsed && enabledSections.length > 1 && (
+          <div className="px-2 pt-2.5">
+            <div className="flex flex-wrap gap-1 bg-black/20 rounded-xl p-1">
+              <WorkspacePill
+                label="All"
+                icon={ALL_WORKSPACE_ICON}
+                active={effectiveFocus === 'all'}
+                onClick={() => setFocus('all')}
+              />
+              {enabledSections.map(s => (
+                <WorkspacePill
+                  key={s.id}
+                  label={s.label}
+                  icon={s.icon}
+                  active={effectiveFocus === s.id}
+                  onClick={() => setFocus(s.id)}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         <nav className="flex-1 p-2 overflow-y-auto space-y-4 mt-1">
-          {NAV.map(({ group, items }) => {
-            const visibleItems = items.filter(item => {
-              if (item.minRole && !isAtLeast(item.minRole as any)) return false;
-              if (!item.pinned && isItemHidden(item.to)) return false;
-              return true;
-            });
-            if (visibleItems.length === 0) return null;
-            const groupCollapsed = !collapsed && isGroupCollapsed(group);
+          {/* Pinned items (e.g. Command Center) — always shown */}
+          <div className="space-y-0.5">
+            {PINNED_ITEMS.filter(canShow).map(renderItem)}
+          </div>
+
+          {visibleSections.map(section => {
+            const items = section.items.filter(canShow);
+            if (items.length === 0) return null;
             return (
-              <div key={group}>
-                {!collapsed && (
-                  <button
-                    onClick={() => toggleGroup(group)}
-                    className="flex items-center justify-between w-full px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-500 hover:text-gray-300 transition-colors"
-                  >
-                    {group}
-                    {groupCollapsed ? <ChevronRight size={11} /> : <ChevronDown size={11} />}
-                  </button>
+              <div key={section.id}>
+                {!collapsed && effectiveFocus === 'all' && (
+                  <div className="flex items-center gap-1.5 px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-500">
+                    <section.icon size={11} />
+                    {section.label}
+                  </div>
                 )}
-                <div className={`space-y-0.5 ${groupCollapsed ? 'hidden' : ''}`}>
-                  {visibleItems.map((item) => {
-                    const { to, icon: Icon, label, exact, proOnly } = item;
-                    const isLocked = proOnly && isFree;
-                    return (
-                      <NavLink
-                        key={to}
-                        to={to}
-                        end={exact}
-                        title={collapsed ? label : undefined}
-                        className={({ isActive }) =>
-                          `flex items-center rounded-xl text-sm font-medium transition-all ${
-                            collapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
-                          } ${
-                            isLocked
-                              ? 'text-gray-600 hover:text-gray-500 hover:bg-white/5'
-                              : isActive
-                                ? 'text-white shadow-sm'
-                                : 'text-gray-400 hover:text-white hover:bg-white/8'
-                          }`
-                        }
-                        style={({ isActive }) => (!isLocked && isActive) ? { backgroundColor: 'var(--nav-active)' } : {}}
-                      >
-                        <Icon size={15} className="flex-shrink-0" />
-                        {!collapsed && (
-                          <>
-                            <span className="flex-1">{label}</span>
-                            {isLocked && <ProBadge />}
-                          </>
-                        )}
-                      </NavLink>
-                    );
-                  })}
+                <div className="space-y-0.5">
+                  {items.map(renderItem)}
                 </div>
               </div>
             );

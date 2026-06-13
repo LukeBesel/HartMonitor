@@ -1,7 +1,11 @@
 import { createContext, useContext, useState, ReactNode } from 'react';
+import type { SectionId } from '../config/navigation';
 
 const HIDDEN_KEY = 'hm_hidden_nav';
-const COLLAPSED_KEY = 'hm_collapsed_nav_groups';
+const HIDDEN_SECTIONS_KEY = 'hm_hidden_sections';
+const FOCUS_KEY = 'hm_nav_focus';
+
+export type Focus = 'all' | SectionId;
 
 function loadSet(key: string): Set<string> {
   try {
@@ -22,12 +26,17 @@ function saveSet(key: string, set: Set<string>) {
 }
 
 interface NavPrefsContextValue {
+  // Individual item visibility (advanced)
   hiddenItems: Set<string>;
   isItemHidden: (to: string) => boolean;
   toggleItem: (to: string) => void;
-  collapsedGroups: Set<string>;
-  isGroupCollapsed: (group: string) => boolean;
-  toggleGroup: (group: string) => void;
+  // Whole-workspace visibility
+  hiddenSections: Set<string>;
+  isSectionHidden: (id: SectionId) => boolean;
+  toggleSection: (id: SectionId) => void;
+  // Which workspace is currently focused (also the persisted default)
+  focus: Focus;
+  setFocus: (f: Focus) => void;
   resetNavPrefs: () => void;
 }
 
@@ -35,7 +44,10 @@ const NavPrefsContext = createContext<NavPrefsContextValue | null>(null);
 
 export function NavPrefsProvider({ children }: { children: ReactNode }) {
   const [hiddenItems, setHiddenItems] = useState<Set<string>>(() => loadSet(HIDDEN_KEY));
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => loadSet(COLLAPSED_KEY));
+  const [hiddenSections, setHiddenSections] = useState<Set<string>>(() => loadSet(HIDDEN_SECTIONS_KEY));
+  const [focus, setFocusState] = useState<Focus>(() => {
+    try { return (localStorage.getItem(FOCUS_KEY) as Focus) || 'all'; } catch { return 'all'; }
+  });
 
   const toggleItem = (to: string) => {
     setHiddenItems(prev => {
@@ -47,21 +59,28 @@ export function NavPrefsProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  const toggleGroup = (group: string) => {
-    setCollapsedGroups(prev => {
+  const toggleSection = (id: SectionId) => {
+    setHiddenSections(prev => {
       const next = new Set(prev);
-      if (next.has(group)) next.delete(group);
-      else next.add(group);
-      saveSet(COLLAPSED_KEY, next);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      saveSet(HIDDEN_SECTIONS_KEY, next);
       return next;
     });
   };
 
+  const setFocus = (f: Focus) => {
+    setFocusState(f);
+    try { localStorage.setItem(FOCUS_KEY, f); } catch { /* ignore */ }
+  };
+
   const resetNavPrefs = () => {
     setHiddenItems(new Set());
-    setCollapsedGroups(new Set());
+    setHiddenSections(new Set());
+    setFocusState('all');
     saveSet(HIDDEN_KEY, new Set());
-    saveSet(COLLAPSED_KEY, new Set());
+    saveSet(HIDDEN_SECTIONS_KEY, new Set());
+    try { localStorage.setItem(FOCUS_KEY, 'all'); } catch { /* ignore */ }
   };
 
   return (
@@ -70,9 +89,11 @@ export function NavPrefsProvider({ children }: { children: ReactNode }) {
         hiddenItems,
         isItemHidden: (to) => hiddenItems.has(to),
         toggleItem,
-        collapsedGroups,
-        isGroupCollapsed: (group) => collapsedGroups.has(group),
-        toggleGroup,
+        hiddenSections,
+        isSectionHidden: (id) => hiddenSections.has(id),
+        toggleSection,
+        focus,
+        setFocus,
         resetNavPrefs,
       }}
     >

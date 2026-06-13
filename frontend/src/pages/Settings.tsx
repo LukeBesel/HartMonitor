@@ -26,13 +26,15 @@ import {
   LayoutGrid,
   PanelLeft,
   RotateCcw,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
 import { useTheme, THEME_PRESETS, Theme, buildCustomTheme, applySecondary } from '../context/ThemeContext';
 import { usePlan } from '../context/PlanContext';
 import { useAuth } from '../context/AuthContext';
 import { useBranding } from '../context/BrandingContext';
 import { useNavPrefs } from '../context/NavPrefsContext';
-import { NAV } from '../config/navigation';
+import { SECTIONS } from '../config/navigation';
 import { api } from '../api/client';
 import type { PlanTier, AddonPricing } from '../types';
 
@@ -1116,25 +1118,93 @@ function ThemeTab() {
   );
 }
 
-// ─── Tab: Sidebar Navigation ──────────────────────────────────────────────────
+// ─── Tab: Navigation / Workspaces ─────────────────────────────────────────────
 
 function SidebarTab() {
-  const { isItemHidden, toggleItem, resetNavPrefs } = useNavPrefs();
+  const {
+    isItemHidden, toggleItem,
+    isSectionHidden, toggleSection,
+    focus, setFocus, resetNavPrefs,
+  } = useNavPrefs();
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const enabledSections = SECTIONS.filter(s => !isSectionHidden(s.id));
+  // Keep the default-view selector honest if the focused section is now hidden.
+  const focusValid = focus === 'all' || enabledSections.some(s => s.id === focus);
 
   return (
     <div className="space-y-8 max-w-2xl">
+      {/* Workspaces */}
       <div>
-        <SectionHeader title="Sidebar Navigation" subtitle="Choose which sections appear in the left sidebar for your account" />
-        <div className="space-y-6">
-          {NAV.map(({ group, items }) => {
-            const toggleable = items.filter(item => !item.pinned);
-            if (toggleable.length === 0) return null;
+        <SectionHeader
+          title="Workspaces"
+          subtitle="Pick the areas you actually use. Turn one off and it disappears from the sidebar entirely — keeping things simple."
+        />
+        <div className="grid sm:grid-cols-3 gap-3">
+          {SECTIONS.map(section => {
+            const on = !isSectionHidden(section.id);
+            const Icon = section.icon;
             return (
-              <div key={group}>
-                <div className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1.5">{group}</div>
+              <button
+                key={section.id}
+                onClick={() => toggleSection(section.id)}
+                className={`text-left rounded-xl border-2 p-3.5 transition-all ${
+                  on ? 'shadow-sm' : 'border-gray-100 opacity-70 hover:opacity-100'
+                }`}
+                style={on ? { borderColor: 'var(--accent)', backgroundColor: 'var(--accent-light)' } : {}}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center"
+                    style={{ backgroundColor: on ? 'var(--accent)' : '#f1f5f9', color: on ? '#fff' : '#94a3b8' }}>
+                    <Icon size={15} />
+                  </div>
+                  {on
+                    ? <span style={{ color: 'var(--accent)' }}><Check size={16} /></span>
+                    : <span className="text-[10px] font-semibold text-gray-400 uppercase">Off</span>}
+                </div>
+                <div className="text-sm font-semibold text-gray-800">{section.label}</div>
+                <div className="text-xs text-gray-500 mt-0.5 leading-snug">{section.description}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Default view */}
+      <div>
+        <SectionHeader title="Default view" subtitle="Which workspace the sidebar opens to. You can switch anytime from the buttons at the top of the sidebar." />
+        <select
+          className="input-field text-sm max-w-xs"
+          value={focusValid ? focus : 'all'}
+          onChange={e => setFocus(e.target.value as any)}
+        >
+          <option value="all">Show everything</option>
+          {enabledSections.map(s => (
+            <option key={s.id} value={s.id}>{s.label} only</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Advanced: per-item visibility */}
+      <div>
+        <button
+          onClick={() => setShowAdvanced(v => !v)}
+          className="flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-gray-900"
+        >
+          {showAdvanced ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          Advanced — show or hide individual items
+        </button>
+        {showAdvanced && (
+          <div className="space-y-5 mt-3 pl-1">
+            {SECTIONS.map(section => (
+              <div key={section.id}>
+                <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1.5">
+                  <section.icon size={11} /> {section.label}
+                </div>
                 <div className="divide-y divide-gray-50">
-                  {toggleable.map(item => {
+                  {section.items.map(item => {
                     const Icon = item.icon;
+                    const sectionOff = isSectionHidden(section.id);
                     return (
                       <div key={item.to} className="flex items-center justify-between py-2.5 gap-4">
                         <div className="flex items-center gap-2.5 min-w-0">
@@ -1144,20 +1214,23 @@ function SidebarTab() {
                           </div>
                           <span className="text-sm font-medium text-gray-800 truncate">{item.label}</span>
                         </div>
-                        <Toggle checked={!isItemHidden(item.to)} onChange={() => toggleItem(item.to)} />
+                        <Toggle
+                          checked={!sectionOff && !isItemHidden(item.to)}
+                          onChange={() => toggleItem(item.to)}
+                        />
                       </div>
                     );
                   })}
                 </div>
               </div>
-            );
-          })}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="flex items-center justify-between gap-4 pt-2 border-t border-gray-100">
         <p className="text-xs text-gray-500">
-          Hidden sections can be re-enabled anytime. Command Center always stays visible.
+          Command Center always stays visible. Everything here is saved on this device.
         </p>
         <button onClick={resetNavPrefs} className="btn-secondary text-sm whitespace-nowrap flex items-center gap-1.5">
           <RotateCcw size={13} /> Reset to Defaults
@@ -1746,7 +1819,7 @@ export default function SettingsPage() {
     { id: 'company',  label: 'Company',        icon: <Building2 size={15} />,  minRole: 'manager' },
     { id: 'plan',     label: 'Plan & Billing', icon: <CreditCard size={15} />, minRole: 'manager' },
     { id: 'theme',    label: 'Visual Theme',   icon: <Palette size={15} /> },
-    { id: 'sidebar',  label: 'Sidebar',        icon: <PanelLeft size={15} /> },
+    { id: 'sidebar',  label: 'Navigation',     icon: <PanelLeft size={15} /> },
     { id: 'export',   label: 'Data Export',    icon: <Download size={15} /> },
     { id: 'users',    label: 'Users & Access', icon: <Users size={15} />,      minRole: 'manager' },
   ];
