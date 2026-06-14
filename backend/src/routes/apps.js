@@ -1,6 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { logActivity } = require('../activity');
 
 const router = express.Router();
 
@@ -32,6 +33,7 @@ router.post('/', (req, res) => {
   const defaultStep = [{ id: uuidv4(), name: 'Step 1', order: 0, widgets: [] }];
   db.prepare('INSERT INTO apps (id, name, description, steps, company_id) VALUES (?, ?, ?, ?, ?)')
     .run(id, name, description, JSON.stringify(defaultStep), req.companyId);
+  logActivity(req.companyId, 'app', id, `App "${name}" created`, req.user?.display_name);
   const app = db.prepare('SELECT * FROM apps WHERE id = ?').get(id);
   res.status(201).json({ ...app, steps: JSON.parse(app.steps), variables: JSON.parse(app.variables) });
 });
@@ -66,12 +68,16 @@ router.post('/:id/publish', (req, res) => {
   const app = db.prepare('SELECT * FROM apps WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!app) return res.status(404).json({ error: 'Not found' });
   db.prepare(`UPDATE apps SET status='published', updated_at=datetime('now') WHERE id=?`).run(req.params.id);
+  logActivity(req.companyId, 'app', req.params.id, `App "${app.name}" published`, req.user?.display_name);
   const updated = db.prepare('SELECT * FROM apps WHERE id = ?').get(req.params.id);
   res.json({ ...updated, steps: JSON.parse(updated.steps), variables: JSON.parse(updated.variables) });
 });
 
 router.delete('/:id', (req, res) => {
+  const app = db.prepare('SELECT * FROM apps WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
+  if (!app) return res.status(404).json({ error: 'Not found' });
   db.prepare('DELETE FROM apps WHERE id = ? AND company_id = ?').run(req.params.id, req.companyId);
+  logActivity(req.companyId, 'app', req.params.id, `App "${app.name}" deleted`, req.user?.display_name);
   res.json({ success: true });
 });
 

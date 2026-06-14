@@ -2,6 +2,8 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { logActivity } = require('../activity');
+const { notify } = require('../notifications');
+const { deliverWebhooks } = require('../webhooks');
 
 const router = express.Router();
 
@@ -72,7 +74,7 @@ const ENRICHED_SELECT = `
 // ─── GET / - list all work orders ────────────────────────────────────────────
 
 router.get('/', (req, res) => {
-  const { status, department_id, priority } = req.query;
+  const { status, department_id, priority, site_id } = req.query;
 
   let query = ENRICHED_SELECT;
   const conditions = ['wo.company_id = ?'];
@@ -81,6 +83,7 @@ router.get('/', (req, res) => {
   if (status)        { conditions.push('wo.status = ?');        params.push(status); }
   if (department_id) { conditions.push('wo.department_id = ?'); params.push(department_id); }
   if (priority)      { conditions.push('wo.priority = ?');      params.push(priority); }
+  if (site_id)       { conditions.push('wo.site_id = ?');       params.push(site_id); }
 
   query += ' WHERE ' + conditions.join(' AND ');
   query += ' ORDER BY wo.created_at DESC';
@@ -105,6 +108,7 @@ router.post('/', (req, res) => {
     priority          = 'medium',
     notes             = '',
     work_order_number,
+    site_id           = null,
   } = req.body;
 
   if (!part_number)              return res.status(400).json({ error: 'part_number is required' });
@@ -118,13 +122,13 @@ router.post('/', (req, res) => {
     INSERT INTO work_orders
       (id, work_order_number, part_number, part_name, quantity, quantity_completed,
        app_id, department_id, scheduled_start, scheduled_end, takt_time_minutes,
-       status, priority, notes, company_id, updated_at)
-    VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       status, priority, notes, company_id, site_id, updated_at)
+    VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `).run(
     id, woNumber, part_number, part_name, quantity,
     app_id || null, department_id || null,
     scheduled_start || null, scheduled_end || null,
-    takt_time_minutes, status, priority, notes, req.companyId
+    takt_time_minutes, status, priority, notes, req.companyId, site_id || null
   );
 
   const wo = db.prepare(ENRICHED_SELECT + ' WHERE wo.id = ?').get(id);
@@ -155,6 +159,7 @@ router.put('/:id', (req, res) => {
     'part_number', 'part_name', 'quantity', 'quantity_completed',
     'app_id', 'department_id', 'scheduled_start', 'scheduled_end',
     'takt_time_minutes', 'status', 'priority', 'notes', 'work_order_number',
+    'site_id',
   ];
 
   const updates = {};
@@ -167,13 +172,13 @@ router.put('/:id', (req, res) => {
       part_number=?, part_name=?, quantity=?, quantity_completed=?,
       app_id=?, department_id=?, scheduled_start=?, scheduled_end=?,
       takt_time_minutes=?, status=?, priority=?, notes=?, work_order_number=?,
-      updated_at=datetime('now')
+      site_id=?, updated_at=datetime('now')
     WHERE id=?
   `).run(
     updates.part_number, updates.part_name, updates.quantity, updates.quantity_completed,
     updates.app_id, updates.department_id, updates.scheduled_start, updates.scheduled_end,
     updates.takt_time_minutes, updates.status, updates.priority, updates.notes,
-    updates.work_order_number, req.params.id
+    updates.work_order_number, updates.site_id, req.params.id
   );
 
   // ─── Activity log: describe what changed ──────────────────────────────────
@@ -198,7 +203,22 @@ router.put('/:id', (req, res) => {
   }
 
   const updated = db.prepare(ENRICHED_SELECT + ' WHERE wo.id = ?').get(req.params.id);
-  res.json(enrichWorkOrder(updated));
+  const enriched = enrichWorkOrder(updated);
+
+  if (updates.scheduled_start !== wo.scheduled_start || updates.scheduled_end !== wo.scheduled_end) {
+    notify(req.companyId, 'workorder.schedule_changed', {
+      body: `Work order ${updated.work_order_number} rescheduled to ${fmtDate(updates.scheduled_start)} – ${fmtDate(updates.scheduled_end)}.`,
+    });
+    deliverWebhooks(req.companyId, 'workorder.schedule_changed', enriched);
+  }
+  if (updates.status === 'overdue' && wo.status !== 'overdue') {
+    notify(req.companyId, 'workorder.overdue', {
+      body: `Work order ${updated.work_order_number} (${updated.part_name || updated.part_number}) is now overdue.`,
+    });
+    deliverWebhooks(req.companyId, 'workorder.overdue', enriched);
+  }
+
+  res.json(enriched);
 });
 
 // ─── PUT /:id/complete - mark work order as completed ────────────────────────

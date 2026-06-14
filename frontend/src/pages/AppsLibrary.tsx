@@ -4,10 +4,11 @@ import { api } from '../api/client';
 import { App } from '../types';
 import {
   Plus, Play, Edit3, Trash2, Search, CheckCircle,
-  Clock, FileText, MoreVertical, Globe, Lock, Copy, Download
+  Clock, FileText, MoreVertical, Globe, Lock, Copy, Download, RefreshCw, Database
 } from 'lucide-react';
 import UpgradeModal from '../components/shared/UpgradeModal';
 import { usePlan } from '../context/PlanContext';
+import { useAuth } from '../context/AuthContext';
 
 export default function AppsLibrary() {
   const [apps, setApps] = useState<App[]>([]);
@@ -16,7 +17,10 @@ export default function AppsLibrary() {
   const [newApp, setNewApp] = useState({ name: '', description: '' });
   const [loading, setLoading] = useState(true);
   const [limitReason, setLimitReason] = useState<string | null>(null);
+  const [loadingSample, setLoadingSample] = useState(false);
+  const [sampleError, setSampleError] = useState('');
   const { refresh: refreshPlan } = usePlan();
+  const { isAtLeast } = useAuth();
   const navigate = useNavigate();
 
   const load = () => api.getApps().then(setApps).finally(() => setLoading(false));
@@ -51,6 +55,19 @@ export default function AppsLibrary() {
     e.preventDefault();
     await api.publishApp(id);
     load();
+  };
+
+  const handleLoadSampleData = async () => {
+    setLoadingSample(true);
+    setSampleError('');
+    try {
+      await api.loadSampleData();
+      load();
+    } catch (err: any) {
+      setSampleError(err?.message || 'Failed to load sample data');
+    } finally {
+      setLoadingSample(false);
+    }
   };
 
   const filtered = apps.filter(a =>
@@ -99,9 +116,20 @@ export default function AppsLibrary() {
           <FileText size={40} className="mx-auto mb-3 opacity-30" />
           <p className="font-medium">No apps found</p>
           <p className="text-sm">Create your first manufacturing app to get started</p>
-          <button onClick={() => setShowCreate(true)} className="btn-primary mt-4">
-            <Plus size={14} /> Create App
-          </button>
+          <div className="flex items-center justify-center gap-2 mt-4">
+            <button onClick={() => setShowCreate(true)} className="btn-primary">
+              <Plus size={14} /> Create App
+            </button>
+            {isAtLeast('manager') && (
+              <button onClick={handleLoadSampleData} disabled={loadingSample} className="btn-secondary">
+                {loadingSample ? <RefreshCw size={14} className="animate-spin" /> : <Database size={14} />}
+                Load Sample Data
+              </button>
+            )}
+          </div>
+          {sampleError && (
+            <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mt-3 max-w-sm mx-auto">{sampleError}</p>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-3 gap-4">

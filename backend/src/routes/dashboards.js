@@ -1,6 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { logActivity } = require('../activity');
 
 const router = express.Router();
 
@@ -33,6 +34,7 @@ router.post('/', (req, res) => {
   const id = uuidv4();
   db.prepare(`INSERT INTO dashboards (id, name, description, cards, company_id) VALUES (?, ?, ?, ?, ?)`)
     .run(id, name, description, JSON.stringify(cards), req.companyId);
+  logActivity(req.companyId, 'dashboard', id, `Dashboard "${name}" created`, req.user?.display_name);
   const d = db.prepare('SELECT * FROM dashboards WHERE id = ?').get(id);
   res.status(201).json({ ...d, cards: JSON.parse(d.cards) });
 });
@@ -59,9 +61,10 @@ router.put('/:id', (req, res) => {
 });
 
 router.delete('/:id', (req, res) => {
-  const d = db.prepare('SELECT id FROM dashboards WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
+  const d = db.prepare('SELECT * FROM dashboards WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!d) return res.status(404).json({ error: 'Not found' });
   db.prepare('DELETE FROM dashboards WHERE id = ?').run(req.params.id);
+  logActivity(req.companyId, 'dashboard', req.params.id, `Dashboard "${d.name}" deleted`, req.user?.display_name);
   res.json({ success: true });
 });
 

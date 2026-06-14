@@ -1,9 +1,25 @@
 const express = require('express');
+const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { hashPassword, verifyPassword, generateToken, requireAuth } = require('../middleware/auth');
+const { PROVIDERS, isConfigured } = require('../sso');
 
 const router = express.Router();
+
+// Short-lived CSRF state for the real OAuth2 flow (single-process, in-memory).
+const ssoStates = new Map();
+function pruneSSOStates() {
+  const now = Date.now();
+  for (const [k, v] of ssoStates) if (v.expires < now) ssoStates.delete(k);
+}
+
+// Base URL for OAuth redirects — prefers APP_URL, then the forwarded host.
+function appUrl(req) {
+  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, '');
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  return `${proto}://${req.get('host')}`;
+}
 
 // ─── POST /login ──────────────────────────────────────────────────────────────
 
@@ -58,6 +74,8 @@ router.post('/signup', (req, res) => {
       .run(userId, normalizedEmail, display_name.trim(), hashPassword(password), orgId);
     db.prepare(`INSERT INTO plan (tier, app_limit, dashboard_limit, company_id) VALUES ('free', 5, 2, ?)`)
       .run(orgId);
+    db.prepare(`INSERT INTO sites (id, company_id, name, code, is_primary) VALUES (?, ?, 'Main Site', 'MAIN', 1)`)
+      .run(uuidv4(), orgId);
 
     const defaults = [
       ['company_name', company_name.trim()],
@@ -114,6 +132,125 @@ router.put('/change-password', requireAuth, (req, res) => {
   // Invalidate all other sessions
   db.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?').run(req.user.id, req.user.session_id);
   res.json({ success: true });
+});
+
+// ─── SSO ───────────────────────────────────────────────────────────────────────
+
+// GET /sso/providers — which SSO buttons to show, and whether each is live or demo.
+router.get('/sso/providers', (req, res) => {
+  res.json(Object.keys(PROVIDERS).map(id => ({ id, name: PROVIDERS[id].name, mode: isConfigured(id) ? 'live' : 'demo' })));
+});
+
+// GET /sso/:provider/start — kick off the OAuth redirect (or demo login).
+router.get('/sso/:provider/start', (req, res) => {
+  const provider = req.params.provider;
+  const p = PROVIDERS[provider];
+  if (!p) return res.status(404).json({ error: 'Unknown provider' });
+  const base = appUrl(req);
+
+  if (!isConfigured(provider)) {
+    // Demo mode — sign into the shared demo account so the flow can be explored.
+    const demoUser = db.prepare("SELECT * FROM users WHERE email = 'demo@hartmonitor.demo' AND is_active = 1").get();
+    if (!demoUser) return res.redirect(`${base}/login?sso_error=demo_unavailable`);
+    const token = generateToken();
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    db.prepare(`INSERT INTO sessions (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)`).run(uuidv4(), demoUser.id, token, expiresAt);
+    db.prepare(`UPDATE users SET last_login = datetime('now') WHERE id = ?`).run(demoUser.id);
+    return res.redirect(`${base}/sso/callback?token=${token}&demo=1&provider=${provider}`);
+  }
+
+  pruneSSOStates();
+  const state = crypto.randomBytes(16).toString('hex');
+  ssoStates.set(state, { provider, expires: Date.now() + 10 * 60 * 1000 });
+  const redirectUri = `${base}/api/auth/sso/${provider}/callback`;
+  const params = new URLSearchParams({
+    client_id: process.env[p.clientIdEnv],
+    redirect_uri: redirectUri,
+    response_type: 'code',
+    scope: p.scope,
+    state,
+  });
+  res.redirect(`${p.authUrl}?${params.toString()}`);
+});
+
+// GET /sso/:provider/callback — exchange the code for a session and hand off to the SPA.
+router.get('/sso/:provider/callback', async (req, res) => {
+  const provider = req.params.provider;
+  const p = PROVIDERS[provider];
+  if (!p) return res.status(404).json({ error: 'Unknown provider' });
+  const base = appUrl(req);
+  const { code, state, error } = req.query;
+  if (error) return res.redirect(`${base}/login?sso_error=${encodeURIComponent(String(error))}`);
+
+  const stateEntry = ssoStates.get(state);
+  if (!stateEntry || stateEntry.provider !== provider || stateEntry.expires < Date.now()) {
+    return res.redirect(`${base}/login?sso_error=invalid_state`);
+  }
+  ssoStates.delete(state);
+
+  try {
+    const redirectUri = `${base}/api/auth/sso/${provider}/callback`;
+    const tokenRes = await fetch(p.tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: process.env[p.clientIdEnv],
+        client_secret: process.env[p.clientSecretEnv],
+        code: String(code || ''),
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code',
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenRes.ok || !tokenData.access_token) throw new Error(tokenData.error_description || 'Token exchange failed');
+
+    const profileRes = await fetch(p.userInfoUrl, {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    const profile = await profileRes.json();
+    const email = (profile.email || '').toLowerCase().trim();
+    const name = profile.name || profile.given_name || (email ? email.split('@')[0] : 'New User');
+    if (!email) throw new Error('Provider did not return an email address');
+
+    let user = db.prepare('SELECT * FROM users WHERE email = ?').get(email);
+    if (user) {
+      if (!user.is_active) throw new Error('This account is deactivated');
+      if (!user.sso_provider) db.prepare('UPDATE users SET sso_provider = ? WHERE id = ?').run(provider, user.id);
+    } else {
+      // Provision a new organization for this user, mirroring /signup.
+      const orgId = uuidv4();
+      const userId = uuidv4();
+      const orgName = `${name}'s Organization`;
+      let slug = (email.split('@')[1] || 'org').split('.')[0].toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'org';
+      if (db.prepare('SELECT id FROM organizations WHERE slug = ?').get(slug)) slug = `${slug}-${orgId.slice(0, 8)}`;
+
+      const provision = db.transaction(() => {
+        db.prepare('INSERT INTO organizations (id, name, slug) VALUES (?, ?, ?)').run(orgId, orgName, slug);
+        db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role, company_id, sso_provider) VALUES (?, ?, ?, ?, 'developer', ?, ?)`)
+          .run(userId, email, name, hashPassword(crypto.randomBytes(32).toString('hex')), orgId, provider);
+        db.prepare(`INSERT INTO plan (tier, app_limit, dashboard_limit, company_id) VALUES ('free', 5, 2, ?)`).run(orgId);
+        db.prepare(`INSERT INTO sites (id, company_id, name, code, is_primary) VALUES (?, ?, 'Main Site', 'MAIN', 1)`).run(uuidv4(), orgId);
+        const insSetting = db.prepare(`INSERT OR IGNORE INTO org_settings (company_id, key, value) VALUES (?, ?, ?)`);
+        for (const [k, v] of [['company_name', orgName], ['timezone', 'America/New_York'], ['date_format', 'MM/DD/YYYY'], ['currency', 'USD']]) {
+          insSetting.run(orgId, k, v);
+        }
+      });
+      provision();
+      user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+    }
+
+    const token = generateToken();
+    const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    db.prepare(`INSERT INTO sessions (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)`).run(uuidv4(), user.id, token, expiresAt);
+    db.prepare(`UPDATE users SET last_login = datetime('now') WHERE id = ?`).run(user.id);
+
+    res.redirect(`${base}/sso/callback?token=${token}`);
+  } catch (e) {
+    console.error('[sso] callback error:', e.message);
+    res.redirect(`${base}/login?sso_error=${encodeURIComponent(e.message)}`);
+  }
 });
 
 module.exports = router;

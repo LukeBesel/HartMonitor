@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, Fragment } from 'react';
 import { api } from '../api/client';
 import { useHighlight } from '../hooks/useHighlight';
+import { useSite } from '../context/SiteContext';
 import ActivityLog from '../components/shared/ActivityLog';
 import SavedViewsBar from '../components/shared/SavedViewsBar';
 import {
@@ -361,6 +362,7 @@ function WOModal({
 type ViewMode = 'list' | 'gantt';
 
 export default function Schedule() {
+  const { selectedSiteId } = useSite();
   const { highlightId, isHighlighted, highlightRef } = useHighlight();
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [apps, setApps] = useState<App[]>([]);
@@ -390,10 +392,11 @@ export default function Schedule() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
+      const siteParams = { site_id: selectedSiteId || undefined };
       const [wos, appList, deptList] = await Promise.all([
-        (api as any).getWorkOrders(),
+        (api as any).getWorkOrders(siteParams),
         api.getApps(),
-        (api as any).getDepartments().catch(() => []),
+        (api as any).getDepartments(siteParams).catch(() => []),
       ]);
       setWorkOrders(wos ?? []);
       setApps(appList ?? []);
@@ -403,7 +406,7 @@ export default function Schedule() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedSiteId]);
 
   useEffect(() => { load(); }, [load]);
 

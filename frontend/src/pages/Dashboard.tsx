@@ -16,6 +16,7 @@ import type { DailyBrief } from '../types';
 import { ATTENTION_ICONS, ATTENTION_TYPE_LABELS } from '../config/attention';
 import { useDashboardPrefs, DASHBOARD_SECTIONS, DashboardSectionId } from '../hooks/useDashboardPrefs';
 import Toggle from '../components/shared/Toggle';
+import OnboardingWizard from '../components/shared/OnboardingWizard';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -194,6 +195,8 @@ export default function Dashboard() {
 
   return (
     <div className="p-6 space-y-6">
+      <OnboardingWizard />
+
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>

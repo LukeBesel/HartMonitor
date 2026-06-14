@@ -1,5 +1,6 @@
 const express = require('express');
 const db = require('../db');
+const XLSX = require('xlsx');
 
 const router = express.Router();
 
@@ -25,6 +26,31 @@ function sendCSV(res, filename, csv) {
   res.send('﻿' + csv); // BOM for Excel UTF-8 compatibility
 }
 
+function sendXLSX(res, filename, rows, columns, sheetName = 'Sheet1') {
+  const data = rows.map(r => {
+    const o = {};
+    for (const c of columns) o[c] = r[c] ?? '';
+    return o;
+  });
+  const ws = XLSX.utils.json_to_sheet(data, { header: columns });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+  res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+  res.send(buf);
+}
+
+// Sends CSV or XLSX depending on ?format=xlsx, sharing the same rows/columns.
+function sendTable(req, res, baseName, rows, columns, sheetName) {
+  const date = new Date().toISOString().slice(0,10);
+  if (req.query.format === 'xlsx') {
+    sendXLSX(res, `${baseName}-${date}.xlsx`, rows, columns, sheetName);
+  } else {
+    sendCSV(res, `${baseName}-${date}.csv`, toCSV(rows, columns));
+  }
+}
+
 // ─── GET /completions ─────────────────────────────────────────────────────────
 
 router.get('/completions', (req, res) => {
@@ -41,7 +67,7 @@ router.get('/completions', (req, res) => {
     ORDER BY c.started_at DESC
   `).all(req.companyId, `-${days} days`);
   const cols = ['id','app_name','station_name','operator_name','started_at','completed_at','status','cycle_time_minutes','work_order_number','takt_exceeded_steps'];
-  sendCSV(res, `completions-${new Date().toISOString().slice(0,10)}.csv`, toCSV(rows, cols));
+  sendTable(req, res, 'completions', rows, cols, 'Completions');
 });
 
 // ─── GET /work-orders ─────────────────────────────────────────────────────────
@@ -58,7 +84,7 @@ router.get('/work-orders', (req, res) => {
     ORDER BY wo.created_at DESC
   `).all(req.companyId);
   const cols = ['work_order_number','part_number','part_name','quantity','quantity_completed','status','priority','scheduled_start','scheduled_end','takt_time_minutes','department','app_name','notes','created_at','updated_at'];
-  sendCSV(res, `work-orders-${new Date().toISOString().slice(0,10)}.csv`, toCSV(rows, cols));
+  sendTable(req, res, 'work-orders', rows, cols, 'Work Orders');
 });
 
 // ─── GET /inventory ───────────────────────────────────────────────────────────
@@ -75,7 +101,7 @@ router.get('/inventory', (req, res) => {
     WHERE i.is_active = 1 AND i.company_id = ? GROUP BY i.id ORDER BY i.category, i.name
   `).all(req.companyId);
   const cols = ['sku','name','description','category','unit_of_measure','unit_cost','total_quantity','total_value','reorder_point','reorder_qty','lead_time_days','stock_status','created_at','updated_at'];
-  sendCSV(res, `inventory-${new Date().toISOString().slice(0,10)}.csv`, toCSV(rows, cols));
+  sendTable(req, res, 'inventory', rows, cols, 'Inventory');
 });
 
 // ─── GET /stock-movements ─────────────────────────────────────────────────────
@@ -92,7 +118,7 @@ router.get('/stock-movements', (req, res) => {
     ORDER BY sm.created_at DESC
   `).all(req.companyId, `-${days} days`);
   const cols = ['created_at','sku','item_name','location','movement_type','quantity','unit_cost','reference_type','reference_id','notes','operator_name'];
-  sendCSV(res, `stock-movements-${new Date().toISOString().slice(0,10)}.csv`, toCSV(rows, cols));
+  sendTable(req, res, 'stock-movements', rows, cols, 'Stock Movements');
 });
 
 // ─── GET /purchase-orders ─────────────────────────────────────────────────────
@@ -111,7 +137,7 @@ router.get('/purchase-orders', (req, res) => {
     ORDER BY po.order_date DESC, po.po_number
   `).all(req.companyId);
   const cols = ['po_number','vendor','status','order_date','expected_date','received_date','sku','item_name','quantity_ordered','quantity_received','unit_cost','line_total','shipping_cost','notes'];
-  sendCSV(res, `purchase-orders-${new Date().toISOString().slice(0,10)}.csv`, toCSV(rows, cols));
+  sendTable(req, res, 'purchase-orders', rows, cols, 'Purchase Orders');
 });
 
 // ─── GET /ncrs ────────────────────────────────────────────────────────────────
@@ -130,7 +156,7 @@ router.get('/ncrs', (req, res) => {
     ORDER BY n.created_at DESC
   `).all(req.companyId);
   const cols = ['ncr_number','title','severity','status','source','app_name','work_order_number','item_sku','assigned_to','root_cause','corrective_action','due_date','resolved_at','created_at','updated_at'];
-  sendCSV(res, `ncrs-${new Date().toISOString().slice(0,10)}.csv`, toCSV(rows, cols));
+  sendTable(req, res, 'ncrs', rows, cols, 'NCRs');
 });
 
 // ─── GET /oee-events ─────────────────────────────────────────────────────────
@@ -145,7 +171,42 @@ router.get('/oee-events', (req, res) => {
     ORDER BY me.started_at DESC
   `).all(req.companyId, `-${days} days`);
   const cols = ['station_name','location','event_type','reason','started_at','ended_at','duration_minutes'];
-  sendCSV(res, `oee-events-${new Date().toISOString().slice(0,10)}.csv`, toCSV(rows, cols));
+  sendTable(req, res, 'oee-events', rows, cols, 'OEE Events');
+});
+
+// ─── GET /operator-performance ────────────────────────────────────────────────
+
+router.get('/operator-performance', (req, res) => {
+  const rows = db.prepare(`
+    SELECT
+      operator_name,
+      COUNT(*) as completions,
+      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_cycle_minutes
+    FROM completions
+    WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL
+    GROUP BY operator_name
+    ORDER BY completions DESC
+  `).all(req.companyId);
+  const cols = ['operator_name', 'completions', 'avg_cycle_minutes'];
+  sendTable(req, res, 'operator-performance', rows, cols, 'Operator Performance');
+});
+
+// ─── GET /app-performance ─────────────────────────────────────────────────────
+
+router.get('/app-performance', (req, res) => {
+  const rows = db.prepare(`
+    SELECT
+      app_name,
+      COUNT(*) as completions,
+      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_cycle_minutes,
+      COUNT(CASE WHEN status='abandoned' THEN 1 END) as abandoned_count
+    FROM completions
+    WHERE company_id = ?
+    GROUP BY app_id, app_name
+    ORDER BY completions DESC
+  `).all(req.companyId);
+  const cols = ['app_name', 'completions', 'avg_cycle_minutes', 'abandoned_count'];
+  sendTable(req, res, 'app-performance', rows, cols, 'App Performance');
 });
 
 // ─── GET /apps/:appId/completions — single-app completions CSV ────────────────

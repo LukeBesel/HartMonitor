@@ -69,12 +69,14 @@ export interface Station {
   department_id?: string | null;
   department_name?: string | null;
   department_color?: string | null;
+  site_id?: string | null;
 }
 
 export interface Department {
   id: string; name: string; description: string;
   manager_name: string; color: string;
   work_order_count?: number; created_at: string;
+  site_id?: string | null;
 }
 
 export type WorkOrderStatus = 'pending' | 'in_progress' | 'completed' | 'overdue' | 'cancelled';
@@ -89,6 +91,7 @@ export interface WorkOrder {
   scheduled_start: string; scheduled_end: string;
   takt_time_minutes: number; status: WorkOrderStatus; priority: WorkOrderPriority;
   notes: string; schedule_status: ScheduleStatus;
+  site_id?: string | null;
   created_at: string; updated_at: string;
 }
 
@@ -159,6 +162,7 @@ export interface StockByLocation {
 export interface InventoryLocation {
   id: string; name: string; code: string; description: string;
   type: string; is_active: number; item_count?: number; total_units?: number;
+  site_id?: string | null;
   created_at: string;
 }
 
@@ -369,4 +373,100 @@ export interface LeaderboardResponse {
   period_label: string;
   generated_at: string;
   boards: LeaderboardBoard[];
+}
+
+// ── Pricing catalog (public marketing + in-app billing) ───────────────────────
+
+export interface PricingTier {
+  name: string;
+  monthly_price: number | null;
+  app_limit: number;
+  dashboard_limit: number;
+  features: string[];
+}
+
+export interface PricingAddon {
+  name: string;
+  monthly_price: number;
+  description: string;
+}
+
+export interface PricingCatalog {
+  tiers: Record<string, PricingTier>;
+  addons: Record<string, PricingAddon>;
+}
+
+// ── Sites (multi-site / multi-plant) ──────────────────────────────────────────
+
+export interface Site {
+  id: string; name: string; code: string; address: string; timezone: string;
+  is_primary: number;
+  station_count?: number; department_count?: number; work_order_count?: number; location_count?: number;
+  created_at: string; updated_at: string;
+}
+
+// ── Notifications (email/SMS alerts) ──────────────────────────────────────────
+
+export interface NotificationPrefs {
+  email_enabled: boolean; email_to: string;
+  sms_enabled: boolean; sms_to: string;
+  events: string[];
+  available_events: Record<string, string>;
+  email_configured: boolean; sms_configured: boolean;
+}
+
+export interface NotificationLogEntry {
+  id: string; event: string; channel: 'email' | 'sms';
+  recipient: string; subject: string;
+  status: 'sent' | 'simulated' | 'failed';
+  created_at: string;
+}
+
+// ── Role permission overrides ─────────────────────────────────────────────────
+
+export type AppRole = 'viewer' | 'operator' | 'supervisor' | 'manager';
+export type RolePermissionMap = Record<AppRole, Record<string, 0 | 1>>;
+
+// ── Developer: API keys & webhooks (Enterprise) ───────────────────────────────
+
+export interface ApiKey {
+  id: string; name: string; key_prefix: string;
+  last_used_at: string | null; created_at: string;
+}
+
+export interface Webhook {
+  id: string; name: string; url: string; events: string[];
+  secret?: string; is_active: number; created_at: string; updated_at: string;
+}
+
+export interface WebhookDelivery {
+  id: string; webhook_id: string; event: string;
+  status_code: number | null; success: number; error: string | null; created_at: string;
+}
+
+// ── Audit log ──────────────────────────────────────────────────────────────────
+
+export interface AuditLogEntry {
+  id: string; entity_type: string; entity_id: string;
+  action: string; actor: string; created_at: string;
+}
+
+// ── SSO ────────────────────────────────────────────────────────────────────────
+
+export interface SSOProviderInfo {
+  id: string; name: string; mode: 'live' | 'demo';
+}
+
+// ── Live broadcast messages ───────────────────────────────────────────────────
+
+export type MessageSeverity = 'info' | 'warning' | 'urgent';
+
+export interface BroadcastMessage {
+  id: string;
+  sender_id: string;
+  sender_name: string;
+  sender_role: string;
+  body: string;
+  severity: MessageSeverity;
+  created_at: string;
 }

@@ -1,6 +1,8 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { notify } = require('../notifications');
+const { deliverWebhooks } = require('../webhooks');
 
 const router = express.Router();
 
@@ -157,6 +159,14 @@ router.post('/:id/event', (req, res) => {
     .run(statusMap[event_type], now, station.id);
 
   const updated = db.prepare('SELECT * FROM stations WHERE id = ?').get(station.id);
+
+  if (event_type === 'down' && station.current_status !== 'down') {
+    notify(req.companyId, 'station.down', {
+      body: `Station "${station.name}" went down${reason ? ` (${reason})` : ''}.`,
+    });
+    deliverWebhooks(req.companyId, 'station.down', { id: station.id, name: station.name, reason });
+  }
+
   res.json({
     id: updated.id, name: updated.name, current_status: updated.current_status,
     current_status_since: updated.current_status_since,

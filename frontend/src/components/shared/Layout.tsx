@@ -8,8 +8,11 @@ import { usePlan } from '../../context/PlanContext';
 import { useAuth } from '../../context/AuthContext';
 import { useBranding } from '../../context/BrandingContext';
 import { useNavPrefs } from '../../context/NavPrefsContext';
+import { usePermissions } from '../../context/PermissionsContext';
 import { PINNED_ITEMS, SECTIONS, ALL_WORKSPACE_ICON, NavItem } from '../../config/navigation';
 import NotificationBell from './NotificationBell';
+import MessagesBell from './MessagesBell';
+import SiteSwitcher from './SiteSwitcher';
 
 function ProBadge() {
   return (
@@ -54,9 +57,10 @@ export default function Layout() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const { isFree } = usePlan();
-  const { user, logout, isAtLeast } = useAuth();
+  const { user, logout } = useAuth();
   const { companyName, logoUrl } = useBranding();
   const { isItemHidden, isSectionHidden, focus, setFocus } = useNavPrefs();
+  const { canShowNavItem } = usePermissions();
   const [logoError, setLogoError] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -74,7 +78,7 @@ export default function Layout() {
     : enabledSections.filter(s => s.id === effectiveFocus);
 
   const canShow = (item: NavItem) => {
-    if (item.minRole && !isAtLeast(item.minRole as any)) return false;
+    if (!canShowNavItem(item)) return false;
     if (!item.pinned && isItemHidden(item.to)) return false;
     return true;
   };
@@ -158,7 +162,7 @@ export default function Layout() {
         </button>
 
         <Link
-          to="/"
+          to="/dashboard"
           className={`flex items-center border-b border-white/10 hover:bg-white/5 transition-colors flex-shrink-0 ${effectiveCollapsed ? 'justify-center p-3' : 'gap-3 p-4'}`}
         >
           {logoUrl && !logoError ? (
@@ -211,6 +215,13 @@ export default function Layout() {
           </div>
         )}
 
+        {/* Site switcher — only rendered for multi-site orgs */}
+        {!effectiveCollapsed && (
+          <div className="px-2 pt-2">
+            <SiteSwitcher />
+          </div>
+        )}
+
         <nav className="flex-1 p-2 overflow-y-auto space-y-4 mt-1">
           {/* Pinned items (e.g. Command Center) — always shown */}
           <div className="space-y-0.5">
@@ -238,6 +249,7 @@ export default function Layout() {
 
         <div className="p-2 border-t border-white/10 flex-shrink-0 space-y-0.5">
           <NotificationBell collapsed={effectiveCollapsed} />
+          <MessagesBell collapsed={effectiveCollapsed} />
 
           <NavLink
             to="/settings"

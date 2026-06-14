@@ -1,7 +1,9 @@
-import { useState, FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useState, useEffect, FormEvent } from 'react';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Activity, Eye, EyeOff, ArrowRight, Building2 } from 'lucide-react';
+import { api } from '../api/client';
+import type { SSOProviderInfo } from '../types';
+import { Activity, Eye, EyeOff, ArrowRight, Building2, ChevronLeft, Globe, Square } from 'lucide-react';
 
 const DEMO_ACCOUNTS = [
   { label: 'Developer (full access)', email: 'admin@hartmonitor.demo', password: 'Admin123!', color: 'bg-purple-100 text-purple-700' },
@@ -13,7 +15,8 @@ const DEMO_ACCOUNTS = [
 export default function Login() {
   const { login, signup } = useAuth();
   const navigate = useNavigate();
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [searchParams] = useSearchParams();
+  const [mode, setMode] = useState<'signin' | 'signup'>(searchParams.get('mode') === 'signup' ? 'signup' : 'signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -22,6 +25,32 @@ export default function Login() {
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [ssoProviders, setSsoProviders] = useState<SSOProviderInfo[]>([]);
+
+  useEffect(() => {
+    api.getSSOProviders()
+      .then(providers => setSsoProviders(providers || []))
+      .catch(() => setSsoProviders([]));
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const ssoError = params.get('sso_error');
+    if (ssoError !== null) {
+      let message = 'Single sign-on failed. Please try again or use your email and password.';
+      try {
+        const decoded = decodeURIComponent(ssoError).trim();
+        if (decoded) message = decoded;
+      } catch {
+        // ignore decode errors, fall back to generic message
+      }
+      setError(message);
+      params.delete('sso_error');
+      const newSearch = params.toString();
+      const newUrl = `${window.location.pathname}${newSearch ? `?${newSearch}` : ''}${window.location.hash}`;
+      window.history.replaceState({}, '', newUrl);
+    }
+  }, []);
 
   const switchMode = (m: 'signin' | 'signup') => {
     setMode(m);
@@ -36,7 +65,7 @@ export default function Login() {
     setLoading(true);
     try {
       await login(creds.email, creds.password);
-      navigate('/');
+      navigate('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Login failed');
     } finally {
@@ -55,7 +84,7 @@ export default function Login() {
     setLoading(true);
     try {
       await signup(companyName.trim(), displayName.trim(), email, password);
-      navigate('/');
+      navigate('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Signup failed');
     } finally {
@@ -74,6 +103,10 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
+        {/* Back to marketing site */}
+        <Link to="/" className="inline-flex items-center gap-1.5 text-blue-300/70 hover:text-blue-200 text-sm mb-6 transition-colors">
+          <ChevronLeft size={16} /> Back to home
+        </Link>
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-600 shadow-lg mb-4">
@@ -219,7 +252,44 @@ export default function Login() {
                 <p className="text-xs text-gray-400 text-center">
                   Free plan includes 5 production apps & 2 dashboards — no credit card required. You become the owner.
                 </p>
+                <p className="text-xs text-gray-400 text-center">
+                  By creating a workspace you agree to our{' '}
+                  <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Terms</a>{' '}
+                  and{' '}
+                  <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Privacy Policy</a>.
+                </p>
               </form>
+            )}
+
+            {/* SSO providers */}
+            {mode === 'signin' && ssoProviders.length > 0 && (
+              <div className="mt-5 space-y-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex-1 h-px bg-gray-200" />
+                  <span className="text-xs text-gray-400 uppercase tracking-wider">or continue with</span>
+                  <div className="flex-1 h-px bg-gray-200" />
+                </div>
+                <div className="space-y-2">
+                  {ssoProviders.map(provider => {
+                    const Icon = provider.id === 'microsoft' ? Square : Globe;
+                    return (
+                      <a
+                        key={provider.id}
+                        href={`/api/auth/sso/${provider.id}/start`}
+                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-gray-200 hover:bg-gray-50 transition-colors text-sm font-medium text-gray-700"
+                      >
+                        <Icon size={16} className="text-gray-500" />
+                        <span>Continue with {provider.name}</span>
+                        {provider.mode === 'demo' && (
+                          <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200">
+                            Demo
+                          </span>
+                        )}
+                      </a>
+                    );
+                  })}
+                </div>
+              </div>
             )}
           </div>
 

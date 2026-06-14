@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { requireAuth, requireRole, hashPassword } = require('../middleware/auth');
+const { logActivity } = require('../activity');
 
 const router = express.Router();
 
@@ -37,6 +38,7 @@ router.post('/', requireRole('developer'), (req, res) => {
   const id = uuidv4();
   db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role, company_id) VALUES (?, ?, ?, ?, ?, ?)`)
     .run(id, email.toLowerCase().trim(), display_name, hashPassword(password), role, req.companyId);
+  logActivity(req.companyId, 'user', id, `User "${display_name}" created with role ${role}`, req.user.display_name);
   const user = db.prepare('SELECT id, email, display_name, role, is_active, created_at FROM users WHERE id = ?').get(id);
   res.status(201).json(user);
 });
@@ -79,6 +81,13 @@ router.put('/:id', requireRole('developer'), (req, res) => {
 
   if (password) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(req.params.id);
 
+  if (updates.role !== user.role) {
+    logActivity(req.companyId, 'user', req.params.id, `Role changed from ${user.role} to ${updates.role} for "${updates.display_name}"`, req.user.display_name);
+  }
+  if (updates.is_active !== user.is_active) {
+    logActivity(req.companyId, 'user', req.params.id, `User "${updates.display_name}" ${updates.is_active ? 'activated' : 'deactivated'}`, req.user.display_name);
+  }
+
   res.json(db.prepare('SELECT id, email, display_name, role, is_active, last_login, created_at, updated_at FROM users WHERE id = ?').get(req.params.id));
 });
 
@@ -94,6 +103,7 @@ router.delete('/:id', requireRole('developer'), (req, res) => {
   }
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(req.params.id);
   db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+  logActivity(req.companyId, 'user', req.params.id, `User deleted`, req.user.display_name);
   res.json({ success: true });
 });
 

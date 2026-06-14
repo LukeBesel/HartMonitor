@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Station, App, Department } from '../types';
 import { Plus, Trash2, Monitor, Edit3, X, Check, Play, MapPin, Activity } from 'lucide-react';
+import { useSite } from '../context/SiteContext';
 
 const STATUS_COLORS: Record<Station['status'], string> = {
   active: 'bg-green-100 text-green-700',
@@ -11,6 +12,7 @@ const STATUS_COLORS: Record<Station['status'], string> = {
 };
 
 export default function Stations() {
+  const { selectedSiteId } = useSite();
   const [stations, setStations] = useState<Station[]>([]);
   const [apps, setApps] = useState<App[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -19,13 +21,16 @@ export default function Stations() {
   const [form, setForm] = useState({ name: '', description: '', location: '', department_id: '' });
   const [editForm, setEditForm] = useState<Partial<Station>>({});
 
-  const load = () => Promise.all([api.getStations(), api.getApps(), api.getDepartments()]).then(([s, a, d]) => {
-    setStations(s);
-    setApps(a.filter((a: App) => a.status === 'published'));
-    setDepartments(d);
-  });
+  const load = () => {
+    const siteParams = { site_id: selectedSiteId || undefined };
+    return Promise.all([api.getStations(siteParams), api.getApps(), api.getDepartments(siteParams)]).then(([s, a, d]) => {
+      setStations(s);
+      setApps(a.filter((a: App) => a.status === 'published'));
+      setDepartments(d);
+    });
+  };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [selectedSiteId]);
 
   const handleCreate = async () => {
     if (!form.name.trim()) return;

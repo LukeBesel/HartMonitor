@@ -1,8 +1,12 @@
 const Database = require('better-sqlite3');
+const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const { config } = require('./config');
 
-const DB_PATH = path.join(__dirname, '..', 'mes.db');
+const DB_PATH = config.databasePath;
+// Ensure the parent directory exists (e.g. a mounted /data volume on first boot).
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 const db = new Database(DB_PATH);
 
 db.pragma('journal_mode = WAL');
@@ -304,6 +308,7 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_activity_log_entity ON activity_log(entity_type, entity_id);
+  CREATE INDEX IF NOT EXISTS idx_activity_log_company_created ON activity_log(company_id, created_at DESC);
 `);
 
 // ─── Migrations: plan (à-la-carte add-on slots) ──────────────────────────────
@@ -377,6 +382,116 @@ db.exec(`
     value TEXT NOT NULL
   );
 `);
+
+// ─── Live broadcast messages ──────────────────────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id),
+    sender_id TEXT REFERENCES users(id),
+    sender_name TEXT NOT NULL,
+    sender_role TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info' CHECK(severity IN ('info','warning','urgent')),
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_messages_company ON messages(company_id, created_at);
+`);
+
+// ─── Sites (multi-site / multi-plant support) ─────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sites (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id),
+    name TEXT NOT NULL,
+    code TEXT NOT NULL,
+    address TEXT DEFAULT '',
+    timezone TEXT DEFAULT '',
+    is_primary INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(company_id, code)
+  );
+`);
+
+// ─── Notifications (email / SMS alerts) ───────────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS notification_log (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id),
+    channel TEXT NOT NULL CHECK(channel IN ('email','sms')),
+    event TEXT NOT NULL,
+    recipient TEXT NOT NULL,
+    subject TEXT DEFAULT '',
+    body TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'simulated' CHECK(status IN ('sent','simulated','failed')),
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_notification_log_company ON notification_log(company_id, created_at);
+`);
+
+// ─── Role permission overrides ────────────────────────────────────────────────
+// Lets a developer/manager hide specific nav items from specific roles, layered
+// on top of the built-in minRole defaults (which remain the security floor for
+// API routes via requireRole).
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS role_permissions (
+    company_id TEXT NOT NULL,
+    role TEXT NOT NULL,
+    nav_key TEXT NOT NULL,
+    visible INTEGER NOT NULL DEFAULT 1,
+    PRIMARY KEY (company_id, role, nav_key)
+  );
+`);
+
+// ─── API keys & webhooks (Enterprise integrations) ────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS api_keys (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id),
+    name TEXT NOT NULL,
+    key_prefix TEXT NOT NULL,
+    key_hash TEXT NOT NULL,
+    created_by TEXT DEFAULT '',
+    last_used_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS webhooks (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id),
+    url TEXT NOT NULL,
+    events TEXT NOT NULL DEFAULT '[]',
+    secret TEXT NOT NULL,
+    is_active INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS webhook_deliveries (
+    id TEXT PRIMARY KEY,
+    webhook_id TEXT NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+    event TEXT NOT NULL,
+    status_code INTEGER,
+    success INTEGER NOT NULL DEFAULT 0,
+    error TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id, created_at);
+`);
+
+// ─── Migrations: SSO provider tag on users ────────────────────────────────────
+
+{
+  const ssoCols = db.prepare('PRAGMA table_info(users)').all().map(r => r.name);
+  if (!ssoCols.includes('sso_provider')) db.exec("ALTER TABLE users ADD COLUMN sso_provider TEXT DEFAULT ''");
+}
 
 // ─── Migrations: company_id on every directly-scoped table ────────────────────
 // Child tables (table_records, machine_events, stock_levels, stock_movements,
@@ -546,6 +661,14 @@ if (!uniqueRebuilt) {
   });
   rebuildAll();
   db.pragma('foreign_keys = ON');
+}
+
+// ─── Migrations: site_id on site-scoped tables ────────────────────────────────
+
+for (const t of ['stations', 'departments', 'work_orders', 'locations']) {
+  const cols = db.prepare(`PRAGMA table_info(${t})`).all().map(r => r.name);
+  if (!cols.includes('site_id')) db.exec(`ALTER TABLE ${t} ADD COLUMN site_id TEXT REFERENCES sites(id) ON DELETE SET NULL`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_${t}_site ON ${t}(site_id)`);
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1070,6 +1193,138 @@ function seedDashboard() {
     .run(uuidv4(), 'Production Overview', 'Daily production KPIs and throughput tracking', JSON.stringify(cards));
 }
 
+// ─── On-demand sample data for a new (empty) company ─────────────────────────
+// Lets a brand-new organization populate itself with a realistic demo app,
+// stations, work orders, inventory, and history with one click — so empty
+// states don't greet new signups with a blank slate.
+
+function loadSampleDataForCompany(companyId) {
+  const site = db.prepare('SELECT id FROM sites WHERE company_id = ? ORDER BY is_primary DESC, created_at ASC LIMIT 1').get(companyId);
+  const siteId = site?.id || null;
+
+  // App
+  const appId = uuidv4();
+  const steps = [
+    {
+      id: uuidv4(), name: 'Safety Check', order: 0, takt_time: 60,
+      widgets: [
+        { id: uuidv4(), type: 'instruction', order: 0, label: 'Safety Instructions', config: { content: 'Ensure all safety equipment is in place before starting. Wear PPE including gloves and safety glasses.', backgroundColor: '#fef3c7' } },
+        { id: uuidv4(), type: 'checkbox', order: 1, label: 'PPE Worn', config: { required: true, variableName: 'ppe_worn' } },
+        { id: uuidv4(), type: 'button', order: 2, label: '', config: { buttonText: 'Proceed to Assembly', buttonType: 'next', buttonColor: '#22c55e' } }
+      ]
+    },
+    {
+      id: uuidv4(), name: 'Assembly', order: 1, takt_time: 240,
+      widgets: [
+        { id: uuidv4(), type: 'instruction', order: 0, label: 'Assembly Instructions', config: { content: '1. Place base component on fixture\n2. Apply torque to 15 Nm\n3. Verify alignment before final tightening', backgroundColor: '#eff6ff' } },
+        { id: uuidv4(), type: 'counter', order: 1, label: 'Bolt Count', config: { variableName: 'bolt_count', min: 0, max: 8, step: 1, initialValue: 0 } },
+        { id: uuidv4(), type: 'button', order: 2, label: '', config: { buttonText: 'Assembly Complete', buttonType: 'next', buttonColor: '#3b82f6' } }
+      ]
+    },
+    {
+      id: uuidv4(), name: 'Quality Check', order: 2, takt_time: 120,
+      widgets: [
+        { id: uuidv4(), type: 'pass-fail', order: 0, label: 'Final Inspection', config: { variableName: 'final_inspection' } },
+        { id: uuidv4(), type: 'button', order: 1, label: '', config: { buttonText: 'Complete Process', buttonType: 'complete', buttonColor: '#22c55e' } }
+      ]
+    }
+  ];
+  db.prepare(`INSERT INTO apps (id, name, description, status, steps, company_id) VALUES (?, ?, ?, 'published', ?, ?)`)
+    .run(appId, 'Sample Assembly Process', 'A starter guided work instruction — feel free to edit or delete.', JSON.stringify(steps), companyId);
+
+  // Department + stations
+  const deptId = uuidv4();
+  db.prepare(`INSERT INTO departments (id, name, description, manager_name, color, headcount, company_id, site_id) VALUES (?, 'Assembly', 'Sample department', '', '#3b82f6', 4, ?, ?)`)
+    .run(deptId, companyId, siteId);
+
+  const s1 = uuidv4(), s2 = uuidv4();
+  db.prepare(`INSERT INTO stations (id, name, description, location, current_app_id, department_id, company_id, site_id) VALUES (?, 'Assembly Station A1', 'Sample station', 'Building A', ?, ?, ?, ?)`)
+    .run(s1, appId, deptId, companyId, siteId);
+  db.prepare(`INSERT INTO stations (id, name, description, location, department_id, company_id, site_id) VALUES (?, 'QC Inspection Bench', 'Sample station', 'Building A', ?, ?, ?)`)
+    .run(s2, deptId, companyId, siteId);
+
+  // Completions over the last 7 days
+  const operators = ['Alex Rivera', 'Jordan Lee', 'Sam Patel'];
+  const now = new Date();
+  for (let i = 6; i >= 0; i--) {
+    const date = new Date(now);
+    date.setDate(date.getDate() - i);
+    const perDay = 3 + Math.floor(Math.random() * 4);
+    for (let j = 0; j < perDay; j++) {
+      const start = new Date(date);
+      start.setHours(8 + Math.floor(Math.random() * 8));
+      start.setMinutes(Math.floor(Math.random() * 60));
+      const cycleMin = 10 + Math.floor(Math.random() * 15);
+      const end = new Date(start.getTime() + cycleMin * 60000);
+      const pf = Math.random() > 0.1 ? 'Pass' : 'Fail';
+      db.prepare(`
+        INSERT INTO completions (id, app_id, app_name, station_id, operator_name, started_at, completed_at, status, data, step_times, company_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'completed', ?, ?, ?)
+      `).run(
+        uuidv4(), appId, 'Sample Assembly Process',
+        Math.random() > 0.5 ? s1 : s2,
+        operators[Math.floor(Math.random() * operators.length)],
+        start.toISOString(), end.toISOString(),
+        JSON.stringify({ ppe_worn: true, bolt_count: 8, final_inspection: pf }),
+        JSON.stringify({ 0: 50 + Math.random() * 20, 1: 220 + Math.random() * 60, 2: 90 + Math.random() * 40 }),
+        companyId
+      );
+    }
+  }
+
+  // Work orders
+  const woIns = db.prepare(`
+    INSERT INTO work_orders (id, work_order_number, part_number, part_name, quantity, quantity_completed, app_id, department_id, scheduled_start, scheduled_end, takt_time_minutes, status, priority, notes, company_id, site_id, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `);
+  woIns.run(uuidv4(), nextSampleWONumber(companyId), 'SAMP-001', 'Sample Part Assembly', 50, 18, appId, deptId, isoOffset(-1), isoOffset(2), 15, 'in_progress', 'medium', 'Sample work order — edit or delete freely.', companyId, siteId);
+  woIns.run(uuidv4(), nextSampleWONumber(companyId), 'SAMP-002', 'Sample Part Assembly — Batch 2', 30, 0, appId, deptId, isoOffset(2), isoOffset(5), 15, 'pending', 'low', 'Sample work order — edit or delete freely.', companyId, siteId);
+
+  // Inventory: one location + a few items with stock
+  const locId = uuidv4();
+  db.prepare(`INSERT INTO locations (id, name, code, description, type, company_id, site_id) VALUES (?, 'Main Warehouse', 'MWH', 'Sample location', 'warehouse', ?, ?)`)
+    .run(locId, companyId, siteId);
+
+  const itemDefs = [
+    { sku: 'SAMP-BASE-01', name: 'Sample Base Plate',  cat: 'Mechanical',  uom: 'ea', cost: 4.25, rop: 50,  roq: 200, qty: 142 },
+    { sku: 'SAMP-BOLT-01', name: 'Sample M6 Bolt',     cat: 'Fasteners',   uom: 'ea', cost: 0.12, rop: 500, roq: 2000, qty: 320 },
+    { sku: 'SAMP-PCB-01',  name: 'Sample Control PCB', cat: 'Electronics', uom: 'ea', cost: 34.0, rop: 50,  roq: 100, qty: 18 },
+  ];
+  for (const def of itemDefs) {
+    const itemId = uuidv4();
+    db.prepare(`INSERT INTO items (id, sku, name, description, category, unit_of_measure, unit_cost, reorder_point, reorder_qty, lead_time_days, company_id) VALUES (?, ?, ?, '', ?, ?, ?, ?, ?, 14, ?)`)
+      .run(itemId, def.sku, def.name, def.cat, def.uom, def.cost, def.rop, def.roq, companyId);
+    db.prepare(`INSERT INTO stock_levels (id, item_id, location_id, quantity) VALUES (?, ?, ?, ?)`)
+      .run(uuidv4(), itemId, locId, def.qty);
+  }
+
+  // Dashboard
+  if (db.prepare('SELECT COUNT(*) as c FROM dashboards WHERE company_id = ?').get(companyId).c === 0) {
+    const cards = [
+      { id: uuidv4(), type: 'metric',       title: "Today's Output",          metric_key: 'today_completions', size: 'sm', color: '#3b82f6' },
+      { id: uuidv4(), type: 'metric',       title: 'Pass Rate',                metric_key: 'pass_rate',         size: 'sm', color: '#10b981' },
+      { id: uuidv4(), type: 'wo_status',    title: 'Work Order Status',        size: 'md' },
+      { id: uuidv4(), type: 'time_series',  title: '7-Day Throughput',         series: 'throughput', period_days: 7, size: 'lg', color: '#3b82f6' },
+      { id: uuidv4(), type: 'table',        title: 'Recent Completions',       limit: 10, size: 'lg', app_id: appId },
+    ];
+    db.prepare(`INSERT INTO dashboards (id, name, description, cards, company_id) VALUES (?, ?, ?, ?, ?)`)
+      .run(uuidv4(), 'Production Overview', 'Sample dashboard — customize or delete.', JSON.stringify(cards), companyId);
+  }
+
+  return { appId, deptId, stationIds: [s1, s2], locationId: locId };
+}
+
+function nextSampleWONumber(companyId) {
+  const year = new Date().getFullYear();
+  const prefix = `WO-${year}-`;
+  const latest = db.prepare(
+    `SELECT work_order_number FROM work_orders WHERE company_id = ? AND work_order_number LIKE ? ORDER BY work_order_number DESC LIMIT 1`
+  ).get(companyId, prefix + '%');
+  if (!latest) return `${prefix}001`;
+  const seq = parseInt(latest.work_order_number.replace(prefix, ''), 10);
+  return `${prefix}${String(seq + 1).padStart(3, '0')}`;
+}
+
 // ─── Seed: users ──────────────────────────────────────────────────────────────
 
 function seedUsers() {
@@ -1090,23 +1345,25 @@ function seedUsers() {
   for (const u of users) ins.run(u.id, u.email, u.display_name, hashPw(u.password), u.role);
 }
 
-// ─── Run all seeds ────────────────────────────────────────────────────────────
+// ─── Run all seeds (DEVELOPMENT ONLY) ─────────────────────────────────────────
+// Demo company + sample login accounts (admin@hartmonitor.demo, etc.) and fake
+// production data. Gated behind SEED_DEMO_DATA so a production database starts
+// empty and the first real user creates their own organization via /signup.
+// Shipping these accounts to production would expose publicly-known credentials.
 
-seedUsers();
-seedPlan();
-seedCompanySettings();
-const appData     = seedAppData();
-const deptIds     = seedDepartments();
-seedWorkOrders(appData?.appId, deptIds);
-const invData     = seedInventory();
-seedVendorsAndPOs(invData);
-seedNCRs(appData, invData?.itemIds);
-seedDashboard();
+if (config.seedDemoData) {
+  seedUsers();
+  seedPlan();
+  seedCompanySettings();
+  const appData     = seedAppData();
+  const deptIds     = seedDepartments();
+  seedWorkOrders(appData?.appId, deptIds);
+  const invData     = seedInventory();
+  seedVendorsAndPOs(invData);
+  seedNCRs(appData, invData?.itemIds);
+  seedDashboard();
 
-// ─── Backfill: assign seeded stations to departments, default headcounts ─────
-// Runs on every boot so existing databases pick these up too.
-
-{
+  // ─── Backfill: assign seeded stations to departments, default headcounts ───
   const deptByName = {};
   for (const d of db.prepare('SELECT id, name FROM departments').all()) deptByName[d.name] = d.id;
 
@@ -1125,10 +1382,17 @@ seedDashboard();
 }
 
 // ─── Backfill: default organization ──────────────────────────────────────────
-// Idempotent, runs every boot. Any rows without a company_id (seed data and
-// pre-tenancy databases) are adopted by the default organization.
+// Idempotent. Adopts any rows without a company_id (demo/seed data and
+// pre-tenancy databases) into a default organization. Guarded so a fresh
+// production database — which has no data to adopt — stays empty until the first
+// real signup, rather than getting a junk "default" org.
 
-{
+const hasExistingData =
+  !!db.prepare('SELECT 1 FROM organizations LIMIT 1').get() ||
+  !!db.prepare('SELECT 1 FROM company_settings LIMIT 1').get() ||
+  TENANT_TABLES.some(t => !!db.prepare(`SELECT 1 FROM ${t} LIMIT 1`).get());
+
+if (hasExistingData) {
   let defaultOrg = db.prepare('SELECT id FROM organizations LIMIT 1').get();
   if (!defaultOrg) {
     const id = uuidv4();
@@ -1153,6 +1417,26 @@ seedDashboard();
   }
 }
 
+// ─── Backfill: default site per organization ──────────────────────────────────
+// Idempotent, runs every boot. Every organization gets a "Main Site" if it has
+// none, and any stations/departments/work orders/locations without a site_id
+// are assigned to that organization's primary (or first) site.
+
+{
+  for (const org of db.prepare('SELECT id, name FROM organizations').all()) {
+    let primarySite = db.prepare('SELECT id FROM sites WHERE company_id = ? ORDER BY is_primary DESC, created_at ASC LIMIT 1').get(org.id);
+    if (!primarySite) {
+      const siteId = uuidv4();
+      db.prepare(`INSERT INTO sites (id, company_id, name, code, is_primary) VALUES (?, ?, ?, ?, 1)`)
+        .run(siteId, org.id, 'Main Site', 'MAIN');
+      primarySite = { id: siteId };
+    }
+    for (const t of ['stations', 'departments', 'work_orders', 'locations']) {
+      db.prepare(`UPDATE ${t} SET site_id = ? WHERE company_id = ? AND site_id IS NULL`).run(primarySite.id, org.id);
+    }
+  }
+}
+
 // ─── Migration: bump free-tier app limit from 3 to 5 ──────────────────────────
 // One-time, guarded by a schema_meta flag. Only touches plans that are still
 // on the original free-tier default (tier='free' and app_limit=3); plans that
@@ -1166,3 +1450,4 @@ if (!freeLimitBumped) {
 }
 
 module.exports = db;
+module.exports.loadSampleDataForCompany = loadSampleDataForCompany;
