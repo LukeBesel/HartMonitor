@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, Fragment } from 'react';
 import { api } from '../api/client';
+import { useHighlight } from '../hooks/useHighlight';
 import {
   Plus, Search, Filter, List, BarChart2, Edit2, Trash2, CheckSquare,
   X, ChevronDown, AlertTriangle, Calendar, Package, Building2, Clock
@@ -338,6 +339,7 @@ function WOModal({
 type ViewMode = 'list' | 'gantt';
 
 export default function Schedule() {
+  const { highlightId, isHighlighted, highlightRef } = useHighlight();
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [apps, setApps] = useState<App[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -556,6 +558,8 @@ export default function Schedule() {
           onEdit={openEdit}
           onDelete={setDeleteTarget}
           onComplete={handleMarkComplete}
+          isHighlighted={isHighlighted}
+          highlightRef={highlightRef}
         />
       ) : (
         <GanttView
@@ -626,11 +630,15 @@ function ListView({
   onEdit,
   onDelete,
   onComplete,
+  isHighlighted,
+  highlightRef,
 }: {
   workOrders: WorkOrder[];
   onEdit: (wo: WorkOrder) => void;
   onDelete: (wo: WorkOrder) => void;
   onComplete: (wo: WorkOrder) => void;
+  isHighlighted: (id: string) => boolean;
+  highlightRef: (id: string) => (el: HTMLElement | null) => void;
 }) {
   if (workOrders.length === 0) {
     return (
@@ -656,7 +664,11 @@ function ListView({
             {workOrders.map(wo => {
               const pct = wo.quantity_total > 0 ? Math.round((wo.quantity_completed / wo.quantity_total) * 100) : 0;
               return (
-                <tr key={wo.id} className="hover:bg-gray-50 transition-colors">
+                <tr
+                  key={wo.id}
+                  ref={highlightRef(wo.id)}
+                  className={`hover:bg-gray-50 transition-colors ${isHighlighted(wo.id) ? 'nav-highlight' : ''}`}
+                >
                   <td className="px-4 py-3">
                     <span className="font-mono text-xs font-semibold text-blue-700">{wo.work_order_number}</span>
                   </td>

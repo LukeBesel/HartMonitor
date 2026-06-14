@@ -36,6 +36,7 @@ import { useBranding } from '../context/BrandingContext';
 import { useNavPrefs } from '../context/NavPrefsContext';
 import { SECTIONS } from '../config/navigation';
 import { api } from '../api/client';
+import Toggle from '../components/shared/Toggle';
 import type { PlanTier, AddonPricing } from '../types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -135,29 +136,6 @@ const ENTERPRISE_FEATURES = [
 ];
 
 // ─── Helper components ────────────────────────────────────────────────────────
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2"
-      style={{
-        backgroundColor: checked ? 'var(--accent)' : '#e5e7eb',
-        // @ts-ignore
-        '--tw-ring-color': 'var(--accent)',
-      }}
-      aria-checked={checked}
-      role="switch"
-    >
-      <span
-        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-          checked ? 'translate-x-6' : 'translate-x-1'
-        }`}
-      />
-    </button>
-  );
-}
 
 function ProgressBar({ value, max, accent }: { value: number; max: number; accent: string }) {
   const pct = max < 0 ? 100 : Math.min(100, Math.round((value / max) * 100));

@@ -687,7 +687,7 @@ router.get('/daily-brief', (req, res) => {
         severity: ss === 'overdue' ? 'red' : 'amber',
         label: `${wo.work_order_number} · ${wo.part_name}`,
         detail: `${wo.quantity_completed}/${wo.quantity} done${wo.department_name ? ` · ${wo.department_name}` : ''} · due ${new Date(wo.scheduled_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
-        link: '/schedule',
+        link: `/schedule?highlight=${wo.id}`,
       });
     }
   }
@@ -753,7 +753,7 @@ router.get('/daily-brief', (req, res) => {
         severity: 'amber',
         label: `${po.po_number}${po.vendor_name ? ` · ${po.vendor_name}` : ''}`,
         detail: `expected ${new Date(po.expected_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, not received`,
-        link: '/purchasing',
+        link: `/purchasing?highlight=${po.id}`,
       });
     }
   }

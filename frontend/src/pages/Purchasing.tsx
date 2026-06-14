@@ -845,12 +845,23 @@ function PODetailModal({
 // ── Purchase Orders Tab ───────────────────────────────────────────────────────
 
 function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [pos, setPOs] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
-  const [viewPO, setViewPO] = useState<string | null>(null);
+  const [viewPO, setViewPO] = useState<string | null>(() => searchParams.get('highlight'));
+
+  // Arriving from a "Needs Attention" link opens that PO's detail directly,
+  // and strips the param so refreshing the page doesn't keep reopening it.
+  useEffect(() => {
+    if (!searchParams.get('highlight')) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('highlight');
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
