@@ -44,13 +44,18 @@ import {
   Crown,
   ExternalLink,
   Code,
+  HelpCircle,
+  Tablet,
+  PlayCircle,
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useTheme, THEME_PRESETS, Theme, buildCustomTheme, applySecondary } from '../context/ThemeContext';
 import { usePlan } from '../context/PlanContext';
 import { useAuth } from '../context/AuthContext';
 import { useBranding } from '../context/BrandingContext';
 import { useNavPrefs } from '../context/NavPrefsContext';
 import { SECTIONS, ALL_SECTION_ITEMS } from '../config/navigation';
+import { REPLAY_FLAG } from '../components/shared/OnboardingWizard';
 import { api } from '../api/client';
 import Toggle from '../components/shared/Toggle';
 import type { PlanTier, AddonPricing, Site, NotificationPrefs, NotificationLogEntry, RolePermissionMap, AppRole, ApiKey, Webhook, WebhookDelivery } from '../types';
@@ -58,7 +63,7 @@ import type { PlanTier, AddonPricing, Site, NotificationPrefs, NotificationLogEn
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type TabId = 'company' | 'plan' | 'theme' | 'sidebar' | 'export' | 'users' | 'account'
-  | 'sites' | 'notifications' | 'permissions' | 'developer';
+  | 'sites' | 'notifications' | 'permissions' | 'developer' | 'help';
 
 interface CompanyForm {
   company_name: string;
@@ -2927,6 +2932,68 @@ function DeveloperTab() {
 
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
+// ─── Help & Guides tab ────────────────────────────────────────────────────────
+
+function HelpTab() {
+  const navigate = useNavigate();
+
+  const replayTour = () => {
+    // The wizard re-opens (bypassing the completed flag) when it mounts on the
+    // dashboard and finds this flag.
+    localStorage.setItem(REPLAY_FLAG, '1');
+    navigate('/dashboard');
+  };
+
+  const GUIDES: { icon: React.ReactNode; title: string; body: string }[] = [
+    { icon: <Activity size={16} />,      title: 'Command Center',       body: 'Your home base — see what needs attention, today’s output, and quick links into every area.' },
+    { icon: <Tablet size={16} />,        title: 'Operator Portal',      body: 'The shop-floor screen. Operators pick their name, a job, and a part, then start working — no settings to get lost in.' },
+    { icon: <AppWindow size={16} />,     title: 'App Library & Builder',body: 'Build step-by-step digital work instructions, publish them, and run them at stations.' },
+    { icon: <ClipboardList size={16} />, title: 'Planning',             body: 'Schedule work orders, plan capacity, and (on paid plans) run inventory and purchasing.' },
+    { icon: <Activity size={16} />,      title: 'Reporting & Analytics',body: 'Throughput, cycle time, OEE, leaderboards, and custom dashboards.' },
+    { icon: <ShieldCheck size={16} />,   title: 'Quality & NCR',        body: 'Capture pass/fail and log non-conformance reports, including straight from the operator portal.' },
+  ];
+
+  return (
+    <div className="max-w-3xl space-y-6">
+      <div className="bg-white rounded-2xl border border-gray-200 p-6">
+        <div className="flex items-start gap-4">
+          <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: 'var(--accent-light)', color: 'var(--accent)' }}>
+            <PlayCircle size={22} />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-gray-900">Product tour</h3>
+            <p className="text-sm text-gray-500 mt-1">
+              New here, or want a refresher? Replay the guided walkthrough that introduces every
+              area of the app, step by step.
+            </p>
+            <button onClick={replayTour} className="btn-primary mt-4">
+              <PlayCircle size={15} /> Replay product tour
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="bg-white rounded-2xl border border-gray-200 p-6">
+        <h3 className="font-semibold text-gray-900 mb-1">Section guides</h3>
+        <p className="text-sm text-gray-500 mb-4">A quick reference for what each part of the app does.</p>
+        <div className="grid sm:grid-cols-2 gap-3">
+          {GUIDES.map(g => (
+            <div key={g.title} className="flex items-start gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50/50">
+              <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-white border border-gray-200 text-gray-500">
+                {g.icon}
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-gray-800">{g.title}</div>
+                <div className="text-xs text-gray-500 mt-0.5">{g.body}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
   { id: 'company', label: 'Company', icon: <Building2 size={15} /> },
   { id: 'plan', label: 'Plan & Billing', icon: <CreditCard size={15} /> },
@@ -2938,7 +3005,7 @@ export default function SettingsPage() {
   const { isAtLeast } = useAuth();
   const [activeTab, setActiveTab] = useState<TabId>(() => {
     const tab = new URLSearchParams(window.location.search).get('tab');
-    const valid: TabId[] = ['account', 'company', 'plan', 'theme', 'sidebar', 'export', 'users', 'sites', 'notifications', 'permissions', 'developer'];
+    const valid: TabId[] = ['account', 'company', 'plan', 'theme', 'sidebar', 'export', 'users', 'sites', 'notifications', 'permissions', 'developer', 'help'];
     return (tab && valid.includes(tab as TabId)) ? (tab as TabId) : 'account';
   });
 
@@ -2954,6 +3021,7 @@ export default function SettingsPage() {
     { id: 'notifications', label: 'Notifications',  icon: <Bell size={15} />,      minRole: 'manager' },
     { id: 'permissions',   label: 'Permissions',    icon: <Sliders size={15} />,   minRole: 'manager' },
     { id: 'developer',     label: 'Developer',      icon: <Code size={15} />,      minRole: 'manager' },
+    { id: 'help',          label: 'Help & Guides',  icon: <HelpCircle size={15} /> },
   ];
   const TABS = ALL_TABS.filter(t => !t.minRole || isAtLeast(t.minRole as any));
 
@@ -3008,6 +3076,7 @@ export default function SettingsPage() {
         {activeTab === 'notifications' && <NotificationsTab />}
         {activeTab === 'permissions'   && <PermissionsTab />}
         {activeTab === 'developer'     && <DeveloperTab />}
+        {activeTab === 'help'          && <HelpTab />}
       </div>
     </div>
   );

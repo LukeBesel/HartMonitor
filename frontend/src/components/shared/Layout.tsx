@@ -10,8 +10,7 @@ import { useBranding } from '../../context/BrandingContext';
 import { useNavPrefs } from '../../context/NavPrefsContext';
 import { usePermissions } from '../../context/PermissionsContext';
 import { PINNED_ITEMS, SECTIONS, ALL_WORKSPACE_ICON, NavItem } from '../../config/navigation';
-import NotificationBell from './NotificationBell';
-import MessagesBell from './MessagesBell';
+import AlertsBell from './AlertsBell';
 import SiteSwitcher from './SiteSwitcher';
 
 function ProBadge() {
@@ -56,7 +55,7 @@ export default function Layout() {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('hm_sidebar') === 'collapsed');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const { isFree } = usePlan();
+  const { isFree, isEnterprise, showProFeatures } = usePlan();
   const { user, logout } = useAuth();
   const { companyName, logoUrl } = useBranding();
   const { isItemHidden, isSectionHidden, focus, setFocus } = useNavPrefs();
@@ -69,8 +68,13 @@ export default function Layout() {
   // desktop-only "collapsed" preference.
   const effectiveCollapsed = collapsed && isDesktop;
 
-  // Sections the user has kept enabled in Settings.
-  const enabledSections = SECTIONS.filter(s => !isSectionHidden(s.id));
+  // Sections the user has kept enabled in Settings, minus paid sections that
+  // a Free account hasn't grown into yet (kept hidden until they hit a limit).
+  const enabledSections = SECTIONS.filter(s => {
+    if (isSectionHidden(s.id)) return false;
+    if (s.proOnly && isFree && !showProFeatures) return false;
+    return true;
+  });
   // The focused workspace falls back to "all" if its section was turned off.
   const effectiveFocus = (focus !== 'all' && enabledSections.some(s => s.id === focus)) ? focus : 'all';
   const visibleSections = effectiveFocus === 'all'
@@ -80,12 +84,34 @@ export default function Layout() {
   const canShow = (item: NavItem) => {
     if (!canShowNavItem(item)) return false;
     if (!item.pinned && isItemHidden(item.to)) return false;
+    // Enterprise-only features are hidden entirely below that tier.
+    if (item.enterpriseOnly && !isEnterprise) return false;
+    // Pro-only items stay out of the way for Free accounts until they've
+    // actually hit a limit — once shown, they're a locked upsell (see isLocked).
+    if (item.proOnly && isFree && !showProFeatures) return false;
     return true;
   };
 
   const renderItem = (item: NavItem) => {
-    const { to, icon: Icon, label, exact, proOnly } = item;
+    const { to, icon: Icon, label, exact, proOnly, standalone } = item;
     const isLocked = proOnly && isFree;
+    // Standalone launchers (e.g. the operator kiosk) get an accented, button-like
+    // treatment so they stand out as the "go here to start working" entry point.
+    if (standalone) {
+      return (
+        <NavLink
+          key={to}
+          to={to}
+          title={effectiveCollapsed ? label : undefined}
+          className={`flex items-center rounded-xl text-sm font-semibold transition-all border border-blue-500/30 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20 hover:text-white ${
+            effectiveCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
+          }`}
+        >
+          <Icon size={15} className="flex-shrink-0" />
+          {!effectiveCollapsed && <span className="flex-1">{label}</span>}
+        </NavLink>
+      );
+    }
     return (
       <NavLink
         key={to}
@@ -248,8 +274,7 @@ export default function Layout() {
         </nav>
 
         <div className="p-2 border-t border-white/10 flex-shrink-0 space-y-0.5">
-          <NotificationBell collapsed={effectiveCollapsed} />
-          <MessagesBell collapsed={effectiveCollapsed} />
+          <AlertsBell collapsed={effectiveCollapsed} />
 
           <NavLink
             to="/settings"

@@ -20,7 +20,11 @@ function deptCounts(deptId) {
     `SELECT COUNT(*) as c FROM work_orders WHERE department_id = ? AND status = 'in_progress'`
   ).get(deptId).c;
 
-  return { work_order_count: woCount, completion_count: completionCount, active_work_orders: activeCount };
+  const stationCount = db.prepare(
+    `SELECT COUNT(*) as c FROM stations WHERE department_id = ?`
+  ).get(deptId).c;
+
+  return { work_order_count: woCount, completion_count: completionCount, active_work_orders: activeCount, station_count: stationCount };
 }
 
 // ─── GET / - list departments with work order and completion counts ────────────

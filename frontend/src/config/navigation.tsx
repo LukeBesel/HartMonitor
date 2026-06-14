@@ -3,7 +3,7 @@ import {
   Calendar, ClipboardList, Trophy,
   Timer, Users, Cpu, LayoutGrid,
   Package, ShoppingCart, ShieldCheck, Building2,
-  Factory, CalendarRange, Layers, History,
+  Factory, CalendarRange, Layers, History, Tablet, Network,
 } from 'lucide-react';
 
 export type NavItem = {
@@ -11,6 +11,11 @@ export type NavItem = {
   exact?: boolean; proOnly?: boolean; minRole?: string;
   /** Items that can't be hidden and always show regardless of workspace. */
   pinned?: boolean;
+  /** Opens a full-screen experience outside the management shell (e.g. the
+   *  operator kiosk) — navigated to as a normal link, no sidebar around it. */
+  standalone?: boolean;
+  /** Only shown to Enterprise-tier accounts. */
+  enterpriseOnly?: boolean;
 };
 
 export type SectionId = 'production' | 'planning' | 'reporting';
@@ -21,11 +26,15 @@ export type NavSection = {
   icon: React.ElementType;
   description: string;
   items: NavItem[];
+  /** Whole section is part of the paid plan — hidden for Free accounts until they
+   *  need it (hit a plan limit) or upgrade. Keeps the default nav lean. */
+  proOnly?: boolean;
 };
 
 // Always visible, independent of the chosen workspace.
 export const PINNED_ITEMS: NavItem[] = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Command Center', exact: true, pinned: true },
+  { to: '/operator',  icon: Tablet,          label: 'Operator Portal', pinned: true, standalone: true },
 ];
 
 // The app is organised into three plain-language workspaces so a new user can
@@ -47,6 +56,7 @@ export const SECTIONS: NavSection[] = [
     label: 'Planning',
     icon: CalendarRange,
     description: 'Schedule work and resources',
+    proOnly: true,
     items: [
       { to: '/schedule',   icon: Calendar,     label: 'Schedule' },
       { to: '/manager',    icon: ClipboardList, label: 'Manager View',  minRole: 'manager' },
@@ -67,7 +77,8 @@ export const SECTIONS: NavSection[] = [
       { to: '/step-metrics', icon: Timer,       label: 'Step Metrics', minRole: 'supervisor' },
       { to: '/analytics',    icon: BarChart3,   label: 'Analytics' },
       { to: '/quality',      icon: ShieldCheck, label: 'NCR / Quality', proOnly: true },
-      { to: '/tables',       icon: Database,    label: 'Tables',        minRole: 'supervisor' },
+      { to: '/facilities',   icon: Network,     label: 'Facilities',    minRole: 'manager', enterpriseOnly: true },
+      { to: '/tables',       icon: Database,    label: 'Tables',        minRole: 'supervisor', proOnly: true },
       { to: '/audit-log',    icon: History,     label: 'Audit Log',     minRole: 'supervisor' },
     ],
   },

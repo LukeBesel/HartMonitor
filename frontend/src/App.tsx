@@ -47,6 +47,7 @@ const Terms            = lazy(() => import('./pages/Terms'));
 const Privacy          = lazy(() => import('./pages/Privacy'));
 const SSOCallback      = lazy(() => import('./pages/SSOCallback'));
 const AuditLog         = lazy(() => import('./pages/AuditLog'));
+const Facilities       = lazy(() => import('./pages/Facilities'));
 
 function Spinner() {
   return (
@@ -118,6 +119,7 @@ export default function App() {
                 <Route path="/quality" element={<Quality />} />
                 <Route path="/quality/:id" element={<Quality />} />
                 <Route path="/leaderboard" element={<Leaderboard />} />
+                <Route path="/facilities" element={<Facilities />} />
                 <Route path="/audit-log" element={<AuditLog />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />

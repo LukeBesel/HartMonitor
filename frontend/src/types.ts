@@ -469,4 +469,7 @@ export interface BroadcastMessage {
   body: string;
   severity: MessageSeverity;
   created_at: string;
+  /** When set, the message is a direct message to this user (not company-wide). */
+  recipient_id?: string | null;
+  recipient_name?: string | null;
 }

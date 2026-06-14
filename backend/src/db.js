@@ -400,6 +400,12 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_messages_company ON messages(company_id, created_at);
 `);
 
+// Migration: direct messages — a null recipient_id means a company-wide broadcast.
+const messageCols = db.prepare('PRAGMA table_info(messages)').all().map(r => r.name);
+if (!messageCols.includes('recipient_id')) {
+  db.exec(`ALTER TABLE messages ADD COLUMN recipient_id TEXT REFERENCES users(id)`);
+}
+
 // ─── Sites (multi-site / multi-plant support) ─────────────────────────────────
 
 db.exec(`

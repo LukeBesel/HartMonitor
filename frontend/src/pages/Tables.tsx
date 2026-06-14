@@ -54,7 +54,10 @@ export default function Tables() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Tables</h1>
-          <p className="text-gray-500 text-sm mt-0.5">Structured data storage for manufacturing operations</p>
+          <p className="text-gray-500 text-sm mt-0.5 max-w-xl">
+            Build your own simple spreadsheets to track anything the built-in features don’t cover —
+            tooling logs, calibration records, supplier lists, custom checklists. Define the columns once, then add rows.
+          </p>
         </div>
         <button onClick={() => setShowCreate(true)} className="btn-primary">
           <Plus size={16} /> New Table
