@@ -37,7 +37,7 @@ router.get('/completions', (req, res) => {
     FROM completions c
     LEFT JOIN stations s ON s.id = c.station_id
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
-    WHERE c.company_id = ? AND c.created_at >= datetime('now', ?)
+    WHERE c.company_id = ? AND c.started_at >= datetime('now', ?)
     ORDER BY c.started_at DESC
   `).all(req.companyId, `-${days} days`);
   const cols = ['id','app_name','station_name','operator_name','started_at','completed_at','status','cycle_time_minutes','work_order_number','takt_exceeded_steps'];
@@ -146,6 +146,64 @@ router.get('/oee-events', (req, res) => {
   `).all(req.companyId, `-${days} days`);
   const cols = ['station_name','location','event_type','reason','started_at','ended_at','duration_minutes'];
   sendCSV(res, `oee-events-${new Date().toISOString().slice(0,10)}.csv`, toCSV(rows, cols));
+});
+
+// ─── GET /apps/:appId/completions — single-app completions CSV ────────────────
+
+router.get('/apps/:appId/completions', (req, res) => {
+  const app = db.prepare('SELECT id, name FROM apps WHERE id = ? AND company_id = ?').get(req.params.appId, req.companyId);
+  if (!app) return res.status(404).json({ error: 'App not found' });
+
+  const rows = db.prepare(`
+    SELECT c.id, c.operator_name, s.name as station_name, c.started_at, c.completed_at, c.status,
+           ROUND((julianday(c.completed_at)-julianday(c.started_at))*1440, 1) as cycle_time_minutes,
+           wo.work_order_number, c.takt_exceeded_steps, c.data, c.step_times
+    FROM completions c
+    LEFT JOIN stations s ON s.id = c.station_id
+    LEFT JOIN work_orders wo ON wo.id = c.work_order_id
+    WHERE c.app_id = ? AND c.company_id = ?
+    ORDER BY c.started_at DESC
+  `).all(req.params.appId, req.companyId);
+  const cols = ['id','operator_name','station_name','started_at','completed_at','status','cycle_time_minutes','work_order_number','takt_exceeded_steps','data','step_times'];
+  const safeName = app.name.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'app';
+  sendCSV(res, `${safeName}-export-${new Date().toISOString().slice(0,10)}.csv`, toCSV(rows, cols));
+});
+
+// ─── GET /apps/:appId/bundle — full JSON bundle for a single app ──────────────
+
+router.get('/apps/:appId/bundle', (req, res) => {
+  const app = db.prepare('SELECT * FROM apps WHERE id = ? AND company_id = ?').get(req.params.appId, req.companyId);
+  if (!app) return res.status(404).json({ error: 'App not found' });
+
+  const completions = db.prepare(`
+    SELECT c.id, c.operator_name, c.station_id, s.name as station_name, c.started_at, c.completed_at, c.status,
+           ROUND((julianday(c.completed_at)-julianday(c.started_at))*1440, 1) as cycle_time_minutes,
+           wo.work_order_number, c.takt_exceeded_steps, c.data, c.step_times
+    FROM completions c
+    LEFT JOIN stations s ON s.id = c.station_id
+    LEFT JOIN work_orders wo ON wo.id = c.work_order_id
+    WHERE c.app_id = ? AND c.company_id = ?
+    ORDER BY c.started_at DESC
+  `).all(req.params.appId, req.companyId);
+
+  const bundle = {
+    exported_at: new Date().toISOString(),
+    app: {
+      id: app.id, name: app.name, description: app.description, status: app.status,
+      steps: JSON.parse(app.steps || '[]'),
+      created_at: app.created_at, updated_at: app.updated_at,
+    },
+    completions: completions.map(c => ({
+      ...c,
+      takt_exceeded_steps: JSON.parse(c.takt_exceeded_steps || '[]'),
+      data: JSON.parse(c.data || '{}'),
+      step_times: JSON.parse(c.step_times || '{}'),
+    })),
+  };
+  const safeName = app.name.replace(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'app';
+  res.setHeader('Content-Disposition', `attachment; filename="${safeName}-bundle-${new Date().toISOString().slice(0,10)}.json"`);
+  res.setHeader('Content-Type', 'application/json');
+  res.json(bundle);
 });
 
 // ─── GET /all — full JSON bundle ──────────────────────────────────────────────

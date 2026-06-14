@@ -51,7 +51,7 @@
     @apply w-full px-3 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-white transition-shadow;
   }
   .stat-card {
-    @apply bg-white rounded-2xl border border-gray-100 p-5 shadow-sm;
+    @apply bg-white rounded-2xl border border-gray-100 p-4 sm:p-5 shadow-sm;
   }
   .badge {
     @apply inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1 rounded-full;
@@ -104,6 +104,16 @@
 }
 .ncr-critical-pulse {
   animation: ncr-critical-flash 1.2s ease-in-out infinite;
+}
+
+/* Highlight a row/card the user just navigated to from a link elsewhere in the app */
+@keyframes nav-highlight-flash {
+  0%   { background-color: rgba(59, 130, 246, 0.18); box-shadow: inset 0 0 0 2px rgba(59, 130, 246, 0.5); }
+  70%  { background-color: rgba(59, 130, 246, 0.18); box-shadow: inset 0 0 0 2px rgba(59, 130, 246, 0.5); }
+  100% { background-color: transparent; box-shadow: inset 0 0 0 2px rgba(59, 130, 246, 0); }
+}
+.nav-highlight {
+  animation: nav-highlight-flash 2.2s ease-out;
 }
 
 ::-webkit-scrollbar { width: 5px; height: 5px; }

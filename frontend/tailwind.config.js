@@ -12,7 +12,13 @@ export default {
           700: '#004499',
           900: '#001f5c',
         }
-      }
+      },
+      keyframes: {
+        fadeIn: {
+          '0%': { opacity: '0', transform: 'translateY(8px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
+      },
     }
   },
   plugins: []

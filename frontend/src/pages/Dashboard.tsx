@@ -1,49 +1,21 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import {
   TrendingUp, TrendingDown, Activity, CheckCircle, Cpu,
-  ShieldCheck, ShoppingCart, RefreshCw, CalendarCheck,
+  RefreshCw, CalendarCheck,
   ExternalLink, Plus, BarChart2, Monitor, Layers,
-  AlertTriangle, Package, CheckCircle2, ChevronRight, Wrench, Lock
+  AlertTriangle, CheckCircle2, ChevronRight, Lock, SlidersHorizontal, RotateCcw
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, ReferenceLine
 } from 'recharts';
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-interface AttentionItem {
-  type: 'wo_overdue' | 'wo_behind' | 'station_down' | 'ncr_critical' | 'stock_low' | 'po_late';
-  severity: 'red' | 'amber';
-  label: string;
-  detail: string;
-  link: string;
-}
-
-interface DailyBrief {
-  attention: AttentionItem[];
-  kpis: {
-    completed_today: number;
-    vs_7day_avg_pct: number | null;
-    active_now: number;
-    pass_rate_7d: number | null;
-    schedule_adherence: number | null;
-    work_orders_on_track: number;
-    work_orders_total: number;
-  };
-  due_soon: Array<{
-    id: string; work_order_number: string; part_name: string;
-    department_name: string | null; quantity: number; quantity_completed: number;
-    completion_pct: number; scheduled_end: string; priority: string;
-    schedule_status: string;
-  }>;
-  throughput_7d: Array<{ date: string; count: number }>;
-  week_avg_per_day: number;
-  is_pro: boolean;
-}
+import type { DailyBrief } from '../types';
+import { ATTENTION_ICONS, ATTENTION_TYPE_LABELS } from '../config/attention';
+import { useDashboardPrefs, DASHBOARD_SECTIONS, DashboardSectionId } from '../hooks/useDashboardPrefs';
+import Toggle from '../components/shared/Toggle';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -59,24 +31,6 @@ function formatDate(): string {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
   });
 }
-
-const ATTENTION_ICONS: Record<AttentionItem['type'], React.ReactNode> = {
-  wo_overdue:   <CalendarCheck size={15} />,
-  wo_behind:    <CalendarCheck size={15} />,
-  station_down: <Wrench size={15} />,
-  ncr_critical: <ShieldCheck size={15} />,
-  stock_low:    <Package size={15} />,
-  po_late:      <ShoppingCart size={15} />,
-};
-
-const ATTENTION_TYPE_LABELS: Record<AttentionItem['type'], string> = {
-  wo_overdue:   'Work order overdue',
-  wo_behind:    'Work order behind',
-  station_down: 'Station down',
-  ncr_critical: 'Critical NCR',
-  stock_low:    'Low stock',
-  po_late:      'Late delivery',
-};
 
 const SCHEDULE_PILL: Record<string, string> = {
   on_track:    'bg-green-100 text-green-700',
@@ -156,6 +110,46 @@ function QuickAction({ icon, label, to, newTab, color = 'text-gray-600' }: {
   );
 }
 
+// ─── Customize panel ──────────────────────────────────────────────────────────
+
+function CustomizePanel({
+  isHidden, toggleSection, resetSections, onClose,
+}: {
+  isHidden: (id: DashboardSectionId) => boolean;
+  toggleSection: (id: DashboardSectionId) => void;
+  resetSections: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-xl shadow-xl border border-gray-100 z-50 overflow-hidden">
+      <div className="px-3.5 py-2.5 border-b border-gray-100 flex items-center justify-between">
+        <div>
+          <div className="text-sm font-semibold text-gray-800">Customize this page</div>
+          <div className="text-[11px] text-gray-400">Hide what you don't need</div>
+        </div>
+        <button onClick={onClose} className="text-gray-300 hover:text-gray-500 text-xs">Done</button>
+      </div>
+      <div className="py-1.5 max-h-80 overflow-y-auto">
+        {DASHBOARD_SECTIONS.map(s => (
+          <div key={s.id} className="flex items-center justify-between gap-3 px-3.5 py-2 hover:bg-gray-50">
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-gray-800">{s.label}</div>
+              <div className="text-[11px] text-gray-400 truncate">{s.description}</div>
+            </div>
+            <Toggle checked={!isHidden(s.id)} onChange={() => toggleSection(s.id)} />
+          </div>
+        ))}
+      </div>
+      <button
+        onClick={resetSections}
+        className="w-full flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-medium text-gray-500 hover:text-gray-800 hover:bg-gray-50 border-t border-gray-100 transition-colors"
+      >
+        <RotateCcw size={12} /> Show everything
+      </button>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -164,6 +158,9 @@ export default function Dashboard() {
   const [companyName, setCompanyName] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const { isHidden, toggleSection, resetSections } = useDashboardPrefs();
+  const [showCustomize, setShowCustomize] = useState(false);
+  const customizeRef = useRef<HTMLDivElement>(null);
 
   const loadData = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -183,6 +180,15 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [loadData]);
 
+  useEffect(() => {
+    if (!showCustomize) return;
+    const onClick = (e: MouseEvent) => {
+      if (customizeRef.current && !customizeRef.current.contains(e.target as Node)) setShowCustomize(false);
+    };
+    document.addEventListener('mousedown', onClick);
+    return () => document.removeEventListener('mousedown', onClick);
+  }, [showCustomize]);
+
   const kpis = brief?.kpis;
   const attention = brief?.attention ?? [];
 
@@ -198,16 +204,39 @@ export default function Dashboard() {
             {formatDate()}{companyName ? ` · ${companyName}` : ''}
           </p>
         </div>
-        <button
-          onClick={() => loadData(true)}
-          className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 shadow-sm"
-        >
-          <RefreshCw size={14} className={refreshing ? 'animate-spin text-blue-500' : ''} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => loadData(true)}
+            className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 shadow-sm"
+          >
+            <RefreshCw size={14} className={refreshing ? 'animate-spin text-blue-500' : ''} />
+            Refresh
+          </button>
+          <div className="relative" ref={customizeRef}>
+            <button
+              onClick={() => setShowCustomize(o => !o)}
+              title="Customize this page"
+              className={`flex items-center gap-2 px-3 py-2 border rounded-lg text-sm shadow-sm transition-colors ${
+                showCustomize ? 'bg-gray-100 border-gray-300 text-gray-800' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <SlidersHorizontal size={14} />
+              Customize
+            </button>
+            {showCustomize && (
+              <CustomizePanel
+                isHidden={isHidden}
+                toggleSection={toggleSection}
+                resetSections={resetSections}
+                onClose={() => setShowCustomize(false)}
+              />
+            )}
+          </div>
+        </div>
       </div>
 
       {/* Needs attention */}
+      {!isHidden('attention') && (
       <div className="card p-5">
         <div className="flex items-center gap-2 mb-4">
           <AlertTriangle size={16} className={attention.length > 0 ? 'text-red-500' : 'text-gray-300'} />
@@ -258,8 +287,10 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+      )}
 
       {/* KPI row */}
+      {!isHidden('kpis') && (
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {loading ? (
           [1, 2, 3, 4].map(i => <SkeletonBox key={i} className="h-24 w-full" />)
@@ -294,9 +325,12 @@ export default function Dashboard() {
           </>
         )}
       </div>
+      )}
 
       {/* Due soon + throughput */}
+      {(!isHidden('due_soon') || !isHidden('output')) && (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {!isHidden('due_soon') && (
         <div className="card p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-gray-900">Due in the Next 48 Hours</h2>
@@ -346,7 +380,9 @@ export default function Dashboard() {
             </div>
           )}
         </div>
+        )}
 
+        {!isHidden('output') && (
         <div className="card p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-gray-900">Output — Last 7 Days</h2>
@@ -387,9 +423,12 @@ export default function Dashboard() {
             </ResponsiveContainer>
           )}
         </div>
+        )}
       </div>
+      )}
 
       {/* Quick Actions */}
+      {!isHidden('quick_actions') && (
       <div>
         <h2 className="font-semibold text-gray-700 text-sm mb-3">Quick Actions</h2>
         <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
@@ -405,6 +444,7 @@ export default function Dashboard() {
           <QuickAction icon={<Monitor size={18} />} label="Plant View" to="/plant" color="text-pink-600" />
         </div>
       </div>
+      )}
 
       {/* Free-tier upgrade banner */}
       {brief && !brief.is_pro && (

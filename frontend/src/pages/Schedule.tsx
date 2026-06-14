@@ -1,8 +1,11 @@
 import { useEffect, useState, useCallback, Fragment } from 'react';
 import { api } from '../api/client';
+import { useHighlight } from '../hooks/useHighlight';
+import ActivityLog from '../components/shared/ActivityLog';
+import SavedViewsBar from '../components/shared/SavedViewsBar';
 import {
   Plus, Search, Filter, List, BarChart2, Edit2, Trash2, CheckSquare,
-  X, ChevronDown, AlertTriangle, Calendar, Package, Building2, Clock
+  X, ChevronDown, AlertTriangle, Calendar, Package, Building2, Clock, History
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -50,6 +53,14 @@ interface WOFormData {
   scheduled_end: string;
   takt_time: number;
   notes: string;
+}
+
+interface ScheduleViewFilters {
+  statusFilter: string;
+  priorityFilter: string;
+  deptFilter: string;
+  search: string;
+  viewMode: ViewMode;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -145,6 +156,7 @@ function WOModal({
   onChange,
   onSave,
   onClose,
+  entityId,
 }: {
   title: string;
   form: WOFormData;
@@ -154,6 +166,7 @@ function WOModal({
   onChange: (field: keyof WOFormData, value: any) => void;
   onSave: () => void;
   onClose: () => void;
+  entityId?: string;
 }) {
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
@@ -320,6 +333,16 @@ function WOModal({
               onChange={e => onChange('notes', e.target.value)}
             />
           </div>
+
+          {entityId && (
+            <div className="pt-2 border-t border-gray-100">
+              <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                <History size={12} />
+                Activity
+              </div>
+              <ActivityLog entityType="work_order" entityId={entityId} />
+            </div>
+          )}
         </div>
 
         <div className="flex items-center justify-end gap-3 px-5 pb-5">
@@ -338,6 +361,7 @@ function WOModal({
 type ViewMode = 'list' | 'gantt';
 
 export default function Schedule() {
+  const { highlightId, isHighlighted, highlightRef } = useHighlight();
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [apps, setApps] = useState<App[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -348,6 +372,14 @@ export default function Schedule() {
   const [priorityFilter, setPriorityFilter] = useState('All');
   const [deptFilter, setDeptFilter] = useState('All');
   const [search, setSearch] = useState('');
+
+  const applySavedView = (f: ScheduleViewFilters) => {
+    setStatusFilter(f.statusFilter);
+    setPriorityFilter(f.priorityFilter);
+    setDeptFilter(f.deptFilter);
+    setSearch(f.search);
+    setViewMode(f.viewMode);
+  };
 
   const [showCreate, setShowCreate] = useState(false);
   const [editTarget, setEditTarget] = useState<WorkOrder | null>(null);
@@ -481,7 +513,7 @@ export default function Schedule() {
   return (
     <div className="min-h-screen bg-[#f8fafc] p-6 space-y-5">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <Calendar size={20} className="text-blue-600" />
@@ -489,7 +521,7 @@ export default function Schedule() {
           </div>
           <p className="text-gray-500 text-sm mt-0.5">Work order management and production scheduling</p>
         </div>
-        <button onClick={openCreate} className="btn-primary">
+        <button onClick={openCreate} className="btn-primary flex-shrink-0 whitespace-nowrap self-start sm:self-auto">
           <Plus size={16} />
           New Work Order
         </button>
@@ -530,6 +562,12 @@ export default function Schedule() {
           />
         </div>
 
+        <SavedViewsBar<ScheduleViewFilters>
+          storageKey="hm_saved_views_schedule"
+          currentFilters={{ statusFilter, priorityFilter, deptFilter, search, viewMode }}
+          onApply={applySavedView}
+        />
+
         {/* View toggle */}
         <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 ml-auto">
           <button
@@ -556,6 +594,8 @@ export default function Schedule() {
           onEdit={openEdit}
           onDelete={setDeleteTarget}
           onComplete={handleMarkComplete}
+          isHighlighted={isHighlighted}
+          highlightRef={highlightRef}
         />
       ) : (
         <GanttView
@@ -590,6 +630,7 @@ export default function Schedule() {
           onChange={handleChange}
           onSave={handleSaveEdit}
           onClose={() => setEditTarget(null)}
+          entityId={editTarget.id}
         />
       )}
 
@@ -626,11 +667,15 @@ function ListView({
   onEdit,
   onDelete,
   onComplete,
+  isHighlighted,
+  highlightRef,
 }: {
   workOrders: WorkOrder[];
   onEdit: (wo: WorkOrder) => void;
   onDelete: (wo: WorkOrder) => void;
   onComplete: (wo: WorkOrder) => void;
+  isHighlighted: (id: string) => boolean;
+  highlightRef: (id: string) => (el: HTMLElement | null) => void;
 }) {
   if (workOrders.length === 0) {
     return (
@@ -644,7 +689,7 @@ function ListView({
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm whitespace-nowrap">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
               {['WO #', 'Part', 'Department', 'Quantity', 'Priority', 'Scheduled', 'Status', 'Actions'].map(h => (
@@ -656,7 +701,11 @@ function ListView({
             {workOrders.map(wo => {
               const pct = wo.quantity_total > 0 ? Math.round((wo.quantity_completed / wo.quantity_total) * 100) : 0;
               return (
-                <tr key={wo.id} className="hover:bg-gray-50 transition-colors">
+                <tr
+                  key={wo.id}
+                  ref={highlightRef(wo.id)}
+                  className={`hover:bg-gray-50 transition-colors ${isHighlighted(wo.id) ? 'nav-highlight' : ''}`}
+                >
                   <td className="px-4 py-3">
                     <span className="font-mono text-xs font-semibold text-blue-700">{wo.work_order_number}</span>
                   </td>

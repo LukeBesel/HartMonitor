@@ -5,24 +5,37 @@ const { calcOEE } = require('./oee');
 
 const router = express.Router();
 
+// ─── Filter helper ────────────────────────────────────────────────────────────
+// Builds an optional `AND app_id = ? AND product_type_id = ?` clause from the
+// query string so completion-based analytics can be scoped to a specific app
+// and/or product (part) type. Returns the SQL fragment plus ordered params.
+function completionFilter(req) {
+  const clauses = [];
+  const params = [];
+  if (req.query.app_id) { clauses.push('app_id = ?'); params.push(req.query.app_id); }
+  if (req.query.product_type_id) { clauses.push('product_type_id = ?'); params.push(req.query.product_type_id); }
+  return { clause: clauses.length ? ' AND ' + clauses.join(' AND ') : '', params };
+}
+
 // ─── GET /overview ────────────────────────────────────────────────────────────
 
 router.get('/overview', (req, res) => {
   const cid = req.companyId;
-  const totalCompletions  = db.prepare("SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed'").get(cid).c;
-  const todayCompletions  = db.prepare("SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed' AND date(completed_at)=date('now')").get(cid).c;
-  const inProgress        = db.prepare("SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='in_progress'").get(cid).c;
+  const f = completionFilter(req);
+  const totalCompletions  = db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed'${f.clause}`).get(cid, ...f.params).c;
+  const todayCompletions  = db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed' AND date(completed_at)=date('now')${f.clause}`).get(cid, ...f.params).c;
+  const inProgress        = db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='in_progress'${f.clause}`).get(cid, ...f.params).c;
   const totalApps         = db.prepare("SELECT COUNT(*) as c FROM apps WHERE company_id = ?").get(cid).c;
   const publishedApps     = db.prepare("SELECT COUNT(*) as c FROM apps WHERE company_id = ? AND status='published'").get(cid).c;
   const activeStations    = db.prepare("SELECT COUNT(*) as c FROM stations WHERE company_id = ? AND status='active'").get(cid).c;
 
   const cycleTimeResult = db.prepare(`
     SELECT AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60) as avg_minutes
-    FROM completions WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL
-  `).get(cid);
+    FROM completions WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL${f.clause}
+  `).get(cid, ...f.params);
   const avgCycleTime = cycleTimeResult?.avg_minutes ? Math.round(cycleTimeResult.avg_minutes) : 0;
 
-  const passFailData = db.prepare(`SELECT data FROM completions WHERE company_id = ? AND status='completed' LIMIT 500`).all(cid);
+  const passFailData = db.prepare(`SELECT data FROM completions WHERE company_id = ? AND status='completed'${f.clause} LIMIT 500`).all(cid, ...f.params);
   let passCount = 0, failCount = 0;
   for (const row of passFailData) {
     const data = JSON.parse(row.data);
@@ -40,13 +53,14 @@ router.get('/overview', (req, res) => {
 
 router.get('/throughput', (req, res) => {
   const { days = 30 } = req.query;
+  const f = completionFilter(req);
   const rows = db.prepare(`
     SELECT date(completed_at) as date, COUNT(*) as count
     FROM completions
-    WHERE company_id = ? AND status='completed' AND completed_at >= date('now', '-' || ? || ' days')
+    WHERE company_id = ? AND status='completed' AND completed_at >= date('now', '-' || ? || ' days')${f.clause}
     GROUP BY date(completed_at)
     ORDER BY date ASC
-  `).all(req.companyId, parseInt(days));
+  `).all(req.companyId, parseInt(days), ...f.params);
   res.json(rows);
 });
 
@@ -54,6 +68,7 @@ router.get('/throughput', (req, res) => {
 
 router.get('/cycle-times', (req, res) => {
   const { days = 30 } = req.query;
+  const f = completionFilter(req);
   const rows = db.prepare(`
     SELECT
       date(completed_at) as date,
@@ -62,33 +77,35 @@ router.get('/cycle-times', (req, res) => {
       ROUND(MAX((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as max_minutes
     FROM completions
     WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL
-      AND completed_at >= date('now', '-' || ? || ' days')
+      AND completed_at >= date('now', '-' || ? || ' days')${f.clause}
     GROUP BY date(completed_at)
     ORDER BY date ASC
-  `).all(req.companyId, parseInt(days));
+  `).all(req.companyId, parseInt(days), ...f.params);
   res.json(rows);
 });
 
 // ─── GET /operator-performance ────────────────────────────────────────────────
 
 router.get('/operator-performance', (req, res) => {
+  const f = completionFilter(req);
   const rows = db.prepare(`
     SELECT
       operator_name,
       COUNT(*) as completions,
       ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_cycle_minutes
     FROM completions
-    WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL
+    WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL${f.clause}
     GROUP BY operator_name
     ORDER BY completions DESC
     LIMIT 20
-  `).all(req.companyId);
+  `).all(req.companyId, ...f.params);
   res.json(rows);
 });
 
 // ─── GET /app-performance ─────────────────────────────────────────────────────
 
 router.get('/app-performance', (req, res) => {
+  const f = completionFilter(req);
   const rows = db.prepare(`
     SELECT
       app_id,
@@ -97,10 +114,10 @@ router.get('/app-performance', (req, res) => {
       ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_cycle_minutes,
       COUNT(CASE WHEN status='abandoned' THEN 1 END) as abandoned_count
     FROM completions
-    WHERE company_id = ?
+    WHERE company_id = ?${f.clause}
     GROUP BY app_id, app_name
     ORDER BY completions DESC
-  `).all(req.companyId);
+  `).all(req.companyId, ...f.params);
   res.json(rows);
 });
 
@@ -108,12 +125,13 @@ router.get('/app-performance', (req, res) => {
 
 router.get('/quality', (req, res) => {
   const { days = 30 } = req.query;
+  const f = completionFilter(req);
   const rows = db.prepare(`
     SELECT date(completed_at) as date, data
     FROM completions
-    WHERE company_id = ? AND status='completed' AND completed_at >= date('now', '-' || ? || ' days')
+    WHERE company_id = ? AND status='completed' AND completed_at >= date('now', '-' || ? || ' days')${f.clause}
     ORDER BY completed_at ASC
-  `).all(req.companyId, parseInt(days));
+  `).all(req.companyId, parseInt(days), ...f.params);
 
   const byDate = {};
   for (const row of rows) {
@@ -669,7 +687,7 @@ router.get('/daily-brief', (req, res) => {
         severity: ss === 'overdue' ? 'red' : 'amber',
         label: `${wo.work_order_number} · ${wo.part_name}`,
         detail: `${wo.quantity_completed}/${wo.quantity} done${wo.department_name ? ` · ${wo.department_name}` : ''} · due ${new Date(wo.scheduled_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
-        link: '/schedule',
+        link: `/schedule?highlight=${wo.id}`,
       });
     }
   }
@@ -735,7 +753,7 @@ router.get('/daily-brief', (req, res) => {
         severity: 'amber',
         label: `${po.po_number}${po.vendor_name ? ` · ${po.vendor_name}` : ''}`,
         detail: `expected ${new Date(po.expected_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}, not received`,
-        link: '/purchasing',
+        link: `/purchasing?highlight=${po.id}`,
       });
     }
   }

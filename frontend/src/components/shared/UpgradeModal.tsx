@@ -131,7 +131,7 @@ export default function UpgradeModal({ onClose, feature = 'app', reason, onPurch
                   onClick={upgradePro}
                   disabled={!!busy}
                   className="w-full py-2.5 rounded-xl text-white font-semibold text-sm flex items-center justify-center gap-2 transition-all disabled:opacity-60"
-                  style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-dark))' }}
+                  style={{ background: 'linear-gradient(135deg, var(--accent), var(--secondary))' }}
                 >
                   {busy === 'pro' ? 'Upgrading…' : <>Upgrade to Pro <ArrowRight size={14} /></>}
                 </button>

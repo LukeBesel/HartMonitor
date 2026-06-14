@@ -1,8 +1,25 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { logActivity } = require('../activity');
 
 const router = express.Router();
+
+const STATUS_LABELS = {
+  pending: 'Pending', in_progress: 'In Progress', completed: 'Completed',
+  overdue: 'Overdue', cancelled: 'Cancelled',
+};
+const PRIORITY_LABELS = { low: 'Low', medium: 'Medium', high: 'High', critical: 'Critical' };
+
+function departmentName(id) {
+  if (!id) return 'None';
+  return db.prepare('SELECT name FROM departments WHERE id = ?').get(id)?.name || 'Unknown';
+}
+
+function fmtDate(iso) {
+  if (!iso) return 'Not set';
+  return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
 
 // ─── Schedule status helper ───────────────────────────────────────────────────
 
@@ -111,6 +128,7 @@ router.post('/', (req, res) => {
   );
 
   const wo = db.prepare(ENRICHED_SELECT + ' WHERE wo.id = ?').get(id);
+  logActivity(req.companyId, 'work_order', id, 'Work order created', req.user?.display_name);
   res.status(201).json(enrichWorkOrder(wo));
 });
 
@@ -158,6 +176,27 @@ router.put('/:id', (req, res) => {
     updates.work_order_number, req.params.id
   );
 
+  // ─── Activity log: describe what changed ──────────────────────────────────
+  const changes = [];
+  if (updates.status !== wo.status) {
+    changes.push(`Status changed from ${STATUS_LABELS[wo.status] || wo.status} to ${STATUS_LABELS[updates.status] || updates.status}`);
+  }
+  if (updates.priority !== wo.priority) {
+    changes.push(`Priority changed from ${PRIORITY_LABELS[wo.priority] || wo.priority} to ${PRIORITY_LABELS[updates.priority] || updates.priority}`);
+  }
+  if (updates.department_id !== wo.department_id) {
+    changes.push(`Department changed from ${departmentName(wo.department_id)} to ${departmentName(updates.department_id)}`);
+  }
+  if (updates.scheduled_start !== wo.scheduled_start || updates.scheduled_end !== wo.scheduled_end) {
+    changes.push(`Schedule changed to ${fmtDate(updates.scheduled_start)} – ${fmtDate(updates.scheduled_end)}`);
+  }
+  if (updates.quantity !== wo.quantity) {
+    changes.push(`Quantity changed from ${wo.quantity} to ${updates.quantity}`);
+  }
+  for (const change of changes) {
+    logActivity(req.companyId, 'work_order', req.params.id, change, req.user?.display_name);
+  }
+
   const updated = db.prepare(ENRICHED_SELECT + ' WHERE wo.id = ?').get(req.params.id);
   res.json(enrichWorkOrder(updated));
 });
@@ -173,6 +212,10 @@ router.put('/:id/complete', (req, res) => {
     SET status='completed', quantity_completed=quantity, updated_at=datetime('now')
     WHERE id=?
   `).run(req.params.id);
+
+  if (wo.status !== 'completed') {
+    logActivity(req.companyId, 'work_order', req.params.id, 'Marked as completed', req.user?.display_name);
+  }
 
   const updated = db.prepare(ENRICHED_SELECT + ' WHERE wo.id = ?').get(req.params.id);
   res.json(enrichWorkOrder(updated));
@@ -194,6 +237,10 @@ router.post('/:id/increment', (req, res) => {
     SET quantity_completed=?, status=?, updated_at=datetime('now')
     WHERE id=?
   `).run(newQty, newStatus, req.params.id);
+
+  if (newStatus !== wo.status) {
+    logActivity(req.companyId, 'work_order', req.params.id, `Status changed from ${STATUS_LABELS[wo.status] || wo.status} to ${STATUS_LABELS[newStatus] || newStatus}`, req.user?.display_name);
+  }
 
   const updated = db.prepare(ENRICHED_SELECT + ' WHERE wo.id = ?').get(req.params.id);
   res.json(enrichWorkOrder(updated));

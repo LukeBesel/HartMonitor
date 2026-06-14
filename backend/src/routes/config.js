@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { requireRole } = require('../middleware/auth');
+const { getStripe, isConfigured, billingMode, currency } = require('../stripe');
 
 const router = express.Router();
 
@@ -14,9 +15,9 @@ const PRICING = {
     free: {
       name: 'Free',
       monthly_price: 0,
-      app_limit: 3,
+      app_limit: 5,
       dashboard_limit: 2,
-      features: ['App Builder (3 apps)', '2 Dashboards', 'Work Orders & Scheduling', 'OEE Tracking', 'Basic Analytics', 'Operator Portal', 'CSV Export'],
+      features: ['App Builder (5 apps)', '2 Dashboards', 'Work Orders & Scheduling', 'OEE Tracking', 'Basic Analytics', 'Operator Portal', 'CSV Export'],
     },
     pro: {
       name: 'Pro',
@@ -42,7 +43,7 @@ const PRICING = {
 function getPlanRow(companyId) {
   let plan = db.prepare('SELECT * FROM plan WHERE company_id = ?').get(companyId);
   if (!plan) {
-    db.prepare(`INSERT INTO plan (tier, app_limit, dashboard_limit, company_id) VALUES ('free', 3, 2, ?)`).run(companyId);
+    db.prepare(`INSERT INTO plan (tier, app_limit, dashboard_limit, company_id) VALUES ('free', 5, 2, ?)`).run(companyId);
     plan = db.prepare('SELECT * FROM plan WHERE company_id = ?').get(companyId);
   }
   return plan;
@@ -65,6 +66,32 @@ function monthlyTotal(plan) {
     total += (plan.extra_dashboard_slots || 0) * PRICING.addons.dashboard_slot.monthly_price;
   }
   return total;
+}
+
+// ─── Reusable plan mutators (shared by demo routes + Stripe webhook) ──────────
+
+function setTier(companyId, tier) {
+  const def = PRICING.tiers[tier];
+  if (!def) return;
+  db.prepare(`UPDATE plan SET tier=?, app_limit=?, dashboard_limit=?, updated_at=datetime('now') WHERE company_id=?`)
+    .run(tier, def.app_limit, def.dashboard_limit, companyId);
+}
+
+function addAddonSlots(companyId, type, qty) {
+  const col = type === 'app_slot' ? 'extra_app_slots' : 'extra_dashboard_slots';
+  db.prepare(`UPDATE plan SET ${col} = ${col} + ?, updated_at = datetime('now') WHERE company_id = ?`).run(qty, companyId);
+}
+
+function recordBilling(companyId, { type, description, quantity = 1, unit_price = 0, amount = 0 }) {
+  db.prepare(`INSERT INTO billing_history (id, type, description, quantity, unit_price, amount, company_id) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(uuidv4(), type, description, quantity, unit_price, amount, companyId);
+}
+
+// Base URL for Checkout redirects — prefers APP_URL, then the forwarded host.
+function appUrl(req) {
+  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, '');
+  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+  return `${proto}://${req.get('host')}`;
 }
 
 function planResponse(companyId) {
@@ -196,7 +223,120 @@ router.delete('/plan/addon', requireRole('manager'), (req, res) => {
   res.json(planResponse(req.companyId));
 });
 
+// ─── GET /plan/billing-config — does this deployment take real money? ─────────
+
+router.get('/plan/billing-config', (req, res) => {
+  res.json({ configured: isConfigured(), mode: billingMode() });
+});
+
+// ─── POST /plan/checkout — start a real Stripe Checkout session (manager+) ────
+// Returns { url } to redirect the browser to Stripe's hosted, PCI-compliant
+// payment page. Works for a tier upgrade or an à-la-carte add-on, both billed
+// as monthly subscriptions. Falls back with a clear error if Stripe is off.
+
+router.post('/plan/checkout', requireRole('manager'), async (req, res) => {
+  const stripe = getStripe();
+  if (!stripe) {
+    return res.status(400).json({ error: 'not_configured', message: 'Live payments are not enabled on this deployment.' });
+  }
+
+  try {
+    const { tier, addon, quantity = 1 } = req.body;
+    const metadata = { company_id: req.companyId };
+    let line;
+
+    if (tier) {
+      const t = PRICING.tiers[tier];
+      if (!t || !t.monthly_price) return res.status(400).json({ error: 'A purchasable tier is required' });
+      line = {
+        price_data: {
+          currency: currency(),
+          product_data: { name: `HartMonitor ${t.name} Plan` },
+          unit_amount: Math.round(t.monthly_price * 100),
+          recurring: { interval: 'month' },
+        },
+        quantity: 1,
+      };
+      metadata.kind = 'tier';
+      metadata.tier = tier;
+    } else if (addon) {
+      const a = PRICING.addons[addon];
+      if (!a) return res.status(400).json({ error: 'Unknown add-on' });
+      const qty = Math.max(1, Math.min(50, Math.floor(Number(quantity)) || 1));
+      line = {
+        price_data: {
+          currency: currency(),
+          product_data: { name: a.name },
+          unit_amount: Math.round(a.monthly_price * 100),
+          recurring: { interval: 'month' },
+        },
+        quantity: qty,
+      };
+      metadata.kind = 'addon';
+      metadata.addon = addon;
+      metadata.quantity = String(qty);
+    } else {
+      return res.status(400).json({ error: 'tier or addon is required' });
+    }
+
+    // Reuse or create a Stripe customer for this company.
+    const plan = getPlanRow(req.companyId);
+    let customerId = plan.stripe_customer_id;
+    if (!customerId) {
+      const org = db.prepare('SELECT * FROM organizations WHERE id = ?').get(req.companyId);
+      const customer = await stripe.customers.create({
+        name: org?.name || undefined,
+        email: plan.billing_email || undefined,
+        metadata: { company_id: req.companyId },
+      });
+      customerId = customer.id;
+      db.prepare('UPDATE plan SET stripe_customer_id = ? WHERE company_id = ?').run(customerId, req.companyId);
+    }
+
+    const base = appUrl(req);
+    const session = await stripe.checkout.sessions.create({
+      mode: 'subscription',
+      customer: customerId,
+      line_items: [line],
+      allow_promotion_codes: true,
+      success_url: `${base}/settings?tab=plan&checkout=success`,
+      cancel_url: `${base}/settings?tab=plan&checkout=cancel`,
+      metadata,
+      subscription_data: { metadata },
+    });
+
+    res.json({ url: session.url });
+  } catch (e) {
+    console.error('[stripe] checkout error:', e.message);
+    res.status(502).json({ error: 'checkout_failed', message: e.message });
+  }
+});
+
+// ─── POST /plan/portal — open Stripe billing portal to manage/cancel ──────────
+
+router.post('/plan/portal', requireRole('manager'), async (req, res) => {
+  const stripe = getStripe();
+  if (!stripe) return res.status(400).json({ error: 'not_configured' });
+  try {
+    const plan = getPlanRow(req.companyId);
+    if (!plan.stripe_customer_id) {
+      return res.status(400).json({ error: 'no_customer', message: 'No billing account yet — make a purchase first.' });
+    }
+    const session = await stripe.billingPortal.sessions.create({
+      customer: plan.stripe_customer_id,
+      return_url: `${appUrl(req)}/settings?tab=plan`,
+    });
+    res.json({ url: session.url });
+  } catch (e) {
+    console.error('[stripe] portal error:', e.message);
+    res.status(502).json({ error: 'portal_failed', message: e.message });
+  }
+});
+
 module.exports = router;
 module.exports.PRICING = PRICING;
 module.exports.effectiveLimits = effectiveLimits;
 module.exports.getPlanRow = getPlanRow;
+module.exports.setTier = setTier;
+module.exports.addAddonSlots = addAddonSlots;
+module.exports.recordBilling = recordBilling;

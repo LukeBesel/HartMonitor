@@ -24,16 +24,24 @@ import {
   Key,
   AppWindow,
   LayoutGrid,
+  PanelLeft,
+  RotateCcw,
+  ChevronDown,
+  ChevronRight,
 } from 'lucide-react';
-import { useTheme, THEME_PRESETS, Theme } from '../context/ThemeContext';
+import { useTheme, THEME_PRESETS, Theme, buildCustomTheme, applySecondary } from '../context/ThemeContext';
 import { usePlan } from '../context/PlanContext';
 import { useAuth } from '../context/AuthContext';
+import { useBranding } from '../context/BrandingContext';
+import { useNavPrefs } from '../context/NavPrefsContext';
+import { SECTIONS } from '../config/navigation';
 import { api } from '../api/client';
+import Toggle from '../components/shared/Toggle';
 import type { PlanTier, AddonPricing } from '../types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type TabId = 'company' | 'plan' | 'theme' | 'export' | 'users' | 'account';
+type TabId = 'company' | 'plan' | 'theme' | 'sidebar' | 'export' | 'users' | 'account';
 
 interface CompanyForm {
   company_name: string;
@@ -100,7 +108,7 @@ const PRESET_LABELS: Record<string, string> = {
 };
 
 const FREE_FEATURES = [
-  'Up to 3 production apps',
+  'Up to 5 production apps',
   'Up to 2 dashboards',
   'Basic analytics',
   'CSV export',
@@ -128,29 +136,6 @@ const ENTERPRISE_FEATURES = [
 ];
 
 // ─── Helper components ────────────────────────────────────────────────────────
-
-function Toggle({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button
-      type="button"
-      onClick={() => onChange(!checked)}
-      className="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2"
-      style={{
-        backgroundColor: checked ? 'var(--accent)' : '#e5e7eb',
-        // @ts-ignore
-        '--tw-ring-color': 'var(--accent)',
-      }}
-      aria-checked={checked}
-      role="switch"
-    >
-      <span
-        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-          checked ? 'translate-x-6' : 'translate-x-1'
-        }`}
-      />
-    </button>
-  );
-}
 
 function ProgressBar({ value, max, accent }: { value: number; max: number; accent: string }) {
   const pct = max < 0 ? 100 : Math.min(100, Math.round((value / max) * 100));
@@ -203,6 +188,7 @@ function CompanyTab() {
   const [saving, setSaving] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { refresh: refreshBranding } = useBranding();
 
   const isDirty = JSON.stringify(form) !== JSON.stringify(saved);
 
@@ -228,6 +214,7 @@ function CompanyTab() {
     try {
       await api.updateCompanySettings(form);
       setSaved({ ...form });
+      refreshBranding();
       showToast('Settings saved successfully');
     } catch {
       showToast('Failed to save settings', 'error');
@@ -280,6 +267,9 @@ function CompanyTab() {
               value={form.logo_url}
               onChange={set('logo_url')}
             />
+            <p className="text-xs text-gray-400 mt-1">
+              Shown in the top-left of the sidebar in place of the default mark. "Powered by HartMonitor" stays visible underneath.
+            </p>
             {form.logo_url && (
               <div className="mt-2 flex items-center gap-3">
                 <img
@@ -569,6 +559,8 @@ function PlanTab() {
   const [checkout, setCheckout] = useState<CheckoutItem | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [billingMode, setBillingMode] = useState<'demo' | 'test' | 'live'>('demo');
+  const [redirecting, setRedirecting] = useState(false);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -576,7 +568,61 @@ function PlanTab() {
     toastTimer.current = setTimeout(() => setToast(null), 4000);
   };
 
+  // Detect whether real Stripe payments are enabled on this deployment.
+  useEffect(() => {
+    api.getBillingConfig().then(c => setBillingMode(c.mode)).catch(() => setBillingMode('demo'));
+  }, []);
+
+  // Handle return from Stripe Checkout (?checkout=success|cancel).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const result = params.get('checkout');
+    if (!result) return;
+    if (result === 'success') { showToast('Payment successful — your plan is now active.'); refresh(); }
+    else if (result === 'cancel') showToast('Checkout canceled — no charge was made.', 'error');
+    params.delete('checkout');
+    const qs = params.toString();
+    window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const isLive = billingMode !== 'demo';
+
+  // Route a purchase either to real Stripe Checkout or the demo modal.
+  const startPurchase = async (item: CheckoutItem) => {
+    if (!isLive) { setCheckout(item); return; }
+    setRedirecting(true);
+    try {
+      const { url } = await api.createCheckout(
+        item.kind === 'tier'
+          ? { tier: item.tier }
+          : { addon: item.addonType, quantity: item.quantity }
+      );
+      window.location.href = url;
+    } catch (err: any) {
+      showToast(err.message || 'Could not start checkout', 'error');
+      setRedirecting(false);
+    }
+  };
+
+  const handleManageBilling = async () => {
+    setRedirecting(true);
+    try {
+      const { url } = await api.createBillingPortal();
+      window.location.href = url;
+    } catch (err: any) {
+      showToast(err.message || 'Could not open billing portal', 'error');
+      setRedirecting(false);
+    }
+  };
+
   const handleDowngrade = async () => {
+    // With live billing, cancel through Stripe so we never keep charging a
+    // customer whose DB plan says "free".
+    if (isLive && (plan as any)?.stripe_subscription_id) {
+      showToast('Manage or cancel your subscription in the billing portal.');
+      return handleManageBilling();
+    }
     if (!confirm('Downgrade to Free? You will lose unlimited capacity (existing data is kept).')) return;
     try {
       await api.updatePlan({ tier: 'free' });
@@ -588,6 +634,10 @@ function PlanTab() {
   };
 
   const handleRemoveAddon = async (type: 'app_slot' | 'dashboard_slot') => {
+    if (isLive && (plan as any)?.stripe_subscription_id) {
+      showToast('Adjust add-on subscriptions in the billing portal.');
+      return handleManageBilling();
+    }
     try {
       await api.removeAddon(type, 1);
       refresh();
@@ -608,6 +658,17 @@ function PlanTab() {
 
   return (
     <div className="space-y-8 max-w-3xl">
+      {billingMode === 'demo' && (
+        <div className="flex items-start gap-2.5 text-xs bg-blue-50 text-blue-800 rounded-xl px-3.5 py-2.5 border border-blue-100">
+          <AlertCircle size={15} className="flex-shrink-0 mt-0.5" />
+          <span>
+            <strong>Demo billing.</strong> Upgrades apply instantly without charge. To accept real
+            payments that pay out to your bank, set a Stripe secret key (and webhook secret) on the
+            server — checkout then switches to Stripe automatically.
+          </span>
+        </div>
+      )}
+
       {/* Current Plan Card */}
       <div className={`rounded-2xl p-6 text-white relative overflow-hidden ${
         isEnterprise ? 'bg-gradient-to-br from-purple-700 to-indigo-800'
@@ -622,9 +683,21 @@ function PlanTab() {
         <div className="relative">
           <div className="flex items-start justify-between mb-4">
             <div>
-              <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-white/20 inline-flex items-center gap-1">
-                {isPro && <span>✦</span>} {plan.tier.charAt(0).toUpperCase() + plan.tier.slice(1)} Plan
-              </span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-semibold px-2.5 py-0.5 rounded-full bg-white/20 inline-flex items-center gap-1">
+                  {isPro && <span>✦</span>} {plan.tier.charAt(0).toUpperCase() + plan.tier.slice(1)} Plan
+                </span>
+                {billingMode === 'live' && (
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-400/30 text-emerald-50 inline-flex items-center gap-1">
+                    <Check size={10} /> Live payments
+                  </span>
+                )}
+                {billingMode === 'test' && (
+                  <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-400/30 text-amber-50">
+                    Stripe test mode
+                  </span>
+                )}
+              </div>
               <h2 className="text-2xl font-bold mt-1.5">
                 ${plan.monthly_total ?? 0}<span className="text-base font-normal text-white/70">/month</span>
               </h2>
@@ -667,12 +740,20 @@ function PlanTab() {
             </div>
           </div>
 
-          {isPro && !isEnterprise && (
-            <button onClick={handleDowngrade}
-              className="mt-4 text-xs text-white/60 hover:text-white/90 underline underline-offset-2 transition-colors">
-              Downgrade to Free
-            </button>
-          )}
+          <div className="mt-4 flex items-center gap-4">
+            {isPro && !isEnterprise && (
+              <button onClick={handleDowngrade}
+                className="text-xs text-white/60 hover:text-white/90 underline underline-offset-2 transition-colors">
+                Downgrade to Free
+              </button>
+            )}
+            {isLive && (plan as any).stripe_subscription_id && (
+              <button onClick={handleManageBilling} disabled={redirecting}
+                className="text-xs font-medium text-white/90 hover:text-white inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/15 hover:bg-white/25 transition-colors disabled:opacity-60">
+                <CreditCard size={13} /> Manage Billing
+              </button>
+            )}
+          </div>
         </div>
       </div>
 
@@ -688,14 +769,14 @@ function PlanTab() {
               addonType="app_slot"
               addon={addons.app_slot}
               owned={plan.extra_app_slots ?? 0}
-              onPurchase={(qty) => setCheckout({ kind: 'addon', addonType: 'app_slot', name: addons.app_slot.name, quantity: qty, unitPrice: addons.app_slot.monthly_price })}
+              onPurchase={(qty) => startPurchase({ kind: 'addon', addonType: 'app_slot', name: addons.app_slot.name, quantity: qty, unitPrice: addons.app_slot.monthly_price })}
               onRemove={() => handleRemoveAddon('app_slot')}
             />
             <AddonCard
               addonType="dashboard_slot"
               addon={addons.dashboard_slot}
               owned={plan.extra_dashboard_slots ?? 0}
-              onPurchase={(qty) => setCheckout({ kind: 'addon', addonType: 'dashboard_slot', name: addons.dashboard_slot.name, quantity: qty, unitPrice: addons.dashboard_slot.monthly_price })}
+              onPurchase={(qty) => startPurchase({ kind: 'addon', addonType: 'dashboard_slot', name: addons.dashboard_slot.name, quantity: qty, unitPrice: addons.dashboard_slot.monthly_price })}
               onRemove={() => handleRemoveAddon('dashboard_slot')}
             />
           </div>
@@ -754,9 +835,10 @@ function PlanTab() {
                     <button onClick={handleDowngrade} className="btn-secondary w-full text-sm py-2">Downgrade</button>
                   ) : (
                     <button
-                      onClick={() => setCheckout({ kind: 'tier', tier: 'pro', name: 'Pro Plan', quantity: 1, unitPrice: t.monthly_price ?? 0 })}
-                      className="btn-primary w-full text-sm py-2">
-                      Upgrade to Pro
+                      onClick={() => startPurchase({ kind: 'tier', tier: 'pro', name: 'Pro Plan', quantity: 1, unitPrice: t.monthly_price ?? 0 })}
+                      disabled={redirecting}
+                      className="btn-primary w-full text-sm py-2 disabled:opacity-60">
+                      {redirecting ? 'Redirecting…' : 'Upgrade to Pro'}
                     </button>
                   )}
                 </div>
@@ -873,6 +955,55 @@ function ThemeTab() {
             );
           })}
         </div>
+
+        {/* Custom accent + secondary colors */}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {/* Primary / accent */}
+          <label
+            className={`relative flex items-center gap-2 px-3 py-2 rounded-xl border-2 cursor-pointer transition-all hover:shadow-sm ${
+              theme.name === 'custom' ? 'shadow-md' : 'border-gray-100 hover:border-gray-200'
+            }`}
+            style={theme.name === 'custom' ? { borderColor: theme.accent, backgroundColor: theme.accentLight } : {}}
+          >
+            <div
+              className="w-8 h-8 rounded-lg border border-gray-200 flex-shrink-0"
+              style={{ backgroundColor: theme.accent }}
+            />
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold text-gray-700">Primary colour</div>
+              <div className="text-[10px] text-gray-400 truncate">{theme.accent}</div>
+            </div>
+            <input
+              type="color"
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              value={theme.accent}
+              onChange={(e) => setTheme(buildCustomTheme(e.target.value, theme.secondary))}
+            />
+          </label>
+
+          {/* Secondary */}
+          <label
+            className="relative flex items-center gap-2 px-3 py-2 rounded-xl border-2 border-gray-100 hover:border-gray-200 cursor-pointer transition-all hover:shadow-sm"
+          >
+            <div
+              className="w-8 h-8 rounded-lg border border-gray-200 flex-shrink-0"
+              style={{ background: `linear-gradient(135deg, ${theme.accent}, ${theme.secondary})` }}
+            />
+            <div className="min-w-0">
+              <div className="text-[11px] font-semibold text-gray-700">Secondary colour</div>
+              <div className="text-[10px] text-gray-400 truncate">{theme.secondary}</div>
+            </div>
+            <input
+              type="color"
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+              value={theme.secondary}
+              onChange={(e) => setTheme(applySecondary(theme, e.target.value))}
+            />
+          </label>
+        </div>
+        <p className="text-xs text-gray-400 mt-2">
+          The secondary colour shapes branded gradients — logos, avatars, leaderboard cards, and upgrade banners.
+        </p>
       </div>
 
       {/* Additional settings */}
@@ -902,12 +1033,21 @@ function ThemeTab() {
 
       {/* Live Preview Strip */}
       <div>
-        <SectionHeader title="Live Preview" subtitle="How accent colour looks across UI elements" />
+        <SectionHeader title="Live Preview" subtitle="How your colours look across UI elements" />
         <div className="rounded-xl border border-gray-100 overflow-hidden">
-          <div className="px-4 py-2 bg-gray-50 text-xs font-medium text-gray-400 border-b border-gray-100">
-            {PRESET_LABELS[theme.name] ?? theme.name} — {theme.accent}
+          <div className="px-4 py-2 bg-gray-50 text-xs font-medium text-gray-400 border-b border-gray-100 flex items-center gap-2">
+            <span>{PRESET_LABELS[theme.name] ?? theme.name}</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: theme.accent }} />{theme.accent}</span>
+            <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: theme.secondary }} />{theme.secondary}</span>
           </div>
           <div className="p-4 flex flex-wrap items-center gap-3 bg-white">
+            {/* Branded gradient (uses both colours) */}
+            <div
+              className="w-10 h-10 rounded-xl shadow-sm flex-shrink-0"
+              style={{ background: `linear-gradient(135deg, ${theme.accent}, ${theme.secondary})` }}
+              title="Branded gradient (primary → secondary)"
+            />
+
             {/* Primary button */}
             <button
               className="px-4 py-2 rounded-lg text-white text-sm font-medium shadow-sm"
@@ -951,6 +1091,128 @@ function ThemeTab() {
             </span>
           </div>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Tab: Navigation / Workspaces ─────────────────────────────────────────────
+
+function SidebarTab() {
+  const {
+    isItemHidden, toggleItem,
+    isSectionHidden, toggleSection,
+    focus, setFocus, resetNavPrefs,
+  } = useNavPrefs();
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const enabledSections = SECTIONS.filter(s => !isSectionHidden(s.id));
+  // Keep the default-view selector honest if the focused section is now hidden.
+  const focusValid = focus === 'all' || enabledSections.some(s => s.id === focus);
+
+  return (
+    <div className="space-y-8 max-w-2xl">
+      {/* Workspaces */}
+      <div>
+        <SectionHeader
+          title="Workspaces"
+          subtitle="Pick the areas you actually use. Turn one off and it disappears from the sidebar entirely — keeping things simple."
+        />
+        <div className="grid sm:grid-cols-3 gap-3">
+          {SECTIONS.map(section => {
+            const on = !isSectionHidden(section.id);
+            const Icon = section.icon;
+            return (
+              <button
+                key={section.id}
+                onClick={() => toggleSection(section.id)}
+                className={`text-left rounded-xl border-2 p-3.5 transition-all ${
+                  on ? 'shadow-sm' : 'border-gray-100 opacity-70 hover:opacity-100'
+                }`}
+                style={on ? { borderColor: 'var(--accent)', backgroundColor: 'var(--accent-light)' } : {}}
+              >
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="w-8 h-8 rounded-lg flex items-center justify-center"
+                    style={{ backgroundColor: on ? 'var(--accent)' : '#f1f5f9', color: on ? '#fff' : '#94a3b8' }}>
+                    <Icon size={15} />
+                  </div>
+                  {on
+                    ? <span style={{ color: 'var(--accent)' }}><Check size={16} /></span>
+                    : <span className="text-[10px] font-semibold text-gray-400 uppercase">Off</span>}
+                </div>
+                <div className="text-sm font-semibold text-gray-800">{section.label}</div>
+                <div className="text-xs text-gray-500 mt-0.5 leading-snug">{section.description}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Default view */}
+      <div>
+        <SectionHeader title="Default view" subtitle="Which workspace the sidebar opens to. You can switch anytime from the buttons at the top of the sidebar." />
+        <select
+          className="input-field text-sm max-w-xs"
+          value={focusValid ? focus : 'all'}
+          onChange={e => setFocus(e.target.value as any)}
+        >
+          <option value="all">Show everything</option>
+          {enabledSections.map(s => (
+            <option key={s.id} value={s.id}>{s.label} only</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Advanced: per-item visibility */}
+      <div>
+        <button
+          onClick={() => setShowAdvanced(v => !v)}
+          className="flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-gray-900"
+        >
+          {showAdvanced ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          Advanced — show or hide individual items
+        </button>
+        {showAdvanced && (
+          <div className="space-y-5 mt-3 pl-1">
+            {SECTIONS.map(section => (
+              <div key={section.id}>
+                <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1.5">
+                  <section.icon size={11} /> {section.label}
+                </div>
+                <div className="divide-y divide-gray-50">
+                  {section.items.map(item => {
+                    const Icon = item.icon;
+                    const sectionOff = isSectionHidden(section.id);
+                    return (
+                      <div key={item.to} className="flex items-center justify-between py-2.5 gap-4">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                            style={{ backgroundColor: 'var(--accent-light)', color: 'var(--accent)' }}>
+                            <Icon size={14} />
+                          </div>
+                          <span className="text-sm font-medium text-gray-800 truncate">{item.label}</span>
+                        </div>
+                        <Toggle
+                          checked={!sectionOff && !isItemHidden(item.to)}
+                          onChange={() => toggleItem(item.to)}
+                        />
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-between gap-4 pt-2 border-t border-gray-100">
+        <p className="text-xs text-gray-500">
+          Command Center always stays visible. Everything here is saved on this device.
+        </p>
+        <button onClick={resetNavPrefs} className="btn-secondary text-sm whitespace-nowrap flex items-center gap-1.5">
+          <RotateCcw size={13} /> Reset to Defaults
+        </button>
       </div>
     </div>
   );
@@ -1006,13 +1268,15 @@ const EXPORT_CARDS: ExportCard[] = [
   },
 ];
 
-function ExportCardItem({ card }: { card: ExportCard }) {
+function ExportCardItem({ card, onError }: { card: ExportCard; onError: (m: string) => void }) {
   const [downloading, setDownloading] = useState(false);
 
   const handleDownload = async () => {
     setDownloading(true);
     try {
       await api.downloadExport(card.type, card.params);
+    } catch (err: any) {
+      onError(err?.message || `Failed to export ${card.title}`);
     } finally {
       setDownloading(false);
     }
@@ -1054,11 +1318,21 @@ function ExportCardItem({ card }: { card: ExportCard }) {
 
 function ExportTab() {
   const [bundleDownloading, setBundleDownloading] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ message, type });
+    toastTimer.current = setTimeout(() => setToast(null), 4000);
+  };
 
   const handleBundle = async () => {
     setBundleDownloading(true);
     try {
       await api.downloadExport('all');
+    } catch (err: any) {
+      showToast(err?.message || 'Failed to export data bundle', 'error');
     } finally {
       setBundleDownloading(false);
     }
@@ -1075,7 +1349,7 @@ function ExportTab() {
       {/* 2×3 grid */}
       <div className="grid grid-cols-2 gap-4">
         {EXPORT_CARDS.map((card) => (
-          <ExportCardItem key={card.type} card={card} />
+          <ExportCardItem key={card.type} card={card} onError={(m) => showToast(m, 'error')} />
         ))}
       </div>
 
@@ -1113,6 +1387,8 @@ function ExportTab() {
           )}
         </button>
       </div>
+
+      {toast && <Toast message={toast.message} type={toast.type} onDismiss={() => setToast(null)} />}
     </div>
   );
 }
@@ -1301,7 +1577,7 @@ function UsersTab() {
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-2.5">
                       <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                        style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-dark))' }}>
+                        style={{ background: 'linear-gradient(135deg, var(--accent), var(--secondary))' }}>
                         {u.display_name?.[0]?.toUpperCase()}
                       </div>
                       <div>
@@ -1438,7 +1714,7 @@ function AccountTab() {
         <SectionHeader title="Profile" subtitle="Your account information" />
         <div className="flex items-center gap-4">
           <div className="w-14 h-14 rounded-2xl flex items-center justify-center text-white text-xl font-bold shadow"
-            style={{ background: 'linear-gradient(135deg, var(--accent), var(--accent-dark))' }}>
+            style={{ background: 'linear-gradient(135deg, var(--accent), var(--secondary))' }}>
             {user?.display_name?.[0]?.toUpperCase()}
           </div>
           <div>
@@ -1510,13 +1786,18 @@ const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
 
 export default function SettingsPage() {
   const { isAtLeast } = useAuth();
-  const [activeTab, setActiveTab] = useState<TabId>('account');
+  const [activeTab, setActiveTab] = useState<TabId>(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    const valid: TabId[] = ['account', 'company', 'plan', 'theme', 'sidebar', 'export', 'users'];
+    return (tab && valid.includes(tab as TabId)) ? (tab as TabId) : 'account';
+  });
 
   const ALL_TABS: { id: TabId; label: string; icon: React.ReactNode; minRole?: string }[] = [
     { id: 'account',  label: 'My Account',    icon: <Key size={15} /> },
     { id: 'company',  label: 'Company',        icon: <Building2 size={15} />,  minRole: 'manager' },
     { id: 'plan',     label: 'Plan & Billing', icon: <CreditCard size={15} />, minRole: 'manager' },
     { id: 'theme',    label: 'Visual Theme',   icon: <Palette size={15} /> },
+    { id: 'sidebar',  label: 'Navigation',     icon: <PanelLeft size={15} /> },
     { id: 'export',   label: 'Data Export',    icon: <Download size={15} /> },
     { id: 'users',    label: 'Users & Access', icon: <Users size={15} />,      minRole: 'manager' },
   ];
@@ -1566,6 +1847,7 @@ export default function SettingsPage() {
         {activeTab === 'company'  && <CompanyTab />}
         {activeTab === 'plan'     && <PlanTab />}
         {activeTab === 'theme'    && <ThemeTab />}
+        {activeTab === 'sidebar'  && <SidebarTab />}
         {activeTab === 'export'   && <ExportTab />}
         {activeTab === 'users'    && <UsersTab />}
       </div>

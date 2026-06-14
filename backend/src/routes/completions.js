@@ -5,10 +5,11 @@ const db = require('../db');
 const router = express.Router();
 
 router.get('/', (req, res) => {
-  const { limit = 50, status } = req.query;
+  const { limit = 50, status, operator_name } = req.query;
   let query = 'SELECT * FROM completions WHERE company_id = ?';
   const params = [req.companyId];
   if (status) { query += ' AND status = ?'; params.push(status); }
+  if (operator_name) { query += ' AND operator_name = ?'; params.push(operator_name); }
   query += ' ORDER BY started_at DESC LIMIT ?';
   params.push(parseInt(limit));
   const completions = db.prepare(query).all(...params);

@@ -1,4 +1,22 @@
+import type { DailyBrief, LeaderboardResponse, LeaderboardPeriod } from '../types';
+
 const BASE = '/api';
+
+export interface AnalyticsFilters {
+  app_id?: string;
+  product_type_id?: string;
+}
+
+// Build a query string from analytics filters plus any extra params, omitting
+// empty values. Returns e.g. "?days=30&app_id=abc" or "" when nothing is set.
+function filterQS(f?: AnalyticsFilters, extra?: Record<string, string | number>): string {
+  const qs = new URLSearchParams();
+  if (extra) for (const [k, v] of Object.entries(extra)) qs.set(k, String(v));
+  if (f?.app_id) qs.set('app_id', f.app_id);
+  if (f?.product_type_id) qs.set('product_type_id', f.product_type_id);
+  const s = qs.toString();
+  return s ? `?${s}` : '';
+}
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const token = localStorage.getItem('hm_token');
@@ -38,10 +56,11 @@ export const api = {
   getAppCompletions: (id: string) => request<any[]>(`/apps/${id}/completions`),
 
   // ── Completions
-  getCompletions: (params?: { limit?: number; status?: string }) => {
+  getCompletions: (params?: { limit?: number; status?: string; operator_name?: string }) => {
     const qs = new URLSearchParams();
     if (params?.limit) qs.set('limit', String(params.limit));
     if (params?.status) qs.set('status', params.status);
+    if (params?.operator_name) qs.set('operator_name', params.operator_name);
     return request<any[]>(`/completions?${qs}`);
   },
   getCompletion: (id: string) => request<any>(`/completions/${id}`),
@@ -88,13 +107,13 @@ export const api = {
   deleteProductType: (id: string) => request<any>(`/product-types/${id}`, { method: 'DELETE' }),
 
   // ── Analytics
-  getOverview: () => request<any>('/analytics/overview'),
-  getDailyBrief: () => request<any>('/analytics/daily-brief'),
-  getThroughput: (days?: number) => request<any[]>(`/analytics/throughput?days=${days ?? 30}`),
-  getCycleTimes: (days?: number) => request<any[]>(`/analytics/cycle-times?days=${days ?? 30}`),
-  getOperatorPerformance: () => request<any[]>('/analytics/operator-performance'),
-  getAppPerformance: () => request<any[]>('/analytics/app-performance'),
-  getQualityData: (days?: number) => request<any[]>(`/analytics/quality?days=${days ?? 30}`),
+  getOverview: (f?: AnalyticsFilters) => request<any>(`/analytics/overview${filterQS(f)}`),
+  getDailyBrief: () => request<DailyBrief>('/analytics/daily-brief'),
+  getThroughput: (days?: number, f?: AnalyticsFilters) => request<any[]>(`/analytics/throughput${filterQS(f, { days: days ?? 30 })}`),
+  getCycleTimes: (days?: number, f?: AnalyticsFilters) => request<any[]>(`/analytics/cycle-times${filterQS(f, { days: days ?? 30 })}`),
+  getOperatorPerformance: (f?: AnalyticsFilters) => request<any[]>(`/analytics/operator-performance${filterQS(f)}`),
+  getAppPerformance: (f?: AnalyticsFilters) => request<any[]>(`/analytics/app-performance${filterQS(f)}`),
+  getQualityData: (days?: number, f?: AnalyticsFilters) => request<any[]>(`/analytics/quality${filterQS(f, { days: days ?? 30 })}`),
   getManagerView: () => request<any>('/analytics/manager-view'),
   getPlantView: () => request<any>('/analytics/plant-view'),
   getDepartmentView: (id: string) => request<any>(`/analytics/department/${id}`),
@@ -190,6 +209,10 @@ export const api = {
     request<any>(`/quality/ncrs/${id}/comments`, { method: 'POST', body: JSON.stringify(data) }),
   getQualitySummary: () => request<any>('/quality/summary'),
 
+  // ── Activity log
+  getActivityLog: (entityType: 'work_order' | 'purchase_order' | 'ncr', entityId: string) =>
+    request<{ id: string; action: string; actor: string; created_at: string }[]>(`/activity/${entityType}/${entityId}`),
+
   // ── Config
   getCompanySettings: () => request<any>('/config'),
   updateCompanySettings: (data: any) => request<any>('/config', { method: 'PUT', body: JSON.stringify(data) }),
@@ -201,6 +224,12 @@ export const api = {
   removeAddon: (type: 'app_slot' | 'dashboard_slot', quantity = 1) =>
     request<any>('/config/plan/addon', { method: 'DELETE', body: JSON.stringify({ type, quantity }) }),
 
+  // ── Real payments (Stripe) — fall back to demo flow when not configured
+  getBillingConfig: () => request<{ configured: boolean; mode: 'demo' | 'test' | 'live' }>('/config/plan/billing-config'),
+  createCheckout: (payload: { tier?: string; addon?: 'app_slot' | 'dashboard_slot'; quantity?: number }) =>
+    request<{ url: string }>('/config/plan/checkout', { method: 'POST', body: JSON.stringify(payload) }),
+  createBillingPortal: () => request<{ url: string }>('/config/plan/portal', { method: 'POST' }),
+
   // ── Export — authenticated download via fetch + blob (Bearer header required)
   downloadExport: async (type: string, params?: Record<string, string>) => {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';
@@ -211,7 +240,8 @@ export const api = {
     if (!res.ok) throw new Error(`Export failed (${res.status})`);
     const disposition = res.headers.get('Content-Disposition') || '';
     const match = disposition.match(/filename="?([^";]+)"?/);
-    const filename = match?.[1] || `${type}-export.${type === 'all' ? 'json' : 'csv'}`;
+    const fallbackName = type.replace(/\//g, '-');
+    const filename = match?.[1] || `${fallbackName}-export.${type === 'all' ? 'json' : 'csv'}`;
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -222,6 +252,10 @@ export const api = {
     a.remove();
     URL.revokeObjectURL(url);
   },
+
+  // ── Per-app export
+  downloadAppCompletions: (appId: string) => api.downloadExport(`apps/${appId}/completions`),
+  downloadAppBundle: (appId: string) => api.downloadExport(`apps/${appId}/bundle`),
 
   // ── Auth
   login: (email: string, password: string) =>
@@ -248,6 +282,10 @@ export const api = {
   getMe: () => request<any>('/auth/me'),
   changePassword: (current_password: string, new_password: string) =>
     request<any>('/auth/change-password', { method: 'PUT', body: JSON.stringify({ current_password, new_password }) }),
+
+  // ── Leaderboard
+  getLeaderboard: (period: LeaderboardPeriod = 'week') =>
+    request<LeaderboardResponse>(`/leaderboard?period=${period}`),
 
   // ── Users
   getUsers: () => request<any[]>('/users'),

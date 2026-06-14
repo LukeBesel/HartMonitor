@@ -4,7 +4,7 @@ import { api } from '../api/client';
 import { App } from '../types';
 import {
   Plus, Play, Edit3, Trash2, Search, CheckCircle,
-  Clock, FileText, MoreVertical, Globe, Lock, Copy
+  Clock, FileText, MoreVertical, Globe, Lock, Copy, Download
 } from 'lucide-react';
 import UpgradeModal from '../components/shared/UpgradeModal';
 import { usePlan } from '../context/PlanContext';
@@ -168,6 +168,21 @@ export default function AppsLibrary() {
 
 function AppCard({ app, onDelete, onPublish }: { app: App; onDelete: any; onPublish: any }) {
   const [menuOpen, setMenuOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async (e: React.MouseEvent, kind: 'completions' | 'bundle') => {
+    e.preventDefault();
+    setMenuOpen(false);
+    setExporting(true);
+    try {
+      if (kind === 'completions') await api.downloadAppCompletions(app.id);
+      else await api.downloadAppBundle(app.id);
+    } catch (err: any) {
+      alert(err.message || 'Export failed');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="card p-5 flex flex-col gap-3 hover:shadow-md transition-shadow">
@@ -196,7 +211,7 @@ function AppCard({ app, onDelete, onPublish }: { app: App; onDelete: any; onPubl
             <MoreVertical size={14} />
           </button>
           {menuOpen && (
-            <div className="absolute right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-10 py-1 w-40">
+            <div className="absolute right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-10 py-1 w-48">
               {app.status === 'draft' && (
                 <button
                   onClick={e => { setMenuOpen(false); onPublish(app.id, e); }}
@@ -205,6 +220,20 @@ function AppCard({ app, onDelete, onPublish }: { app: App; onDelete: any; onPubl
                   <Globe size={13} /> Publish
                 </button>
               )}
+              <button
+                onClick={e => handleExport(e, 'completions')}
+                disabled={exporting}
+                className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 w-full text-gray-700 disabled:opacity-50"
+              >
+                <Download size={13} /> Export completions (CSV)
+              </button>
+              <button
+                onClick={e => handleExport(e, 'bundle')}
+                disabled={exporting}
+                className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 w-full text-gray-700 disabled:opacity-50"
+              >
+                <Download size={13} /> Export app bundle (JSON)
+              </button>
               <button
                 onClick={e => { setMenuOpen(false); onDelete(app.id, e); }}
                 className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 w-full text-red-600"

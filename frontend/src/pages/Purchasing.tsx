@@ -1,10 +1,12 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
+import ActivityLog from '../components/shared/ActivityLog';
+import SavedViewsBar from '../components/shared/SavedViewsBar';
 import {
   Plus, Search, Download, Eye, Trash2, Send, Package, Star,
   X, CheckCircle, Building2, Phone,
-  Mail, Clock, Edit2, TrendingUp, ShoppingCart,
+  Mail, Clock, Edit2, TrendingUp, ShoppingCart, History,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -146,6 +148,10 @@ const PAYMENT_TERMS_OPTIONS: { value: PaymentTerms; label: string }[] = [
 
 function fmt(amount: number) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount ?? 0);
+}
+
+function fmtWhole(amount: number) {
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(amount ?? 0);
 }
 
 function fmtDate(iso: string | undefined) {
@@ -518,6 +524,7 @@ function CreatePOModal({
             </div>
 
             {form.lines.length > 0 && (
+              <div className="overflow-x-auto">
               <table className="w-full text-sm mt-2">
                 <thead>
                   <tr className="text-xs text-gray-400 uppercase">
@@ -568,6 +575,7 @@ function CreatePOModal({
                   )}
                 </tfoot>
               </table>
+              </div>
             )}
           </div>
         </div>
@@ -720,8 +728,8 @@ function PODetailModal({
 
         <div>
           <div className="section-label">Line Items</div>
-          <div className="border border-gray-100 rounded-xl overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="border border-gray-100 rounded-xl overflow-x-auto">
+            <table className="w-full text-sm whitespace-nowrap">
               <thead className="bg-gray-50">
                 <tr>
                   <th className="text-left px-4 py-2.5 text-xs font-semibold text-gray-500 uppercase">Item</th>
@@ -781,6 +789,7 @@ function PODetailModal({
                 </select>
               </div>
             </div>
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-xs text-gray-400 uppercase">
@@ -808,6 +817,7 @@ function PODetailModal({
                 ))}
               </tbody>
             </table>
+            </div>
             <div className="flex gap-2 justify-end">
               <button className="btn-secondary" onClick={() => setShowReceive(false)}>Cancel</button>
               <button className="btn-primary" onClick={handleReceive} disabled={receiving}>
@@ -816,6 +826,14 @@ function PODetailModal({
             </div>
           </div>
         )}
+
+        <div>
+          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+            <History size={12} />
+            Activity
+          </div>
+          <ActivityLog entityType="purchase_order" entityId={po.id} />
+        </div>
 
         <div className="flex justify-between items-center pt-1">
           <div className="flex gap-2">
@@ -844,13 +862,34 @@ function PODetailModal({
 
 // ── Purchase Orders Tab ───────────────────────────────────────────────────────
 
+interface POViewFilters {
+  statusFilter: string;
+  search: string;
+}
+
 function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [pos, setPOs] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [search, setSearch] = useState('');
+
+  const applySavedView = (f: POViewFilters) => {
+    setStatusFilter(f.statusFilter);
+    setSearch(f.search);
+  };
   const [showCreate, setShowCreate] = useState(false);
-  const [viewPO, setViewPO] = useState<string | null>(null);
+  const [viewPO, setViewPO] = useState<string | null>(() => searchParams.get('highlight'));
+
+  // Arriving from a "Needs Attention" link opens that PO's detail directly,
+  // and strips the param so refreshing the page doesn't keep reopening it.
+  useEffect(() => {
+    if (!searchParams.get('highlight')) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete('highlight');
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -910,27 +949,32 @@ function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
             </button>
           ))}
         </div>
-        <div className="flex gap-2 items-center">
-          <div className="relative">
+        <div className="flex flex-wrap gap-2 items-center w-full sm:w-auto">
+          <div className="relative flex-1 sm:flex-initial min-w-[160px]">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
             <input
-              className="input-field pl-9 w-52"
+              className="input-field pl-9 w-full sm:w-52"
               placeholder="Search PO# or vendor…"
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
           </div>
-          <button className="btn-secondary" onClick={() => api.downloadExport('purchase-orders')}>
+          <button className="btn-secondary whitespace-nowrap" onClick={() => api.downloadExport('purchase-orders')}>
             <Download className="w-4 h-4" /> Export CSV
           </button>
-          <button className="btn-primary" onClick={() => setShowCreate(true)}>
+          <button className="btn-primary whitespace-nowrap" onClick={() => setShowCreate(true)}>
             <Plus className="w-4 h-4" /> New PO
           </button>
         </div>
+        <SavedViewsBar<POViewFilters>
+          storageKey="hm_saved_views_purchase_orders"
+          currentFilters={{ statusFilter, search }}
+          onApply={applySavedView}
+        />
       </div>
 
-      <div className="card overflow-hidden">
-        <table className="w-full text-sm">
+      <div className="card overflow-x-auto">
+        <table className="w-full text-sm whitespace-nowrap">
           <thead className="bg-gray-50 border-b border-gray-100">
             <tr>
               {['PO #', 'Vendor', 'Status', 'Order Date', 'Expected', 'Lines', 'Amount', 'Actions'].map(h => (
@@ -1178,7 +1222,7 @@ function SummaryBar() {
   const stats = [
     { label: 'Total Vendors',       value: summary?.total_vendors ?? '—', icon: Building2,    color: 'text-blue-600',    bg: 'bg-blue-50' },
     { label: 'Open POs',            value: summary ? openCount : '—',     icon: ShoppingCart, color: 'text-amber-600',   bg: 'bg-amber-50' },
-    { label: 'Pending Value',       value: summary ? fmt(pendingValue) : '—', icon: TrendingUp, color: 'text-purple-600', bg: 'bg-purple-50' },
+    { label: 'Pending Value',       value: summary ? fmtWhole(pendingValue) : '—', icon: TrendingUp, color: 'text-purple-600', bg: 'bg-purple-50' },
     { label: 'Received This Month', value: summary ? receivedThisMonth : '—', icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50' },
   ];
 
@@ -1189,8 +1233,8 @@ function SummaryBar() {
           <div className={`w-10 h-10 rounded-xl ${s.bg} flex items-center justify-center shrink-0`}>
             <s.icon className={`w-5 h-5 ${s.color}`} />
           </div>
-          <div>
-            <div className="text-2xl font-bold text-gray-900">{s.value}</div>
+          <div className="min-w-0">
+            <div className="text-base sm:text-2xl font-bold text-gray-900 truncate">{s.value}</div>
             <div className="text-xs text-gray-500 mt-0.5">{s.label}</div>
           </div>
         </div>

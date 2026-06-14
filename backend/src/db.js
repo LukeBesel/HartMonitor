@@ -168,7 +168,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS plan (
     id INTEGER PRIMARY KEY DEFAULT 1,
     tier TEXT NOT NULL DEFAULT 'free',
-    app_limit INTEGER NOT NULL DEFAULT 3,
+    app_limit INTEGER NOT NULL DEFAULT 5,
     dashboard_limit INTEGER NOT NULL DEFAULT 2,
     created_at TEXT DEFAULT (datetime('now')),
     updated_at TEXT DEFAULT (datetime('now'))
@@ -292,6 +292,18 @@ db.exec(`
     body TEXT NOT NULL,
     created_at TEXT DEFAULT (datetime('now'))
   );
+
+  CREATE TABLE IF NOT EXISTS activity_log (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id),
+    entity_type TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    action TEXT NOT NULL,
+    actor TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_activity_log_entity ON activity_log(entity_type, entity_id);
 `);
 
 // ─── Migrations: plan (à-la-carte add-on slots) ──────────────────────────────
@@ -300,6 +312,10 @@ const planCols = db.prepare('PRAGMA table_info(plan)').all().map(r => r.name);
 if (!planCols.includes('extra_app_slots'))       db.exec('ALTER TABLE plan ADD COLUMN extra_app_slots INTEGER NOT NULL DEFAULT 0');
 if (!planCols.includes('extra_dashboard_slots')) db.exec('ALTER TABLE plan ADD COLUMN extra_dashboard_slots INTEGER NOT NULL DEFAULT 0');
 if (!planCols.includes('billing_email'))         db.exec("ALTER TABLE plan ADD COLUMN billing_email TEXT DEFAULT ''");
+// Stripe billing linkage (populated only when real payments are configured)
+if (!planCols.includes('stripe_customer_id'))     db.exec('ALTER TABLE plan ADD COLUMN stripe_customer_id TEXT');
+if (!planCols.includes('stripe_subscription_id')) db.exec('ALTER TABLE plan ADD COLUMN stripe_subscription_id TEXT');
+if (!planCols.includes('subscription_status'))    db.exec("ALTER TABLE plan ADD COLUMN subscription_status TEXT DEFAULT ''");
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS billing_history (
@@ -552,7 +568,7 @@ function daysAgo(n) {
 function seedPlan() {
   const existing = db.prepare('SELECT id FROM plan LIMIT 1').get();
   if (!existing) {
-    db.prepare(`INSERT INTO plan (tier, app_limit, dashboard_limit) VALUES ('free', 3, 2)`).run();
+    db.prepare(`INSERT INTO plan (tier, app_limit, dashboard_limit) VALUES ('free', 5, 2)`).run();
   }
 }
 
@@ -1135,6 +1151,18 @@ seedDashboard();
       ins.run(defaultOrg.id, r.key, r.value, r.updated_at);
     }
   }
+}
+
+// ─── Migration: bump free-tier app limit from 3 to 5 ──────────────────────────
+// One-time, guarded by a schema_meta flag. Only touches plans that are still
+// on the original free-tier default (tier='free' and app_limit=3); plans that
+// were already customized (e.g. via add-on purchases changing only extra_app_slots)
+// are unaffected since app_limit itself is untouched by add-on purchases.
+
+const freeLimitBumped = db.prepare("SELECT value FROM schema_meta WHERE key = 'free_tier_app_limit_v2'").get();
+if (!freeLimitBumped) {
+  db.prepare("UPDATE plan SET app_limit = 5, updated_at = datetime('now') WHERE tier = 'free' AND app_limit = 3").run();
+  db.prepare("INSERT INTO schema_meta (key, value) VALUES ('free_tier_app_limit_v2', '1')").run();
 }
 
 module.exports = db;

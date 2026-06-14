@@ -217,7 +217,7 @@ export default function Login() {
                   {loading ? 'Creating workspace…' : <><span>Create Workspace</span><ArrowRight size={14} /></>}
                 </button>
                 <p className="text-xs text-gray-400 text-center">
-                  Starts a fresh workspace on the Free plan — you become the owner.
+                  Free plan includes 5 production apps & 2 dashboards — no credit card required. You become the owner.
                 </p>
               </form>
             )}

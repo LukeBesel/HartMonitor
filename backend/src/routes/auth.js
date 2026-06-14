@@ -56,7 +56,7 @@ router.post('/signup', (req, res) => {
       .run(orgId, company_name.trim(), slug);
     db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role, company_id) VALUES (?, ?, ?, ?, 'developer', ?)`)
       .run(userId, normalizedEmail, display_name.trim(), hashPassword(password), orgId);
-    db.prepare(`INSERT INTO plan (tier, app_limit, dashboard_limit, company_id) VALUES ('free', 3, 2, ?)`)
+    db.prepare(`INSERT INTO plan (tier, app_limit, dashboard_limit, company_id) VALUES ('free', 5, 2, ?)`)
       .run(orgId);
 
     const defaults = [

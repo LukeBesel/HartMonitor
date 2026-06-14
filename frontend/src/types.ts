@@ -303,3 +303,70 @@ export interface ManagerViewData {
   work_orders: WorkOrder[];
   department_stats: { id: string; name: string; color: string; active_count: number; on_track_count: number; behind_count: number; }[];
 }
+
+// ── Daily brief / attention ──────────────────────────────────────────────────
+
+export type AttentionType = 'wo_overdue' | 'wo_behind' | 'station_down' | 'ncr_critical' | 'stock_low' | 'po_late';
+
+export interface AttentionItem {
+  type: AttentionType;
+  severity: 'red' | 'amber';
+  label: string;
+  detail: string;
+  link: string;
+}
+
+export interface DailyBrief {
+  attention: AttentionItem[];
+  kpis: {
+    completed_today: number;
+    vs_7day_avg_pct: number | null;
+    active_now: number;
+    pass_rate_7d: number | null;
+    schedule_adherence: number | null;
+    work_orders_on_track: number;
+    work_orders_total: number;
+  };
+  due_soon: Array<{
+    id: string; work_order_number: string; part_name: string;
+    department_name: string | null; quantity: number; quantity_completed: number;
+    completion_pct: number; scheduled_end: string; priority: string;
+    schedule_status: string;
+  }>;
+  throughput_7d: Array<{ date: string; count: number }>;
+  week_avg_per_day: number;
+  is_pro: boolean;
+}
+
+// ── Leaderboard ───────────────────────────────────────────────────────────────
+
+export type LeaderboardPeriod = 'today' | 'week' | 'month' | 'all';
+
+export interface LeaderboardEntry {
+  rank: number;
+  operator_name: string;
+  best_minutes: number;
+  avg_minutes: number;
+  completions: number;
+  last_completed_at: string;
+  is_record: boolean;
+}
+
+export interface LeaderboardBoard {
+  app_id: string;
+  app_name: string;
+  product_type_id: string | null;
+  product_type_name: string | null;
+  qualifying_count: number;
+  operator_count: number;
+  excluded_quality_count: number;
+  all_time_best_minutes: number | null;
+  leaders: LeaderboardEntry[];
+}
+
+export interface LeaderboardResponse {
+  period: LeaderboardPeriod;
+  period_label: string;
+  generated_at: string;
+  boards: LeaderboardBoard[];
+}

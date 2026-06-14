@@ -1,8 +1,13 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { logActivity } = require('../activity');
 
 const router = express.Router();
+
+const PO_STATUS_LABELS = {
+  draft: 'Draft', sent: 'Sent', partial: 'Partially Received', received: 'Received', cancelled: 'Cancelled',
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -135,6 +140,7 @@ router.post('/orders', (req, res) => {
       .run(uuidv4(), id, line.item_id, line.quantity_ordered, line.unit_cost || 0, line.notes || '');
   }
 
+  logActivity(req.companyId, 'purchase_order', id, 'Purchase order created', req.user?.display_name);
   res.status(201).json(getPOWithDetails(id, req.companyId));
 });
 
@@ -150,6 +156,22 @@ router.put('/orders/:id', (req, res) => {
   const { vendor_id, status, expected_date, shipping_cost, notes } = req.body;
   db.prepare(`UPDATE purchase_orders SET vendor_id=COALESCE(?,vendor_id), status=COALESCE(?,status), expected_date=COALESCE(?,expected_date), shipping_cost=COALESCE(?,shipping_cost), notes=COALESCE(?,notes), updated_at=datetime('now') WHERE id=?`)
     .run(vendor_id, status, expected_date, shipping_cost, notes, req.params.id);
+
+  const changes = [];
+  if (status !== undefined && status !== po.status) {
+    changes.push(`Status changed from ${PO_STATUS_LABELS[po.status] || po.status} to ${PO_STATUS_LABELS[status] || status}`);
+  }
+  if (expected_date !== undefined && expected_date !== po.expected_date) {
+    changes.push(`Expected date changed to ${expected_date || 'not set'}`);
+  }
+  if (vendor_id !== undefined && vendor_id !== po.vendor_id) {
+    const vendorName = db.prepare('SELECT name FROM vendors WHERE id = ?').get(vendor_id)?.name || 'Unknown';
+    changes.push(`Vendor changed to ${vendorName}`);
+  }
+  for (const change of changes) {
+    logActivity(req.companyId, 'purchase_order', req.params.id, change, req.user?.display_name);
+  }
+
   res.json(getPOWithDetails(req.params.id, req.companyId));
 });
 
@@ -175,6 +197,10 @@ router.post('/orders/:id/lines', (req, res) => {
   db.prepare(`INSERT INTO po_lines (id, po_id, item_id, quantity_ordered, unit_cost, notes) VALUES (?, ?, ?, ?, ?, ?)`)
     .run(lineId, req.params.id, item_id, quantity_ordered, unit_cost, notes);
   db.prepare("UPDATE purchase_orders SET updated_at = datetime('now') WHERE id = ?").run(req.params.id);
+
+  const itemName = db.prepare('SELECT name FROM items WHERE id = ?').get(item_id)?.name || 'item';
+  logActivity(req.companyId, 'purchase_order', req.params.id, `Added line: ${quantity_ordered} × ${itemName}`, req.user?.display_name);
+
   res.status(201).json(getPOWithDetails(req.params.id, req.companyId));
 });
 
@@ -195,6 +221,10 @@ router.post('/orders/:id/send', (req, res) => {
   const lines = db.prepare('SELECT COUNT(*) as c FROM po_lines WHERE po_id = ?').get(req.params.id);
   if (lines.c === 0) return res.status(400).json({ error: 'Cannot send an order with no line items' });
   db.prepare("UPDATE purchase_orders SET status = 'sent', updated_at = datetime('now') WHERE id = ?").run(req.params.id);
+
+  const vendorName = db.prepare('SELECT name FROM vendors WHERE id = ?').get(po.vendor_id)?.name || 'vendor';
+  logActivity(req.companyId, 'purchase_order', req.params.id, `Sent to ${vendorName}`, req.user?.display_name);
+
   res.json(getPOWithDetails(req.params.id, req.companyId));
 });
 
@@ -212,6 +242,7 @@ router.post('/orders/:id/receive', (req, res) => {
   if (!receipts.length) return res.status(400).json({ error: 'receipts array required' });
 
   const now = new Date().toISOString();
+  const receivedDescriptions = [];
 
   for (const r of receipts) {
     if (!r.line_id || !r.quantity_received) continue;
@@ -222,6 +253,9 @@ router.post('/orders/:id/receive', (req, res) => {
     if (qty <= 0) continue;
 
     db.prepare('UPDATE po_lines SET quantity_received = quantity_received + ? WHERE id = ?').run(qty, r.line_id);
+
+    const itemName = db.prepare('SELECT name FROM items WHERE id = ?').get(line.item_id)?.name || 'item';
+    receivedDescriptions.push(`${qty} × ${itemName}`);
 
     const locId = r.location_id || location_id;
     if (locId) {
@@ -241,6 +275,11 @@ router.post('/orders/:id/receive', (req, res) => {
   const newStatus = remaining <= 0 ? 'received' : 'partial';
   db.prepare(`UPDATE purchase_orders SET status = ?, received_date = ?, updated_at = datetime('now') WHERE id = ?`)
     .run(newStatus, remaining <= 0 ? now : po.received_date, req.params.id);
+
+  if (receivedDescriptions.length) {
+    const suffix = newStatus === 'received' ? ' (order fully received)' : '';
+    logActivity(req.companyId, 'purchase_order', req.params.id, `Received ${receivedDescriptions.join(', ')}${suffix}`, req.user?.display_name || operator_name);
+  }
 
   res.json(getPOWithDetails(req.params.id, req.companyId));
 });
