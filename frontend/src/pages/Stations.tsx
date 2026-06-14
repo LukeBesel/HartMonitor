@@ -84,7 +84,7 @@ export default function Stations() {
           <button onClick={() => setShowCreate(true)} className="btn-primary mt-4"><Plus size={14} /> Add Station</button>
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {stations.map(station => {
             const assignedApp = apps.find(a => a.id === station.current_app_id);
             const isEditing = editingId === station.id;

@@ -8,7 +8,7 @@ interface MessagesContextValue {
   unreadCount: number;
   connected: boolean;
   markAllRead: () => void;
-  sendMessage: (body: string, severity?: MessageSeverity) => Promise<void>;
+  sendMessage: (body: string, severity?: MessageSeverity, recipientId?: string | null) => Promise<void>;
   toast: BroadcastMessage | null;
   dismissToast: () => void;
 }
@@ -94,8 +94,8 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
 
   const markAllRead = useCallback(() => setUnreadCount(0), []);
 
-  const sendMessage = useCallback(async (body: string, severity: MessageSeverity = 'info') => {
-    const msg = await api.sendMessage(body, severity);
+  const sendMessage = useCallback(async (body: string, severity: MessageSeverity = 'info', recipientId?: string | null) => {
+    const msg = await api.sendMessage(body, severity, recipientId);
     setMessages(prev => prev.some(m => m.id === msg.id) ? prev : [msg, ...prev].slice(0, MAX_HISTORY));
   }, []);
 

@@ -132,7 +132,7 @@ export default function Analytics() {
       </div>
 
       {/* KPI cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard icon={<CheckCircle size={18} className="text-green-600" />} bg="bg-green-50" label="Total Completions" value={overview?.totalCompletions ?? '—'} />
         <KPICard icon={<Clock size={18} className="text-blue-600" />} bg="bg-blue-50" label="Avg Cycle Time" value={overview ? `${overview.avgCycleTime}m` : '—'} />
         <KPICard icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50" label="Pass Rate" value={overview ? `${overview.passRate}%` : '—'} />
@@ -140,8 +140,8 @@ export default function Analytics() {
       </div>
 
       {/* Throughput + Quality */}
-      <div className="grid grid-cols-3 gap-6">
-        <div className="col-span-2 card p-5">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="lg:col-span-2 card p-5">
           <h3 className="font-semibold text-gray-900 mb-4">Daily Throughput</h3>
           <ResponsiveContainer width="100%" height={200}>
             <AreaChart data={throughput}>
@@ -212,7 +212,7 @@ export default function Analytics() {
         </ResponsiveContainer>
       </div>
 
-      <div className="grid grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Operator performance */}
         <div className="card p-5">
           <div className="flex items-center gap-2 mb-4">

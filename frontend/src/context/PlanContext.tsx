@@ -12,6 +12,10 @@ interface PlanContextValue {
   isPro: boolean;
   isEnterprise: boolean;
   isFree: boolean;
+  /** Whether Pro-only nav items / upsells should be shown to a Free account.
+   *  Stays hidden to keep the app simple until the team actually needs more
+   *  (hits an app or dashboard limit), at which point upgrading becomes relevant. */
+  showProFeatures: boolean;
 }
 
 const PlanContext = createContext<PlanContextValue | null>(null);
@@ -40,8 +44,12 @@ export function PlanProvider({ children }: { children: ReactNode }) {
   const canCreateApp = !plan || appLimit < 0 || (plan.app_count ?? 0) < appLimit;
   const canCreateDashboard = !plan || dashLimit < 0 || (plan.dashboard_count ?? 0) < dashLimit;
 
+  // Free accounts only see Pro-only nav items/sections once they've hit a
+  // limit (and would actually benefit from upgrading). Pro/Enterprise always see them.
+  const showProFeatures = !isFree || !canCreateApp || !canCreateDashboard;
+
   return (
-    <PlanContext.Provider value={{ plan, loading, refresh, canCreateApp, canCreateDashboard, isPro, isEnterprise, isFree }}>
+    <PlanContext.Provider value={{ plan, loading, refresh, canCreateApp, canCreateDashboard, isPro, isEnterprise, isFree, showProFeatures }}>
       {children}
     </PlanContext.Provider>
   );

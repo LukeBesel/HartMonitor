@@ -272,8 +272,8 @@ export const api = {
 
   // ── Live broadcast messages
   getMessages: (limit = 50) => request<BroadcastMessage[]>(`/messages?limit=${limit}`),
-  sendMessage: (body: string, severity: MessageSeverity = 'info') =>
-    request<BroadcastMessage>('/messages', { method: 'POST', body: JSON.stringify({ body, severity }) }),
+  sendMessage: (body: string, severity: MessageSeverity = 'info', recipientId?: string | null) =>
+    request<BroadcastMessage>('/messages', { method: 'POST', body: JSON.stringify({ body, severity, recipient_id: recipientId || null }) }),
 
   // ── Config
   getCompanySettings: () => request<any>('/config'),

@@ -11,7 +11,7 @@ function initWebSocketServer(server) {
     const url = new URL(req.url, 'http://localhost');
     const token = url.searchParams.get('token');
     const row = token && db.prepare(`
-      SELECT u.company_id FROM sessions s JOIN users u ON u.id = s.user_id
+      SELECT u.company_id, u.id AS user_id FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token = ? AND s.expires_at > datetime('now') AND u.is_active = 1
     `).get(token);
 
@@ -21,6 +21,7 @@ function initWebSocketServer(server) {
     }
 
     const companyId = row.company_id;
+    ws.userId = row.user_id;            // used for targeted (direct) messages
     if (!companyClients.has(companyId)) companyClients.set(companyId, new Set());
     companyClients.get(companyId).add(ws);
 
@@ -42,4 +43,16 @@ function broadcast(companyId, payload) {
   }
 }
 
-module.exports = { initWebSocketServer, broadcast };
+// Sends a JSON payload only to the given users' sockets within a company
+// (used for direct messages so private content isn't pushed to everyone).
+function sendToUsers(companyId, userIds, payload) {
+  const clients = companyClients.get(companyId);
+  if (!clients) return;
+  const ids = new Set(userIds.filter(Boolean));
+  const data = JSON.stringify(payload);
+  for (const ws of clients) {
+    if (ws.readyState === ws.OPEN && ids.has(ws.userId)) ws.send(data);
+  }
+}
+
+module.exports = { initWebSocketServer, broadcast, sendToUsers };
