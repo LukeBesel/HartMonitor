@@ -65,20 +65,27 @@ app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false 
 
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 // The frontend is served from the same origin as the API, so cross-origin access
-// is only needed for external integrations. Locked to an allowlist in production.
-function corsOptions() {
-  if (!config.isProd) return {};                  // reflect any origin in dev
+// is only needed for external integrations. Locked to an allowlist in production,
+// but genuine same-origin requests (the bundled SPA calling its own API) are
+// ALWAYS allowed — even if APP_URL wasn't configured — so the app works out of
+// the box on any single-service host.
+function corsDelegate(req, cb) {
+  if (!config.isProd) return cb(null, { origin: true, credentials: true });
+
+  const reqOrigin = req.headers.origin;
+  // No Origin header (server-to-server, curl, health probes) → allow.
+  if (!reqOrigin) return cb(null, { origin: true, credentials: true });
+
   const allow = new Set(config.allowedOrigins);
   if (config.appUrl) allow.add(config.appUrl);
-  return {
-    origin(origin, cb) {
-      if (!origin || allow.has(origin)) return cb(null, true);
-      cb(new Error('Origin not allowed by CORS'));
-    },
-    credentials: true,
-  };
+
+  // Same-origin: the request's Origin host matches the host it was sent to.
+  let sameOrigin = false;
+  try { sameOrigin = new URL(reqOrigin).host === req.headers.host; } catch { /* malformed origin */ }
+
+  cb(null, { origin: sameOrigin || allow.has(reqOrigin), credentials: true });
 }
-app.use(cors(corsOptions()));
+app.use(cors(corsDelegate));
 
 // ─── Lightweight request logging ──────────────────────────────────────────────
 app.use((req, res, next) => {
