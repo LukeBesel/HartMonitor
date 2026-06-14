@@ -4,11 +4,13 @@ import {
   Package, DollarSign, AlertTriangle, TrendingUp, Search, Plus,
   Download, MapPin, X, Pencil, Trash2, ArrowUpCircle, ArrowDownCircle,
   RefreshCw, ChevronDown, Layers, RotateCcw, ArrowLeftRight, Truck,
-  ClipboardList, ScanLine,
+  ClipboardList, ScanLine, Database,
 } from 'lucide-react';
 import { api } from '../api/client';
 import SavedViewsBar from '../components/shared/SavedViewsBar';
 import BarcodeScannerModal from '../components/shared/BarcodeScannerModal';
+import { useSite } from '../context/SiteContext';
+import { useAuth } from '../context/AuthContext';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -211,6 +213,7 @@ function ItemModal({ item, onClose, onSaved }: { item: any | null; onClose: () =
 // ─── Adjust Stock Modal ──────────────────────────────────────────────────────
 
 function AdjustModal({ item, onClose, onSaved }: { item: any; onClose: () => void; onSaved: () => void }) {
+  const { selectedSiteId } = useSite();
   const [locations, setLocations] = useState<any[]>([]);
   const [form, setForm] = useState({
     location_id: '',
@@ -223,8 +226,8 @@ function AdjustModal({ item, onClose, onSaved }: { item: any; onClose: () => voi
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.getLocations().then(setLocations).catch(() => {});
-  }, []);
+    api.getLocations({ site_id: selectedSiteId || undefined }).then(setLocations).catch(() => {});
+  }, [selectedSiteId]);
 
   function set(field: string, val: any) {
     setForm(f => ({ ...f, [field]: val }));
@@ -321,6 +324,7 @@ function AdjustModal({ item, onClose, onSaved }: { item: any; onClose: () => voi
 // ─── Locations Modal ─────────────────────────────────────────────────────────
 
 function LocationsModal({ onClose }: { onClose: () => void }) {
+  const { selectedSiteId } = useSite();
   const [locations, setLocations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ name: '', code: '', type: 'warehouse' });
@@ -329,8 +333,8 @@ function LocationsModal({ onClose }: { onClose: () => void }) {
 
   const loadLocations = useCallback(() => {
     setLoading(true);
-    api.getLocations().then(data => { setLocations(data); setLoading(false); }).catch(() => setLoading(false));
-  }, []);
+    api.getLocations({ site_id: selectedSiteId || undefined }).then(data => { setLocations(data); setLoading(false); }).catch(() => setLoading(false));
+  }, [selectedSiteId]);
 
   useEffect(() => { loadLocations(); }, [loadLocations]);
 
@@ -669,6 +673,9 @@ export default function Inventory() {
   const [showLocations, setShowLocations] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showScanner, setShowScanner] = useState(false);
+  const [loadingSample, setLoadingSample] = useState(false);
+  const [sampleError, setSampleError] = useState('');
+  const { isAtLeast } = useAuth();
 
   const loadSummary = useCallback(() => {
     api.getInventorySummary().then(setSummary).catch(() => {});
@@ -687,6 +694,20 @@ export default function Inventory() {
 
   useEffect(() => { loadSummary(); }, [loadSummary]);
   useEffect(() => { loadItems(); }, [loadItems]);
+
+  const handleLoadSampleData = async () => {
+    setLoadingSample(true);
+    setSampleError('');
+    try {
+      await api.loadSampleData();
+      loadItems();
+      loadSummary();
+    } catch (err: any) {
+      setSampleError(err?.message || 'Failed to load sample data');
+    } finally {
+      setLoadingSample(false);
+    }
+  };
 
   function refresh() {
     loadSummary();
@@ -900,13 +921,24 @@ export default function Inventory() {
                           {search || category || lowStockOnly ? 'Try adjusting your filters' : 'Get started by adding your first item'}
                         </p>
                         {!search && !category && !lowStockOnly && (
-                          <button
-                            onClick={() => { setEditingItem(null); setShowItemModal(true); }}
-                            className="btn-primary mt-1"
-                          >
-                            <Plus size={14} />
-                            New Item
-                          </button>
+                          <div className="flex items-center justify-center gap-2 mt-1">
+                            <button
+                              onClick={() => { setEditingItem(null); setShowItemModal(true); }}
+                              className="btn-primary"
+                            >
+                              <Plus size={14} />
+                              New Item
+                            </button>
+                            {isAtLeast('manager') && (
+                              <button onClick={handleLoadSampleData} disabled={loadingSample} className="btn-secondary">
+                                {loadingSample ? <RefreshCw size={14} className="animate-spin" /> : <Database size={14} />}
+                                Load Sample Data
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {sampleError && (
+                          <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mt-1 max-w-sm mx-auto">{sampleError}</p>
                         )}
                       </div>
                     </td>

@@ -4,6 +4,7 @@ const db = require('../db');
 const { requireRole } = require('../middleware/auth');
 const { getStripe, isConfigured, billingMode, currency } = require('../stripe');
 const { PRICING } = require('../pricing');
+const { logActivity } = require('../activity');
 
 const router = express.Router();
 
@@ -100,10 +101,21 @@ router.put('/', requireRole('manager'), (req, res) => {
     }
   });
   upsertAll(req.body);
+  logActivity(req.companyId, 'settings', req.companyId, `Organization settings updated (${Object.keys(req.body).join(', ')})`, req.user.display_name);
   const rows = db.prepare('SELECT key, value FROM org_settings WHERE company_id = ?').all(req.companyId);
   const settings = {};
   for (const r of rows) settings[r.key] = r.value;
   res.json(settings);
+});
+
+// ─── POST /sample-data — load demo apps, stations, work orders, etc (manager+) ─
+// Powers the "Load Sample Data" empty-state CTA so trial accounts can see what
+// a populated workspace looks like without entering data by hand.
+
+router.post('/sample-data', requireRole('manager'), (req, res) => {
+  const result = db.loadSampleDataForCompany(req.companyId);
+  logActivity(req.companyId, 'settings', req.companyId, 'Sample data loaded', req.user.display_name);
+  res.status(201).json(result);
 });
 
 // ─── GET /plan — plan info + usage + pricing + billing history ────────────────
@@ -131,6 +143,8 @@ router.put('/plan', requireRole('manager'), (req, res) => {
   const price = def.monthly_price ?? 0;
   db.prepare(`INSERT INTO billing_history (id, type, description, quantity, unit_price, amount, company_id) VALUES (?, 'tier_change', ?, 1, ?, ?, ?)`)
     .run(uuidv4(), `Plan changed to ${def.name}${price ? ` — $${price}/mo` : ''}`, price, price, req.companyId);
+
+  logActivity(req.companyId, 'plan', req.companyId, `Plan changed from ${current.tier} to ${tier}`, req.user.display_name);
 
   res.json(planResponse(req.companyId));
 });

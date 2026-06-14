@@ -3,7 +3,7 @@ import {
   Calendar, ClipboardList, Trophy,
   Timer, Users, Cpu, LayoutGrid,
   Package, ShoppingCart, ShieldCheck, Building2,
-  Factory, CalendarRange, Layers,
+  Factory, CalendarRange, Layers, History,
 } from 'lucide-react';
 
 export type NavItem = {
@@ -68,6 +68,7 @@ export const SECTIONS: NavSection[] = [
       { to: '/analytics',    icon: BarChart3,   label: 'Analytics' },
       { to: '/quality',      icon: ShieldCheck, label: 'NCR / Quality', proOnly: true },
       { to: '/tables',       icon: Database,    label: 'Tables',        minRole: 'supervisor' },
+      { to: '/audit-log',    icon: History,     label: 'Audit Log',     minRole: 'supervisor' },
     ],
   },
 ];

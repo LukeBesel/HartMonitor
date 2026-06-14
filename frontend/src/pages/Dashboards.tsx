@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Dashboard } from '../types';
-import { LayoutGrid, Plus, Trash2, Edit, Clock, BarChart3, RefreshCw } from 'lucide-react';
+import { LayoutGrid, Plus, Trash2, Edit, Clock, BarChart3, RefreshCw, Database } from 'lucide-react';
 import UpgradeModal from '../components/shared/UpgradeModal';
 import { usePlan } from '../context/PlanContext';
+import { useAuth } from '../context/AuthContext';
 
 export default function Dashboards() {
   const navigate = useNavigate();
@@ -15,7 +16,10 @@ export default function Dashboards() {
   const [newDesc, setNewDesc] = useState('');
   const [saving, setSaving] = useState(false);
   const [limitReason, setLimitReason] = useState<string | null>(null);
+  const [loadingSample, setLoadingSample] = useState(false);
+  const [sampleError, setSampleError] = useState('');
   const { refresh: refreshPlan } = usePlan();
+  const { isAtLeast } = useAuth();
 
   const load = () => {
     setLoading(true);
@@ -47,6 +51,19 @@ export default function Dashboards() {
     if (!confirm(`Delete dashboard "${name}"?`)) return;
     await api.deleteDashboard(id);
     setDashboards(prev => prev.filter(d => d.id !== id));
+  };
+
+  const handleLoadSampleData = async () => {
+    setLoadingSample(true);
+    setSampleError('');
+    try {
+      await api.loadSampleData();
+      load();
+    } catch (err: any) {
+      setSampleError(err?.message || 'Failed to load sample data');
+    } finally {
+      setLoadingSample(false);
+    }
   };
 
   const CARD_ICONS: Record<string, any> = {
@@ -110,9 +127,20 @@ export default function Dashboards() {
           <BarChart3 size={40} className="mx-auto mb-3 text-gray-200" />
           <div className="text-gray-500 font-medium">No dashboards yet</div>
           <p className="text-gray-400 text-sm mt-1">Create your first custom analytics dashboard</p>
-          <button onClick={() => setCreating(true)} className="btn-primary mt-4 mx-auto">
-            <Plus size={16} /> Create Dashboard
-          </button>
+          <div className="flex items-center justify-center gap-2 mt-4">
+            <button onClick={() => setCreating(true)} className="btn-primary">
+              <Plus size={16} /> Create Dashboard
+            </button>
+            {isAtLeast('manager') && (
+              <button onClick={handleLoadSampleData} disabled={loadingSample} className="btn-secondary">
+                {loadingSample ? <RefreshCw size={16} className="animate-spin" /> : <Database size={16} />}
+                Load Sample Data
+              </button>
+            )}
+          </div>
+          {sampleError && (
+            <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mt-3 max-w-sm mx-auto">{sampleError}</p>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">

@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
+import { useSite } from '../context/SiteContext';
 import {
   CheckCircle2, Activity, TrendingUp, Clock, CalendarCheck, Package,
   AlertTriangle, RefreshCw, Building2, ChevronRight
@@ -103,6 +104,7 @@ const WO_SUMMARY_COLORS: Record<string, string> = {
 };
 
 export default function PlantView() {
+  const { selectedSiteId } = useSite();
   const [data, setData] = useState<PlantViewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [lastRefresh, setLastRefresh] = useState(new Date());
@@ -112,7 +114,7 @@ export default function PlantView() {
   const load = useCallback(async (showSpinner = false) => {
     if (showSpinner) setRefreshing(true);
     try {
-      const result = await (api as any).getPlantView();
+      const result = await (api as any).getPlantView({ site_id: selectedSiteId || undefined });
       setData(result);
       setLastRefresh(new Date());
     } catch {
@@ -121,7 +123,7 @@ export default function PlantView() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [selectedSiteId]);
 
   useEffect(() => {
     load(true);

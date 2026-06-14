@@ -1,6 +1,8 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { notify } = require('../notifications');
+const { deliverWebhooks } = require('../webhooks');
 
 const router = express.Router();
 
@@ -137,24 +139,28 @@ router.delete('/items/:id', (req, res) => {
 // ─── GET /locations ───────────────────────────────────────────────────────────
 
 router.get('/locations', (req, res) => {
-  const locs = db.prepare(`
+  let sql = `
     SELECT l.*, COUNT(DISTINCT sl.item_id) as item_count, COALESCE(SUM(sl.quantity), 0) as total_units
     FROM locations l LEFT JOIN stock_levels sl ON sl.location_id = l.id
-    WHERE l.is_active = 1 AND l.company_id = ? GROUP BY l.id ORDER BY l.name
-  `).all(req.companyId);
+    WHERE l.is_active = 1 AND l.company_id = ?
+  `;
+  const params = [req.companyId];
+  if (req.query.site_id) { sql += ' AND l.site_id = ?'; params.push(req.query.site_id); }
+  sql += ' GROUP BY l.id ORDER BY l.name';
+  const locs = db.prepare(sql).all(...params);
   res.json(locs);
 });
 
 // ─── POST /locations ──────────────────────────────────────────────────────────
 
 router.post('/locations', (req, res) => {
-  const { name, code, description = '', type = 'warehouse' } = req.body;
+  const { name, code, description = '', type = 'warehouse', site_id = null } = req.body;
   if (!name || !code) return res.status(400).json({ error: 'name and code required' });
   const existing = db.prepare('SELECT id FROM locations WHERE code = ? AND company_id = ?').get(code, req.companyId);
   if (existing) return res.status(409).json({ error: 'Location code already exists' });
   const id = uuidv4();
-  db.prepare(`INSERT INTO locations (id, name, code, description, type, company_id) VALUES (?, ?, ?, ?, ?, ?)`)
-    .run(id, name, code, description, type, req.companyId);
+  db.prepare(`INSERT INTO locations (id, name, code, description, type, company_id, site_id) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, name, code, description, type, req.companyId, site_id || null);
   res.status(201).json(db.prepare('SELECT * FROM locations WHERE id = ?').get(id));
 });
 
@@ -164,8 +170,9 @@ router.put('/locations/:id', (req, res) => {
   const loc = db.prepare('SELECT * FROM locations WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!loc) return res.status(404).json({ error: 'Not found' });
   const { name, code, description, type, is_active } = req.body;
-  db.prepare(`UPDATE locations SET name=COALESCE(?,name), code=COALESCE(?,code), description=COALESCE(?,description), type=COALESCE(?,type), is_active=COALESCE(?,is_active) WHERE id=?`)
-    .run(name, code, description, type, is_active, req.params.id);
+  const site_id = req.body.site_id !== undefined ? (req.body.site_id || null) : loc.site_id;
+  db.prepare(`UPDATE locations SET name=COALESCE(?,name), code=COALESCE(?,code), description=COALESCE(?,description), type=COALESCE(?,type), is_active=COALESCE(?,is_active), site_id=? WHERE id=?`)
+    .run(name, code, description, type, is_active, site_id, req.params.id);
   res.json(db.prepare('SELECT * FROM locations WHERE id = ?').get(req.params.id));
 });
 
@@ -204,6 +211,18 @@ router.post('/movements', (req, res) => {
     .run(id, item_id, location_id || null, movement_type, signedQty, unit_cost, reference_type, reference_id, notes, operator_name);
 
   if (location_id) updateStockLevel(item_id, location_id, signedQty);
+
+  // Fire a low-stock alert the moment total quantity crosses at-or-below the reorder point.
+  if (item.reorder_point > 0) {
+    const totalAfter = db.prepare('SELECT COALESCE(SUM(quantity),0) as q FROM stock_levels WHERE item_id = ?').get(item_id).q;
+    const totalBefore = totalAfter - signedQty;
+    if (totalBefore > item.reorder_point && totalAfter <= item.reorder_point) {
+      notify(req.companyId, 'inventory.low_stock', {
+        body: `${item.name} (${item.sku}) fell to ${totalAfter} ${item.unit_of_measure}, at or below its reorder point of ${item.reorder_point}.`,
+      });
+      deliverWebhooks(req.companyId, 'inventory.low_stock', { ...item, total_quantity: totalAfter });
+    }
+  }
 
   const mov = db.prepare(`
     SELECT sm.*, l.name as location_name FROM stock_movements sm

@@ -8,6 +8,8 @@ import { PlanProvider } from './context/PlanContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { BrandingProvider } from './context/BrandingContext';
 import { NavPrefsProvider } from './context/NavPrefsContext';
+import { SiteProvider } from './context/SiteContext';
+import { PermissionsProvider } from './context/PermissionsContext';
 import { MessagesProvider } from './context/MessagesContext';
 import MessageToast from './components/shared/MessageToast';
 
@@ -41,6 +43,8 @@ const Leaderboard      = lazy(() => import('./pages/Leaderboard'));
 const LeaderboardTV    = lazy(() => import('./pages/LeaderboardTV'));
 const Landing          = lazy(() => import('./pages/Landing'));
 const Pricing          = lazy(() => import('./pages/Pricing'));
+const SSOCallback      = lazy(() => import('./pages/SSOCallback'));
+const AuditLog         = lazy(() => import('./pages/AuditLog'));
 
 function Spinner() {
   return (
@@ -63,6 +67,8 @@ export default function App() {
       <ThemeProvider>
         <BrandingProvider>
         <PlanProvider>
+        <SiteProvider>
+        <PermissionsProvider>
         <NavPrefsProvider>
         <MessagesProvider>
           <BrowserRouter>
@@ -74,6 +80,7 @@ export default function App() {
               <Route path="/pricing" element={<Pricing />} />
 
               <Route path="/login" element={<Login />} />
+              <Route path="/sso/callback" element={<SSOCallback />} />
               <Route path="/play/:id" element={<ProtectedRoute><AppPlayer /></ProtectedRoute>} />
               <Route path="/operator" element={<ProtectedRoute><OperatorPortal /></ProtectedRoute>} />
               <Route path="/leaderboard/tv" element={<ProtectedRoute><LeaderboardTV /></ProtectedRoute>} />
@@ -107,6 +114,7 @@ export default function App() {
                 <Route path="/quality" element={<Quality />} />
                 <Route path="/quality/:id" element={<Quality />} />
                 <Route path="/leaderboard" element={<Leaderboard />} />
+                <Route path="/audit-log" element={<AuditLog />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Route>
@@ -115,6 +123,8 @@ export default function App() {
           </BrowserRouter>
         </MessagesProvider>
         </NavPrefsProvider>
+        </PermissionsProvider>
+        </SiteProvider>
         </PlanProvider>
         </BrandingProvider>
       </ThemeProvider>

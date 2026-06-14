@@ -2,6 +2,8 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { logActivity } = require('../activity');
+const { notify } = require('../notifications');
+const { deliverWebhooks } = require('../webhooks');
 
 const router = express.Router();
 
@@ -109,7 +111,14 @@ router.post('/ncrs', (req, res) => {
     assigned_to, due_date || null, cid
   );
   logActivity(cid, 'ncr', id, 'NCR created', req.user?.display_name);
-  res.status(201).json(getNCRWithDetails(id, cid));
+
+  const created = getNCRWithDetails(id, cid);
+  notify(cid, 'ncr.created', {
+    body: `NCR ${ncr_number} raised: "${title}" (${severity}).`,
+  });
+  deliverWebhooks(cid, 'ncr.created', created);
+
+  res.status(201).json(created);
 });
 
 // ─── GET /ncrs/:id ────────────────────────────────────────────────────────────

@@ -215,21 +215,39 @@ router.get('/manager-view', (req, res) => {
 
 router.get('/plant-view', (req, res) => {
   const cid = req.companyId;
+  const { site_id } = req.query;
+
+  // Site filter for completions, joined through their work order or station
+  // (a completion's "site" = its work order's site, falling back to its station's site).
+  const siteJoin = site_id
+    ? `LEFT JOIN work_orders wo ON wo.id = completions.work_order_id
+       LEFT JOIN stations    st ON st.id = completions.station_id`
+    : '';
+  const siteClause = site_id ? ' AND COALESCE(wo.site_id, st.site_id) = ?' : '';
+  const siteParams = site_id ? [site_id] : [];
+
   // KPIs
-  const todayCompleted = db.prepare("SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed' AND date(completed_at)=date('now')").get(cid).c;
-  const activeNow      = db.prepare("SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='in_progress'").get(cid).c;
+  const todayCompleted = db.prepare(`
+    SELECT COUNT(*) as c FROM completions ${siteJoin}
+    WHERE completions.company_id = ? AND completions.status='completed' AND date(completions.completed_at)=date('now')${siteClause}
+  `).get(cid, ...siteParams).c;
+  const activeNow = db.prepare(`
+    SELECT COUNT(*) as c FROM completions ${siteJoin}
+    WHERE completions.company_id = ? AND completions.status='in_progress'${siteClause}
+  `).get(cid, ...siteParams).c;
 
   const ctRow = db.prepare(`
-    SELECT AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60) as avg_minutes
-    FROM completions WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL
-  `).get(cid);
+    SELECT AVG((julianday(completions.completed_at) - julianday(completions.started_at)) * 24 * 60) as avg_minutes
+    FROM completions ${siteJoin}
+    WHERE completions.company_id = ? AND completions.status='completed' AND completions.completed_at IS NOT NULL${siteClause}
+  `).get(cid, ...siteParams);
   const avgCycleTime = ctRow?.avg_minutes ? Math.round(ctRow.avg_minutes) : 0;
 
   // Pass rate over the last 7 days, counting only completions with explicit QC results
   const pfRows = db.prepare(`
-    SELECT data FROM completions
-    WHERE company_id = ? AND status='completed' AND completed_at >= datetime('now', '-7 days')
-  `).all(cid);
+    SELECT completions.data as data FROM completions ${siteJoin}
+    WHERE completions.company_id = ? AND completions.status='completed' AND completions.completed_at >= datetime('now', '-7 days')${siteClause}
+  `).all(cid, ...siteParams);
   let pass = 0, fail = 0;
   for (const row of pfRows) {
     const vals = Object.values(JSON.parse(row.data));
@@ -244,8 +262,8 @@ router.get('/plant-view', (req, res) => {
     FROM work_orders wo
     LEFT JOIN departments d ON d.id = wo.department_id
     LEFT JOIN apps        a ON a.id = wo.app_id
-    WHERE wo.company_id = ? AND wo.status != 'cancelled'
-  `).all(cid).map(wo => ({ ...wo, schedule_status: calcScheduleStatus(wo) }));
+    WHERE wo.company_id = ? AND wo.status != 'cancelled'${site_id ? ' AND wo.site_id = ?' : ''}
+  `).all(cid, ...siteParams).map(wo => ({ ...wo, schedule_status: calcScheduleStatus(wo) }));
 
   const woSummary = { on_track: 0, at_risk: 0, behind: 0, not_started: 0, completed: 0 };
   for (const wo of allWOs) {
@@ -259,7 +277,7 @@ router.get('/plant-view', (req, res) => {
 
   // Department performance. A completion belongs to its work order's department,
   // falling back to its station's department when it ran without a work order.
-  const depts = db.prepare('SELECT * FROM departments WHERE company_id = ?').all(cid);
+  const depts = db.prepare(`SELECT * FROM departments WHERE company_id = ?${site_id ? ' AND site_id = ?' : ''}`).all(cid, ...siteParams);
   const departmentPerformance = depts.map(dept => {
     const deptWOs = allWOs.filter(wo => wo.department_id === dept.id);
 
@@ -305,14 +323,14 @@ router.get('/plant-view', (req, res) => {
   // Hourly throughput for last 24 hours
   const hourlyThroughput = db.prepare(`
     SELECT
-      strftime('%Y-%m-%dT%H:00:00', completed_at) as hour,
+      strftime('%Y-%m-%dT%H:00:00', completions.completed_at) as hour,
       COUNT(*) as count
-    FROM completions
-    WHERE company_id = ? AND status = 'completed'
-      AND completed_at >= datetime('now', '-24 hours')
-    GROUP BY strftime('%Y-%m-%dT%H:00:00', completed_at)
+    FROM completions ${siteJoin}
+    WHERE completions.company_id = ? AND completions.status = 'completed'
+      AND completions.completed_at >= datetime('now', '-24 hours')${siteClause}
+    GROUP BY strftime('%Y-%m-%dT%H:00:00', completions.completed_at)
     ORDER BY hour ASC
-  `).all(cid);
+  `).all(cid, ...siteParams);
 
   // Active alerts: work orders running behind or past their scheduled end
   const activeAlerts = allWOs
@@ -338,10 +356,10 @@ router.get('/plant-view', (req, res) => {
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN stations st    ON st.id = c.station_id
     LEFT JOIN departments d  ON d.id  = COALESCE(wo.department_id, st.department_id)
-    WHERE c.company_id = ?
+    WHERE c.company_id = ?${site_id ? ' AND COALESCE(wo.site_id, st.site_id) = ?' : ''}
     ORDER BY datetime(COALESCE(c.completed_at, c.started_at)) DESC
     LIMIT 15
-  `).all(cid).map(c => {
+  `).all(cid, ...siteParams).map(c => {
     const end = c.completed_at ? new Date(c.completed_at) : new Date();
     const durationMinutes = Math.round(((end - new Date(c.started_at)) / 60000) * 10) / 10;
     return {

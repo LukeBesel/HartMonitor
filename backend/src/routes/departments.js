@@ -26,7 +26,11 @@ function deptCounts(deptId) {
 // ─── GET / - list departments with work order and completion counts ────────────
 
 router.get('/', (req, res) => {
-  const depts = db.prepare('SELECT * FROM departments WHERE company_id = ? ORDER BY name').all(req.companyId);
+  let sql = 'SELECT * FROM departments WHERE company_id = ?';
+  const params = [req.companyId];
+  if (req.query.site_id) { sql += ' AND site_id = ?'; params.push(req.query.site_id); }
+  sql += ' ORDER BY name';
+  const depts = db.prepare(sql).all(...params);
   res.json(depts.map(dept => ({ ...dept, ...deptCounts(dept.id) })));
 });
 
@@ -39,13 +43,14 @@ router.post('/', (req, res) => {
     manager_name  = '',
     color         = '#3b82f6',
     headcount     = 0,
+    site_id       = null,
   } = req.body;
 
   if (!name) return res.status(400).json({ error: 'name is required' });
 
   const id = uuidv4();
-  db.prepare(`INSERT INTO departments (id, name, description, manager_name, color, headcount, company_id) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, name, description, manager_name, color, Math.max(0, parseInt(headcount) || 0), req.companyId);
+  db.prepare(`INSERT INTO departments (id, name, description, manager_name, color, headcount, site_id, company_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, name, description, manager_name, color, Math.max(0, parseInt(headcount) || 0), site_id || null, req.companyId);
 
   const dept = db.prepare('SELECT * FROM departments WHERE id = ?').get(id);
   res.status(201).json({ ...dept, work_order_count: 0, completion_count: 0, active_work_orders: 0 });
@@ -63,10 +68,11 @@ router.put('/:id', (req, res) => {
     manager_name: req.body.manager_name !== undefined ? req.body.manager_name : dept.manager_name,
     color:        req.body.color        !== undefined ? req.body.color        : dept.color,
     headcount:    req.body.headcount    !== undefined ? Math.max(0, parseInt(req.body.headcount) || 0) : (dept.headcount || 0),
+    site_id:      req.body.site_id      !== undefined ? (req.body.site_id || null) : dept.site_id,
   };
 
-  db.prepare(`UPDATE departments SET name=?, description=?, manager_name=?, color=?, headcount=? WHERE id=?`)
-    .run(updates.name, updates.description, updates.manager_name, updates.color, updates.headcount, req.params.id);
+  db.prepare(`UPDATE departments SET name=?, description=?, manager_name=?, color=?, headcount=?, site_id=? WHERE id=?`)
+    .run(updates.name, updates.description, updates.manager_name, updates.color, updates.headcount, updates.site_id, req.params.id);
 
   const updated = db.prepare('SELECT * FROM departments WHERE id = ?').get(req.params.id);
   res.json({ ...updated, ...deptCounts(req.params.id) });

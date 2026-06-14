@@ -8,9 +8,11 @@ import { usePlan } from '../../context/PlanContext';
 import { useAuth } from '../../context/AuthContext';
 import { useBranding } from '../../context/BrandingContext';
 import { useNavPrefs } from '../../context/NavPrefsContext';
+import { usePermissions } from '../../context/PermissionsContext';
 import { PINNED_ITEMS, SECTIONS, ALL_WORKSPACE_ICON, NavItem } from '../../config/navigation';
 import NotificationBell from './NotificationBell';
 import MessagesBell from './MessagesBell';
+import SiteSwitcher from './SiteSwitcher';
 
 function ProBadge() {
   return (
@@ -55,9 +57,10 @@ export default function Layout() {
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const { isFree } = usePlan();
-  const { user, logout, isAtLeast } = useAuth();
+  const { user, logout } = useAuth();
   const { companyName, logoUrl } = useBranding();
   const { isItemHidden, isSectionHidden, focus, setFocus } = useNavPrefs();
+  const { canShowNavItem } = usePermissions();
   const [logoError, setLogoError] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -75,7 +78,7 @@ export default function Layout() {
     : enabledSections.filter(s => s.id === effectiveFocus);
 
   const canShow = (item: NavItem) => {
-    if (item.minRole && !isAtLeast(item.minRole as any)) return false;
+    if (!canShowNavItem(item)) return false;
     if (!item.pinned && isItemHidden(item.to)) return false;
     return true;
   };
@@ -209,6 +212,13 @@ export default function Layout() {
                 />
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Site switcher — only rendered for multi-site orgs */}
+        {!effectiveCollapsed && (
+          <div className="px-2 pt-2">
+            <SiteSwitcher />
           </div>
         )}
 

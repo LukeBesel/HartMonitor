@@ -29,7 +29,13 @@ const usersRouter        = require('./routes/users');
 const leaderboardRouter  = require('./routes/leaderboard');
 const activityRouter     = require('./routes/activity');
 const messagesRouter     = require('./routes/messages');
+const sitesRouter        = require('./routes/sites');
+const permissionsRouter  = require('./routes/permissions');
+const developerRouter    = require('./routes/developer');
+const notificationsRouter = require('./routes/notifications');
+const v1Router           = require('./routes/v1');
 const { requireAuth }    = require('./middleware/auth');
+const { apiKeyAuth }     = require('./middleware/apiKeyAuth');
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -46,6 +52,9 @@ app.use('/api/auth',          authRouter);  // public
 
 // Public pricing catalog — powers the marketing site without authentication.
 app.get('/api/public/pricing', (_req, res) => res.json(PRICING));
+
+// Enterprise API v1 — authenticated with a long-lived API key, not a session.
+app.use('/api/v1', apiKeyAuth, v1Router);
 
 app.use('/api',               requireAuth); // protect everything below
 app.use('/api/apps',          appsRouter);
@@ -67,6 +76,10 @@ app.use('/api/users',         usersRouter);
 app.use('/api/leaderboard',   leaderboardRouter);
 app.use('/api/activity',      activityRouter);
 app.use('/api/messages',      messagesRouter);
+app.use('/api/sites',         sitesRouter);
+app.use('/api/permissions',   permissionsRouter);
+app.use('/api/developer',     developerRouter);
+app.use('/api/notifications', notificationsRouter);
 
 const frontendDist = path.join(__dirname, '..', '..', 'frontend', 'dist');
 app.use(express.static(frontendDist));

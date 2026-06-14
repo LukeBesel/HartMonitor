@@ -30,20 +30,35 @@ import {
   ChevronRight,
   Moon,
   Sun,
+  MapPin,
+  Bell,
+  Sliders,
+  Webhook as WebhookIcon,
+  Copy,
+  Send,
+  Mail,
+  MessageSquare,
+  Globe,
+  CheckCircle2,
+  XCircle,
+  Crown,
+  ExternalLink,
+  Code,
 } from 'lucide-react';
 import { useTheme, THEME_PRESETS, Theme, buildCustomTheme, applySecondary } from '../context/ThemeContext';
 import { usePlan } from '../context/PlanContext';
 import { useAuth } from '../context/AuthContext';
 import { useBranding } from '../context/BrandingContext';
 import { useNavPrefs } from '../context/NavPrefsContext';
-import { SECTIONS } from '../config/navigation';
+import { SECTIONS, ALL_SECTION_ITEMS } from '../config/navigation';
 import { api } from '../api/client';
 import Toggle from '../components/shared/Toggle';
-import type { PlanTier, AddonPricing } from '../types';
+import type { PlanTier, AddonPricing, Site, NotificationPrefs, NotificationLogEntry, RolePermissionMap, AppRole, ApiKey, Webhook, WebhookDelivery } from '../types';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type TabId = 'company' | 'plan' | 'theme' | 'sidebar' | 'export' | 'users' | 'account';
+type TabId = 'company' | 'plan' | 'theme' | 'sidebar' | 'export' | 'users' | 'account'
+  | 'sites' | 'notifications' | 'permissions' | 'developer';
 
 interface CompanyForm {
   company_name: string;
@@ -1283,16 +1298,28 @@ const EXPORT_CARDS: ExportCard[] = [
 ];
 
 function ExportCardItem({ card, onError }: { card: ExportCard; onError: (m: string) => void }) {
-  const [downloading, setDownloading] = useState(false);
+  const [downloadingCsv, setDownloadingCsv] = useState(false);
+  const [downloadingXlsx, setDownloadingXlsx] = useState(false);
 
-  const handleDownload = async () => {
-    setDownloading(true);
+  const handleDownloadCsv = async () => {
+    setDownloadingCsv(true);
     try {
       await api.downloadExport(card.type, card.params);
     } catch (err: any) {
       onError(err?.message || `Failed to export ${card.title}`);
     } finally {
-      setDownloading(false);
+      setDownloadingCsv(false);
+    }
+  };
+
+  const handleDownloadXlsx = async () => {
+    setDownloadingXlsx(true);
+    try {
+      await api.downloadExport(card.type, { ...card.params, format: 'xlsx' });
+    } catch (err: any) {
+      onError(err?.message || `Failed to export ${card.title}`);
+    } finally {
+      setDownloadingXlsx(false);
     }
   };
 
@@ -1310,22 +1337,32 @@ function ExportCardItem({ card, onError }: { card: ExportCard; onError: (m: stri
           <div className="text-xs text-gray-500 mt-0.5">{card.description}</div>
         </div>
       </div>
-      <button
-        onClick={handleDownload}
-        className="btn-secondary w-full flex items-center justify-center gap-2 text-sm py-1.5"
-      >
-        {downloading ? (
-          <>
+      <div className="flex gap-2">
+        <button
+          onClick={handleDownloadCsv}
+          disabled={downloadingCsv}
+          className="btn-secondary flex-1 flex items-center justify-center gap-2 text-sm py-1.5"
+        >
+          {downloadingCsv ? (
             <span className="w-3.5 h-3.5 border-2 border-current/40 border-t-current rounded-full animate-spin" />
-            Downloading…
-          </>
-        ) : (
-          <>
+          ) : (
             <Download size={14} />
-            Download CSV
-          </>
-        )}
-      </button>
+          )}
+          CSV
+        </button>
+        <button
+          onClick={handleDownloadXlsx}
+          disabled={downloadingXlsx}
+          className="btn-secondary flex-1 flex items-center justify-center gap-2 text-sm py-1.5"
+        >
+          {downloadingXlsx ? (
+            <span className="w-3.5 h-3.5 border-2 border-current/40 border-t-current rounded-full animate-spin" />
+          ) : (
+            <Download size={14} />
+          )}
+          Excel
+        </button>
+      </div>
     </div>
   );
 }
@@ -1789,6 +1826,1105 @@ function AccountTab() {
   );
 }
 
+// ─── Tab 7: Sites ─────────────────────────────────────────────────────────────
+
+interface SiteForm {
+  name: string;
+  code: string;
+  address: string;
+  timezone: string;
+  is_primary: boolean;
+}
+
+const DEFAULT_SITE_FORM: SiteForm = {
+  name: '',
+  code: '',
+  address: '',
+  timezone: 'America/New_York',
+  is_primary: false,
+};
+
+function SiteModal({ site, onClose, onSaved, onError }: {
+  site: Site | null;
+  onClose: () => void;
+  onSaved: (message: string) => void;
+  onError: (message: string) => void;
+}) {
+  const isEdit = !!site;
+  const [form, setForm] = useState<SiteForm>(() => site ? {
+    name: site.name ?? '',
+    code: site.code ?? '',
+    address: site.address ?? '',
+    timezone: site.timezone || 'America/New_York',
+    is_primary: !!site.is_primary,
+  } : DEFAULT_SITE_FORM);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const set = (k: keyof SiteForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
+    setForm(f => ({ ...f, [k]: e.target.value }));
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (!form.name.trim()) { setError('Site name is required'); return; }
+    setSaving(true);
+    try {
+      if (isEdit) {
+        await api.updateSite(site!.id, {
+          name: form.name,
+          code: form.code,
+          address: form.address,
+          timezone: form.timezone,
+          ...(form.is_primary ? { is_primary: 1 } : {}),
+        });
+        onSaved('Site updated');
+      } else {
+        await api.createSite({ name: form.name, code: form.code, address: form.address, timezone: form.timezone });
+        onSaved('Site created');
+      }
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Failed to save site');
+      onError(err.message || 'Failed to save site');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h3 className="font-semibold text-gray-800">{isEdit ? 'Edit Site' : 'Add Site'}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Name</label>
+            <input className="input-field w-full" value={form.name} onChange={set('name')} required placeholder="Main Plant" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Code</label>
+            <input className="input-field w-full" value={form.code} onChange={set('code')} placeholder="MAIN" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Address</label>
+            <textarea className="input-field w-full resize-none" rows={2} value={form.address} onChange={set('address')} placeholder="123 Main St, Springfield, IL 62701" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Timezone</label>
+            <select className="input-field w-full" value={form.timezone} onChange={set('timezone')}>
+              {TIMEZONES.map(tz => (
+                <option key={tz} value={tz}>{tz.replace('_', ' ')}</option>
+              ))}
+            </select>
+          </div>
+          {isEdit && !site!.is_primary && (
+            <div className="flex items-center justify-between py-1">
+              <div>
+                <div className="text-sm font-medium text-gray-800">Set as primary site</div>
+                <div className="text-xs text-gray-500 mt-0.5">The primary site is the default for company-wide views</div>
+              </div>
+              <Toggle checked={form.is_primary} onChange={(v) => setForm(f => ({ ...f, is_primary: v }))} />
+            </div>
+          )}
+          {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={saving} className="btn-primary flex-1">
+              {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Site'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function SitesTab() {
+  const [sites, setSites] = useState<Site[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [modalSite, setModalSite] = useState<Site | null | false>(false); // false=closed, null=new, obj=edit
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    api.getSites()
+      .then(setSites)
+      .catch(() => setSites([]))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, []);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ message, type });
+    toastTimer.current = setTimeout(() => setToast(null), 3000);
+  };
+
+  const handleDelete = async (site: Site) => {
+    if (!confirm(`Delete site "${site.name}"? This cannot be undone.`)) return;
+    setDeletingId(site.id);
+    try {
+      await api.deleteSite(site.id);
+      showToast(`Site "${site.name}" deleted`);
+      load();
+    } catch (err: any) {
+      showToast(err.message || 'Failed to delete site', 'error');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  return (
+    <div className="max-w-3xl space-y-6">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-gray-600">Manage the sites / plants in your organisation.</p>
+        <button onClick={() => setModalSite(null)} className="btn-primary flex items-center gap-2">
+          <Plus size={15} /> Add Site
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="text-center py-12 text-gray-400 text-sm">Loading sites…</div>
+      ) : sites.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-gray-200 py-10 text-center">
+          <MapPin size={24} className="mx-auto text-gray-300 mb-2" />
+          <p className="text-sm text-gray-400">No sites yet</p>
+          <p className="text-xs text-gray-400 mt-0.5">Add your first site to get started.</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {sites.map(site => (
+            <div key={site.id} className="card p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+                    style={{ backgroundColor: 'var(--accent-light)', color: 'var(--accent)' }}>
+                    <MapPin size={18} />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-gray-800">{site.name}</span>
+                      {site.code && <span className="text-xs font-mono text-gray-400">{site.code}</span>}
+                      {!!site.is_primary && (
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Primary</span>
+                      )}
+                    </div>
+                    {site.address && <div className="text-xs text-gray-500 mt-0.5">{site.address}</div>}
+                    <div className="text-xs text-gray-400 mt-0.5">{site.timezone}</div>
+                    <div className="flex items-center gap-3 mt-2 text-xs text-gray-500 flex-wrap">
+                      <span>{site.station_count ?? 0} stations</span>
+                      <span>·</span>
+                      <span>{site.department_count ?? 0} departments</span>
+                      <span>·</span>
+                      <span>{site.work_order_count ?? 0} work orders</span>
+                      <span>·</span>
+                      <span>{site.location_count ?? 0} locations</span>
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <button onClick={() => setModalSite(site)}
+                    className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+                    <Edit2 size={14} />
+                  </button>
+                  {!site.is_primary && (
+                    <button
+                      onClick={() => handleDelete(site)}
+                      disabled={deletingId === site.id}
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+                      <Trash2 size={14} />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {modalSite !== false && (
+        <SiteModal
+          site={modalSite}
+          onClose={() => setModalSite(false)}
+          onSaved={(msg) => { showToast(msg); load(); }}
+          onError={(msg) => showToast(msg, 'error')}
+        />
+      )}
+      {toast && <Toast message={toast.message} type={toast.type} onDismiss={() => setToast(null)} />}
+    </div>
+  );
+}
+
+// ─── Tab 8: Notifications ─────────────────────────────────────────────────────
+
+function NotificationsTab() {
+  const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
+  const [saved, setSaved] = useState<NotificationPrefs | null>(null);
+  const [log, setLog] = useState<NotificationLogEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    Promise.all([api.getNotificationPrefs(), api.getNotificationLog(20)])
+      .then(([p, l]) => {
+        setPrefs(p);
+        setSaved(p);
+        setLog(l);
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, []);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ message, type });
+    toastTimer.current = setTimeout(() => setToast(null), 4000);
+  };
+
+  const isDirty = JSON.stringify(prefs) !== JSON.stringify(saved);
+
+  const toggleEvent = (key: string) => {
+    if (!prefs) return;
+    const has = prefs.events.includes(key);
+    setPrefs({ ...prefs, events: has ? prefs.events.filter(e => e !== key) : [...prefs.events, key] });
+  };
+
+  const handleSave = async () => {
+    if (!prefs) return;
+    setSaving(true);
+    try {
+      const updated = await api.updateNotificationPrefs({
+        email_enabled: prefs.email_enabled,
+        email_to: prefs.email_to,
+        sms_enabled: prefs.sms_enabled,
+        sms_to: prefs.sms_to,
+        events: prefs.events,
+      });
+      setPrefs(updated);
+      setSaved(updated);
+      showToast('Notification preferences saved');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to save preferences', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleTest = async () => {
+    setTesting(true);
+    try {
+      const result: any = await api.sendTestNotification();
+      showToast(result?.message || 'Test notification sent');
+      api.getNotificationLog(20).then(setLog).catch(() => {});
+    } catch (err: any) {
+      showToast(err.message || 'Failed to send test notification', 'error');
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  if (loading || !prefs) {
+    return <div className="flex items-center justify-center py-20 text-gray-400 text-sm">Loading notification settings…</div>;
+  }
+
+  return (
+    <div className="space-y-8 max-w-2xl">
+      {/* Channel status */}
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full inline-flex items-center gap-1.5 ${
+          prefs.email_configured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+        }`}>
+          <Mail size={12} />
+          {prefs.email_configured ? 'Email — Configured' : 'Email — Demo mode (will log instead of send)'}
+        </span>
+        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full inline-flex items-center gap-1.5 ${
+          prefs.sms_configured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
+        }`}>
+          <MessageSquare size={12} />
+          {prefs.sms_configured ? 'SMS — Configured' : 'SMS — Demo mode (will log instead of send)'}
+        </span>
+      </div>
+
+      {/* Email */}
+      <div>
+        <SectionHeader title="Email Alerts" subtitle="Send email notifications for selected events" />
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="text-sm font-medium text-gray-800">Enable email notifications</div>
+            </div>
+            <Toggle checked={prefs.email_enabled} onChange={(v) => setPrefs(p => p ? { ...p, email_enabled: v } : p)} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Recipients</label>
+            <input
+              className="input-field w-full"
+              value={prefs.email_to}
+              onChange={e => setPrefs(p => p ? { ...p, email_to: e.target.value } : p)}
+              placeholder="ops@company.com, manager@company.com"
+            />
+            <p className="text-xs text-gray-400 mt-1">Comma-separated email addresses</p>
+          </div>
+        </div>
+      </div>
+
+      {/* SMS */}
+      <div>
+        <SectionHeader title="SMS Alerts" subtitle="Send text message notifications for selected events" />
+        <div className="space-y-4">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="text-sm font-medium text-gray-800">Enable SMS notifications</div>
+            </div>
+            <Toggle checked={prefs.sms_enabled} onChange={(v) => setPrefs(p => p ? { ...p, sms_enabled: v } : p)} />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Recipients</label>
+            <input
+              className="input-field w-full"
+              value={prefs.sms_to}
+              onChange={e => setPrefs(p => p ? { ...p, sms_to: e.target.value } : p)}
+              placeholder="+15551234567"
+            />
+            <p className="text-xs text-gray-400 mt-1">Comma-separated phone numbers, e.g. +15551234567</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Event subscriptions */}
+      <div>
+        <SectionHeader title="Event Subscriptions" subtitle="Choose which events trigger notifications" />
+        <div className="divide-y divide-gray-50">
+          {Object.entries(prefs.available_events).map(([key, label]) => (
+            <label key={key} className="flex items-center justify-between py-2.5 gap-4 cursor-pointer">
+              <span className="text-sm text-gray-700">{label}</span>
+              <input
+                type="checkbox"
+                className="w-4 h-4 rounded border-gray-300"
+                checked={prefs.events.includes(key)}
+                onChange={() => toggleEvent(key)}
+                style={{ accentColor: 'var(--accent)' }}
+              />
+            </label>
+          ))}
+        </div>
+      </div>
+
+      {/* Save / Test */}
+      <div className="flex items-center gap-3">
+        <button onClick={handleSave} disabled={saving} className="btn-primary flex items-center justify-center gap-2">
+          {saving ? <><span className="w-4 h-4 border-2 border-white/40 border-t-white rounded-full animate-spin" />Saving…</> : <><Check size={15} />Save</>}
+        </button>
+        <button onClick={handleTest} disabled={testing} className="btn-secondary flex items-center justify-center gap-2">
+          {testing ? <><span className="w-4 h-4 border-2 border-current/40 border-t-current rounded-full animate-spin" />Sending…</> : <><Send size={14} />Send Test Notification</>}
+        </button>
+        {isDirty && (
+          <span className="text-xs text-amber-600 whitespace-nowrap flex items-center gap-1">
+            <AlertCircle size={12} /> Unsaved changes
+          </span>
+        )}
+      </div>
+
+      {/* Recent notifications */}
+      <div>
+        <SectionHeader title="Recent Notifications" subtitle="Last 20 notification attempts" />
+        {log.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-gray-200 py-10 text-center">
+            <Bell size={24} className="mx-auto text-gray-300 mb-2" />
+            <p className="text-sm text-gray-400">No notifications sent yet</p>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50">
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Event</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Channel</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Recipient</th>
+                  <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Status</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">When</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {log.map(entry => (
+                  <tr key={entry.id} className="hover:bg-gray-50/50">
+                    <td className="px-4 py-2.5 text-gray-700">{prefs.available_events[entry.event] ?? entry.event}</td>
+                    <td className="px-4 py-2.5 text-gray-500">
+                      <span className="inline-flex items-center gap-1.5">
+                        {entry.channel === 'email' ? <Mail size={12} /> : <MessageSquare size={12} />}
+                        {entry.channel.toUpperCase()}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-gray-600">{entry.recipient}</td>
+                    <td className="px-4 py-2.5 text-center">
+                      {entry.status === 'sent' && (
+                        <span title="Sent" className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600">
+                          <CheckCircle2 size={14} /> Sent
+                        </span>
+                      )}
+                      {entry.status === 'simulated' && (
+                        <span title="Demo mode — logged instead of sent" className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
+                          <AlertCircle size={14} /> Simulated
+                        </span>
+                      )}
+                      {entry.status === 'failed' && (
+                        <span title="Failed to send" className="inline-flex items-center gap-1 text-xs font-medium text-red-500">
+                          <XCircle size={14} /> Failed
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap">
+                      {new Date(entry.created_at + 'Z').toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {toast && <Toast message={toast.message} type={toast.type} onDismiss={() => setToast(null)} />}
+    </div>
+  );
+}
+
+// ─── Tab 9: Permissions ───────────────────────────────────────────────────────
+
+const ROLE_LEVELS: Record<string, number> = { manager: 4, supervisor: 3, operator: 2, viewer: 1 };
+const PERM_ROLES: AppRole[] = ['manager', 'supervisor', 'operator', 'viewer'];
+
+function PermissionsTab() {
+  const [permissions, setPermissions] = useState<RolePermissionMap | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [busyKey, setBusyKey] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    api.getPermissions()
+      .then(setPermissions)
+      .catch(() => setPermissions(null))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, []);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ message, type });
+    toastTimer.current = setTimeout(() => setToast(null), 3000);
+  };
+
+  const handleToggle = async (role: AppRole, item: typeof ALL_SECTION_ITEMS[number]) => {
+    if (!permissions) return;
+    const defaultVisible = !item.minRole || (ROLE_LEVELS[role] ?? 0) >= (ROLE_LEVELS[item.minRole] ?? 99);
+    const effective = permissions[role]?.[item.to] !== undefined ? !!permissions[role][item.to] : defaultVisible;
+    const next = !effective;
+    const visible = next === defaultVisible ? null : next;
+    const key = `${role}:${item.to}`;
+    setBusyKey(key);
+    try {
+      const updated = await api.updatePermissions([{ role, nav_key: item.to, visible }]);
+      setPermissions(updated);
+    } catch (err: any) {
+      showToast(err.message || 'Failed to update permission', 'error');
+    } finally {
+      setBusyKey(null);
+    }
+  };
+
+  const handleReset = async () => {
+    if (!confirm('Reset all role permission overrides to their defaults?')) return;
+    try {
+      const updated = await api.resetPermissions();
+      setPermissions(updated);
+      showToast('Permissions reset to defaults');
+    } catch (err: any) {
+      showToast(err.message || 'Failed to reset permissions', 'error');
+    }
+  };
+
+  if (loading || !permissions) {
+    return <div className="flex items-center justify-center py-20 text-gray-400 text-sm">Loading permissions…</div>;
+  }
+
+  return (
+    <div className="max-w-4xl space-y-6">
+      <div className="flex items-start gap-2.5 text-xs bg-blue-50 text-blue-800 rounded-xl px-3.5 py-2.5 border border-blue-100">
+        <AlertCircle size={15} className="flex-shrink-0 mt-0.5" />
+        <span>
+          Toggle which navigation items each role can see, beyond the built-in defaults.
+          A grey/default cell means the item follows its normal role requirement.
+        </span>
+      </div>
+
+      <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50">
+              <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Navigation Item</th>
+              {PERM_ROLES.map(role => (
+                <th key={role} className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500 capitalize">{role}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {ALL_SECTION_ITEMS.map(item => (
+              <tr key={item.to} className="hover:bg-gray-50/50">
+                <td className="px-4 py-2.5 text-gray-700 flex items-center gap-2">
+                  <item.icon size={14} className="text-gray-400" />
+                  {item.label}
+                </td>
+                {PERM_ROLES.map(role => {
+                  const defaultVisible = !item.minRole || (ROLE_LEVELS[role] ?? 0) >= (ROLE_LEVELS[item.minRole] ?? 99);
+                  const override = permissions[role]?.[item.to];
+                  const effective = override !== undefined ? !!override : defaultVisible;
+                  const isOverridden = override !== undefined;
+                  const key = `${role}:${item.to}`;
+                  return (
+                    <td key={role} className="px-3 py-2.5 text-center">
+                      <div className="flex items-center justify-center gap-1.5">
+                        <span className={isOverridden ? '' : 'opacity-50'}>
+                          <Toggle
+                            checked={effective}
+                            onChange={() => busyKey ? undefined : handleToggle(role, item)}
+                          />
+                        </span>
+                        {busyKey === key && (
+                          <span className="w-3 h-3 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin inline-block" />
+                        )}
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <div className="flex items-center justify-between gap-4 pt-2 border-t border-gray-100">
+        <p className="text-xs text-gray-500">
+          Changes apply immediately to the relevant role's sidebar.
+        </p>
+        <button onClick={handleReset} className="btn-secondary text-sm whitespace-nowrap flex items-center gap-1.5">
+          <RotateCcw size={13} /> Reset All to Defaults
+        </button>
+      </div>
+
+      {toast && <Toast message={toast.message} type={toast.type} onDismiss={() => setToast(null)} />}
+    </div>
+  );
+}
+
+// ─── Tab 10: Developer (Enterprise) ───────────────────────────────────────────
+
+function NewApiKeyModal({ onClose, onCreated, onError }: {
+  onClose: () => void;
+  onCreated: (key: ApiKey & { key: string }) => void;
+  onError: (message: string) => void;
+}) {
+  const [name, setName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (!name.trim()) { setError('Name is required'); return; }
+    setSaving(true);
+    try {
+      const created = await api.createApiKey(name.trim());
+      onCreated(created);
+    } catch (err: any) {
+      setError(err.message || 'Failed to create API key');
+      onError(err.message || 'Failed to create API key');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h3 className="font-semibold text-gray-800">Generate New API Key</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Name</label>
+            <input className="input-field w-full" value={name} onChange={e => setName(e.target.value)} required placeholder="ERP Integration" autoFocus />
+          </div>
+          {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={saving} className="btn-primary flex-1">{saving ? 'Generating…' : 'Generate Key'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function RevealKeyModal({ apiKey, onClose }: { apiKey: ApiKey & { key: string }; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(apiKey.key);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h3 className="font-semibold text-gray-800">API Key Created</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="flex items-start gap-2.5 text-xs bg-amber-50 text-amber-800 rounded-xl px-3.5 py-2.5 border border-amber-100">
+            <AlertCircle size={15} className="flex-shrink-0 mt-0.5" />
+            <span>This key will only be shown once — copy it now. You won't be able to view it again.</span>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">{apiKey.name}</label>
+            <div className="flex items-center gap-2">
+              <code className="input-field w-full font-mono text-xs break-all">{apiKey.key}</code>
+              <button onClick={handleCopy} type="button" className="btn-secondary flex-shrink-0 px-3 py-2.5 flex items-center gap-1.5 text-xs">
+                <Copy size={13} /> {copied ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+          </div>
+          <button onClick={onClose} className="btn-primary w-full">Done</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WebhookModal({ webhook, availableEvents, onClose, onSaved, onError }: {
+  webhook: Webhook | null;
+  availableEvents: string[];
+  onClose: () => void;
+  onSaved: (message: string) => void;
+  onError: (message: string) => void;
+}) {
+  const isEdit = !!webhook;
+  const [name, setName] = useState(webhook?.name ?? '');
+  const [url, setUrl] = useState(webhook?.url ?? '');
+  const [events, setEvents] = useState<string[]>(webhook?.events ?? []);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const toggleEvent = (key: string) => {
+    if (key === '*') {
+      setEvents(prev => prev.includes('*') ? [] : ['*']);
+      return;
+    }
+    setEvents(prev => {
+      const withoutAll = prev.filter(e => e !== '*');
+      return withoutAll.includes(key) ? withoutAll.filter(e => e !== key) : [...withoutAll, key];
+    });
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    if (!name.trim()) { setError('Name is required'); return; }
+    if (!url.trim()) { setError('URL is required'); return; }
+    if (events.length === 0) { setError('Select at least one event'); return; }
+    setSaving(true);
+    try {
+      if (isEdit) {
+        await api.updateWebhook(webhook!.id, { name, url, events });
+        onSaved('Webhook updated');
+      } else {
+        await api.createWebhook({ name, url, events });
+        onSaved('Webhook created');
+      }
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Failed to save webhook');
+      onError(err.message || 'Failed to save webhook');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white">
+          <h3 className="font-semibold text-gray-800">{isEdit ? 'Edit Webhook' : 'Add Webhook'}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Name</label>
+            <input className="input-field w-full" value={name} onChange={e => setName(e.target.value)} required placeholder="ERP Sync" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">URL</label>
+            <input type="url" className="input-field w-full" value={url} onChange={e => setUrl(e.target.value)} required placeholder="https://example.com/webhooks/hartmonitor" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Events</label>
+            <div className="divide-y divide-gray-50 border border-gray-100 rounded-lg max-h-56 overflow-y-auto">
+              {availableEvents.map(key => (
+                <label key={key} className="flex items-center justify-between py-2 px-3 gap-4 cursor-pointer text-sm">
+                  <span className="text-gray-700">{key === '*' ? 'All events' : key}</span>
+                  <input
+                    type="checkbox"
+                    className="w-4 h-4 rounded border-gray-300"
+                    checked={events.includes(key) || (key !== '*' && events.includes('*'))}
+                    onChange={() => toggleEvent(key)}
+                    disabled={key !== '*' && events.includes('*')}
+                    style={{ accentColor: 'var(--accent)' }}
+                  />
+                </label>
+              ))}
+            </div>
+          </div>
+          {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+            <button type="submit" disabled={saving} className="btn-primary flex-1">{saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Add Webhook'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function WebhookDeliveriesModal({ webhook, onClose }: { webhook: Webhook; onClose: () => void }) {
+  const [deliveries, setDeliveries] = useState<WebhookDelivery[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api.getWebhookDeliveries(webhook.id)
+      .then(setDeliveries)
+      .catch(() => setDeliveries([]))
+      .finally(() => setLoading(false));
+  }, [webhook.id]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white">
+          <h3 className="font-semibold text-gray-800">Deliveries — {webhook.name}</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+        <div className="p-6">
+          {loading ? (
+            <div className="text-center py-8 text-gray-400 text-sm">Loading deliveries…</div>
+          ) : deliveries.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-gray-200 py-10 text-center">
+              <p className="text-sm text-gray-400">No deliveries yet</p>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50">
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Event</th>
+                    <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Status</th>
+                    <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Result</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Error</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">When</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {deliveries.map(d => (
+                    <tr key={d.id} className="hover:bg-gray-50/50">
+                      <td className="px-4 py-2.5 text-gray-700">{d.event}</td>
+                      <td className="px-4 py-2.5 text-center text-gray-600">{d.status_code ?? '—'}</td>
+                      <td className="px-4 py-2.5 text-center">
+                        {d.success
+                          ? <CheckCircle2 size={14} className="text-emerald-500 inline" />
+                          : <XCircle size={14} className="text-red-500 inline" />}
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-500 text-xs">{d.error || '—'}</td>
+                      <td className="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap">
+                        {new Date(d.created_at + 'Z').toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DeveloperTab() {
+  const [availability, setAvailability] = useState<{ available: boolean; events: string[] } | null>(null);
+  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
+  const [webhooks, setWebhooks] = useState<Webhook[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showNewKey, setShowNewKey] = useState(false);
+  const [revealKey, setRevealKey] = useState<(ApiKey & { key: string }) | null>(null);
+  const [modalWebhook, setModalWebhook] = useState<Webhook | null | false>(false);
+  const [deliveriesWebhook, setDeliveriesWebhook] = useState<Webhook | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    api.getDeveloperAvailability()
+      .then(avail => {
+        setAvailability(avail);
+        if (avail.available) {
+          return Promise.all([api.getApiKeys(), api.getWebhooks()]).then(([keys, hooks]) => {
+            setApiKeys(keys);
+            setWebhooks(hooks);
+          });
+        }
+      })
+      .catch(() => setAvailability({ available: false, events: [] }))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, []);
+
+  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast({ message, type });
+    toastTimer.current = setTimeout(() => setToast(null), 3000);
+  };
+
+  const loadKeys = () => api.getApiKeys().then(setApiKeys).catch(() => {});
+  const loadWebhooks = () => api.getWebhooks().then(setWebhooks).catch(() => {});
+
+  const handleDeleteKey = async (key: ApiKey) => {
+    if (!confirm(`Delete API key "${key.name}"? Any integrations using it will stop working.`)) return;
+    try {
+      await api.deleteApiKey(key.id);
+      showToast('API key deleted');
+      loadKeys();
+    } catch (err: any) {
+      showToast(err.message || 'Failed to delete API key', 'error');
+    }
+  };
+
+  const handleDeleteWebhook = async (hook: Webhook) => {
+    if (!confirm(`Delete webhook "${hook.name}"?`)) return;
+    try {
+      await api.deleteWebhook(hook.id);
+      showToast('Webhook deleted');
+      loadWebhooks();
+    } catch (err: any) {
+      showToast(err.message || 'Failed to delete webhook', 'error');
+    }
+  };
+
+  const handleTestWebhook = async (hook: Webhook) => {
+    try {
+      const result: any = await api.testWebhook(hook.id);
+      showToast(result?.success === false ? (result?.error || 'Webhook test failed') : 'Webhook test sent', result?.success === false ? 'error' : 'success');
+    } catch (err: any) {
+      showToast(err.message || 'Webhook test failed', 'error');
+    }
+  };
+
+  if (loading || !availability) {
+    return <div className="flex items-center justify-center py-20 text-gray-400 text-sm">Loading…</div>;
+  }
+
+  if (!availability.available) {
+    return (
+      <div className="max-w-2xl">
+        <div className="rounded-2xl border-2 border-amber-200 bg-amber-50 p-8 text-center">
+          <div className="w-12 h-12 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto mb-4">
+            <Crown size={22} />
+          </div>
+          <h3 className="text-base font-semibold text-gray-800 mb-1.5">Enterprise Feature</h3>
+          <p className="text-sm text-gray-600 max-w-md mx-auto">
+            API access and webhooks for ERP / external system integration are available on the
+            Enterprise plan. Generate API keys for the read-only REST API and configure webhooks
+            to push real-time events to your other systems.
+          </p>
+          <p className="text-xs text-gray-500 mt-3">
+            Visit the <span className="font-semibold">Plan &amp; Billing</span> tab to upgrade.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="max-w-3xl space-y-8">
+      {/* API info card */}
+      <div className="card p-5">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
+            style={{ backgroundColor: 'var(--accent-light)', color: 'var(--accent)' }}>
+            <Code size={18} />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-semibold text-gray-800">Enterprise REST API</div>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Read-only API for integrating with ERP and other external systems.
+              Base URL: <code className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">/api/v1</code>.
+              Authenticate with <code className="font-mono bg-gray-100 px-1.5 py-0.5 rounded">Authorization: Bearer &lt;api-key&gt;</code>.
+            </p>
+            <ul className="text-xs text-gray-600 mt-2 space-y-1 font-mono">
+              <li><span className="text-emerald-600 font-semibold">GET</span> /api/v1/work-orders</li>
+              <li><span className="text-emerald-600 font-semibold">GET</span> /api/v1/completions</li>
+              <li><span className="text-emerald-600 font-semibold">GET</span> /api/v1/inventory</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      {/* API Keys */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <SectionHeader title="API Keys" subtitle="Generate keys to authenticate requests to the Enterprise API" />
+          <button onClick={() => setShowNewKey(true)} className="btn-primary flex items-center gap-2 text-sm flex-shrink-0 -mt-5">
+            <Plus size={14} /> Generate New Key
+          </button>
+        </div>
+        {apiKeys.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-gray-200 py-8 text-center">
+            <Key size={20} className="mx-auto text-gray-300 mb-2" />
+            <p className="text-sm text-gray-400">No API keys yet</p>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50">
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Name</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Key</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Last Used</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Created</th>
+                  <th className="px-4 py-2.5" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {apiKeys.map(key => (
+                  <tr key={key.id} className="hover:bg-gray-50/50">
+                    <td className="px-4 py-2.5 text-gray-800 font-medium">{key.name}</td>
+                    <td className="px-4 py-2.5 text-gray-500 font-mono text-xs">{key.key_prefix}••••••••</td>
+                    <td className="px-4 py-2.5 text-gray-500 text-xs">{key.last_used_at ? new Date(key.last_used_at + 'Z').toLocaleString() : 'Never'}</td>
+                    <td className="px-4 py-2.5 text-gray-500 text-xs">{new Date(key.created_at + 'Z').toLocaleDateString()}</td>
+                    <td className="px-4 py-2.5">
+                      <div className="flex justify-end">
+                        <button onClick={() => handleDeleteKey(key)}
+                          className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Webhooks */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <SectionHeader title="Webhooks" subtitle="Push real-time events to an external URL" />
+          <button onClick={() => setModalWebhook(null)} className="btn-primary flex items-center gap-2 text-sm flex-shrink-0 -mt-5">
+            <Plus size={14} /> Add Webhook
+          </button>
+        </div>
+        {webhooks.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-gray-200 py-8 text-center">
+            <WebhookIcon size={20} className="mx-auto text-gray-300 mb-2" />
+            <p className="text-sm text-gray-400">No webhooks configured</p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {webhooks.map(hook => (
+              <div key={hook.id} className="card p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-sm font-semibold text-gray-800">{hook.name}</span>
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${hook.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
+                        {hook.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5 truncate">{hook.url}</div>
+                    <div className="text-xs text-gray-400 mt-1">
+                      {hook.events.includes('*') ? 'All events' : hook.events.join(', ')}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button onClick={() => setDeliveriesWebhook(hook)} title="View Deliveries"
+                      className="px-2 py-1.5 rounded-lg text-gray-400 hover:text-gray-700 hover:bg-gray-50 transition-colors text-xs font-medium flex items-center gap-1">
+                      <Activity size={13} /> Deliveries
+                    </button>
+                    <button onClick={() => handleTestWebhook(hook)} title="Test"
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+                      <Send size={13} />
+                    </button>
+                    <button onClick={() => setModalWebhook(hook)} title="Edit"
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+                      <Edit2 size={13} />
+                    </button>
+                    <button onClick={() => handleDeleteWebhook(hook)} title="Delete"
+                      className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {showNewKey && (
+        <NewApiKeyModal
+          onClose={() => setShowNewKey(false)}
+          onCreated={(created) => { setShowNewKey(false); setRevealKey(created); loadKeys(); }}
+          onError={(msg) => showToast(msg, 'error')}
+        />
+      )}
+      {revealKey && <RevealKeyModal apiKey={revealKey} onClose={() => setRevealKey(null)} />}
+      {modalWebhook !== false && (
+        <WebhookModal
+          webhook={modalWebhook}
+          availableEvents={availability.events}
+          onClose={() => setModalWebhook(false)}
+          onSaved={(msg) => { showToast(msg); loadWebhooks(); }}
+          onError={(msg) => showToast(msg, 'error')}
+        />
+      )}
+      {deliveriesWebhook && (
+        <WebhookDeliveriesModal webhook={deliveriesWebhook} onClose={() => setDeliveriesWebhook(null)} />
+      )}
+      {toast && <Toast message={toast.message} type={toast.type} onDismiss={() => setToast(null)} />}
+    </div>
+  );
+}
+
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 const TABS: { id: TabId; label: string; icon: React.ReactNode }[] = [
@@ -1802,7 +2938,7 @@ export default function SettingsPage() {
   const { isAtLeast } = useAuth();
   const [activeTab, setActiveTab] = useState<TabId>(() => {
     const tab = new URLSearchParams(window.location.search).get('tab');
-    const valid: TabId[] = ['account', 'company', 'plan', 'theme', 'sidebar', 'export', 'users'];
+    const valid: TabId[] = ['account', 'company', 'plan', 'theme', 'sidebar', 'export', 'users', 'sites', 'notifications', 'permissions', 'developer'];
     return (tab && valid.includes(tab as TabId)) ? (tab as TabId) : 'account';
   });
 
@@ -1814,6 +2950,10 @@ export default function SettingsPage() {
     { id: 'sidebar',  label: 'Navigation',     icon: <PanelLeft size={15} /> },
     { id: 'export',   label: 'Data Export',    icon: <Download size={15} /> },
     { id: 'users',    label: 'Users & Access', icon: <Users size={15} />,      minRole: 'manager' },
+    { id: 'sites',         label: 'Sites',          icon: <MapPin size={15} />,    minRole: 'manager' },
+    { id: 'notifications', label: 'Notifications',  icon: <Bell size={15} />,      minRole: 'manager' },
+    { id: 'permissions',   label: 'Permissions',    icon: <Sliders size={15} />,   minRole: 'manager' },
+    { id: 'developer',     label: 'Developer',      icon: <Code size={15} />,      minRole: 'manager' },
   ];
   const TABS = ALL_TABS.filter(t => !t.minRole || isAtLeast(t.minRole as any));
 
@@ -1864,6 +3004,10 @@ export default function SettingsPage() {
         {activeTab === 'sidebar'  && <SidebarTab />}
         {activeTab === 'export'   && <ExportTab />}
         {activeTab === 'users'    && <UsersTab />}
+        {activeTab === 'sites'         && <SitesTab />}
+        {activeTab === 'notifications' && <NotificationsTab />}
+        {activeTab === 'permissions'   && <PermissionsTab />}
+        {activeTab === 'developer'     && <DeveloperTab />}
       </div>
     </div>
   );

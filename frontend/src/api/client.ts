@@ -1,4 +1,8 @@
-import type { DailyBrief, LeaderboardResponse, LeaderboardPeriod, BroadcastMessage, MessageSeverity, PricingCatalog } from '../types';
+import type {
+  DailyBrief, LeaderboardResponse, LeaderboardPeriod, BroadcastMessage, MessageSeverity, PricingCatalog,
+  Site, NotificationPrefs, NotificationLogEntry, RolePermissionMap, ApiKey, Webhook, WebhookDelivery,
+  AuditLogEntry, SSOProviderInfo,
+} from '../types';
 
 const BASE = '/api';
 
@@ -45,6 +49,28 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return res.json();
 }
 
+// Authenticated file download via fetch + blob, saved with the server-provided
+// filename (Content-Disposition) or the given fallback.
+async function downloadBlob(path: string, fallbackFilename: string): Promise<void> {
+  const token = localStorage.getItem('hm_token');
+  const res = await fetch(`${BASE}${path}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) throw new Error(`Download failed (${res.status})`);
+  const disposition = res.headers.get('Content-Disposition') || '';
+  const match = disposition.match(/filename="?([^";]+)"?/);
+  const filename = match?.[1] || fallbackFilename;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export const api = {
   // ── Apps
   getApps: () => request<any[]>('/apps'),
@@ -81,19 +107,37 @@ export const api = {
   deleteRecord: (tableId: string, recordId: string) => request<any>(`/tables/${tableId}/records/${recordId}`, { method: 'DELETE' }),
 
   // ── Stations
-  getStations: () => request<any[]>('/stations'),
+  getStations: (params?: { site_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.site_id) qs.set('site_id', params.site_id);
+    const s = qs.toString();
+    return request<any[]>(`/stations${s ? `?${s}` : ''}`);
+  },
   createStation: (data: any) => request<any>('/stations', { method: 'POST', body: JSON.stringify(data) }),
   updateStation: (id: string, data: any) => request<any>(`/stations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteStation: (id: string) => request<any>(`/stations/${id}`, { method: 'DELETE' }),
 
   // ── Departments
-  getDepartments: () => request<any[]>('/departments'),
+  getDepartments: (params?: { site_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.site_id) qs.set('site_id', params.site_id);
+    const s = qs.toString();
+    return request<any[]>(`/departments${s ? `?${s}` : ''}`);
+  },
   createDepartment: (data: any) => request<any>('/departments', { method: 'POST', body: JSON.stringify(data) }),
   updateDepartment: (id: string, data: any) => request<any>(`/departments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteDepartment: (id: string) => request<any>(`/departments/${id}`, { method: 'DELETE' }),
 
   // ── Work Orders
-  getWorkOrders: () => request<any[]>('/work-orders'),
+  getWorkOrders: (params?: { status?: string; department_id?: string; priority?: string; site_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.status)        qs.set('status', params.status);
+    if (params?.department_id) qs.set('department_id', params.department_id);
+    if (params?.priority)      qs.set('priority', params.priority);
+    if (params?.site_id)       qs.set('site_id', params.site_id);
+    const s = qs.toString();
+    return request<any[]>(`/work-orders${s ? `?${s}` : ''}`);
+  },
   getWorkOrder: (id: string) => request<any>(`/work-orders/${id}`),
   createWorkOrder: (data: any) => request<any>('/work-orders', { method: 'POST', body: JSON.stringify(data) }),
   updateWorkOrder: (id: string, data: any) => request<any>(`/work-orders/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -115,7 +159,12 @@ export const api = {
   getAppPerformance: (f?: AnalyticsFilters) => request<any[]>(`/analytics/app-performance${filterQS(f)}`),
   getQualityData: (days?: number, f?: AnalyticsFilters) => request<any[]>(`/analytics/quality${filterQS(f, { days: days ?? 30 })}`),
   getManagerView: () => request<any>('/analytics/manager-view'),
-  getPlantView: () => request<any>('/analytics/plant-view'),
+  getPlantView: (params?: { site_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.site_id) qs.set('site_id', params.site_id);
+    const s = qs.toString();
+    return request<any>(`/analytics/plant-view${s ? `?${s}` : ''}`);
+  },
   getDepartmentView: (id: string) => request<any>(`/analytics/department/${id}`),
   getStationView: (id: string) => request<any>(`/analytics/station/${id}`),
   getCompletionDetail: (id: string) => request<any>(`/analytics/completion/${id}`),
@@ -152,7 +201,12 @@ export const api = {
   createInventoryItem: (data: any) => request<any>('/inventory/items', { method: 'POST', body: JSON.stringify(data) }),
   updateInventoryItem: (id: string, data: any) => request<any>(`/inventory/items/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteInventoryItem: (id: string) => request<any>(`/inventory/items/${id}`, { method: 'DELETE' }),
-  getLocations: () => request<any[]>('/inventory/locations'),
+  getLocations: (params?: { site_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.site_id) qs.set('site_id', params.site_id);
+    const s = qs.toString();
+    return request<any[]>(`/inventory/locations${s ? `?${s}` : ''}`);
+  },
   createLocation: (data: any) => request<any>('/inventory/locations', { method: 'POST', body: JSON.stringify(data) }),
   updateLocation: (id: string, data: any) => request<any>(`/inventory/locations/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   createMovement: (data: any) => request<any>('/inventory/movements', { method: 'POST', body: JSON.stringify(data) }),
@@ -241,24 +295,9 @@ export const api = {
   // ── Export — authenticated download via fetch + blob (Bearer header required)
   downloadExport: async (type: string, params?: Record<string, string>) => {
     const qs = params ? '?' + new URLSearchParams(params).toString() : '';
-    const token = localStorage.getItem('hm_token');
-    const res = await fetch(`${BASE}/export/${type}${qs}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
-    });
-    if (!res.ok) throw new Error(`Export failed (${res.status})`);
-    const disposition = res.headers.get('Content-Disposition') || '';
-    const match = disposition.match(/filename="?([^";]+)"?/);
     const fallbackName = type.replace(/\//g, '-');
-    const filename = match?.[1] || `${fallbackName}-export.${type === 'all' ? 'json' : 'csv'}`;
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    const fallbackExt = type === 'all' ? 'json' : (params?.format === 'xlsx' ? 'xlsx' : 'csv');
+    await downloadBlob(`/export/${type}${qs}`, `${fallbackName}-export.${fallbackExt}`);
   },
 
   // ── Per-app export
@@ -301,4 +340,67 @@ export const api = {
   createUser: (data: any) => request<any>('/users', { method: 'POST', body: JSON.stringify(data) }),
   updateUser: (id: string, data: any) => request<any>(`/users/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteUser: (id: string) => request<any>(`/users/${id}`, { method: 'DELETE' }),
+
+  // ── Sites (multi-site / multi-plant)
+  getSites: () => request<Site[]>('/sites'),
+  createSite: (data: { name: string; code?: string; address?: string; timezone?: string }) =>
+    request<Site>('/sites', { method: 'POST', body: JSON.stringify(data) }),
+  updateSite: (id: string, data: Partial<Site>) =>
+    request<Site>(`/sites/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteSite: (id: string) => request<any>(`/sites/${id}`, { method: 'DELETE' }),
+
+  // ── Notifications (email/SMS alerts)
+  getNotificationPrefs: () => request<NotificationPrefs>('/notifications'),
+  updateNotificationPrefs: (data: { email_enabled?: boolean; email_to?: string; sms_enabled?: boolean; sms_to?: string; events?: string[] }) =>
+    request<NotificationPrefs>('/notifications', { method: 'PUT', body: JSON.stringify(data) }),
+  getNotificationLog: (limit = 50) => request<NotificationLogEntry[]>(`/notifications/log?limit=${limit}`),
+  sendTestNotification: () => request<any>('/notifications/test', { method: 'POST' }),
+
+  // ── Role permission overrides
+  getPermissions: () => request<RolePermissionMap>('/permissions'),
+  updatePermissions: (overrides: { role: string; nav_key: string; visible: boolean | null }[]) =>
+    request<RolePermissionMap>('/permissions', { method: 'PUT', body: JSON.stringify({ overrides }) }),
+  resetPermissions: () => request<RolePermissionMap>('/permissions/reset', { method: 'DELETE' }),
+
+  // ── Developer: API keys & webhooks (Enterprise)
+  getDeveloperAvailability: () => request<{ available: boolean; events: string[] }>('/developer/availability'),
+  getApiKeys: () => request<ApiKey[]>('/developer/api-keys'),
+  createApiKey: (name: string) =>
+    request<ApiKey & { key: string }>('/developer/api-keys', { method: 'POST', body: JSON.stringify({ name }) }),
+  deleteApiKey: (id: string) => request<any>(`/developer/api-keys/${id}`, { method: 'DELETE' }),
+  getWebhooks: () => request<Webhook[]>('/developer/webhooks'),
+  createWebhook: (data: { name: string; url: string; events: string[] }) =>
+    request<Webhook>('/developer/webhooks', { method: 'POST', body: JSON.stringify(data) }),
+  updateWebhook: (id: string, data: Partial<Webhook>) =>
+    request<Webhook>(`/developer/webhooks/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteWebhook: (id: string) => request<any>(`/developer/webhooks/${id}`, { method: 'DELETE' }),
+  getWebhookDeliveries: (id: string) => request<WebhookDelivery[]>(`/developer/webhooks/${id}/deliveries`),
+  testWebhook: (id: string) => request<any>(`/developer/webhooks/${id}/test`, { method: 'POST' }),
+
+  // ── Audit log
+  getAuditLog: (params?: { entity_type?: string; actor?: string; from?: string; to?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.entity_type) qs.set('entity_type', params.entity_type);
+    if (params?.actor)       qs.set('actor', params.actor);
+    if (params?.from)        qs.set('from', params.from);
+    if (params?.to)          qs.set('to', params.to);
+    if (params?.limit)       qs.set('limit', String(params.limit));
+    const s = qs.toString();
+    return request<AuditLogEntry[]>(`/activity${s ? `?${s}` : ''}`);
+  },
+  downloadAuditLog: (params?: { entity_type?: string; actor?: string; from?: string; to?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.entity_type) qs.set('entity_type', params.entity_type);
+    if (params?.actor)       qs.set('actor', params.actor);
+    if (params?.from)        qs.set('from', params.from);
+    if (params?.to)          qs.set('to', params.to);
+    const s = qs.toString();
+    return downloadBlob(`/activity/export${s ? `?${s}` : ''}`, 'audit-log-export.csv');
+  },
+
+  // ── Sample data
+  loadSampleData: () => request<any>('/config/sample-data', { method: 'POST' }),
+
+  // ── SSO
+  getSSOProviders: () => request<SSOProviderInfo[]>('/auth/sso/providers'),
 };
