@@ -7,12 +7,18 @@ import {
   ClipboardList,
 } from 'lucide-react';
 import { api } from '../api/client';
+import SavedViewsBar from '../components/shared/SavedViewsBar';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 function fmtCurrency(v: number | null | undefined): string {
   if (v == null) return '$0.00';
   return '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtCurrencyWhole(v: number | null | undefined): string {
+  if (v == null) return '$0';
+  return '$' + Math.round(v).toLocaleString('en-US');
 }
 
 function fmtNum(v: number | null | undefined): string {
@@ -65,7 +71,7 @@ function SummaryCard({ icon, iconBg, label, value, sub }: any) {
           {icon}
         </div>
         <div className="min-w-0">
-          <div className="text-2xl font-bold text-gray-900 truncate">{value}</div>
+          <div className="text-base sm:text-2xl font-bold text-gray-900 truncate">{value}</div>
           <div className="text-xs font-medium text-gray-500">{label}</div>
           {sub && <div className="text-xs text-gray-400">{sub}</div>}
         </div>
@@ -361,7 +367,7 @@ function LocationsModal({ onClose }: { onClose: () => void }) {
             </div>
           ) : (
             <div className="overflow-auto max-h-64">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm min-w-[480px]">
                 <thead>
                   <tr className="border-b border-gray-100">
                     <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500">Name</th>
@@ -466,7 +472,7 @@ function DetailPanel({ itemId, onClose, onEdit, onRefreshList }: {
 
   if (loading) {
     return (
-      <div className="flex-1 bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4 min-w-0">
+      <div className="w-full lg:flex-1 bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4 min-w-0">
         <Skeleton className="h-6 w-48" />
         <Skeleton className="h-4 w-32" />
         <Skeleton className="h-32 w-full" />
@@ -477,7 +483,7 @@ function DetailPanel({ itemId, onClose, onEdit, onRefreshList }: {
 
   if (!item) {
     return (
-      <div className="flex-1 bg-white rounded-2xl border border-gray-200 shadow-sm p-6 flex items-center justify-center">
+      <div className="w-full lg:flex-1 bg-white rounded-2xl border border-gray-200 shadow-sm p-6 flex items-center justify-center">
         <p className="text-gray-400">Item not found</p>
       </div>
     );
@@ -486,7 +492,7 @@ function DetailPanel({ itemId, onClose, onEdit, onRefreshList }: {
   const status = stockStatus(totalStock, item.reorder_point ?? 0);
 
   return (
-    <div className="flex-1 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col min-w-0 overflow-hidden">
+    <div className="w-full lg:flex-1 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col min-w-0 overflow-hidden">
       {showAdjust && (
         <AdjustModal
           item={item}
@@ -631,6 +637,12 @@ function DetailPanel({ itemId, onClose, onEdit, onRefreshList }: {
   );
 }
 
+interface InventoryViewFilters {
+  search: string;
+  category: string;
+  lowStockOnly: boolean;
+}
+
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
 export default function Inventory() {
@@ -644,6 +656,12 @@ export default function Inventory() {
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
   const [lowStockOnly, setLowStockOnly] = useState(false);
+
+  const applySavedView = (f: InventoryViewFilters) => {
+    setSearch(f.search);
+    setCategory(f.category);
+    setLowStockOnly(f.lowStockOnly);
+  };
 
   const [showItemModal, setShowItemModal] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
@@ -714,21 +732,21 @@ export default function Inventory() {
       {showLocations && <LocationsModal onClose={() => setShowLocations(false)} />}
 
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Inventory</h1>
           <p className="text-gray-500 text-sm mt-0.5">Track stock levels, movements and locations</p>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => setShowLocations(true)} className="btn-secondary">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={() => setShowLocations(true)} className="btn-secondary whitespace-nowrap">
             <MapPin size={14} />
             Locations
           </button>
-          <button onClick={() => api.downloadExport('inventory')} className="btn-secondary">
+          <button onClick={() => api.downloadExport('inventory')} className="btn-secondary whitespace-nowrap">
             <Download size={14} />
             Export CSV
           </button>
-          <button onClick={() => { setEditingItem(null); setShowItemModal(true); }} className="btn-primary">
+          <button onClick={() => { setEditingItem(null); setShowItemModal(true); }} className="btn-primary whitespace-nowrap">
             <Plus size={14} />
             New Item
           </button>
@@ -736,7 +754,7 @@ export default function Inventory() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         {summary ? (
           <>
             <SummaryCard
@@ -750,7 +768,7 @@ export default function Inventory() {
               icon={<DollarSign size={18} className="text-emerald-600" />}
               iconBg="bg-emerald-50"
               label="Total Stock Value"
-              value={fmtCurrency(summary.total_value)}
+              value={fmtCurrencyWhole(summary.total_value)}
               sub="across all locations"
             />
             <SummaryCard
@@ -813,15 +831,21 @@ export default function Inventory() {
           Low Stock Only
           {lowStockOnly && <span className="w-2 h-2 bg-red-500 rounded-full" />}
         </button>
+
+        <SavedViewsBar<InventoryViewFilters>
+          storageKey="hm_saved_views_inventory"
+          currentFilters={{ search, category, lowStockOnly }}
+          onApply={applySavedView}
+        />
       </div>
 
       {/* Main content: list + optional detail */}
-      <div className={`flex gap-5 items-start ${id ? 'min-h-[500px]' : ''}`}>
+      <div className={`flex flex-col lg:flex-row gap-5 items-start ${id ? 'lg:min-h-[500px]' : ''}`}>
 
         {/* Items table */}
-        <div className={`card overflow-hidden flex-shrink-0 ${id ? 'w-[55%]' : 'flex-1'}`}>
+        <div className={`card overflow-hidden flex-shrink-0 w-full ${id ? 'lg:w-[55%]' : 'lg:flex-1'}`}>
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm whitespace-nowrap">
               <thead>
                 <tr className="border-b border-gray-100 bg-gray-50/60">
                   <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 whitespace-nowrap">SKU</th>

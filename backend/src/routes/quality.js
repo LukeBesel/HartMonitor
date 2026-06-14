@@ -1,8 +1,13 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { logActivity } = require('../activity');
 
 const router = express.Router();
+
+const NCR_STATUS_LABELS = {
+  open: 'Open', investigating: 'Investigating', resolved: 'Resolved', closed: 'Closed',
+};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -103,6 +108,7 @@ router.post('/ncrs', (req, res) => {
     ownedOrNull('items', item_id, cid),
     assigned_to, due_date || null, cid
   );
+  logActivity(cid, 'ncr', id, 'NCR created', req.user?.display_name);
   res.status(201).json(getNCRWithDetails(id, cid));
 });
 
@@ -132,6 +138,27 @@ router.put('/ncrs/:id', (req, res) => {
   if (!Object.keys(updates).length) return res.json(getNCRWithDetails(req.params.id, req.companyId));
   const sets = Object.keys(updates).map(k => `${k} = ?`).join(', ');
   db.prepare(`UPDATE ncrs SET ${sets}, updated_at = datetime('now') WHERE id = ?`).run(...Object.values(updates), req.params.id);
+
+  const changes = [];
+  if (updates.status !== undefined && updates.status !== ncr.status) {
+    changes.push(`Status changed from ${NCR_STATUS_LABELS[ncr.status] || ncr.status} to ${NCR_STATUS_LABELS[updates.status] || updates.status}`);
+  }
+  if (updates.severity !== undefined && updates.severity !== ncr.severity) {
+    changes.push(`Severity changed from ${ncr.severity} to ${updates.severity}`);
+  }
+  if (updates.assigned_to !== undefined && updates.assigned_to !== ncr.assigned_to) {
+    changes.push(`Assigned to ${updates.assigned_to || 'nobody'}`);
+  }
+  if (updates.root_cause !== undefined && updates.root_cause && updates.root_cause !== ncr.root_cause) {
+    changes.push('Root cause updated');
+  }
+  if (updates.corrective_action !== undefined && updates.corrective_action && updates.corrective_action !== ncr.corrective_action) {
+    changes.push('Corrective action updated');
+  }
+  for (const change of changes) {
+    logActivity(req.companyId, 'ncr', req.params.id, change, req.user?.display_name);
+  }
+
   res.json(getNCRWithDetails(req.params.id, req.companyId));
 });
 
@@ -145,6 +172,7 @@ router.post('/ncrs/:id/comments', (req, res) => {
   const id = uuidv4();
   db.prepare(`INSERT INTO ncr_comments (id, ncr_id, author, body) VALUES (?, ?, ?, ?)`).run(id, req.params.id, author, body);
   db.prepare("UPDATE ncrs SET updated_at = datetime('now') WHERE id = ?").run(req.params.id);
+  logActivity(req.companyId, 'ncr', req.params.id, 'Comment added', author);
   res.status(201).json(db.prepare('SELECT * FROM ncr_comments WHERE id = ?').get(id));
 });
 

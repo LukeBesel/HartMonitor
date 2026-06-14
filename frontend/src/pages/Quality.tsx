@@ -3,9 +3,11 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, ShieldCheck, Plus, Search, Download, X,
   User, Calendar, MessageSquare, ChevronRight, AlertCircle,
-  Package, Briefcase, Cpu, Clock, Send, Trash2,
+  Package, Briefcase, Cpu, Clock, Send, Trash2, History,
 } from 'lucide-react';
 import { api } from '../api/client';
+import ActivityLog from '../components/shared/ActivityLog';
+import SavedViewsBar from '../components/shared/SavedViewsBar';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -528,6 +530,15 @@ function NCRDetail({ ncrId, onClose, onRefresh }: {
           />
         </div>
 
+        {/* Activity */}
+        <div>
+          <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+            <History size={12} />
+            Activity
+          </div>
+          <ActivityLog entityType="ncr" entityId={ncrId} />
+        </div>
+
         {/* Danger zone */}
         <div className="border-t border-gray-100 pt-4">
           {!confirmDelete ? (
@@ -797,6 +808,13 @@ const STATUS_PILLS = ['All', 'open', 'investigating', 'resolved', 'closed'] as c
 const SEVERITY_PILLS = ['All', 'critical', 'major', 'minor'] as const;
 const SOURCE_PILLS = ['All', 'production', 'receiving', 'customer', 'audit', 'internal'] as const;
 
+interface NCRViewFilters {
+  statusFilter: string;
+  severityFilter: string;
+  sourceFilter: string;
+  search: string;
+}
+
 export default function Quality() {
   const { id } = useParams<{ id?: string }>();
   const navigate = useNavigate();
@@ -810,6 +828,13 @@ export default function Quality() {
   const [sourceFilter, setSourceFilter] = useState<string>('All');
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+
+  const applySavedView = (f: NCRViewFilters) => {
+    setStatusFilter(f.statusFilter);
+    setSeverityFilter(f.severityFilter);
+    setSourceFilter(f.sourceFilter);
+    setSearch(f.search);
+  };
 
   const loadNCRs = useCallback(async () => {
     const params: any = {};
@@ -857,7 +882,7 @@ export default function Quality() {
       <div className={`flex flex-col flex-1 min-w-0 overflow-hidden ${id ? 'hidden lg:flex' : 'flex'}`}>
         <div className="flex-1 overflow-y-auto p-6">
           {/* Page header */}
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-6">
             <div>
               <h1 className="text-2xl font-bold text-gray-900 tracking-tight flex items-center gap-2">
                 <ShieldCheck size={22} className="text-red-600" />
@@ -865,11 +890,11 @@ export default function Quality() {
               </h1>
               <p className="text-sm text-gray-500 mt-0.5">Track and resolve non-conformance reports</p>
             </div>
-            <div className="flex items-center gap-2">
-              <button onClick={() => api.downloadExport('ncrs')} className="btn-secondary">
+            <div className="flex items-center gap-2 flex-wrap">
+              <button onClick={() => api.downloadExport('ncrs')} className="btn-secondary whitespace-nowrap">
                 <Download size={14} /> Export CSV
               </button>
-              <button className="btn-danger" onClick={() => setShowCreate(true)}>
+              <button className="btn-danger whitespace-nowrap" onClick={() => setShowCreate(true)}>
                 <Plus size={14} /> New NCR
               </button>
             </div>
@@ -895,7 +920,7 @@ export default function Quality() {
 
             <div className="flex flex-wrap gap-2">
               {/* Severity pills */}
-              <div className="flex gap-1.5">
+              <div className="flex flex-wrap gap-1.5">
                 {SEVERITY_PILLS.map(s => (
                   <button
                     key={s}
@@ -931,6 +956,12 @@ export default function Quality() {
                 />
               </div>
             </div>
+
+            <SavedViewsBar<NCRViewFilters>
+              storageKey="hm_saved_views_ncrs"
+              currentFilters={{ statusFilter, severityFilter, sourceFilter, search }}
+              onApply={applySavedView}
+            />
           </div>
 
           {/* NCR list */}

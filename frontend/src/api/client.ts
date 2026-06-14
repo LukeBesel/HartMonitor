@@ -56,10 +56,11 @@ export const api = {
   getAppCompletions: (id: string) => request<any[]>(`/apps/${id}/completions`),
 
   // ── Completions
-  getCompletions: (params?: { limit?: number; status?: string }) => {
+  getCompletions: (params?: { limit?: number; status?: string; operator_name?: string }) => {
     const qs = new URLSearchParams();
     if (params?.limit) qs.set('limit', String(params.limit));
     if (params?.status) qs.set('status', params.status);
+    if (params?.operator_name) qs.set('operator_name', params.operator_name);
     return request<any[]>(`/completions?${qs}`);
   },
   getCompletion: (id: string) => request<any>(`/completions/${id}`),
@@ -207,6 +208,10 @@ export const api = {
   addNCRComment: (id: string, data: { author: string; body: string }) =>
     request<any>(`/quality/ncrs/${id}/comments`, { method: 'POST', body: JSON.stringify(data) }),
   getQualitySummary: () => request<any>('/quality/summary'),
+
+  // ── Activity log
+  getActivityLog: (entityType: 'work_order' | 'purchase_order' | 'ncr', entityId: string) =>
+    request<{ id: string; action: string; actor: string; created_at: string }[]>(`/activity/${entityType}/${entityId}`),
 
   // ── Config
   getCompanySettings: () => request<any>('/config'),

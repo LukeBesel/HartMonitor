@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Outlet, NavLink, Link, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Settings, Activity, ChevronLeft, ChevronRight,
-  LogOut, ChevronDown,
+  LogOut, ChevronDown, Menu, X,
 } from 'lucide-react';
 import { usePlan } from '../../context/PlanContext';
 import { useAuth } from '../../context/AuthContext';
@@ -17,6 +17,20 @@ function ProBadge() {
       PRO
     </span>
   );
+}
+
+// Tracks whether the viewport is at the desktop (lg) breakpoint, so we can
+// fall back to an expanded sidebar layout inside the mobile drawer even when
+// the desktop "collapsed" preference is on.
+function useIsDesktop() {
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia('(min-width: 1024px)').matches);
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 1024px)');
+    const handler = (e: MediaQueryListEvent) => setIsDesktop(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
+  return isDesktop;
 }
 
 function WorkspacePill({ label, icon: Icon, active, onClick }: {
@@ -38,12 +52,18 @@ function WorkspacePill({ label, icon: Icon, active, onClick }: {
 export default function Layout() {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('hm_sidebar') === 'collapsed');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const { isFree } = usePlan();
   const { user, logout, isAtLeast } = useAuth();
   const { companyName, logoUrl } = useBranding();
   const { isItemHidden, isSectionHidden, focus, setFocus } = useNavPrefs();
   const [logoError, setLogoError] = useState(false);
   const navigate = useNavigate();
+  const location = useLocation();
+  const isDesktop = useIsDesktop();
+  // On mobile the drawer is always shown expanded, regardless of the
+  // desktop-only "collapsed" preference.
+  const effectiveCollapsed = collapsed && isDesktop;
 
   // Sections the user has kept enabled in Settings.
   const enabledSections = SECTIONS.filter(s => !isSectionHidden(s.id));
@@ -67,10 +87,10 @@ export default function Layout() {
         key={to}
         to={to}
         end={exact}
-        title={collapsed ? label : undefined}
+        title={effectiveCollapsed ? label : undefined}
         className={({ isActive }) =>
           `flex items-center rounded-xl text-sm font-medium transition-all ${
-            collapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
+            effectiveCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
           } ${
             isLocked
               ? 'text-gray-600 hover:text-gray-500 hover:bg-white/5'
@@ -82,7 +102,7 @@ export default function Layout() {
         style={({ isActive }) => (!isLocked && isActive) ? { backgroundColor: 'var(--nav-active)' } : {}}
       >
         <Icon size={15} className="flex-shrink-0" />
-        {!collapsed && (
+        {!effectiveCollapsed && (
           <>
             <span className="flex-1">{label}</span>
             {isLocked && <ProBadge />}
@@ -100,22 +120,46 @@ export default function Layout() {
     setLogoError(false);
   }, [logoUrl]);
 
+  // Close the mobile drawer whenever the route changes.
+  useEffect(() => {
+    setMobileNavOpen(false);
+  }, [location.pathname]);
+
   const handleLogout = async () => {
     await logout();
     navigate('/login');
   };
 
-  const sidebarW = collapsed ? 'w-14' : 'w-56';
+  const sidebarW = effectiveCollapsed ? 'w-14' : (isDesktop ? 'w-56' : 'w-64');
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
+      {/* Mobile backdrop — closes the drawer when tapped */}
+      {mobileNavOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-30 lg:hidden"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      )}
+
       <aside
-        className={`${sidebarW} flex-shrink-0 flex flex-col transition-all duration-200`}
+        className={`${sidebarW} fixed inset-y-0 left-0 z-40 flex-shrink-0 flex flex-col transition-all duration-200 lg:static lg:z-auto lg:translate-x-0 ${
+          mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
         style={{ backgroundColor: 'var(--sidebar-bg)' }}
       >
+        {/* Close button for the mobile drawer */}
+        <button
+          onClick={() => setMobileNavOpen(false)}
+          aria-label="Close navigation menu"
+          className="lg:hidden absolute top-3 right-3 p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors z-10"
+        >
+          <X size={18} />
+        </button>
+
         <Link
           to="/"
-          className={`flex items-center border-b border-white/10 hover:bg-white/5 transition-colors flex-shrink-0 ${collapsed ? 'justify-center p-3' : 'gap-3 p-4'}`}
+          className={`flex items-center border-b border-white/10 hover:bg-white/5 transition-colors flex-shrink-0 ${effectiveCollapsed ? 'justify-center p-3' : 'gap-3 p-4'}`}
         >
           {logoUrl && !logoError ? (
             <img
@@ -132,8 +176,8 @@ export default function Layout() {
               <Activity size={18} className="text-white" />
             </div>
           )}
-          {!collapsed && (
-            <div className="min-w-0">
+          {!effectiveCollapsed && (
+            <div className="min-w-0 pr-8 lg:pr-0">
               <div className="text-white font-bold text-base leading-tight tracking-tight truncate">
                 {companyName || 'HartMonitor'}
               </div>
@@ -145,7 +189,7 @@ export default function Layout() {
         </Link>
 
         {/* Workspace switcher — focus the sidebar on one area at a time */}
-        {!collapsed && enabledSections.length > 1 && (
+        {!effectiveCollapsed && enabledSections.length > 1 && (
           <div className="px-2 pt-2.5">
             <div className="flex flex-wrap gap-1 bg-black/20 rounded-xl p-1">
               <WorkspacePill
@@ -178,7 +222,7 @@ export default function Layout() {
             if (items.length === 0) return null;
             return (
               <div key={section.id}>
-                {!collapsed && effectiveFocus === 'all' && (
+                {!effectiveCollapsed && effectiveFocus === 'all' && (
                   <div className="flex items-center gap-1.5 px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-500">
                     <section.icon size={11} />
                     {section.label}
@@ -193,26 +237,27 @@ export default function Layout() {
         </nav>
 
         <div className="p-2 border-t border-white/10 flex-shrink-0 space-y-0.5">
-          <NotificationBell collapsed={collapsed} />
+          <NotificationBell collapsed={effectiveCollapsed} />
 
           <NavLink
             to="/settings"
-            title={collapsed ? 'Settings' : undefined}
+            title={effectiveCollapsed ? 'Settings' : undefined}
             className={({ isActive }) =>
               `flex items-center rounded-xl text-sm font-medium text-gray-500 hover:text-white hover:bg-white/8 transition-all ${
-                collapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
+                effectiveCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
               } ${isActive ? 'text-white' : ''}`
             }
             style={({ isActive }) => isActive ? { backgroundColor: 'var(--nav-active)' } : {}}
           >
             <Settings size={15} className="flex-shrink-0" />
-            {!collapsed && 'Settings'}
+            {!effectiveCollapsed && 'Settings'}
           </NavLink>
 
+          {/* Collapse toggle is a desktop-only concept — the mobile drawer is always expanded */}
           <button
             onClick={() => setCollapsed(c => !c)}
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className={`flex items-center rounded-xl text-sm font-medium text-gray-600 hover:text-white hover:bg-white/8 transition-all w-full ${
+            className={`hidden lg:flex items-center rounded-xl text-sm font-medium text-gray-600 hover:text-white hover:bg-white/8 transition-all w-full ${
               collapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
             }`}
           >
@@ -220,7 +265,7 @@ export default function Layout() {
           </button>
 
           {/* User section */}
-          {!collapsed ? (
+          {!effectiveCollapsed ? (
             <div className="relative mt-1">
               <button
                 onClick={() => setUserMenuOpen(o => !o)}
@@ -265,9 +310,39 @@ export default function Layout() {
         </div>
       </aside>
 
-      <main className="flex-1 overflow-auto">
-        <Outlet />
-      </main>
+      <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+        {/* Mobile header — hamburger to open the drawer, desktop hides this entirely */}
+        <header className="lg:hidden flex items-center gap-3 px-4 py-3 border-b border-gray-200 bg-white flex-shrink-0">
+          <button
+            onClick={() => setMobileNavOpen(true)}
+            aria-label="Open navigation menu"
+            className="p-1.5 -ml-1.5 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+          >
+            <Menu size={20} />
+          </button>
+          {logoUrl && !logoError ? (
+            <img
+              src={logoUrl}
+              alt={companyName || 'Company logo'}
+              className="w-7 h-7 rounded-lg object-contain flex-shrink-0 bg-gray-50"
+            />
+          ) : (
+            <div
+              className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
+              style={{ background: 'linear-gradient(135deg, var(--accent), var(--secondary))' }}
+            >
+              <Activity size={14} className="text-white" />
+            </div>
+          )}
+          <div className="font-bold text-sm text-gray-800 truncate">
+            {companyName || 'HartMonitor'}
+          </div>
+        </header>
+
+        <main className="flex-1 overflow-auto">
+          <Outlet />
+        </main>
+      </div>
     </div>
   );
 }
