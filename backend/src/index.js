@@ -40,6 +40,7 @@ const developerRouter    = require('./routes/developer');
 const notificationsRouter = require('./routes/notifications');
 const v1Router           = require('./routes/v1');
 const { requireAuth }    = require('./middleware/auth');
+const { requirePlan }    = require('./middleware/plan');
 const { apiKeyAuth }     = require('./middleware/apiKeyAuth');
 
 // ─── Startup validation ───────────────────────────────────────────────────────
@@ -130,9 +131,20 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), stri
 app.use(express.json({ limit: '10mb' }));
 
 // Throttle credential endpoints specifically, then everything under /api.
-app.use('/api/auth/login',  authLimiter);
-app.use('/api/auth/signup', authLimiter);
+app.use('/api/auth/login',           authLimiter);
+app.use('/api/auth/signup',          authLimiter);
+app.use('/api/auth/change-password', authLimiter);
 app.use('/api', generalLimiter);
+
+// Method-aware role gate: reads (GET) stay open to any authenticated member,
+// but writes (POST/PUT/PATCH/DELETE) require at least the given role. Keeps
+// read-only "viewer" accounts from mutating data and reserves config changes
+// for supervisors and up, without per-route boilerplate.
+const { requireRole } = require('./middleware/auth');
+function writeRole(minRole) {
+  const guard = requireRole(minRole);
+  return (req, res, next) => (req.method === 'GET' ? next() : guard(req, res, next));
+}
 
 app.use('/api/auth',          authRouter);  // public
 
@@ -143,19 +155,21 @@ app.get('/api/public/pricing', (_req, res) => res.json(PRICING));
 app.use('/api/v1', apiKeyAuth, v1Router);
 
 app.use('/api',               requireAuth); // protect everything below
-app.use('/api/apps',          appsRouter);
-app.use('/api/completions',   completionsRouter);
-app.use('/api/tables',        tablesRouter);
-app.use('/api/stations',      stationsRouter);
+app.use('/api/apps',          writeRole('supervisor'), appsRouter);
+app.use('/api/completions',   writeRole('operator'),   completionsRouter);
+app.use('/api/tables',        writeRole('supervisor'), tablesRouter);
+app.use('/api/stations',      writeRole('supervisor'), stationsRouter);
 app.use('/api/analytics',     analyticsRouter);
-app.use('/api/work-orders',   workOrdersRouter);
-app.use('/api/departments',   departmentsRouter);
-app.use('/api/product-types', productTypesRouter);
+app.use('/api/work-orders',   writeRole('supervisor'), workOrdersRouter);
+app.use('/api/departments',   writeRole('supervisor'), departmentsRouter);
+app.use('/api/product-types', writeRole('supervisor'), productTypesRouter);
 app.use('/api/oee',           oeeRouter);
-app.use('/api/dashboards',    dashboardsRouter);
-app.use('/api/inventory',     inventoryRouter);
-app.use('/api/purchasing',    purchasingRouter);
-app.use('/api/quality',       qualityRouter);
+app.use('/api/dashboards',    writeRole('supervisor'), dashboardsRouter);
+// Pro-tier features — enforced at the API layer, not just hidden in the UI.
+// Operators can file NCRs from the floor; resolving/deleting them needs supervisor (guarded inside).
+app.use('/api/inventory',     requirePlan('pro'), writeRole('supervisor'), inventoryRouter);
+app.use('/api/purchasing',    requirePlan('pro'), writeRole('supervisor'), purchasingRouter);
+app.use('/api/quality',       requirePlan('pro'), writeRole('operator'),   qualityRouter);
 app.use('/api/config',        configRouter);
 app.use('/api/export',        exportRouter);
 app.use('/api/users',         usersRouter);

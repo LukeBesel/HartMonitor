@@ -12,6 +12,7 @@ import { usePermissions } from '../../context/PermissionsContext';
 import { PINNED_ITEMS, SECTIONS, ALL_WORKSPACE_ICON, NavItem } from '../../config/navigation';
 import AlertsBell from './AlertsBell';
 import SiteSwitcher from './SiteSwitcher';
+import UpgradeModal from './UpgradeModal';
 
 function ProBadge() {
   return (
@@ -55,6 +56,8 @@ export default function Layout() {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('hm_sidebar') === 'collapsed');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // Set to a feature label when a Free user clicks a locked Pro nav item.
+  const [lockedModal, setLockedModal] = useState<string | null>(null);
   const { isFree, isEnterprise, showProFeatures } = usePlan();
   const { user, logout } = useAuth();
   const { companyName, logoUrl } = useBranding();
@@ -110,6 +113,28 @@ export default function Layout() {
           <Icon size={15} className="flex-shrink-0" />
           {!effectiveCollapsed && <span className="flex-1">{label}</span>}
         </NavLink>
+      );
+    }
+    // Locked Pro items open the upgrade modal instead of navigating to a page
+    // the API would reject — a clear, value-forward upsell moment.
+    if (isLocked) {
+      return (
+        <button
+          key={to}
+          onClick={() => { setLockedModal(label); setMobileNavOpen(false); }}
+          title={effectiveCollapsed ? `${label} (Pro)` : undefined}
+          className={`w-full flex items-center rounded-xl text-sm font-medium transition-all text-gray-500 hover:text-gray-300 hover:bg-white/5 ${
+            effectiveCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
+          }`}
+        >
+          <Icon size={15} className="flex-shrink-0" />
+          {!effectiveCollapsed && (
+            <>
+              <span className="flex-1 text-left">{label}</span>
+              <ProBadge />
+            </>
+          )}
+        </button>
       );
     }
     return (
@@ -380,6 +405,14 @@ export default function Layout() {
           <Outlet />
         </main>
       </div>
+
+      {lockedModal && (
+        <UpgradeModal
+          lockedFeature={lockedModal}
+          onClose={() => setLockedModal(null)}
+          onPurchased={() => setLockedModal(null)}
+        />
+      )}
     </div>
   );
 }

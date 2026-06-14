@@ -7,19 +7,23 @@ interface Props {
   onClose: () => void;
   /** Which limit was hit — controls the à-la-carte offer shown */
   feature?: 'app' | 'dashboard';
+  /** When set, this is a locked Pro *feature* (e.g. "Inventory") rather than a
+   *  capacity limit — shows a feature-gate message and only the Pro upgrade. */
+  lockedFeature?: string;
   reason?: string;
   /** Called after a successful purchase/upgrade so the caller can retry */
   onPurchased?: () => void;
 }
 
-export default function UpgradeModal({ onClose, feature = 'app', reason, onPurchased }: Props) {
+export default function UpgradeModal({ onClose, feature = 'app', lockedFeature, reason, onPurchased }: Props) {
   const { plan, refresh } = usePlan();
   const [busy, setBusy] = useState<'slot' | 'pro' | null>(null);
   const [done, setDone] = useState('');
   const [error, setError] = useState('');
 
   const addonType = feature === 'dashboard' ? 'dashboard_slot' : 'app_slot';
-  const addon = plan?.pricing?.addons?.[addonType];
+  // Feature locks offer only the full upgrade — no à-la-carte slot.
+  const addon = lockedFeature ? null : plan?.pricing?.addons?.[addonType];
   const proPrice = plan?.pricing?.tiers?.pro?.monthly_price ?? 299;
   const proFeatures = plan?.pricing?.tiers?.pro?.features ?? [];
 
@@ -67,9 +71,9 @@ export default function UpgradeModal({ onClose, feature = 'app', reason, onPurch
             </div>
             <div>
               <div className="text-white font-bold text-lg leading-tight">
-                {feature === 'dashboard' ? 'Dashboard limit reached' : 'App limit reached'}
+                {lockedFeature ? `${lockedFeature} is a Pro feature` : feature === 'dashboard' ? 'Dashboard limit reached' : 'App limit reached'}
               </div>
-              <div className="text-blue-200 text-xs">Add capacity your way</div>
+              <div className="text-blue-200 text-xs">{lockedFeature ? 'Upgrade to unlock it' : 'Add capacity your way'}</div>
             </div>
           </div>
           {reason && (
@@ -143,7 +147,7 @@ export default function UpgradeModal({ onClose, feature = 'app', reason, onPurch
               <button onClick={onClose} className="w-full py-2 text-sm text-gray-400 hover:text-gray-600 transition-colors">
                 Maybe later
               </button>
-              <p className="text-center text-xs text-gray-400">Demo checkout — purchases are instant and free.</p>
+              <p className="text-center text-xs text-gray-400">Plan changes apply immediately. Manage billing anytime in Settings.</p>
             </div>
           </>
         )}
