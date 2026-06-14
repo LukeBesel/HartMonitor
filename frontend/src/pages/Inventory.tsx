@@ -4,10 +4,11 @@ import {
   Package, DollarSign, AlertTriangle, TrendingUp, Search, Plus,
   Download, MapPin, X, Pencil, Trash2, ArrowUpCircle, ArrowDownCircle,
   RefreshCw, ChevronDown, Layers, RotateCcw, ArrowLeftRight, Truck,
-  ClipboardList,
+  ClipboardList, ScanLine,
 } from 'lucide-react';
 import { api } from '../api/client';
 import SavedViewsBar from '../components/shared/SavedViewsBar';
+import BarcodeScannerModal from '../components/shared/BarcodeScannerModal';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -667,6 +668,7 @@ export default function Inventory() {
   const [editingItem, setEditingItem] = useState<any>(null);
   const [showLocations, setShowLocations] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [showScanner, setShowScanner] = useState(false);
 
   const loadSummary = useCallback(() => {
     api.getInventorySummary().then(setSummary).catch(() => {});
@@ -730,6 +732,14 @@ export default function Inventory() {
         />
       )}
       {showLocations && <LocationsModal onClose={() => setShowLocations(false)} />}
+      {showScanner && (
+        <BarcodeScannerModal
+          title="Scan Item Barcode"
+          hint="Scan a SKU barcode to search for that item"
+          onClose={() => setShowScanner(false)}
+          onScan={code => { setSearch(code.trim()); setShowScanner(false); }}
+        />
+      )}
 
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -806,11 +816,18 @@ export default function Inventory() {
         <div className="relative flex-1 min-w-48">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
-            className="input-field pl-8"
+            className="input-field pl-8 pr-9"
             placeholder="Search items by name or SKU…"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
+          <button
+            onClick={() => setShowScanner(true)}
+            title="Scan barcode"
+            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-blue-600 transition-colors"
+          >
+            <ScanLine size={15} />
+          </button>
         </div>
         <div className="relative">
           <select

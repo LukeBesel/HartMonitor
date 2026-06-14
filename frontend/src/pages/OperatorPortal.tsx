@@ -3,9 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import {
   Factory, ChevronRight, Package, Clock, AlertTriangle, CheckCircle, User, Tablet,
-  Briefcase, History as HistoryIcon, LogOut, RefreshCw, Send, ArrowLeft,
+  Briefcase, History as HistoryIcon, LogOut, RefreshCw, Send, ArrowLeft, ScanLine, WifiOff,
+  MessageSquare,
 } from 'lucide-react';
 import { timeAgo } from '../utils/time';
+import BarcodeScannerModal from '../components/shared/BarcodeScannerModal';
+import { useOnlineStatus } from '../hooks/useOnlineStatus';
+import { getQueuedNCRs, queueNCR, syncQueuedNCRs } from '../utils/offlineQueue';
+import { useMessages } from '../context/MessagesContext';
+import type { MessageSeverity } from '../types';
 
 interface WorkOrder {
   id: string;
@@ -77,10 +83,19 @@ export default function OperatorPortal() {
   const [completions, setCompletions] = useState<Completion[] | null>(null);
   const [completionsLoading, setCompletionsLoading] = useState(false);
 
+  const online = useOnlineStatus();
+  const [pendingReports, setPendingReports] = useState(() => getQueuedNCRs().length);
+
   useEffect(() => {
     const saved = localStorage.getItem('hm_operator_name');
     if (saved) setOperatorName(saved);
   }, []);
+
+  // When connectivity returns, flush any quality reports that were queued while offline.
+  useEffect(() => {
+    if (!online || pendingReports === 0) return;
+    syncQueuedNCRs().then(() => setPendingReports(getQueuedNCRs().length));
+  }, [online, pendingReports]);
 
   const loadWorkOrders = async () => {
     const wos: WorkOrder[] = await api.getWorkOrders();
@@ -217,6 +232,15 @@ export default function OperatorPortal() {
         </div>
       </header>
 
+      {!online && (
+        <div className="px-4 sm:px-6 pb-2 flex-shrink-0">
+          <div className="flex items-center gap-2 bg-amber-500/15 border border-amber-500/30 text-amber-300 rounded-xl px-3 py-2 text-xs font-medium">
+            <WifiOff size={14} />
+            You're offline — showing cached jobs. New reports will be saved and sent once you're back online.
+          </div>
+        </div>
+      )}
+
       {/* Main content */}
       <main className="flex-1 overflow-y-auto px-4 sm:px-6 pb-28">
         {activeTab === 'jobs' && (
@@ -239,6 +263,8 @@ export default function OperatorPortal() {
           <ReportTab
             operatorName={operatorName}
             workOrders={workOrders}
+            online={online}
+            onQueue={() => setPendingReports(getQueuedNCRs().length)}
           />
         )}
         {activeTab === 'profile' && (
@@ -246,6 +272,7 @@ export default function OperatorPortal() {
             operatorName={operatorName}
             jobCount={workOrders.length}
             onSwitchOperator={switchOperator}
+            pendingReports={pendingReports}
           />
         )}
       </main>
@@ -301,27 +328,68 @@ function JobsTab({
   onRefresh: () => void;
 }) {
   const [refreshing, setRefreshing] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const [scanMessage, setScanMessage] = useState('');
 
   const handleRefresh = async () => {
     setRefreshing(true);
     try { await onRefresh(); } finally { setRefreshing(false); }
   };
 
+  const handleScan = (code: string) => {
+    setShowScanner(false);
+    const normalized = code.trim().toLowerCase();
+    const match = workOrders.find(wo =>
+      wo.work_order_number.toLowerCase() === normalized ||
+      wo.part_number.toLowerCase() === normalized
+    );
+    if (match) {
+      setSelectedWO(match);
+      setScanMessage('');
+    } else {
+      setScanMessage(`No job found matching "${code}"`);
+    }
+  };
+
   return (
     <div>
+      {showScanner && (
+        <BarcodeScannerModal
+          title="Scan Job Barcode"
+          hint="Scan a work order or part barcode to select that job"
+          onClose={() => setShowScanner(false)}
+          onScan={handleScan}
+        />
+      )}
+
       <div className="flex items-center justify-between mb-3">
         <p className="text-blue-200/70 text-sm">
           {workOrders.length > 0 ? `${workOrders.length} job${workOrders.length !== 1 ? 's' : ''} available` : 'No jobs scheduled yet'}
         </p>
-        <button
-          onClick={handleRefresh}
-          disabled={refreshing}
-          className="flex items-center gap-1.5 text-xs text-blue-300 hover:text-white transition-colors disabled:opacity-50"
-        >
-          <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => { setScanMessage(''); setShowScanner(true); }}
+            className="flex items-center gap-1.5 text-xs text-blue-300 hover:text-white transition-colors"
+          >
+            <ScanLine size={13} />
+            Scan
+          </button>
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="flex items-center gap-1.5 text-xs text-blue-300 hover:text-white transition-colors disabled:opacity-50"
+          >
+            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
+            Refresh
+          </button>
+        </div>
       </div>
+
+      {scanMessage && (
+        <div className="mb-3 bg-amber-500/15 border border-amber-500/30 text-amber-300 rounded-xl px-3 py-2 text-sm">
+          {scanMessage}
+        </div>
+      )}
 
       {workOrders.length === 0 ? (
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-10 text-center">
@@ -512,7 +580,14 @@ function HistoryTab({
 
 // ── Report Issue tab ────────────────────────────────────────────────────────
 
-function ReportTab({ operatorName, workOrders }: { operatorName: string; workOrders: WorkOrder[] }) {
+function ReportTab({
+  operatorName, workOrders, online, onQueue,
+}: {
+  operatorName: string;
+  workOrders: WorkOrder[];
+  online: boolean;
+  onQueue: () => void;
+}) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [severity, setSeverity] = useState<'minor' | 'major' | 'critical'>('minor');
@@ -520,6 +595,7 @@ function ReportTab({ operatorName, workOrders }: { operatorName: string; workOrd
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [submitted, setSubmitted] = useState<string | null>(null);
+  const [queuedOffline, setQueuedOffline] = useState(false);
 
   const reset = () => {
     setTitle('');
@@ -527,6 +603,7 @@ function ReportTab({ operatorName, workOrders }: { operatorName: string; workOrd
     setSeverity('minor');
     setWorkOrderId('');
     setSubmitted(null);
+    setQueuedOffline(false);
     setError('');
   };
 
@@ -534,17 +611,26 @@ function ReportTab({ operatorName, workOrders }: { operatorName: string; workOrd
     if (!title.trim()) { setError('Please describe the issue in the title.'); return; }
     setSaving(true);
     setError('');
+    const wo = workOrders.find(w => w.id === workOrderId);
+    const descPrefix = `Reported by ${operatorName.trim()} from the shop floor.`;
+    const payload = {
+      title: title.trim(),
+      description: description.trim() ? `${descPrefix}\n\n${description.trim()}` : descPrefix,
+      severity,
+      source: 'production',
+      work_order_id: workOrderId || undefined,
+      app_id: wo?.app_id || undefined,
+    };
+    if (!online) {
+      queueNCR(payload);
+      onQueue();
+      setQueuedOffline(true);
+      setSubmitted('queued');
+      setSaving(false);
+      return;
+    }
     try {
-      const wo = workOrders.find(w => w.id === workOrderId);
-      const descPrefix = `Reported by ${operatorName.trim()} from the shop floor.`;
-      const ncr = await api.createNCR({
-        title: title.trim(),
-        description: description.trim() ? `${descPrefix}\n\n${description.trim()}` : descPrefix,
-        severity,
-        source: 'production',
-        work_order_id: workOrderId || undefined,
-        app_id: wo?.app_id || undefined,
-      });
+      const ncr = await api.createNCR(payload);
       setSubmitted(ncr.ncr_number);
     } catch (e: any) {
       setError(e.message || 'Failed to submit report');
@@ -556,12 +642,21 @@ function ReportTab({ operatorName, workOrders }: { operatorName: string; workOrd
   if (submitted) {
     return (
       <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-8 text-center">
-        <div className="w-16 h-16 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-4 border-2 border-green-400/30">
-          <CheckCircle size={32} className="text-green-400" />
+        <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 border-2 ${queuedOffline ? 'bg-amber-500/20 border-amber-400/30' : 'bg-green-500/20 border-green-400/30'}`}>
+          {queuedOffline ? <WifiOff size={32} className="text-amber-400" /> : <CheckCircle size={32} className="text-green-400" />}
         </div>
-        <div className="text-white font-bold text-lg">Issue reported</div>
-        <div className="text-blue-200/70 text-sm mt-1">NCR <span className="font-mono">{submitted}</span> has been created</div>
-        <div className="text-blue-300/50 text-xs mt-2">Your supervisor and quality team will follow up.</div>
+        {queuedOffline ? (
+          <>
+            <div className="text-white font-bold text-lg">Saved offline</div>
+            <div className="text-blue-200/70 text-sm mt-1">Your report will be submitted automatically once you're back online.</div>
+          </>
+        ) : (
+          <>
+            <div className="text-white font-bold text-lg">Issue reported</div>
+            <div className="text-blue-200/70 text-sm mt-1">NCR <span className="font-mono">{submitted}</span> has been created</div>
+            <div className="text-blue-300/50 text-xs mt-2">Your supervisor and quality team will follow up.</div>
+          </>
+        )}
         <button
           onClick={reset}
           className="mt-6 w-full h-12 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold transition-colors flex items-center justify-center gap-2"
@@ -642,10 +737,60 @@ function ReportTab({ operatorName, workOrders }: { operatorName: string; workOrd
       >
         {saving ? (
           <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-        ) : (
+        ) : online ? (
           <>Submit Report <Send size={18} /></>
+        ) : (
+          <>Save Offline <WifiOff size={18} /></>
         )}
       </button>
+    </div>
+  );
+}
+
+// ── Messages card ───────────────────────────────────────────────────────────
+
+const MESSAGE_SEVERITY_DOT: Record<MessageSeverity, string> = {
+  info: 'bg-blue-400',
+  warning: 'bg-amber-400',
+  urgent: 'bg-red-400',
+};
+
+function MessagesCard() {
+  const { messages, unreadCount, markAllRead } = useMessages();
+  const recent = messages.slice(0, 5);
+
+  return (
+    <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <MessageSquare size={16} className="text-blue-300" />
+        <div className="text-white font-semibold text-sm">Messages</div>
+        {unreadCount > 0 && (
+          <button
+            onClick={markAllRead}
+            className="ml-auto text-[11px] font-medium text-blue-300 hover:text-blue-200 transition-colors"
+          >
+            Mark {unreadCount} read
+          </button>
+        )}
+      </div>
+      {recent.length === 0 ? (
+        <div className="text-blue-300/50 text-xs py-2">No messages yet</div>
+      ) : (
+        <div className="space-y-2">
+          {recent.map(m => (
+            <div key={m.id} className="flex items-start gap-2">
+              <span className={`w-1.5 h-1.5 rounded-full mt-1.5 flex-shrink-0 ${MESSAGE_SEVERITY_DOT[m.severity] ?? MESSAGE_SEVERITY_DOT.info}`} />
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-white text-xs font-medium truncate">{m.sender_name}</span>
+                  <span className="text-blue-300/40 text-[10px] flex-shrink-0">{timeAgo(m.created_at)}</span>
+                </div>
+                <div className="text-blue-200/70 text-xs break-words">{m.body}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -653,11 +798,12 @@ function ReportTab({ operatorName, workOrders }: { operatorName: string; workOrd
 // ── Profile tab ──────────────────────────────────────────────────────────────
 
 function ProfileTab({
-  operatorName, jobCount, onSwitchOperator,
+  operatorName, jobCount, onSwitchOperator, pendingReports,
 }: {
   operatorName: string;
   jobCount: number;
   onSwitchOperator: () => void;
+  pendingReports: number;
 }) {
   const navigate = useNavigate();
 
@@ -680,6 +826,20 @@ function ProfileTab({
           <div className="text-blue-300/50 text-xs">Visible on the Jobs tab</div>
         </div>
       </div>
+
+      {pendingReports > 0 && (
+        <div className="bg-amber-500/10 backdrop-blur-sm rounded-2xl border border-amber-500/30 p-4 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-amber-500/15 flex items-center justify-center flex-shrink-0">
+            <WifiOff size={18} className="text-amber-400" />
+          </div>
+          <div>
+            <div className="text-white font-semibold">{pendingReports} report{pendingReports !== 1 ? 's' : ''} pending sync</div>
+            <div className="text-amber-300/70 text-xs">Will be submitted automatically once you're online</div>
+          </div>
+        </div>
+      )}
+
+      <MessagesCard />
 
       <div className="space-y-2 pt-2">
         <button

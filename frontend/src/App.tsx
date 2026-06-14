@@ -8,6 +8,8 @@ import { PlanProvider } from './context/PlanContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { BrandingProvider } from './context/BrandingContext';
 import { NavPrefsProvider } from './context/NavPrefsContext';
+import { MessagesProvider } from './context/MessagesContext';
+import MessageToast from './components/shared/MessageToast';
 
 // Code-split the rest of the pages so the initial load only ships the shell,
 // login, and landing dashboard. Heavy chart pages load on demand.
@@ -60,7 +62,9 @@ export default function App() {
         <BrandingProvider>
         <PlanProvider>
         <NavPrefsProvider>
+        <MessagesProvider>
           <BrowserRouter>
+            <MessageToast />
             <Suspense fallback={<Spinner />}>
             <Routes>
               <Route path="/login" element={<Login />} />
@@ -101,6 +105,7 @@ export default function App() {
             </Routes>
             </Suspense>
           </BrowserRouter>
+        </MessagesProvider>
         </NavPrefsProvider>
         </PlanProvider>
         </BrandingProvider>

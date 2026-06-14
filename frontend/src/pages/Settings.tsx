@@ -28,6 +28,8 @@ import {
   RotateCcw,
   ChevronDown,
   ChevronRight,
+  Moon,
+  Sun,
 } from 'lucide-react';
 import { useTheme, THEME_PRESETS, Theme, buildCustomTheme, applySecondary } from '../context/ThemeContext';
 import { usePlan } from '../context/PlanContext';
@@ -899,7 +901,7 @@ function PlanTab() {
 // ─── Tab 3: Visual Theme ──────────────────────────────────────────────────────
 
 function ThemeTab() {
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, darkMode, setDarkMode } = useTheme();
 
   const [compactMode, setCompactMode] = useState(() => {
     try { return localStorage.getItem('hm_compact') === 'true'; } catch { return false; }
@@ -1010,6 +1012,18 @@ function ThemeTab() {
       <div>
         <SectionHeader title="Display Preferences" subtitle="Interface behaviour stored locally" />
         <div className="space-y-1 divide-y divide-gray-50">
+          <div className="flex items-center justify-between py-3.5 gap-4">
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-medium text-gray-800 flex items-center gap-1.5">
+                {darkMode ? <Moon size={14} /> : <Sun size={14} />}
+                Dark Mode
+              </div>
+              <div className="text-xs text-gray-500 mt-0.5">
+                Switch the interface to a dark colour scheme
+              </div>
+            </div>
+            <Toggle checked={darkMode} onChange={setDarkMode} />
+          </div>
           <div className="flex items-center justify-between py-3.5 gap-4">
             <div className="flex-1 min-w-0">
               <div className="text-sm font-medium text-gray-800">Compact Mode</div>

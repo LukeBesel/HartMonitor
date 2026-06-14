@@ -378,6 +378,23 @@ db.exec(`
   );
 `);
 
+// ─── Live broadcast messages ──────────────────────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id),
+    sender_id TEXT REFERENCES users(id),
+    sender_name TEXT NOT NULL,
+    sender_role TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info' CHECK(severity IN ('info','warning','urgent')),
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_messages_company ON messages(company_id, created_at);
+`);
+
 // ─── Migrations: company_id on every directly-scoped table ────────────────────
 // Child tables (table_records, machine_events, stock_levels, stock_movements,
 // po_lines, ncr_comments, sessions) scope through their parent instead.

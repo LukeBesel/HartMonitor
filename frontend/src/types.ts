@@ -370,3 +370,17 @@ export interface LeaderboardResponse {
   generated_at: string;
   boards: LeaderboardBoard[];
 }
+
+// ── Live broadcast messages ───────────────────────────────────────────────────
+
+export type MessageSeverity = 'info' | 'warning' | 'urgent';
+
+export interface BroadcastMessage {
+  id: string;
+  sender_id: string;
+  sender_name: string;
+  sender_role: string;
+  body: string;
+  severity: MessageSeverity;
+  created_at: string;
+}

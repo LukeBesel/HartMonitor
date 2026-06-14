@@ -4,7 +4,9 @@ try { require('dotenv').config(); } catch { /* dotenv optional */ }
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
+const http = require('http');
 const { stripeWebhook } = require('./webhook');
+const { initWebSocketServer } = require('./ws');
 
 const appsRouter        = require('./routes/apps');
 const completionsRouter = require('./routes/completions');
@@ -25,6 +27,7 @@ const authRouter         = require('./routes/auth');
 const usersRouter        = require('./routes/users');
 const leaderboardRouter  = require('./routes/leaderboard');
 const activityRouter     = require('./routes/activity');
+const messagesRouter     = require('./routes/messages');
 const { requireAuth }    = require('./middleware/auth');
 
 const app  = express();
@@ -58,6 +61,7 @@ app.use('/api/export',        exportRouter);
 app.use('/api/users',         usersRouter);
 app.use('/api/leaderboard',   leaderboardRouter);
 app.use('/api/activity',      activityRouter);
+app.use('/api/messages',      messagesRouter);
 
 const frontendDist = path.join(__dirname, '..', '..', 'frontend', 'dist');
 app.use(express.static(frontendDist));
@@ -65,6 +69,9 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(frontendDist, 'index.html'));
 });
 
-app.listen(PORT, () => {
+const server = http.createServer(app);
+initWebSocketServer(server);
+
+server.listen(PORT, () => {
   console.log(`HartMonitor backend running on http://localhost:${PORT}`);
 });

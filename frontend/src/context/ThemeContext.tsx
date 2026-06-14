@@ -24,6 +24,7 @@ export const THEME_PRESETS: Theme[] = [
 ];
 
 const LS_KEY = 'hm_theme';
+const LS_DARK_KEY = 'hm_dark_mode';
 
 // ─── Color helpers for custom accent generation ───────────────────────────────
 
@@ -102,6 +103,20 @@ function applyTheme(theme: Theme) {
   root.style.setProperty('--secondary-light', t.secondaryLight);
 }
 
+function loadDarkMode(): boolean {
+  try {
+    const saved = localStorage.getItem(LS_DARK_KEY);
+    if (saved != null) return saved === 'true';
+  } catch {
+    // ignore
+  }
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+}
+
+function applyDarkMode(dark: boolean) {
+  document.documentElement.classList.toggle('dark', dark);
+}
+
 function isValidTheme(t: any): t is Theme {
   return t && typeof t.accent === 'string' && typeof t.accentDark === 'string'
     && typeof t.accentLight === 'string' && typeof t.sidebarBg === 'string';
@@ -130,15 +145,19 @@ function loadTheme(): Theme {
 interface ThemeContextValue {
   theme: Theme;
   setTheme: (theme: Theme) => void;
+  darkMode: boolean;
+  setDarkMode: (dark: boolean) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>(loadTheme);
+  const [darkMode, setDarkModeState] = useState<boolean>(loadDarkMode);
 
   useEffect(() => {
     applyTheme(theme);
+    applyDarkMode(darkMode);
   }, []);
 
   const setTheme = (newTheme: Theme) => {
@@ -151,8 +170,18 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const setDarkMode = (dark: boolean) => {
+    setDarkModeState(dark);
+    applyDarkMode(dark);
+    try {
+      localStorage.setItem(LS_DARK_KEY, String(dark));
+    } catch {
+      // ignore
+    }
+  };
+
   return (
-    <ThemeContext.Provider value={{ theme, setTheme }}>
+    <ThemeContext.Provider value={{ theme, setTheme, darkMode, setDarkMode }}>
       {children}
     </ThemeContext.Provider>
   );

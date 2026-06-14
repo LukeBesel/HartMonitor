@@ -10,6 +10,7 @@ import { useBranding } from '../../context/BrandingContext';
 import { useNavPrefs } from '../../context/NavPrefsContext';
 import { PINNED_ITEMS, SECTIONS, ALL_WORKSPACE_ICON, NavItem } from '../../config/navigation';
 import NotificationBell from './NotificationBell';
+import MessagesBell from './MessagesBell';
 
 function ProBadge() {
   return (
@@ -238,6 +239,7 @@ export default function Layout() {
 
         <div className="p-2 border-t border-white/10 flex-shrink-0 space-y-0.5">
           <NotificationBell collapsed={effectiveCollapsed} />
+          <MessagesBell collapsed={effectiveCollapsed} />
 
           <NavLink
             to="/settings"

@@ -1,4 +1,4 @@
-import type { DailyBrief, LeaderboardResponse, LeaderboardPeriod } from '../types';
+import type { DailyBrief, LeaderboardResponse, LeaderboardPeriod, BroadcastMessage, MessageSeverity } from '../types';
 
 const BASE = '/api';
 
@@ -212,6 +212,11 @@ export const api = {
   // ── Activity log
   getActivityLog: (entityType: 'work_order' | 'purchase_order' | 'ncr', entityId: string) =>
     request<{ id: string; action: string; actor: string; created_at: string }[]>(`/activity/${entityType}/${entityId}`),
+
+  // ── Live broadcast messages
+  getMessages: (limit = 50) => request<BroadcastMessage[]>(`/messages?limit=${limit}`),
+  sendMessage: (body: string, severity: MessageSeverity = 'info') =>
+    request<BroadcastMessage>('/messages', { method: 'POST', body: JSON.stringify({ body, severity }) }),
 
   // ── Config
   getCompanySettings: () => request<any>('/config'),
