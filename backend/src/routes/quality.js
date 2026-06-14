@@ -4,6 +4,7 @@ const db = require('../db');
 const { logActivity } = require('../activity');
 const { notify } = require('../notifications');
 const { deliverWebhooks } = require('../webhooks');
+const { requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -131,7 +132,7 @@ router.get('/ncrs/:id', (req, res) => {
 
 // ─── PUT /ncrs/:id ────────────────────────────────────────────────────────────
 
-router.put('/ncrs/:id', (req, res) => {
+router.put('/ncrs/:id', requireRole('supervisor'), (req, res) => {
   const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!ncr) return res.status(404).json({ error: 'Not found' });
 
@@ -187,7 +188,7 @@ router.post('/ncrs/:id/comments', (req, res) => {
 
 // ─── DELETE /ncrs/:id ─────────────────────────────────────────────────────────
 
-router.delete('/ncrs/:id', (req, res) => {
+router.delete('/ncrs/:id', requireRole('supervisor'), (req, res) => {
   const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!ncr) return res.status(404).json({ error: 'Not found' });
   db.prepare('DELETE FROM ncrs WHERE id = ?').run(req.params.id);

@@ -809,7 +809,7 @@ function PlanTab() {
       {tiers && (
         <div>
           <h3 className="text-sm font-semibold text-gray-800 mb-4">Plans</h3>
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             {(['free', 'pro', 'enterprise'] as PlanTier[]).map(tierId => {
               const t = tiers[tierId];
               const isCurrent = plan.tier === tierId;

@@ -23,8 +23,9 @@ const COLUMNS = [
   {
     title: 'Company',
     links: [
-      { label: 'About', href: '/#product' },
       { label: 'Contact Sales', href: 'mailto:sales@hartmonitor.io' },
+      { label: 'Privacy', href: '/privacy' },
+      { label: 'Terms', href: '/terms' },
       { label: 'Get started', href: '/login?mode=signup' },
     ],
   },

@@ -230,9 +230,9 @@ export default function PlantView() {
           {/* Department Performance */}
           <div>
             <h2 className="text-base font-semibold text-gray-900 mb-3">Department Performance</h2>
-            <div className="grid grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {(data?.department_performance ?? []).length === 0 && (
-                <div className="col-span-3 text-center text-gray-400 text-sm py-8 bg-white rounded-xl border border-gray-200">
+                <div className="col-span-full text-center text-gray-400 text-sm py-8 bg-white rounded-xl border border-gray-200">
                   No department data available
                 </div>
               )}
@@ -275,7 +275,7 @@ export default function PlantView() {
           </div>
 
           {/* Charts Row */}
-          <div className="grid grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* WO Summary Donut */}
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
               <h2 className="font-semibold text-gray-900 mb-4">Work Order Summary</h2>
@@ -317,7 +317,7 @@ export default function PlantView() {
             </div>
 
             {/* Hourly Throughput */}
-            <div className="col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+            <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm p-5">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="font-semibold text-gray-900">Hourly Throughput</h2>
                 <span className="text-xs text-gray-400">Last 24 hours</span>
@@ -335,9 +335,9 @@ export default function PlantView() {
           </div>
 
           {/* Alerts + Recent Completions */}
-          <div className="grid grid-cols-5 gap-6">
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
             {/* Active Alerts */}
-            <div className="col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+            <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm p-5">
               <div className="flex items-center gap-2 mb-4">
                 <AlertTriangle size={16} className="text-red-500" />
                 <h2 className="font-semibold text-gray-900">Active Alerts</h2>
@@ -387,7 +387,7 @@ export default function PlantView() {
             </div>
 
             {/* Recent Completions */}
-            <div className="col-span-3 bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+            <div className="lg:col-span-3 bg-white rounded-xl border border-gray-200 shadow-sm p-5">
               <div className="flex items-center justify-between mb-4">
                 <h2 className="font-semibold text-gray-900">Recent Completions</h2>
                 <Link to="/analytics" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">

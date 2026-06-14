@@ -629,7 +629,7 @@ router.get('/completion/:id', (req, res) => {
   if (!completion) return res.status(404).json({ error: 'Completion not found' });
 
   // Fetch app steps to map step index to name and takt_time
-  const app = db.prepare('SELECT id, name, steps FROM apps WHERE id = ?').get(completion.app_id);
+  const app = db.prepare('SELECT id, name, steps FROM apps WHERE id = ? AND company_id = ?').get(completion.app_id, req.companyId);
   const appSteps = app ? JSON.parse(app.steps) : [];
 
   const stepTimes       = JSON.parse(completion.step_times || '{}');
