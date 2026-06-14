@@ -252,6 +252,12 @@ export default function Login() {
                 <p className="text-xs text-gray-400 text-center">
                   Free plan includes 5 production apps & 2 dashboards — no credit card required. You become the owner.
                 </p>
+                <p className="text-xs text-gray-400 text-center">
+                  By creating a workspace you agree to our{' '}
+                  <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Terms</a>{' '}
+                  and{' '}
+                  <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Privacy Policy</a>.
+                </p>
               </form>
             )}
 

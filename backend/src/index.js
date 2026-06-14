@@ -3,10 +3,15 @@ try { require('dotenv').config(); } catch { /* dotenv optional */ }
 
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 const http = require('http');
+
+const { config, validate, banner } = require('./config');
 const { stripeWebhook } = require('./webhook');
 const { initWebSocketServer } = require('./ws');
+const { startBackups } = require('./backup');
 const { PRICING } = require('./pricing');
 
 const appsRouter        = require('./routes/apps');
@@ -37,16 +42,90 @@ const v1Router           = require('./routes/v1');
 const { requireAuth }    = require('./middleware/auth');
 const { apiKeyAuth }     = require('./middleware/apiKeyAuth');
 
-const app  = express();
-const PORT = process.env.PORT || 3001;
+// ─── Startup validation ───────────────────────────────────────────────────────
+const { warnings, errors } = validate();
+console.log(banner());
+for (const w of warnings) console.warn(`  ⚠  ${w}`);
+if (errors.length) {
+  for (const e of errors) console.error(`  ✖  ${e}`);
+  console.error('\nRefusing to start with the above configuration errors.\n');
+  process.exit(1);
+}
 
-app.use(cors());
+const app  = express();
+const PORT = config.port;
+
+// Behind a single platform proxy (Railway/Render/nginx) — needed so rate
+// limiting and logging see the real client IP, not the proxy's.
+app.set('trust proxy', 1);
+
+// Security headers. CSP is left off because the SPA relies heavily on inline
+// styles; the other protections (HSTS, no-sniff, frameguard, etc.) still apply.
+app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+// The frontend is served from the same origin as the API, so cross-origin access
+// is only needed for external integrations. Locked to an allowlist in production.
+function corsOptions() {
+  if (!config.isProd) return {};                  // reflect any origin in dev
+  const allow = new Set(config.allowedOrigins);
+  if (config.appUrl) allow.add(config.appUrl);
+  return {
+    origin(origin, cb) {
+      if (!origin || allow.has(origin)) return cb(null, true);
+      cb(new Error('Origin not allowed by CORS'));
+    },
+    credentials: true,
+  };
+}
+app.use(cors(corsOptions()));
+
+// ─── Lightweight request logging ──────────────────────────────────────────────
+app.use((req, res, next) => {
+  if (!req.path.startsWith('/api')) return next();   // skip static asset noise
+  const start = Date.now();
+  res.on('finish', () => {
+    console.log(`${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - start}ms`);
+  });
+  next();
+});
+
+// ─── Rate limiting ────────────────────────────────────────────────────────────
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 1000,                       // generous; protects against runaway clients
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,                         // brute-force protection on credentials
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts. Please wait a few minutes and try again.', code: 'RATE_LIMITED' },
+});
+
+// ─── Health check (for platform probes / uptime monitors) ─────────────────────
+app.get('/api/health', (_req, res) => {
+  let dbOk = true;
+  try { require('./db').prepare('SELECT 1').get(); } catch { dbOk = false; }
+  res.status(dbOk ? 200 : 503).json({
+    status: dbOk ? 'ok' : 'degraded',
+    uptime: Math.round(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
+});
 
 // Stripe webhook needs the raw body for signature verification, so it must be
 // registered before the JSON parser and outside requireAuth.
 app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), stripeWebhook);
 
 app.use(express.json({ limit: '10mb' }));
+
+// Throttle credential endpoints specifically, then everything under /api.
+app.use('/api/auth/login',  authLimiter);
+app.use('/api/auth/signup', authLimiter);
+app.use('/api', generalLimiter);
 
 app.use('/api/auth',          authRouter);  // public
 
@@ -81,10 +160,28 @@ app.use('/api/permissions',   permissionsRouter);
 app.use('/api/developer',     developerRouter);
 app.use('/api/notifications', notificationsRouter);
 
+// Unknown API routes return JSON 404 (not the SPA shell).
+app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));
+
+// ─── Static frontend + SPA fallback ───────────────────────────────────────────
 const frontendDist = path.join(__dirname, '..', '..', 'frontend', 'dist');
 app.use(express.static(frontendDist));
-app.get('*', (req, res) => {
+app.get('*', (_req, res) => {
   res.sendFile(path.join(frontendDist, 'index.html'));
+});
+
+// ─── Central error handler ────────────────────────────────────────────────────
+// Catches thrown/async errors so the process never crashes and stack traces are
+// never leaked to clients in production.
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, _next) => {
+  console.error('[error]', req.method, req.originalUrl, '-', err.message);
+  if (res.headersSent) return;
+  const status = err.status || 500;
+  res.status(status).json({
+    error: config.isProd ? 'Internal server error' : err.message,
+    code: err.code || 'INTERNAL_ERROR',
+  });
 });
 
 const server = http.createServer(app);
@@ -92,4 +189,20 @@ initWebSocketServer(server);
 
 server.listen(PORT, () => {
   console.log(`HartMonitor backend running on http://localhost:${PORT}`);
+  startBackups();
 });
+
+// ─── Resilience: never let an unhandled error take the process down silently ──
+process.on('unhandledRejection', (reason) => console.error('[unhandledRejection]', reason));
+process.on('uncaughtException',  (err)    => console.error('[uncaughtException]', err));
+
+// ─── Graceful shutdown ────────────────────────────────────────────────────────
+function shutdown(signal) {
+  console.log(`\n${signal} received — shutting down gracefully…`);
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 10_000).unref();   // force-exit safety net
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT',  () => shutdown('SIGINT'));
+
+module.exports = app;

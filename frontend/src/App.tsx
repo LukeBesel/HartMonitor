@@ -43,6 +43,8 @@ const Leaderboard      = lazy(() => import('./pages/Leaderboard'));
 const LeaderboardTV    = lazy(() => import('./pages/LeaderboardTV'));
 const Landing          = lazy(() => import('./pages/Landing'));
 const Pricing          = lazy(() => import('./pages/Pricing'));
+const Terms            = lazy(() => import('./pages/Terms'));
+const Privacy          = lazy(() => import('./pages/Privacy'));
 const SSOCallback      = lazy(() => import('./pages/SSOCallback'));
 const AuditLog         = lazy(() => import('./pages/AuditLog'));
 
@@ -78,6 +80,8 @@ export default function App() {
               {/* Public marketing site */}
               <Route path="/" element={<Landing />} />
               <Route path="/pricing" element={<Pricing />} />
+              <Route path="/terms" element={<Terms />} />
+              <Route path="/privacy" element={<Privacy />} />
 
               <Route path="/login" element={<Login />} />
               <Route path="/sso/callback" element={<SSOCallback />} />

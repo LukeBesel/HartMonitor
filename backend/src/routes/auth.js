@@ -74,6 +74,8 @@ router.post('/signup', (req, res) => {
       .run(userId, normalizedEmail, display_name.trim(), hashPassword(password), orgId);
     db.prepare(`INSERT INTO plan (tier, app_limit, dashboard_limit, company_id) VALUES ('free', 5, 2, ?)`)
       .run(orgId);
+    db.prepare(`INSERT INTO sites (id, company_id, name, code, is_primary) VALUES (?, ?, 'Main Site', 'MAIN', 1)`)
+      .run(uuidv4(), orgId);
 
     const defaults = [
       ['company_name', company_name.trim()],
@@ -229,6 +231,7 @@ router.get('/sso/:provider/callback', async (req, res) => {
         db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role, company_id, sso_provider) VALUES (?, ?, ?, ?, 'developer', ?, ?)`)
           .run(userId, email, name, hashPassword(crypto.randomBytes(32).toString('hex')), orgId, provider);
         db.prepare(`INSERT INTO plan (tier, app_limit, dashboard_limit, company_id) VALUES ('free', 5, 2, ?)`).run(orgId);
+        db.prepare(`INSERT INTO sites (id, company_id, name, code, is_primary) VALUES (?, ?, 'Main Site', 'MAIN', 1)`).run(uuidv4(), orgId);
         const insSetting = db.prepare(`INSERT OR IGNORE INTO org_settings (company_id, key, value) VALUES (?, ?, ?)`);
         for (const [k, v] of [['company_name', orgName], ['timezone', 'America/New_York'], ['date_format', 'MM/DD/YYYY'], ['currency', 'USD']]) {
           insSetting.run(orgId, k, v);

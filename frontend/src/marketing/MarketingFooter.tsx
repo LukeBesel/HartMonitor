@@ -66,9 +66,9 @@ export default function MarketingFooter() {
         <div className="mt-14 pt-8 border-t border-white/10 flex flex-col md:flex-row items-center justify-between gap-4">
           <p className="text-xs text-gray-600">© {new Date().getFullYear()} HartMonitor. All rights reserved.</p>
           <div className="flex items-center gap-6">
-            <a href="#" className="text-xs text-gray-600 hover:text-gray-400 transition-colors">Privacy</a>
-            <a href="#" className="text-xs text-gray-600 hover:text-gray-400 transition-colors">Terms</a>
-            <a href="#" className="text-xs text-gray-600 hover:text-gray-400 transition-colors">Security</a>
+            <Link to="/privacy" className="text-xs text-gray-600 hover:text-gray-400 transition-colors">Privacy</Link>
+            <Link to="/terms" className="text-xs text-gray-600 hover:text-gray-400 transition-colors">Terms</Link>
+            <a href="mailto:security@hartmonitor.io" className="text-xs text-gray-600 hover:text-gray-400 transition-colors">Security</a>
           </div>
         </div>
       </div>

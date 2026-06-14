@@ -53,17 +53,32 @@ A full-stack MES platform similar to Tulip Interfaces, built for tracking and gu
 ## Quick Start
 
 ```bash
-# Install all dependencies
-npm install --workspace=backend
-npm install --workspace=frontend
+# Install all dependencies (root + both workspaces)
+npm run install:all
 
-# Development (separate terminals)
-cd backend && npm run dev     # API on :3001
-cd frontend && npm run dev    # UI on :5173 (proxies /api to :3001)
+# Development — runs API (:3001) + UI (:5173) together
+npm run dev
 
-# Production
-./start.sh                    # Builds frontend, serves everything on :3001
+# Run the production build locally (serves everything on :3001)
+npm run build && npm start
+
+# Run the test suite (auth, tenant isolation, rate limiting, health)
+npm test
 ```
+
+Open **http://localhost:5173** in dev. Locally, demo data is seeded and you can
+log in with **admin@hartmonitor.demo** / **Admin123!**, or create a fresh
+workspace via **Get started**.
+
+> Demo accounts are only created when `SEED_DEMO_DATA=true` (set in
+> `backend/.env` for local dev). Production databases start empty and secure —
+> the first real signup becomes the owner.
+
+## Deploying & Selling
+
+See **[HOSTING.md](./HOSTING.md)** for the full launch guide: putting it online
+(Railway / Render / Docker), turning on Stripe payments, onboarding customers,
+custom domains, backups, and the subscription/upgrade model.
 
 ## Project Structure
 
@@ -98,8 +113,9 @@ Claude-MES/
 
 ## Demo Data
 
-On first start the system seeds:
-- 1 published "Widget Assembly Process" app (4 steps, 13 widgets)
-- 2 stations
-- 30 days of synthetic completion history (~5-11/day, 93% pass rate)
-- 1 "Part Inventory" data table with 5 sample records
+When `SEED_DEMO_DATA=true` (local development only), the system seeds a demo
+company with sample login accounts, a published "Widget Assembly Process" app,
+stations, ~30 days of synthetic completion history, inventory, vendors, purchase
+orders, and NCRs. In production this is disabled — new databases start empty, and
+each customer's workspace is created (and isolated) at signup. Customers can load
+their own sample data anytime from the onboarding wizard.

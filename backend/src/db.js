@@ -1,8 +1,12 @@
 const Database = require('better-sqlite3');
+const fs = require('fs');
 const path = require('path');
 const { v4: uuidv4 } = require('uuid');
+const { config } = require('./config');
 
-const DB_PATH = path.join(__dirname, '..', 'mes.db');
+const DB_PATH = config.databasePath;
+// Ensure the parent directory exists (e.g. a mounted /data volume on first boot).
+fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
 const db = new Database(DB_PATH);
 
 db.pragma('journal_mode = WAL');
@@ -1341,23 +1345,25 @@ function seedUsers() {
   for (const u of users) ins.run(u.id, u.email, u.display_name, hashPw(u.password), u.role);
 }
 
-// ─── Run all seeds ────────────────────────────────────────────────────────────
+// ─── Run all seeds (DEVELOPMENT ONLY) ─────────────────────────────────────────
+// Demo company + sample login accounts (admin@hartmonitor.demo, etc.) and fake
+// production data. Gated behind SEED_DEMO_DATA so a production database starts
+// empty and the first real user creates their own organization via /signup.
+// Shipping these accounts to production would expose publicly-known credentials.
 
-seedUsers();
-seedPlan();
-seedCompanySettings();
-const appData     = seedAppData();
-const deptIds     = seedDepartments();
-seedWorkOrders(appData?.appId, deptIds);
-const invData     = seedInventory();
-seedVendorsAndPOs(invData);
-seedNCRs(appData, invData?.itemIds);
-seedDashboard();
+if (config.seedDemoData) {
+  seedUsers();
+  seedPlan();
+  seedCompanySettings();
+  const appData     = seedAppData();
+  const deptIds     = seedDepartments();
+  seedWorkOrders(appData?.appId, deptIds);
+  const invData     = seedInventory();
+  seedVendorsAndPOs(invData);
+  seedNCRs(appData, invData?.itemIds);
+  seedDashboard();
 
-// ─── Backfill: assign seeded stations to departments, default headcounts ─────
-// Runs on every boot so existing databases pick these up too.
-
-{
+  // ─── Backfill: assign seeded stations to departments, default headcounts ───
   const deptByName = {};
   for (const d of db.prepare('SELECT id, name FROM departments').all()) deptByName[d.name] = d.id;
 
@@ -1376,10 +1382,17 @@ seedDashboard();
 }
 
 // ─── Backfill: default organization ──────────────────────────────────────────
-// Idempotent, runs every boot. Any rows without a company_id (seed data and
-// pre-tenancy databases) are adopted by the default organization.
+// Idempotent. Adopts any rows without a company_id (demo/seed data and
+// pre-tenancy databases) into a default organization. Guarded so a fresh
+// production database — which has no data to adopt — stays empty until the first
+// real signup, rather than getting a junk "default" org.
 
-{
+const hasExistingData =
+  !!db.prepare('SELECT 1 FROM organizations LIMIT 1').get() ||
+  !!db.prepare('SELECT 1 FROM company_settings LIMIT 1').get() ||
+  TENANT_TABLES.some(t => !!db.prepare(`SELECT 1 FROM ${t} LIMIT 1`).get());
+
+if (hasExistingData) {
   let defaultOrg = db.prepare('SELECT id FROM organizations LIMIT 1').get();
   if (!defaultOrg) {
     const id = uuidv4();

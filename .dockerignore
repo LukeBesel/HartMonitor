@@ -1,0 +1,14 @@
+node_modules
+**/node_modules
+frontend/dist
+frontend/dev-dist
+backend/mes.db
+*.db-shm
+*.db-wal
+.git
+.env
+.env.local
+**/.env
+npm-debug.log
+.DS_Store
+/tmp
