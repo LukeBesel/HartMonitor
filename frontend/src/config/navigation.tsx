@@ -25,7 +25,7 @@ export type NavSection = {
 
 // Always visible, independent of the chosen workspace.
 export const PINNED_ITEMS: NavItem[] = [
-  { to: '/', icon: LayoutDashboard, label: 'Command Center', exact: true, pinned: true },
+  { to: '/dashboard', icon: LayoutDashboard, label: 'Command Center', exact: true, pinned: true },
 ];
 
 // The app is organised into three plain-language workspaces so a new user can

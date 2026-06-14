@@ -39,6 +39,8 @@ const Purchasing       = lazy(() => import('./pages/Purchasing'));
 const Quality          = lazy(() => import('./pages/Quality'));
 const Leaderboard      = lazy(() => import('./pages/Leaderboard'));
 const LeaderboardTV    = lazy(() => import('./pages/LeaderboardTV'));
+const Landing          = lazy(() => import('./pages/Landing'));
+const Pricing          = lazy(() => import('./pages/Pricing'));
 
 function Spinner() {
   return (
@@ -67,40 +69,46 @@ export default function App() {
             <MessageToast />
             <Suspense fallback={<Spinner />}>
             <Routes>
+              {/* Public marketing site */}
+              <Route path="/" element={<Landing />} />
+              <Route path="/pricing" element={<Pricing />} />
+
               <Route path="/login" element={<Login />} />
               <Route path="/play/:id" element={<ProtectedRoute><AppPlayer /></ProtectedRoute>} />
               <Route path="/operator" element={<ProtectedRoute><OperatorPortal /></ProtectedRoute>} />
               <Route path="/leaderboard/tv" element={<ProtectedRoute><LeaderboardTV /></ProtectedRoute>} />
-              <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-                <Route index element={<Dashboard />} />
-                <Route path="apps" element={<AppsLibrary />} />
-                <Route path="apps/:id/build" element={<AppBuilder />} />
-                <Route path="apps/:id/history" element={<AppHistory />} />
-                <Route path="tables" element={<Tables />} />
-                <Route path="tables/:id" element={<TableDetail />} />
-                <Route path="analytics" element={<Analytics />} />
-                <Route path="stations" element={<Stations />} />
-                <Route path="stations/:id" element={<StationView />} />
-                <Route path="schedule" element={<Schedule />} />
-                <Route path="plant" element={<PlantView />} />
-                <Route path="departments/:id" element={<DepartmentView />} />
-                <Route path="manager" element={<ManagerView />} />
-                <Route path="step-metrics" element={<StepMetrics />} />
-                <Route path="capacity" element={<CapacityPlanning />} />
-                <Route path="completions/:id" element={<CompletionDetail />} />
-                <Route path="oee" element={<OEETracker />} />
-                <Route path="dashboards" element={<Dashboards />} />
-                <Route path="dashboards/:id" element={<DashboardView />} />
-                <Route path="dashboards/:id/:mode" element={<DashboardView />} />
-                <Route path="inventory" element={<Inventory />} />
-                <Route path="inventory/:id" element={<Inventory />} />
-                <Route path="purchasing" element={<Purchasing />} />
-                <Route path="purchasing/:tab" element={<Purchasing />} />
-                <Route path="quality" element={<Quality />} />
-                <Route path="quality/:id" element={<Quality />} />
-                <Route path="leaderboard" element={<Leaderboard />} />
-                <Route path="settings" element={<SettingsPage />} />
-                <Route path="*" element={<Navigate to="/" replace />} />
+
+              {/* Protected app — lives under /dashboard and friends */}
+              <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+                <Route path="/dashboard" element={<Dashboard />} />
+                <Route path="/apps" element={<AppsLibrary />} />
+                <Route path="/apps/:id/build" element={<AppBuilder />} />
+                <Route path="/apps/:id/history" element={<AppHistory />} />
+                <Route path="/tables" element={<Tables />} />
+                <Route path="/tables/:id" element={<TableDetail />} />
+                <Route path="/analytics" element={<Analytics />} />
+                <Route path="/stations" element={<Stations />} />
+                <Route path="/stations/:id" element={<StationView />} />
+                <Route path="/schedule" element={<Schedule />} />
+                <Route path="/plant" element={<PlantView />} />
+                <Route path="/departments/:id" element={<DepartmentView />} />
+                <Route path="/manager" element={<ManagerView />} />
+                <Route path="/step-metrics" element={<StepMetrics />} />
+                <Route path="/capacity" element={<CapacityPlanning />} />
+                <Route path="/completions/:id" element={<CompletionDetail />} />
+                <Route path="/oee" element={<OEETracker />} />
+                <Route path="/dashboards" element={<Dashboards />} />
+                <Route path="/dashboards/:id" element={<DashboardView />} />
+                <Route path="/dashboards/:id/:mode" element={<DashboardView />} />
+                <Route path="/inventory" element={<Inventory />} />
+                <Route path="/inventory/:id" element={<Inventory />} />
+                <Route path="/purchasing" element={<Purchasing />} />
+                <Route path="/purchasing/:tab" element={<Purchasing />} />
+                <Route path="/quality" element={<Quality />} />
+                <Route path="/quality/:id" element={<Quality />} />
+                <Route path="/leaderboard" element={<Leaderboard />} />
+                <Route path="/settings" element={<SettingsPage />} />
+                <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Route>
             </Routes>
             </Suspense>

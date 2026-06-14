@@ -371,6 +371,27 @@ export interface LeaderboardResponse {
   boards: LeaderboardBoard[];
 }
 
+// ── Pricing catalog (public marketing + in-app billing) ───────────────────────
+
+export interface PricingTier {
+  name: string;
+  monthly_price: number | null;
+  app_limit: number;
+  dashboard_limit: number;
+  features: string[];
+}
+
+export interface PricingAddon {
+  name: string;
+  monthly_price: number;
+  description: string;
+}
+
+export interface PricingCatalog {
+  tiers: Record<string, PricingTier>;
+  addons: Record<string, PricingAddon>;
+}
+
 // ── Live broadcast messages ───────────────────────────────────────────────────
 
 export type MessageSeverity = 'info' | 'warning' | 'urgent';

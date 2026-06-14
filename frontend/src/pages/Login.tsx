@@ -1,7 +1,7 @@
 import { useState, FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { Activity, Eye, EyeOff, ArrowRight, Building2 } from 'lucide-react';
+import { Activity, Eye, EyeOff, ArrowRight, Building2, ChevronLeft } from 'lucide-react';
 
 const DEMO_ACCOUNTS = [
   { label: 'Developer (full access)', email: 'admin@hartmonitor.demo', password: 'Admin123!', color: 'bg-purple-100 text-purple-700' },
@@ -13,7 +13,8 @@ const DEMO_ACCOUNTS = [
 export default function Login() {
   const { login, signup } = useAuth();
   const navigate = useNavigate();
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
+  const [searchParams] = useSearchParams();
+  const [mode, setMode] = useState<'signin' | 'signup'>(searchParams.get('mode') === 'signup' ? 'signup' : 'signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -36,7 +37,7 @@ export default function Login() {
     setLoading(true);
     try {
       await login(creds.email, creds.password);
-      navigate('/');
+      navigate('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Login failed');
     } finally {
@@ -55,7 +56,7 @@ export default function Login() {
     setLoading(true);
     try {
       await signup(companyName.trim(), displayName.trim(), email, password);
-      navigate('/');
+      navigate('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Signup failed');
     } finally {
@@ -74,6 +75,10 @@ export default function Login() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-blue-950 to-slate-900 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
+        {/* Back to marketing site */}
+        <Link to="/" className="inline-flex items-center gap-1.5 text-blue-300/70 hover:text-blue-200 text-sm mb-6 transition-colors">
+          <ChevronLeft size={16} /> Back to home
+        </Link>
         {/* Logo */}
         <div className="text-center mb-8">
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-blue-600 shadow-lg mb-4">

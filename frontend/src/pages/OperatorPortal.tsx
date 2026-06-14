@@ -204,7 +204,7 @@ export default function OperatorPortal() {
 
         <div className="px-6 pb-6 text-center">
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/dashboard')}
             className="text-xs text-blue-400/40 hover:text-blue-300/60 transition-colors"
           >
             Management Dashboard →
@@ -850,7 +850,7 @@ function ProfileTab({
           Switch operator
         </button>
         <button
-          onClick={() => navigate('/')}
+          onClick={() => navigate('/dashboard')}
           className="w-full h-12 bg-white/5 hover:bg-white/10 border border-white/10 text-blue-200/70 rounded-xl font-semibold text-sm transition-colors flex items-center justify-center gap-2"
         >
           <LogOut size={16} />

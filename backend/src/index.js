@@ -7,6 +7,7 @@ const path = require('path');
 const http = require('http');
 const { stripeWebhook } = require('./webhook');
 const { initWebSocketServer } = require('./ws');
+const { PRICING } = require('./pricing');
 
 const appsRouter        = require('./routes/apps');
 const completionsRouter = require('./routes/completions');
@@ -42,6 +43,10 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), stri
 app.use(express.json({ limit: '10mb' }));
 
 app.use('/api/auth',          authRouter);  // public
+
+// Public pricing catalog — powers the marketing site without authentication.
+app.get('/api/public/pricing', (_req, res) => res.json(PRICING));
+
 app.use('/api',               requireAuth); // protect everything below
 app.use('/api/apps',          appsRouter);
 app.use('/api/completions',   completionsRouter);

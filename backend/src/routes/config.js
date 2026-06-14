@@ -3,42 +3,9 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { requireRole } = require('../middleware/auth');
 const { getStripe, isConfigured, billingMode, currency } = require('../stripe');
+const { PRICING } = require('../pricing');
 
 const router = express.Router();
-
-// ─── Pricing catalog ──────────────────────────────────────────────────────────
-// Single source of truth for what each tier and add-on costs. The frontend
-// renders directly from this so prices never drift between UI and billing.
-
-const PRICING = {
-  tiers: {
-    free: {
-      name: 'Free',
-      monthly_price: 0,
-      app_limit: 5,
-      dashboard_limit: 2,
-      features: ['App Builder (5 apps)', '2 Dashboards', 'Work Orders & Scheduling', 'OEE Tracking', 'Basic Analytics', 'Operator Portal', 'CSV Export'],
-    },
-    pro: {
-      name: 'Pro',
-      monthly_price: 299,
-      app_limit: -1,
-      dashboard_limit: -1,
-      features: ['Unlimited Apps', 'Unlimited Dashboards', 'Inventory Management', 'Purchasing & Vendors', 'Quality / NCR Management', 'Full Data Export (CSV/JSON)', 'Advanced Analytics', 'Priority Support'],
-    },
-    enterprise: {
-      name: 'Enterprise',
-      monthly_price: null, // contact sales
-      app_limit: -1,
-      dashboard_limit: -1,
-      features: ['Everything in Pro', 'Custom Branding', 'SSO / SAML', 'Dedicated Instance', 'SLA Guarantee', 'API Access', 'Custom Integrations', 'Dedicated CSM'],
-    },
-  },
-  addons: {
-    app_slot:       { name: 'Extra App Slot',        monthly_price: 29, description: 'Add one production app beyond your plan limit' },
-    dashboard_slot: { name: 'Custom Dashboard Slot', monthly_price: 19, description: 'Add one custom dashboard beyond your plan limit' },
-  },
-};
 
 function getPlanRow(companyId) {
   let plan = db.prepare('SELECT * FROM plan WHERE company_id = ?').get(companyId);

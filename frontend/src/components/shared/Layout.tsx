@@ -159,7 +159,7 @@ export default function Layout() {
         </button>
 
         <Link
-          to="/"
+          to="/dashboard"
           className={`flex items-center border-b border-white/10 hover:bg-white/5 transition-colors flex-shrink-0 ${effectiveCollapsed ? 'justify-center p-3' : 'gap-3 p-4'}`}
         >
           {logoUrl && !logoError ? (
