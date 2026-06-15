@@ -48,6 +48,7 @@ const Privacy          = lazy(() => import('./pages/Privacy'));
 const SSOCallback      = lazy(() => import('./pages/SSOCallback'));
 const AuditLog         = lazy(() => import('./pages/AuditLog'));
 const Facilities       = lazy(() => import('./pages/Facilities'));
+const Game             = lazy(() => import('./pages/Game'));
 
 function Spinner() {
   return (
@@ -83,6 +84,7 @@ export default function App() {
               <Route path="/pricing" element={<Pricing />} />
               <Route path="/terms" element={<Terms />} />
               <Route path="/privacy" element={<Privacy />} />
+              <Route path="/game" element={<Game />} />
 
               <Route path="/login" element={<Login />} />
               <Route path="/sso/callback" element={<SSOCallback />} />

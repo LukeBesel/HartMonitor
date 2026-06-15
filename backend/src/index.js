@@ -39,6 +39,7 @@ const permissionsRouter  = require('./routes/permissions');
 const developerRouter    = require('./routes/developer');
 const notificationsRouter = require('./routes/notifications');
 const v1Router           = require('./routes/v1');
+const gameRouter         = require('./routes/game');
 const { requireAuth }    = require('./middleware/auth');
 const { requirePlan }    = require('./middleware/plan');
 const { apiKeyAuth }     = require('./middleware/apiKeyAuth');
@@ -147,6 +148,7 @@ function writeRole(minRole) {
 }
 
 app.use('/api/auth',          authRouter);  // public
+app.use('/api/game',          gameRouter);  // public — no auth required
 
 // Public pricing catalog — powers the marketing site without authentication.
 app.get('/api/public/pricing', (_req, res) => res.json(PRICING));
