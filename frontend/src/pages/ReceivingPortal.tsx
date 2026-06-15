@@ -84,7 +84,7 @@ function POCard({ po, onReceived }: { po: PurchaseOrder; onReceived: () => void 
           'Content-Type': 'application/json',
           'Authorization': 'Bearer ' + localStorage.getItem('hm_token'),
         },
-        body: JSON.stringify({ lines: toReceive }),
+        body: JSON.stringify({ receipts: toReceive }),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({ error: 'Request failed' }));
