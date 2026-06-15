@@ -1,13 +1,13 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
-import { App, Step, Widget, WidgetType, WidgetLayout, ProductType } from '../types';
+import { App, Step, Widget, WidgetType, WidgetLayout, ProductType, Department, Station } from '../types';
 import {
   Save, Globe, ChevronLeft, Plus, Trash2, GripVertical,
   Type, AlignLeft, Image, MousePointer, TextCursor, Hash,
   List, CheckSquare, Timer, TrendingUp, CheckCheck, Minus,
   PenTool, Eye, Settings, X, ChevronDown, Loader2, Tag,
-  LayoutGrid, Rows3, MoveUp, MoveDown,
+  LayoutGrid, Rows3, MoveUp, MoveDown, MapPin, AlertTriangle,
   AlignLeft as AlignLeftIcon, AlignCenter, AlignRight,
 } from 'lucide-react';
 import CanvasEditor from '../components/app/CanvasEditor';
@@ -72,7 +72,11 @@ export default function AppBuilder() {
   const [saved, setSaved] = useState(false);
   const [rightTab, setRightTab] = useState<'widget' | 'step'>('widget');
   const [showTypesModal, setShowTypesModal] = useState(false);
+  const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showPublishModal, setShowPublishModal] = useState(false);
   const [productTypes, setProductTypes] = useState<ProductType[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [stations, setStations] = useState<Station[]>([]);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -86,11 +90,24 @@ export default function AppBuilder() {
     }
   }, [id]);
 
+  // Load departments/stations once for the "Publish to" selectors.
+  useEffect(() => {
+    api.getDepartments().then(setDepartments).catch(() => {});
+    api.getStations().then(setStations).catch(() => {});
+  }, []);
+
   const save = useCallback(async (appData: App) => {
     if (!id) return;
     setSaving(true);
     try {
-      await api.updateApp(id, { name: appData.name, description: appData.description, steps: appData.steps });
+      await api.updateApp(id, {
+        name: appData.name,
+        description: appData.description,
+        steps: appData.steps,
+        department_id: appData.department_id ?? null,
+        station_id: appData.station_id ?? null,
+        show_takt_warnings: appData.show_takt_warnings ? 1 : 0,
+      });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } finally {
@@ -233,11 +250,15 @@ export default function AppBuilder() {
     }));
   };
 
-  const handlePublish = async () => {
+  // Persist the publish target (department + station) and flip status to published.
+  const handlePublish = async (target: { department_id: string | null; station_id: string | null }) => {
     if (!id || !app) return;
-    await save(app);
+    const next = { ...app, department_id: target.department_id, station_id: target.station_id };
+    setApp(next);
+    await save(next);
     await api.publishApp(id);
-    setApp(prev => prev ? { ...prev, status: 'published' } : prev);
+    setApp(prev => prev ? { ...prev, status: 'published', department_id: target.department_id, station_id: target.station_id } : prev);
+    setShowPublishModal(false);
   };
 
   if (!app) {
@@ -281,6 +302,13 @@ export default function AppBuilder() {
             <Tag size={13} /> Types {productTypes.length > 0 && <span className="bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full text-[10px] ml-0.5">{productTypes.length}</span>}
           </button>
           <button
+            onClick={() => setShowSettingsModal(true)}
+            className="btn-secondary text-xs"
+            title="App settings"
+          >
+            <Settings size={13} /> Settings
+          </button>
+          <button
             onClick={() => save(app)}
             disabled={saving}
             className="btn-secondary text-xs"
@@ -288,7 +316,7 @@ export default function AppBuilder() {
             {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
             {saved ? 'Saved!' : 'Save'}
           </button>
-          <button onClick={handlePublish} className="btn-success text-xs">
+          <button onClick={() => setShowPublishModal(true)} className="btn-success text-xs">
             <Globe size={13} /> Publish
           </button>
         </div>
@@ -485,7 +513,161 @@ export default function AppBuilder() {
         onUpdate={setProductTypes}
       />
     )}
+
+    {/* App Settings Modal */}
+    {showSettingsModal && app && (
+      <AppSettingsModal
+        app={app}
+        onClose={() => setShowSettingsModal(false)}
+        onChange={updates => updateApp(prev => ({ ...prev, ...updates }))}
+        onSave={() => { if (app) save(app); setShowSettingsModal(false); }}
+      />
+    )}
+
+    {/* Publish Modal */}
+    {showPublishModal && app && (
+      <PublishModal
+        app={app}
+        departments={departments}
+        stations={stations}
+        saving={saving}
+        onClose={() => setShowPublishModal(false)}
+        onPublish={handlePublish}
+      />
+    )}
     </>
+  );
+}
+
+// ── App Settings Modal ─────────────────────────────────────────────────────────
+
+function AppSettingsModal({ app, onClose, onChange, onSave }: {
+  app: App;
+  onClose: () => void;
+  onChange: (updates: Partial<App>) => void;
+  onSave: () => void;
+}) {
+  const showTakt = app.show_takt_warnings === undefined ? true : !!app.show_takt_warnings;
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <Settings size={18} className="text-gray-600" />
+            <h2 className="text-lg font-bold text-gray-900">App Settings</h2>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400"><X size={18} /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <Field label="App Name">
+            <input className="input-field" value={app.name} onChange={e => onChange({ name: e.target.value })} />
+          </Field>
+          <Field label="Description">
+            <textarea className="input-field resize-none text-xs" rows={2} value={app.description || ''}
+              onChange={e => onChange({ description: e.target.value })} placeholder="Optional description..." />
+          </Field>
+          <label className="flex items-start gap-3 cursor-pointer rounded-xl border border-gray-200 p-3 hover:bg-gray-50">
+            <input
+              type="checkbox"
+              checked={showTakt}
+              onChange={e => onChange({ show_takt_warnings: e.target.checked ? 1 : 0 })}
+              className="mt-0.5 rounded"
+            />
+            <span className="flex-1">
+              <span className="flex items-center gap-1.5 text-sm font-medium text-gray-800">
+                <AlertTriangle size={13} className="text-amber-500" /> Show takt-time warnings to operators
+              </span>
+              <span className="block text-xs text-gray-500 mt-0.5">
+                When enabled, operators see a flashing alert when a step exceeds its takt time.
+              </span>
+            </span>
+          </label>
+        </div>
+        <div className="flex items-center justify-end gap-2 p-5 border-t border-gray-100">
+          <button onClick={onClose} className="btn-secondary text-xs">Cancel</button>
+          <button onClick={onSave} className="btn-success text-xs"><Save size={13} /> Save Settings</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Publish Modal ──────────────────────────────────────────────────────────────
+
+function PublishModal({ app, departments, stations, saving, onClose, onPublish }: {
+  app: App;
+  departments: Department[];
+  stations: Station[];
+  saving: boolean;
+  onClose: () => void;
+  onPublish: (target: { department_id: string | null; station_id: string | null }) => void;
+}) {
+  const [departmentId, setDepartmentId] = useState<string>(app.department_id || '');
+  const [stationId, setStationId] = useState<string>(app.station_id || '');
+
+  // Filter stations to the chosen department (fall back to all if none selected).
+  const availableStations = departmentId
+    ? stations.filter(s => s.department_id === departmentId)
+    : stations;
+
+  // If the currently selected station isn't in the chosen department, clear it.
+  const handleDept = (deptId: string) => {
+    setDepartmentId(deptId);
+    if (deptId && stationId && !stations.some(s => s.id === stationId && s.department_id === deptId)) {
+      setStationId('');
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg">
+        <div className="flex items-center justify-between p-5 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <Globe size={18} className="text-green-600" />
+            <h2 className="text-lg font-bold text-gray-900">Publish App</h2>
+          </div>
+          <button onClick={onClose} className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-400"><X size={18} /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <p className="text-xs text-gray-500">
+            Choose where to publish <span className="font-medium text-gray-700">{app.name}</span>. Operators at the selected
+            department / workstation will see it. You can leave these blank to publish without a target.
+          </p>
+          <Field label="Department">
+            <select className="input-field" value={departmentId} onChange={e => handleDept(e.target.value)}>
+              <option value="">— No department —</option>
+              {departments.map(d => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Workstation">
+            <select className="input-field" value={stationId} onChange={e => setStationId(e.target.value)}>
+              <option value="">— No workstation —</option>
+              {availableStations.map(s => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+            {departmentId && availableStations.length === 0 && (
+              <p className="text-[11px] text-amber-600 mt-1 flex items-center gap-1">
+                <MapPin size={11} /> No workstations in this department yet.
+              </p>
+            )}
+          </Field>
+        </div>
+        <div className="flex items-center justify-end gap-2 p-5 border-t border-gray-100">
+          <button onClick={onClose} className="btn-secondary text-xs">Cancel</button>
+          <button
+            onClick={() => onPublish({ department_id: departmentId || null, station_id: stationId || null })}
+            disabled={saving}
+            className="btn-success text-xs"
+          >
+            {saving ? <Loader2 size={13} className="animate-spin" /> : <Globe size={13} />}
+            Publish
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 

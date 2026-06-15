@@ -1559,12 +1559,14 @@ db.exec(`
   if (!userCols.includes('job_title'))     db.exec("ALTER TABLE users ADD COLUMN job_title TEXT DEFAULT ''");
 }
 
-// ─── Migrations: apps (department_id, site_id) ───────────────────────────────
+// ─── Migrations: apps (department_id, site_id, station_id, show_takt_warnings) ─
 
 {
   const appCols = db.prepare('PRAGMA table_info(apps)').all().map(r => r.name);
-  if (!appCols.includes('department_id')) db.exec('ALTER TABLE apps ADD COLUMN department_id TEXT REFERENCES departments(id) ON DELETE SET NULL');
-  if (!appCols.includes('site_id'))       db.exec('ALTER TABLE apps ADD COLUMN site_id TEXT REFERENCES sites(id) ON DELETE SET NULL');
+  if (!appCols.includes('department_id'))      db.exec('ALTER TABLE apps ADD COLUMN department_id TEXT REFERENCES departments(id) ON DELETE SET NULL');
+  if (!appCols.includes('site_id'))            db.exec('ALTER TABLE apps ADD COLUMN site_id TEXT REFERENCES sites(id) ON DELETE SET NULL');
+  if (!appCols.includes('station_id'))         db.exec('ALTER TABLE apps ADD COLUMN station_id TEXT REFERENCES stations(id) ON DELETE SET NULL');
+  if (!appCols.includes('show_takt_warnings')) db.exec('ALTER TABLE apps ADD COLUMN show_takt_warnings INTEGER DEFAULT 1');
 }
 
 // ─── Public game leaderboard (no tenant scope) ────────────────────────────────

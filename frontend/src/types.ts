@@ -48,6 +48,10 @@ export interface App {
   id: string; name: string; description: string;
   status: 'draft' | 'published'; steps: Step[];
   variables: AppVariable[]; created_at: string; updated_at: string;
+  department_id?: string | null;
+  site_id?: string | null;
+  station_id?: string | null;
+  show_takt_warnings?: number | boolean;
 }
 
 export interface Completion {
