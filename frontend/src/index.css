@@ -3,13 +3,17 @@
 @tailwind utilities;
 
 /* ── Theme CSS variables (overridden by data-accent) ── */
+/* Default theme: "Midnight" — deep navy sidebar + glowing pink accent. */
 :root {
-  --accent:       #3b82f6;
-  --accent-dark:  #2563eb;
-  --accent-light: #eff6ff;
-  --sidebar-bg:   #0a1628;
-  --nav-active:   #2563eb;
+  --accent:       #ec4899;
+  --accent-dark:  #db2777;
+  --accent-light: #fdf2f8;
+  --secondary:    #6366f1;
+  --sidebar-bg:   #0a0e27;
+  --nav-active:   #db2777;
 }
+[data-accent="midnight"] { --accent:#ec4899; --accent-dark:#db2777; --accent-light:#fdf2f8; --sidebar-bg:#0a0e27; --nav-active:#db2777; }
+[data-accent="blue"]   { --accent:#3b82f6; --accent-dark:#2563eb; --accent-light:#eff6ff; --sidebar-bg:#0a1628; --nav-active:#2563eb; }
 [data-accent="indigo"] { --accent:#6366f1; --accent-dark:#4f46e5; --accent-light:#eef2ff; --sidebar-bg:#0f0e2b; --nav-active:#4f46e5; }
 [data-accent="purple"] { --accent:#8b5cf6; --accent-dark:#7c3aed; --accent-light:#f5f3ff; --sidebar-bg:#170a2d; --nav-active:#7c3aed; }
 [data-accent="teal"]   { --accent:#14b8a6; --accent-dark:#0d9488; --accent-light:#f0fdfa; --sidebar-bg:#041e1c; --nav-active:#0d9488; }
@@ -25,10 +29,20 @@
 
 @layer components {
   .btn-primary {
-    @apply inline-flex items-center gap-2 px-4 py-2 text-white rounded-lg transition-colors font-medium text-sm disabled:opacity-40 disabled:cursor-not-allowed shadow-sm;
+    @apply inline-flex items-center gap-2 px-4 py-2 text-white rounded-lg transition-all font-medium text-sm disabled:opacity-40 disabled:cursor-not-allowed shadow-sm;
     background-color: var(--accent);
+    /* Soft accent glow — classy, not gaudy. */
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 0 14px -6px var(--accent);
   }
-  .btn-primary:hover:not(:disabled) { background-color: var(--accent-dark); }
+  .btn-primary:hover:not(:disabled) {
+    background-color: var(--accent-dark);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 20px -4px var(--accent);
+  }
+
+  /* Soft accent glow utility — drop on any element for a tasteful halo. */
+  .glow-accent {
+    box-shadow: 0 0 20px -4px var(--accent);
+  }
   .btn-secondary {
     @apply inline-flex items-center gap-2 px-4 py-2 bg-white text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 active:bg-gray-100 transition-colors font-medium text-sm shadow-sm;
   }
@@ -168,7 +182,7 @@
 .dark .hover\:bg-green-50:hover,
 .dark .hover\:bg-emerald-50:hover { background-color: rgba(16, 185, 129, 0.15); }
 
-/* Shared component classes (their colours are inlined via @apply, so they
+/* Shared component classes (their colors are inlined via @apply, so they
    need their own dark overrides). */
 .dark .card,
 .dark .card-hover,
@@ -227,7 +241,7 @@
 .dark .bg-sky-50,
 .dark .bg-sky-100 { background-color: rgba(20, 184, 166, 0.15); }
 
-/* Brighten saturated text colours for contrast on dark surfaces */
+/* Brighten saturated text colors for contrast on dark surfaces */
 .dark .text-blue-500,
 .dark .text-blue-600,
 .dark .text-blue-700,

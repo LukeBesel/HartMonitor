@@ -5,7 +5,7 @@ export interface Theme {
   accentDark: string;
   accentLight: string;
   sidebarBg: string;
-  /** Secondary brand colour — drives the end-stop of branded gradients. */
+  /** Secondary brand color — drives the end-stop of branded gradients. */
   secondary: string;
   secondaryDark: string;
   secondaryLight: string;
@@ -13,6 +13,8 @@ export interface Theme {
 }
 
 export const THEME_PRESETS: Theme[] = [
+  // Default: deep midnight navy sidebar with a vivid, glowing pink accent.
+  { name: 'midnight', accent: '#ec4899', accentDark: '#db2777', accentLight: '#fdf2f8', sidebarBg: '#0a0e27', secondary: '#6366f1', secondaryDark: '#4f46e5', secondaryLight: '#eef2ff' },
   { name: 'blue',   accent: '#3b82f6', accentDark: '#2563eb', accentLight: '#eff6ff', sidebarBg: '#0a1628', secondary: '#6366f1', secondaryDark: '#4f46e5', secondaryLight: '#eef2ff' },
   { name: 'indigo', accent: '#6366f1', accentDark: '#4f46e5', accentLight: '#eef2ff', sidebarBg: '#0f0e2b', secondary: '#8b5cf6', secondaryDark: '#7c3aed', secondaryLight: '#f5f3ff' },
   { name: 'purple', accent: '#8b5cf6', accentDark: '#7c3aed', accentLight: '#f5f3ff', sidebarBg: '#170a2d', secondary: '#d946ef', secondaryDark: '#c026d3', secondaryLight: '#fdf4ff' },
@@ -69,8 +71,8 @@ export function buildCustomTheme(accent: string, secondary?: string): Theme {
   };
 }
 
-// Return a copy of `base` with a new secondary colour (and derived shades),
-// keeping the accent palette intact. Used by the secondary colour picker.
+// Return a copy of `base` with a new secondary color (and derived shades),
+// keeping the accent palette intact. Used by the secondary color picker.
 export function applySecondary(base: Theme, secondary: string): Theme {
   return {
     ...withSecondary(base),
@@ -80,7 +82,7 @@ export function applySecondary(base: Theme, secondary: string): Theme {
   };
 }
 
-// Backfill secondary fields for themes saved before secondary colours existed.
+// Backfill secondary fields for themes saved before secondary colors existed.
 function withSecondary(t: Theme): Theme {
   if (t.secondary) return t;
   return {
@@ -139,7 +141,7 @@ function loadTheme(): Theme {
   } catch {
     // ignore
   }
-  return THEME_PRESETS[0]; // default: blue
+  return THEME_PRESETS[0]; // default: midnight
 }
 
 interface ThemeContextValue {
