@@ -31,18 +31,76 @@
   .btn-primary {
     @apply inline-flex items-center gap-2 px-4 py-2 text-white rounded-lg transition-all font-medium text-sm disabled:opacity-40 disabled:cursor-not-allowed shadow-sm;
     background-color: var(--accent);
-    /* Soft accent glow — classy, not gaudy. */
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 0 14px -6px var(--accent);
+    /* Visible accent glow — the signature pink halo. */
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 22px -4px var(--accent);
   }
   .btn-primary:hover:not(:disabled) {
     background-color: var(--accent-dark);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 20px -4px var(--accent);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.12), 0 0 30px -2px var(--accent);
+    transform: translateY(-1px);
   }
 
-  /* Soft accent glow utility — drop on any element for a tasteful halo. */
+  /* Accent glow utility — drop on any element for a halo in the theme accent. */
   .glow-accent {
-    box-shadow: 0 0 20px -4px var(--accent);
+    box-shadow: 0 0 28px -4px var(--accent);
   }
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Glowing-pink utilities — used across the marketing site and accents.
+   Pink (#ec4899) → indigo (#6366f1) is the brand gradient.
+   ════════════════════════════════════════════════════════════════════════ */
+@layer utilities {
+  /* Pink text halo for headlines / highlighted words. */
+  .text-glow-pink {
+    text-shadow: 0 0 24px rgba(236, 72, 153, 0.55), 0 0 48px rgba(236, 72, 153, 0.25);
+  }
+  /* Gradient headline text (pink → indigo). Pair with a fallback text color. */
+  .text-gradient-pink {
+    background-image: linear-gradient(95deg, #f9a8d4 0%, #ec4899 45%, #818cf8 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+  }
+  /* Glowing pink ring/box — for cards, device frames, CTAs. */
+  .glow-pink {
+    box-shadow: 0 0 0 1px rgba(236, 72, 153, 0.30), 0 0 40px -6px rgba(236, 72, 153, 0.55);
+  }
+  .glow-pink-lg {
+    box-shadow: 0 0 0 1px rgba(236, 72, 153, 0.35), 0 0 70px -8px rgba(236, 72, 153, 0.65);
+  }
+  .ring-glow-pink {
+    box-shadow: 0 0 0 1px rgba(236, 72, 153, 0.40);
+  }
+  /* Soft blurred orb — position absolutely behind content for an aurora wash. */
+  .aurora-orb {
+    border-radius: 9999px;
+    filter: blur(70px);
+    opacity: 0.5;
+    pointer-events: none;
+  }
+  /* Slow, breathing pink glow for hero CTAs and badges. */
+  .animate-pulse-glow {
+    animation: pulse-glow 3.2s ease-in-out infinite;
+  }
+  /* Slow drift for background aurora orbs. */
+  .animate-aurora {
+    animation: aurora-drift 16s ease-in-out infinite alternate;
+  }
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 22px -6px rgba(236, 72, 153, 0.55), 0 0 0 0 rgba(236, 72, 153, 0.35); }
+  50%      { box-shadow: 0 0 40px -2px rgba(236, 72, 153, 0.85), 0 0 0 6px rgba(236, 72, 153, 0); }
+}
+
+@keyframes aurora-drift {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  100% { transform: translate3d(24px, -20px, 0) scale(1.12); }
+}
+
+@layer components {
   .btn-secondary {
     @apply inline-flex items-center gap-2 px-4 py-2 bg-white text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 active:bg-gray-100 transition-colors font-medium text-sm shadow-sm;
   }

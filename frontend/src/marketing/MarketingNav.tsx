@@ -29,7 +29,7 @@ export default function MarketingNav() {
     >
       <nav className="max-w-7xl mx-auto px-6 h-16 flex items-center justify-between">
         <Link to="/" className="flex items-center gap-2.5">
-          <span className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #3b82f6, #6366f1)' }}>
+          <span className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #6366f1, #ec4899)' }}>
             <Activity size={18} className="text-white" strokeWidth={2.4} />
           </span>
           <span className="text-white font-semibold text-lg tracking-tight">HartMonitor</span>
@@ -47,8 +47,8 @@ export default function MarketingNav() {
           {user ? (
             <Link
               to="/dashboard"
-              className="text-sm font-semibold text-white px-4 py-2 rounded-full transition-all hover:opacity-90"
-              style={{ background: 'linear-gradient(135deg, #3b82f6, #6366f1)' }}
+              className="text-sm font-semibold text-white px-4 py-2 rounded-full transition-all hover:opacity-90 glow-pink"
+              style={{ background: 'linear-gradient(135deg, #6366f1, #ec4899)' }}
             >
               Open Dashboard
             </Link>
@@ -59,8 +59,8 @@ export default function MarketingNav() {
               </Link>
               <Link
                 to="/login?mode=signup"
-                className="text-sm font-semibold text-white px-4 py-2 rounded-full transition-all hover:opacity-90"
-                style={{ background: 'linear-gradient(135deg, #3b82f6, #6366f1)' }}
+                className="text-sm font-semibold text-white px-4 py-2 rounded-full transition-all hover:opacity-90 glow-pink"
+                style={{ background: 'linear-gradient(135deg, #6366f1, #ec4899)' }}
               >
                 Get started
               </Link>
@@ -82,7 +82,7 @@ export default function MarketingNav() {
           ))}
           <div className="pt-3 border-t border-white/10 flex flex-col gap-2">
             {user ? (
-              <Link to="/dashboard" className="text-center text-sm font-semibold text-white px-4 py-2.5 rounded-full" style={{ background: 'linear-gradient(135deg, #3b82f6, #6366f1)' }}>
+              <Link to="/dashboard" className="text-center text-sm font-semibold text-white px-4 py-2.5 rounded-full" style={{ background: 'linear-gradient(135deg, #6366f1, #ec4899)' }}>
                 Open Dashboard
               </Link>
             ) : (
@@ -90,7 +90,7 @@ export default function MarketingNav() {
                 <Link to="/login" onClick={() => setMenuOpen(false)} className="text-center text-sm text-gray-200 px-4 py-2.5 rounded-full border border-white/15">
                   Sign in
                 </Link>
-                <Link to="/login?mode=signup" onClick={() => setMenuOpen(false)} className="text-center text-sm font-semibold text-white px-4 py-2.5 rounded-full" style={{ background: 'linear-gradient(135deg, #3b82f6, #6366f1)' }}>
+                <Link to="/login?mode=signup" onClick={() => setMenuOpen(false)} className="text-center text-sm font-semibold text-white px-4 py-2.5 rounded-full" style={{ background: 'linear-gradient(135deg, #6366f1, #ec4899)' }}>
                   Get started
                 </Link>
               </>

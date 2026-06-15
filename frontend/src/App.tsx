@@ -48,6 +48,8 @@ const Pricing          = lazy(() => import('./pages/Pricing'));
 const Terms            = lazy(() => import('./pages/Terms'));
 const Privacy          = lazy(() => import('./pages/Privacy'));
 const SSOCallback      = lazy(() => import('./pages/SSOCallback'));
+const ForgotPassword   = lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword    = lazy(() => import('./pages/ResetPassword'));
 const AuditLog         = lazy(() => import('./pages/AuditLog'));
 const TransactionLog   = lazy(() => import('./pages/AuditLog'));
 const Facilities       = lazy(() => import('./pages/Facilities'));
@@ -108,6 +110,8 @@ export default function App() {
               <Route path="/privacy" element={<Privacy />} />
 
               <Route path="/login" element={<Login />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/sso/callback" element={<SSOCallback />} />
               <Route path="/play/:id" element={<OperatorRoute><AppPlayer /></OperatorRoute>} />
               <Route path="/operator" element={<OperatorRoute><OperatorPortal /></OperatorRoute>} />

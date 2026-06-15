@@ -115,6 +115,21 @@ async function sendSMS(companyId, event, to, body) {
   logNotification(companyId, 'sms', event, to, '', body, status);
 }
 
+// Generic transactional email (e.g. password resets) — not tied to a company's
+// notification preferences. Returns { sent } so the caller can fall back to a
+// dev link when SMTP isn't configured. Never throws.
+async function sendRawEmail(to, subject, body) {
+  const t = getTransporter();
+  if (!t) return { sent: false };
+  try {
+    await t.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to, subject, text: body });
+    return { sent: true };
+  } catch (e) {
+    console.error('[notifications] raw email send failed:', e.message);
+    return { sent: false };
+  }
+}
+
 // Fire-and-forget — never throws back to the caller's request handler.
 // Pass force: true to bypass the subscribed-events check (used for test sends).
 function notify(companyId, event, { subject = '', body, force = false }) {
@@ -128,4 +143,4 @@ function notify(companyId, event, { subject = '', body, force = false }) {
   }
 }
 
-module.exports = { notify, getPrefs, setPrefs, EVENTS, smtpConfigured, twilioConfigured };
+module.exports = { notify, sendRawEmail, getPrefs, setPrefs, EVENTS, smtpConfigured, twilioConfigured };

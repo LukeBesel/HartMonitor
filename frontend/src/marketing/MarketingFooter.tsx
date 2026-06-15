@@ -38,7 +38,7 @@ export default function MarketingFooter() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-10">
           <div className="col-span-2 md:col-span-1">
             <Link to="/" className="flex items-center gap-2.5 mb-4">
-              <span className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #3b82f6, #6366f1)' }}>
+              <span className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'linear-gradient(135deg, #6366f1, #ec4899)' }}>
                 <Activity size={18} className="text-white" strokeWidth={2.4} />
               </span>
               <span className="text-white font-semibold text-lg tracking-tight">HartMonitor</span>
