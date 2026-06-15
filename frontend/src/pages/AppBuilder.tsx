@@ -1,13 +1,17 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
-import { App, Step, Widget, WidgetType, ProductType } from '../types';
+import { App, Step, Widget, WidgetType, WidgetLayout, ProductType } from '../types';
 import {
   Save, Globe, ChevronLeft, Plus, Trash2, GripVertical,
   Type, AlignLeft, Image, MousePointer, TextCursor, Hash,
   List, CheckSquare, Timer, TrendingUp, CheckCheck, Minus,
-  PenTool, Eye, Settings, X, ChevronDown, Loader2, Tag
+  PenTool, Eye, Settings, X, ChevronDown, Loader2, Tag,
+  LayoutGrid, Rows3, MoveUp, MoveDown,
+  AlignLeft as AlignLeftIcon, AlignCenter, AlignRight,
 } from 'lucide-react';
+import CanvasEditor from '../components/app/CanvasEditor';
+import { defaultLayout, DEFAULT_CANVAS_H } from '../components/app/WidgetView';
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor,
   useSensor, useSensors, DragEndEvent
@@ -113,12 +117,58 @@ export default function AppBuilder() {
 
   const addWidget = (type: WidgetType) => {
     const widget = defaultWidget(type);
-    updateStep(step => ({
-      ...step,
-      widgets: [...step.widgets, { ...widget, order: step.widgets.length }]
-    }));
+    updateStep(step => {
+      const isCanvas = step.layoutMode === 'canvas';
+      const placed: Widget = isCanvas
+        ? { ...widget, order: step.widgets.length, layout: defaultLayout(type, step.widgets.length) }
+        : { ...widget, order: step.widgets.length };
+      return { ...step, widgets: [...step.widgets, placed] };
+    });
     setSelectedWidgetId(widget.id);
     setRightTab('widget');
+  };
+
+  // Move/resize/rotate a widget on the canvas.
+  const updateWidgetLayout = (widgetId: string, layout: WidgetLayout) => {
+    updateStep(step => ({
+      ...step,
+      widgets: step.widgets.map(w => w.id === widgetId ? { ...w, layout } : w),
+    }));
+  };
+
+  // Bring a widget forward/back in the canvas stacking order.
+  const restackWidget = (widgetId: string, dir: 'front' | 'back') => {
+    updateStep(step => {
+      const zs = step.widgets.map(w => w.layout?.z ?? 0);
+      const target = dir === 'front' ? Math.max(0, ...zs) + 1 : Math.min(0, ...zs) - 1;
+      return {
+        ...step,
+        widgets: step.widgets.map(w =>
+          w.id === widgetId ? { ...w, layout: { ...(w.layout ?? defaultLayout(w.type)), z: target } } : w),
+      };
+    });
+  };
+
+  // Toggle a step between stacked-flow and free-form canvas. Switching to canvas
+  // gives any unplaced widget a default stacked position so nothing disappears.
+  const setStepMode = (mode: 'flow' | 'canvas') => {
+    updateStep(step => {
+      if (mode === 'flow') return { ...step, layoutMode: 'flow' };
+      let y = 32;
+      const widgets = step.widgets.map((w, i) => {
+        if (w.layout) return w;
+        const base = defaultLayout(w.type, i);
+        const placed = { ...w, layout: { ...base, x: 40, y } };
+        y += base.height + 16;
+        return placed;
+      });
+      return {
+        ...step,
+        layoutMode: 'canvas',
+        canvasHeight: step.canvasHeight ?? Math.max(DEFAULT_CANVAS_H, y + 32),
+        widgets,
+      };
+    });
   };
 
   const removeWidget = (widgetId: string) => {
@@ -151,7 +201,10 @@ export default function AppBuilder() {
       id: uuidv4(),
       name: `Step ${app.steps.length + 1}`,
       order: app.steps.length,
-      widgets: []
+      widgets: [],
+      layoutMode: 'canvas',
+      canvasHeight: DEFAULT_CANVAS_H,
+      canvasBackground: '#ffffff',
     };
     updateApp(prev => ({ ...prev, steps: [...prev.steps, newStep] }));
     setActiveStepIdx(app.steps.length);
@@ -305,7 +358,7 @@ export default function AppBuilder() {
 
           {/* Canvas */}
           <div className="flex-1 overflow-y-auto p-6">
-            <div className="max-w-2xl mx-auto">
+            <div className={`mx-auto ${activeStep?.layoutMode === 'canvas' ? 'max-w-3xl' : 'max-w-2xl'}`}>
               {/* Step header */}
               <div className="mb-4 flex items-center gap-2">
                 <div
@@ -324,38 +377,55 @@ export default function AppBuilder() {
                 </span>
               </div>
 
-              {/* Widget canvas */}
-              <div
-                className="bg-white rounded-xl border-2 border-dashed border-gray-200 min-h-64 p-4 space-y-2"
-                onClick={() => setSelectedWidgetId(null)}
-              >
-                {(!activeStep || activeStep.widgets.length === 0) && (
-                  <div className="flex flex-col items-center justify-center py-12 text-gray-300">
-                    <Plus size={32} className="mb-2" />
-                    <p className="text-sm">Click widgets from the left panel to add them</p>
-                  </div>
-                )}
-                <DndContext
-                  sensors={sensors}
-                  collisionDetection={closestCenter}
-                  onDragEnd={handleWidgetDragEnd}
+              {activeStep?.layoutMode === 'canvas' ? (
+                /* ── Free-form canvas editor ── */
+                <>
+                  {activeStep.widgets.length === 0 && (
+                    <div className="mb-3 text-center text-xs text-gray-400">
+                      Add widgets from the left, then drag, resize, and rotate them anywhere on the canvas.
+                    </div>
+                  )}
+                  <CanvasEditor
+                    step={activeStep}
+                    selectedId={selectedWidgetId}
+                    onSelect={(wid) => { setSelectedWidgetId(wid); if (wid) setRightTab('widget'); }}
+                    onChangeLayout={updateWidgetLayout}
+                  />
+                </>
+              ) : (
+                /* ── Stacked flow list ── */
+                <div
+                  className="bg-white rounded-xl border-2 border-dashed border-gray-200 min-h-64 p-4 space-y-2"
+                  onClick={() => setSelectedWidgetId(null)}
                 >
-                  <SortableContext
-                    items={activeStep?.widgets.map(w => w.id) ?? []}
-                    strategy={verticalListSortingStrategy}
+                  {(!activeStep || activeStep.widgets.length === 0) && (
+                    <div className="flex flex-col items-center justify-center py-12 text-gray-300">
+                      <Plus size={32} className="mb-2" />
+                      <p className="text-sm">Click widgets from the left panel to add them</p>
+                    </div>
+                  )}
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleWidgetDragEnd}
                   >
-                    {activeStep?.widgets.map(widget => (
-                      <SortableWidgetCard
-                        key={widget.id}
-                        widget={widget}
-                        isSelected={selectedWidgetId === widget.id}
-                        onClick={e => { e.stopPropagation(); setSelectedWidgetId(widget.id); setRightTab('widget'); }}
-                        onRemove={() => removeWidget(widget.id)}
-                      />
-                    ))}
-                  </SortableContext>
-                </DndContext>
-              </div>
+                    <SortableContext
+                      items={activeStep?.widgets.map(w => w.id) ?? []}
+                      strategy={verticalListSortingStrategy}
+                    >
+                      {activeStep?.widgets.map(widget => (
+                        <SortableWidgetCard
+                          key={widget.id}
+                          widget={widget}
+                          isSelected={selectedWidgetId === widget.id}
+                          onClick={e => { e.stopPropagation(); setSelectedWidgetId(widget.id); setRightTab('widget'); }}
+                          onRemove={() => removeWidget(widget.id)}
+                        />
+                      ))}
+                    </SortableContext>
+                  </DndContext>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -383,13 +453,17 @@ export default function AppBuilder() {
 
           <div className="p-4">
             {rightTab === 'step' && activeStep && (
-              <StepProperties step={activeStep} onUpdate={updater => updateStep(updater)} />
+              <StepProperties step={activeStep} onUpdate={updater => updateStep(updater)} onSetMode={setStepMode} />
             )}
             {rightTab === 'widget' && selectedWidget ? (
               <WidgetProperties
                 widget={selectedWidget}
+                isCanvas={activeStep?.layoutMode === 'canvas'}
                 onUpdate={(updates) => updateWidget(selectedWidget.id, updates)}
                 onUpdateConfig={(cfg) => updateWidgetConfig(selectedWidget.id, cfg)}
+                onUpdateLayout={(l) => updateWidgetLayout(selectedWidget.id, l)}
+                onRestack={(dir) => restackWidget(selectedWidget.id, dir)}
+                onRemove={() => removeWidget(selectedWidget.id)}
               />
             ) : rightTab === 'widget' && (
               <div className="text-center py-8 text-gray-400">
@@ -651,7 +725,9 @@ function WidgetPreview({ widget }: { widget: Widget }) {
     case 'separator':
       return <div className="border-t border-gray-200 mt-1" />;
     case 'image':
-      return <div className="h-8 border border-dashed border-gray-200 rounded flex items-center justify-center text-xs text-gray-400"><Image size={12} className="mr-1" />Image placeholder</div>;
+      return config.imageUrl
+        ? <img src={config.imageUrl} alt={config.imageAlt || ''} className="max-h-20 rounded border border-gray-200 object-contain bg-gray-50" />
+        : <div className="h-8 border border-dashed border-gray-200 rounded flex items-center justify-center text-xs text-gray-400"><Image size={12} className="mr-1" />Image placeholder</div>;
     case 'signature':
       return <div className="h-12 border border-dashed border-gray-200 rounded flex items-center justify-center text-xs text-gray-400"><PenTool size={12} className="mr-1" />Signature area</div>;
     default:
@@ -659,18 +735,55 @@ function WidgetPreview({ widget }: { widget: Widget }) {
   }
 }
 
-function WidgetProperties({ widget, onUpdate, onUpdateConfig }: {
+function WidgetProperties({ widget, isCanvas, onUpdate, onUpdateConfig, onUpdateLayout, onRestack, onRemove }: {
   widget: Widget;
+  isCanvas?: boolean;
   onUpdate: (u: Partial<Widget>) => void;
   onUpdateConfig: (c: Record<string, any>) => void;
+  onUpdateLayout?: (l: WidgetLayout) => void;
+  onRestack?: (dir: 'front' | 'back') => void;
+  onRemove?: () => void;
 }) {
   const { config } = widget;
+  const layout = widget.layout ?? defaultLayout(widget.type);
+  const setLayout = (patch: Partial<WidgetLayout>) => onUpdateLayout?.({ ...layout, ...patch });
 
   return (
     <div className="space-y-4">
-      <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
-        {WIDGET_PALETTE.find(p => p.type === widget.type)?.label} Properties
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+          {WIDGET_PALETTE.find(p => p.type === widget.type)?.label} Properties
+        </div>
+        {onRemove && (
+          <button onClick={onRemove} title="Delete widget" className="p-1 rounded hover:bg-red-50 text-gray-400 hover:text-red-500">
+            <Trash2 size={13} />
+          </button>
+        )}
       </div>
+
+      {/* Position / size / rotation — canvas mode only */}
+      {isCanvas && onUpdateLayout && (
+        <div className="space-y-2.5 pb-3 border-b border-gray-100">
+          <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1">
+            <LayoutGrid size={11} /> Layout
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <NumField label="X" value={Math.round(layout.x)} onChange={v => setLayout({ x: v })} />
+            <NumField label="Y" value={Math.round(layout.y)} onChange={v => setLayout({ y: v })} />
+            <NumField label="Width" value={Math.round(layout.width)} onChange={v => setLayout({ width: Math.max(8, v) })} />
+            <NumField label="Height" value={Math.round(layout.height)} onChange={v => setLayout({ height: Math.max(8, v) })} />
+          </div>
+          <NumField label="Rotation (°)" value={Math.round(layout.rotation ?? 0)} onChange={v => setLayout({ rotation: v })} />
+          <div>
+            <label className="block text-xs font-medium text-gray-600 mb-1">Opacity ({Math.round((config.opacity ?? 1) * 100)}%)</label>
+            <input type="range" min={0} max={100} value={Math.round((config.opacity ?? 1) * 100)} onChange={e => onUpdateConfig({ opacity: Number(e.target.value) / 100 })} className="w-full" />
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => onRestack?.('front')} className="flex-1 flex items-center justify-center gap-1 text-xs py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"><MoveUp size={12} /> Front</button>
+            <button onClick={() => onRestack?.('back')} className="flex-1 flex items-center justify-center gap-1 text-xs py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:bg-gray-50"><MoveDown size={12} /> Back</button>
+          </div>
+        </div>
+      )}
 
       {/* Label (for most widgets) */}
       {!['text', 'button', 'separator', 'image'].includes(widget.type) && (
@@ -701,6 +814,30 @@ function WidgetProperties({ widget, onUpdate, onUpdateConfig }: {
               <option value="bold">Bold</option>
             </select>
           </Field>
+          <Field label="Alignment">
+            <div className="flex gap-1">
+              {([['left', AlignLeftIcon], ['center', AlignCenter], ['right', AlignRight]] as const).map(([val, Ico]) => (
+                <button key={val} onClick={() => onUpdateConfig({ textAlign: val })}
+                  className={`flex-1 flex items-center justify-center py-1.5 rounded-lg border transition-colors ${(config.textAlign || 'left') === val ? 'border-blue-500 bg-blue-50 text-blue-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+                  <Ico size={14} />
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Vertical Align">
+            <select className="input-field" value={config.verticalAlign || 'top'} onChange={e => onUpdateConfig({ verticalAlign: e.target.value })}>
+              <option value="top">Top</option>
+              <option value="center">Center</option>
+              <option value="bottom">Bottom</option>
+            </select>
+          </Field>
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" checked={config.fontStyle === 'italic'} onChange={e => onUpdateConfig({ fontStyle: e.target.checked ? 'italic' : 'normal' })} className="rounded" />
+            <span className="text-sm text-gray-600">Italic</span>
+          </label>
+          {isCanvas && (
+            <p className="text-[11px] text-gray-400">Tip: use the rotation handle on the canvas (or the Rotation field above) for diagonal text.</p>
+          )}
         </>
       )}
 
@@ -887,19 +1024,69 @@ function WidgetProperties({ widget, onUpdate, onUpdateConfig }: {
           <Field label="Alt Text">
             <input className="input-field" value={config.imageAlt || ''} onChange={e => onUpdateConfig({ imageAlt: e.target.value })} />
           </Field>
+          <Field label="Fit">
+            <select className="input-field" value={config.imageFit || 'contain'} onChange={e => onUpdateConfig({ imageFit: e.target.value })}>
+              <option value="contain">Contain (show whole image)</option>
+              <option value="cover">Cover (fill, may crop)</option>
+            </select>
+          </Field>
         </>
       )}
     </div>
   );
 }
 
-function StepProperties({ step, onUpdate }: { step: Step; onUpdate: (u: (s: Step) => Step) => void }) {
+function NumField({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
+  return (
+    <div>
+      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
+      <input type="number" className="input-field" value={value}
+        onChange={e => onChange(e.target.value === '' ? 0 : parseInt(e.target.value))} />
+    </div>
+  );
+}
+
+function StepProperties({ step, onUpdate, onSetMode }: { step: Step; onUpdate: (u: (s: Step) => Step) => void; onSetMode: (m: 'flow' | 'canvas') => void }) {
+  const isCanvas = step.layoutMode === 'canvas';
   return (
     <div className="space-y-4">
       <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Step Properties</div>
       <Field label="Step Name">
         <input className="input-field" value={step.name} onChange={e => onUpdate(s => ({ ...s, name: e.target.value }))} />
       </Field>
+
+      {/* Layout mode */}
+      <Field label="Layout">
+        <div className="flex gap-1.5">
+          <button onClick={() => onSetMode('flow')}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium border transition-colors ${!isCanvas ? 'border-blue-500 bg-blue-50 text-blue-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+            <Rows3 size={13} /> Stacked
+          </button>
+          <button onClick={() => onSetMode('canvas')}
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-medium border transition-colors ${isCanvas ? 'border-blue-500 bg-blue-50 text-blue-600' : 'border-gray-200 text-gray-500 hover:bg-gray-50'}`}>
+            <LayoutGrid size={13} /> Free-form
+          </button>
+        </div>
+        <p className="text-[11px] text-gray-400 mt-1">
+          {isCanvas ? 'Drag, resize, and rotate widgets anywhere — like a slide.' : 'Widgets stack top-to-bottom automatically.'}
+        </p>
+      </Field>
+
+      {isCanvas && (
+        <>
+          <Field label="Canvas Height (px)">
+            <input type="number" className="input-field" min={200} step={20}
+              value={step.canvasHeight ?? 560}
+              onChange={e => onUpdate(s => ({ ...s, canvasHeight: Math.max(200, parseInt(e.target.value) || 560) }))} />
+          </Field>
+          <Field label="Background">
+            <div className="flex gap-2">
+              <input type="color" className="w-10 h-9 rounded border border-gray-300 p-0.5 cursor-pointer" value={step.canvasBackground || '#ffffff'} onChange={e => onUpdate(s => ({ ...s, canvasBackground: e.target.value }))} />
+              <input className="input-field flex-1" value={step.canvasBackground || '#ffffff'} onChange={e => onUpdate(s => ({ ...s, canvasBackground: e.target.value }))} />
+            </div>
+          </Field>
+        </>
+      )}
       <Field label="Takt Time (seconds)">
         <div className="space-y-1">
           <input
