@@ -363,6 +363,38 @@ export const api = {
   getMe: () => request<any>('/auth/me'),
   changePassword: (current_password: string, new_password: string) =>
     request<any>('/auth/change-password', { method: 'PUT', body: JSON.stringify({ current_password, new_password }) }),
+  // Password reset (public, no token). forgotPassword always resolves to avoid
+  // leaking which emails exist; the response may include dev_reset_url when SMTP
+  // isn't configured so self-hosted installs can still complete the flow.
+  forgotPassword: (email: string) =>
+    fetch(`${BASE}/auth/forgot-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    }).then(async res => {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw Object.assign(new Error(data.error || 'Request failed'), { status: res.status });
+      return data as { ok: boolean; dev_reset_url?: string };
+    }),
+  resetPassword: (token: string, new_password: string) =>
+    fetch(`${BASE}/auth/reset-password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, new_password }),
+    }).then(async res => {
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw Object.assign(new Error(data.error || 'Reset failed'), { status: res.status });
+      return data;
+    }),
+
+  // ── Operator floor identity (PIN / badge clock-in)
+  getOperatorRoster: () =>
+    request<{ id: string; display_name: string; job_title?: string; has_pin: number; has_badge: number }[]>('/operators/roster'),
+  verifyOperatorPin: (payload: { user_id?: string; pin?: string; badge_code?: string }) =>
+    request<{ id: string; display_name: string }>('/operators/verify', { method: 'POST', body: JSON.stringify(payload) }),
+  // Manager+ sets or clears an operator's PIN / badge.
+  setUserPin: (id: string, payload: { pin?: string | null; badge_code?: string | null }) =>
+    request<{ ok: boolean; has_pin: boolean; has_badge: boolean }>(`/users/${id}/pin`, { method: 'PUT', body: JSON.stringify(payload) }),
 
   // ── Leaderboard
   // Level 1: leaderboard ranked by department.

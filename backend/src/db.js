@@ -1551,13 +1551,36 @@ db.exec(`
   if (!woCols.includes('assigned_user_id')) db.exec('ALTER TABLE work_orders ADD COLUMN assigned_user_id TEXT REFERENCES users(id) ON DELETE SET NULL');
 }
 
-// ─── Migrations: users (department_id, job_title) ────────────────────────────
+// ─── Migrations: users (department_id, job_title, pin_hash, badge_code) ───────
 
 {
   const userCols = db.prepare('PRAGMA table_info(users)').all().map(r => r.name);
   if (!userCols.includes('department_id')) db.exec('ALTER TABLE users ADD COLUMN department_id TEXT REFERENCES departments(id) ON DELETE SET NULL');
   if (!userCols.includes('job_title'))     db.exec("ALTER TABLE users ADD COLUMN job_title TEXT DEFAULT ''");
+  // Operator floor-identity: a short numeric PIN and/or scannable badge code so
+  // shop-floor staff can clock into the Operator Portal on a shared tablet and
+  // have their work attributed to a verified identity (not free-typed text).
+  if (!userCols.includes('pin_hash'))      db.exec("ALTER TABLE users ADD COLUMN pin_hash TEXT DEFAULT ''");
+  if (!userCols.includes('badge_code'))    db.exec("ALTER TABLE users ADD COLUMN badge_code TEXT DEFAULT ''");
 }
+
+// ─── Password reset tokens ────────────────────────────────────────────────────
+// Single-use, time-limited tokens for the "forgot password" flow. We store only
+// a SHA-256 hash of the token (never the raw value), mirroring how sessions are
+// kept opaque. Expired/used rows are pruned lazily when the flow runs.
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT UNIQUE NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_pw_reset_token ON password_reset_tokens(token_hash);
+  CREATE INDEX IF NOT EXISTS idx_pw_reset_user ON password_reset_tokens(user_id);
+`);
 
 // ─── Migrations: apps (department_id, site_id, station_id, show_takt_warnings) ─
 
