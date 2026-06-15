@@ -97,7 +97,7 @@ export default function DepartmentView() {
   if (error || !data) return (
     <div className="p-6 text-center text-gray-400">
       <p>Department not found</p>
-      <Link to="/plant" className="text-blue-600 text-sm hover:underline mt-2 inline-block">← Back to Plant Overview</Link>
+      <Link to="/dashboard" className="text-blue-600 text-sm hover:underline mt-2 inline-block">← Back to Command Center</Link>
     </div>
   );
 
@@ -108,7 +108,7 @@ export default function DepartmentView() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">
-          <Link to="/plant" className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600 transition-colors">
+          <Link to="/dashboard" className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600 transition-colors">
             <ArrowLeft size={18} />
           </Link>
           <div className="w-1.5 h-12 rounded-full" style={{ backgroundColor: dept.color }} />

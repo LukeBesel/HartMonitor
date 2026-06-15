@@ -5,10 +5,17 @@ const { requireRole } = require('../middleware/auth');
 const router = express.Router();
 
 const VALID_TYPES = [
-  'work_order', 'purchase_order', 'ncr', 'site', 'app', 'dashboard',
+  'work_order', 'completion', 'purchase_order', 'ncr', 'site', 'app', 'dashboard',
   'station', 'department', 'user', 'plan', 'inventory_item', 'vendor',
-  'webhook', 'api_key', 'settings',
+  'webhook', 'api_key', 'settings', 'safety',
 ];
+
+// Entity types that represent shop-floor production activity: jobs being
+// started/finished, units logged against a work order, quality issues (NCRs),
+// downtime/station events, and safety events. The Transaction Log defaults to
+// these (scope=production) so it reads as a true production log rather than an
+// admin/settings audit trail.
+const PRODUCTION_TYPES = ['work_order', 'completion', 'ncr', 'station', 'safety'];
 
 // ─── CSV helpers ──────────────────────────────────────────────────────────────
 
@@ -26,19 +33,39 @@ function toCSV(rows, columns) {
   return `${header}\n${body}`;
 }
 
+// Builds the entity-type WHERE fragment shared by the list and export handlers.
+// An explicit, valid `entity_type` always wins. Otherwise `scope` decides the
+// default: 'production' (the default) limits results to production-relevant
+// types; 'all' returns every type for a full audit view.
+function entityTypeClause(query, clauses, params) {
+  const { entity_type, scope } = query;
+  if (entity_type && VALID_TYPES.includes(entity_type)) {
+    clauses.push('entity_type = ?');
+    params.push(entity_type);
+    return;
+  }
+  if (scope === 'all') return; // no entity-type restriction
+  // Default to production scope.
+  clauses.push(`entity_type IN (${PRODUCTION_TYPES.map(() => '?').join(', ')})`);
+  params.push(...PRODUCTION_TYPES);
+}
+
 // ─── GET / - org-wide audit log, filterable (supervisor+) ──────────────────────
-// Query params: entity_type, actor, from (date), to (date), limit
+// Query params: entity_type, scope ('production' default | 'all'), actor,
+// from (date), to (date), department_id, station_id, limit
 
 router.get('/', requireRole('supervisor'), (req, res) => {
-  const { entity_type, actor, from, to } = req.query;
+  const { actor, from, to, department_id, station_id } = req.query;
   const limit = Math.min(parseInt(req.query.limit) || 100, 1000);
 
   const clauses = ['company_id = ?'];
   const params = [req.companyId];
-  if (entity_type && VALID_TYPES.includes(entity_type)) { clauses.push('entity_type = ?'); params.push(entity_type); }
+  entityTypeClause(req.query, clauses, params);
   if (actor) { clauses.push('actor LIKE ?'); params.push(`%${actor}%`); }
   if (from) { clauses.push('created_at >= ?'); params.push(from); }
   if (to) { clauses.push('created_at <= ?'); params.push(to); }
+  if (department_id) { clauses.push('department_id = ?'); params.push(department_id); }
+  if (station_id) { clauses.push('station_id = ?'); params.push(station_id); }
   params.push(limit);
 
   const rows = db.prepare(`
@@ -53,14 +80,16 @@ router.get('/', requireRole('supervisor'), (req, res) => {
 // ─── GET /export - audit log as CSV (supervisor+) ──────────────────────────────
 
 router.get('/export', requireRole('supervisor'), (req, res) => {
-  const { entity_type, actor, from, to } = req.query;
+  const { actor, from, to, department_id, station_id } = req.query;
 
   const clauses = ['company_id = ?'];
   const params = [req.companyId];
-  if (entity_type && VALID_TYPES.includes(entity_type)) { clauses.push('entity_type = ?'); params.push(entity_type); }
+  entityTypeClause(req.query, clauses, params);
   if (actor) { clauses.push('actor LIKE ?'); params.push(`%${actor}%`); }
   if (from) { clauses.push('created_at >= ?'); params.push(from); }
   if (to) { clauses.push('created_at <= ?'); params.push(to); }
+  if (department_id) { clauses.push('department_id = ?'); params.push(department_id); }
+  if (station_id) { clauses.push('station_id = ?'); params.push(station_id); }
 
   const rows = db.prepare(`
     SELECT created_at, entity_type, entity_id, action, actor FROM activity_log

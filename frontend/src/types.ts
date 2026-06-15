@@ -48,6 +48,10 @@ export interface App {
   id: string; name: string; description: string;
   status: 'draft' | 'published'; steps: Step[];
   variables: AppVariable[]; created_at: string; updated_at: string;
+  department_id?: string | null;
+  site_id?: string | null;
+  station_id?: string | null;
+  show_takt_warnings?: number | boolean;
 }
 
 export interface Completion {
@@ -387,7 +391,33 @@ export interface LeaderboardResponse {
   period: LeaderboardPeriod;
   period_label: string;
   generated_at: string;
+  // Present on drill-down (Level 2) responses; null on the unscoped board.
+  department_id?: string | null;
+  app_id?: string | null;
+  // Distinct apps/operations available within the current scope (Level 2 picker).
+  apps?: { app_id: string; app_name: string }[];
   boards: LeaderboardBoard[];
+}
+
+// Level 1: leaderboard ranked by department.
+export interface LeaderboardDepartment {
+  rank: number;
+  department_id: string | null;
+  department_name: string;
+  department_color: string;
+  completions: number;
+  operator_count: number;
+  avg_minutes: number | null;
+  best_minutes: number | null;
+  last_completed_at: string | null;
+  throughput_per_day: number;
+}
+
+export interface LeaderboardDepartmentsResponse {
+  period: LeaderboardPeriod;
+  period_label: string;
+  generated_at: string;
+  departments: LeaderboardDepartment[];
 }
 
 // ── Pricing catalog (public marketing + in-app billing) ───────────────────────

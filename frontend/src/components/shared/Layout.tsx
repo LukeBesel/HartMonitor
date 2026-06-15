@@ -74,13 +74,10 @@ export default function Layout() {
   // Developer preview: show pro sidebar items even for free users when toggle is on
   const showProSidebar = localStorage.getItem('hm_show_pro_sidebar') === 'true';
 
-  // Sections the user has kept enabled in Settings, minus paid sections that
-  // a Free account hasn't grown into yet.
-  const enabledSections = SECTIONS.filter(s => {
-    if (isSectionHidden(s.id)) return false;
-    if (s.proOnly && isFree) return false;  // Planning section always hidden for Free users
-    return true;
-  });
+  // Sections the user has kept enabled in Settings. Planning is off by default
+  // (see NavPrefsContext) but once a user enables it, the toggle reveals it
+  // regardless of plan tier — individual Pro items inside stay gated by canShow.
+  const enabledSections = SECTIONS.filter(s => !isSectionHidden(s.id));
 
   // Default to first enabled section if current focus is no longer valid
   const effectiveFocus = enabledSections.some(s => s.id === focus)

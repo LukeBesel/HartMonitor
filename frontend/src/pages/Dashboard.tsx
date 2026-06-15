@@ -1,12 +1,12 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useSite } from '../context/SiteContext';
 import {
-  TrendingUp, TrendingDown, Activity, CheckCircle, Cpu,
+  TrendingUp, TrendingDown, Activity, CheckCircle,
   RefreshCw, CalendarCheck,
-  ExternalLink, Plus, BarChart2, Layers, Clock, Package,
+  BarChart2, Clock, Package,
   AlertTriangle, CheckCircle2, ChevronRight, ChevronDown, Lock, SlidersHorizontal, RotateCcw,
   Pin, Building2,
 } from 'lucide-react';
@@ -158,31 +158,6 @@ function DeltaStatCard({ label, value, delta, deltaLabel, icon, iconBg, iconColo
         </div>
       </div>
     </div>
-  );
-}
-
-// ─── Quick Action ─────────────────────────────────────────────────────────────
-
-function QuickAction({ icon, label, to, newTab, color = 'text-gray-600' }: {
-  icon: React.ReactNode; label: string; to: string; newTab?: boolean; color?: string;
-}) {
-  const navigate = useNavigate();
-  const handleClick = () => {
-    if (newTab) window.open(to, '_blank');
-    else navigate(to);
-  };
-  return (
-    <button
-      onClick={handleClick}
-      className="card p-4 flex flex-col items-center gap-2 hover:shadow-md hover:-translate-y-0.5 transition-all duration-150 cursor-pointer text-center group"
-    >
-      <div className={`w-10 h-10 rounded-lg bg-gray-50 group-hover:bg-blue-50 flex items-center justify-center transition-colors ${color} group-hover:text-blue-600`}>
-        {icon}
-      </div>
-      <span className="text-xs font-medium text-gray-700 group-hover:text-blue-700 transition-colors leading-tight">
-        {label}
-      </span>
-    </button>
   );
 }
 
@@ -565,26 +540,8 @@ export default function Dashboard() {
       </div>
       )}
 
-      {/* Quick Actions */}
-      {!isHidden('quick_actions') && (
-      <div>
-        <h2 className="font-semibold text-gray-700 text-sm mb-3">Quick Actions</h2>
-        <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
-          <QuickAction icon={<ExternalLink size={18} />} label="Start Operator Session" to="/operator" newTab color="text-green-600" />
-          {isAtLeast('supervisor') && (
-            <QuickAction icon={<Plus size={18} />} label="New Work Order" to="/schedule" color="text-blue-600" />
-          )}
-          {isAtLeast('supervisor') && (
-            <QuickAction icon={<Layers size={18} />} label="New App" to="/apps" color="text-purple-600" />
-          )}
-          <QuickAction icon={<BarChart2 size={18} />} label="View Analytics" to="/analytics" color="text-indigo-600" />
-          <QuickAction icon={<Cpu size={18} />} label="OEE Dashboard" to="/oee" color="text-amber-600" />
-          <QuickAction icon={<Building2 size={18} />} label="Departments" to="/departments" color="text-pink-600" />
-        </div>
-      </div>
-      )}
-
       {/* ─── Live Floor View (Plant View integrated) ─────────────────────── */}
+      {!isHidden('floor') && (
       <div className="card overflow-hidden">
         <button
           onClick={() => setPlantExpanded(e => !e)}
@@ -633,8 +590,10 @@ export default function Dashboard() {
                 </div>
 
                 {/* Department cards + Hourly throughput */}
+                {(!isHidden('floor_departments') || !isHidden('floor_throughput')) && (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-                  <div className="lg:col-span-2">
+                  {!isHidden('floor_departments') && (
+                  <div className={isHidden('floor_throughput') ? 'lg:col-span-3' : 'lg:col-span-2'}>
                     <div className="flex items-center justify-between mb-2">
                       <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Department Performance</h3>
                       <Link to="/departments" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
@@ -688,9 +647,11 @@ export default function Dashboard() {
                       )}
                     </div>
                   </div>
+                  )}
 
                   {/* Hourly throughput */}
-                  <div>
+                  {!isHidden('floor_throughput') && (
+                  <div className={isHidden('floor_departments') ? 'lg:col-span-3' : ''}>
                     <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Hourly Throughput</h3>
                     <ResponsiveContainer width="100%" height={180}>
                       <BarChart data={plantData.hourly_throughput} barSize={10}>
@@ -702,10 +663,12 @@ export default function Dashboard() {
                       </BarChart>
                     </ResponsiveContainer>
                   </div>
+                  )}
                 </div>
+                )}
 
                 {/* Active Alerts */}
-                {(plantData.active_alerts.length > 0 || plantData.recent_completions.length > 0) && (
+                {!isHidden('floor_activity') && (plantData.active_alerts.length > 0 || plantData.recent_completions.length > 0) && (
                   <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
                     {plantData.active_alerts.length > 0 && (
                       <div className="lg:col-span-2">
@@ -770,6 +733,7 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+      )}
 
       {/* Free-tier upgrade banner */}
       {brief && !brief.is_pro && (

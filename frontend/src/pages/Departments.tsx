@@ -4,7 +4,7 @@ import { api } from '../api/client';
 import { useSite } from '../context/SiteContext';
 import {
   Building2, RefreshCw, Activity, CheckCircle2, Clock, Calendar,
-  ChevronRight
+  ChevronRight, Tv
 } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 
@@ -29,6 +29,16 @@ interface WorkOrder {
   quantity_completed: number;
   created_at?: string;
   started_at?: string;
+  updated_at?: string;
+}
+
+function isToday(iso?: string): boolean {
+  if (!iso) return false;
+  const d = new Date(iso);
+  const now = new Date();
+  return d.getFullYear() === now.getFullYear()
+    && d.getMonth() === now.getMonth()
+    && d.getDate() === now.getDate();
 }
 
 function formatElapsed(startedAt?: string): string {
@@ -93,11 +103,11 @@ export default function Departments() {
   const upcoming = workOrders
     .filter(wo => wo.status === 'not_started' || wo.status === 'pending')
     .sort((a, b) => (a.scheduled_start ?? '').localeCompare(b.scheduled_start ?? ''));
-  const completedToday = workOrders.filter(wo => {
-    if (wo.status !== 'completed') return false;
-    // Check if completed today (using scheduled_end as proxy)
-    return true;
-  }).length;
+  // Count work orders that reached "completed" today (updated_at flips when the
+  // status changes, so it's a reliable proxy for the completion timestamp).
+  const completedToday = workOrders.filter(
+    wo => wo.status === 'completed' && isToday(wo.updated_at)
+  ).length;
 
   const selectedDept = departments.find(d => d.id === selectedDeptId);
   const secondsSinceRefresh = Math.floor((Date.now() - lastRefresh.getTime()) / 1000);
@@ -141,6 +151,16 @@ export default function Departments() {
               <option key={d.id} value={d.id}>{d.name}</option>
             ))}
           </select>
+          {selectedDeptId && (
+            <Link
+              to={`/departments/${selectedDeptId}/tv`}
+              className="flex items-center gap-2 px-3 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 shadow-sm"
+              title="Open full-screen TV mode for this department"
+            >
+              <Tv size={14} />
+              <span>TV Mode</span>
+            </Link>
+          )}
           <button
             onClick={() => loadWorkOrders(true)}
             className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 shadow-sm"
@@ -176,7 +196,7 @@ export default function Departments() {
                 <CheckCircle2 size={18} className="text-green-600" />
               </div>
               <div className="text-2xl font-bold text-gray-900">{completedToday}</div>
-              <div className="text-xs text-gray-500 mt-0.5">Completed (all time)</div>
+              <div className="text-xs text-gray-500 mt-0.5">Completed Today</div>
             </div>
             <div className="card p-5">
               <div className="w-9 h-9 bg-amber-50 rounded-lg flex items-center justify-center mb-3">

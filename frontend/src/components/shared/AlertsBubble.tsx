@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
-import { Bell, CheckCircle2, Send, Wifi, WifiOff, Lock, X } from 'lucide-react';
+import { Bell, CheckCircle2, Send, Wifi, WifiOff, Lock, X, ChevronLeft } from 'lucide-react';
 import { api } from '../../api/client';
 import { useMessages } from '../../context/MessagesContext';
 import { useAuth } from '../../context/AuthContext';
@@ -16,7 +16,7 @@ const SEVERITY_DOT: Record<MessageSeverity, string> = {
 };
 
 const DROPDOWN_WIDTH = 340;
-const HIDDEN_KEY = 'hm_alerts_hidden';
+const COLLAPSED_KEY = 'hm_alerts_collapsed';
 
 // A unified feed row — either a live "needs attention" alert or a team message.
 type FeedRow =
@@ -33,7 +33,9 @@ export default function AlertsBubble() {
   const navigate = useNavigate();
 
   const [open, setOpen] = useState(false);
-  const [hidden, setHidden] = useState(() => localStorage.getItem(HIDDEN_KEY) === 'true');
+  // "Collapsed" tucks the bubble into a thin tab on the right edge instead of
+  // hiding it outright, so it's always one click away.
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(COLLAPSED_KEY) === 'true');
   const [composing, setComposing] = useState(false);
   const [body, setBody] = useState('');
   const [severity, setSeverity] = useState<MessageSeverity>('info');
@@ -62,14 +64,14 @@ export default function AlertsBubble() {
   const criticalCount = items.filter(i => i.severity === 'red').length;
   const totalBadge = items.length + unreadCount;
 
-  // Force-show the bubble when new notifications arrive while it's hidden
+  // Pop the bubble back out when a new notification arrives while collapsed.
   useEffect(() => {
-    if (hidden && totalBadge > prevTotalRef.current) {
-      setHidden(false);
-      localStorage.removeItem(HIDDEN_KEY);
+    if (collapsed && totalBadge > prevTotalRef.current) {
+      setCollapsed(false);
+      localStorage.removeItem(COLLAPSED_KEY);
     }
     prevTotalRef.current = totalBadge;
-  }, [totalBadge, hidden]);
+  }, [totalBadge, collapsed]);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -122,10 +124,15 @@ export default function AlertsBubble() {
     });
   };
 
-  const handleDismiss = () => {
-    setHidden(true);
+  const handleCollapse = () => {
+    setCollapsed(true);
     setOpen(false);
-    localStorage.setItem(HIDDEN_KEY, 'true');
+    localStorage.setItem(COLLAPSED_KEY, 'true');
+  };
+
+  const handleExpand = () => {
+    setCollapsed(false);
+    localStorage.removeItem(COLLAPSED_KEY);
   };
 
   const handleSend = async () => {
@@ -144,7 +151,28 @@ export default function AlertsBubble() {
     }
   };
 
-  if (hidden) return null;
+  // Collapsed: a thin tab tucked against the right edge that slides the bubble
+  // back out when clicked. Always reachable, never fully gone.
+  if (collapsed) {
+    return createPortal(
+      <button
+        onClick={handleExpand}
+        title="Show alerts & messages"
+        className="fixed bottom-24 right-0 z-50 flex items-center gap-1 pl-2 pr-1.5 py-2 rounded-l-xl bg-gray-900 hover:bg-gray-800 text-white shadow-lg transition-all hover:pr-2.5"
+      >
+        <ChevronLeft size={14} />
+        <Bell size={16} />
+        {totalBadge > 0 && (
+          <span className={`flex items-center justify-center text-[10px] font-bold rounded-full text-white min-w-[16px] h-[16px] px-1 ${
+            criticalCount > 0 ? 'bg-red-500' : unreadCount > 0 ? 'bg-blue-500' : 'bg-amber-500'
+          }`}>
+            {totalBadge > 9 ? '9+' : totalBadge}
+          </span>
+        )}
+      </button>,
+      document.body
+    );
+  }
 
   // Position dropdown above the button (bottom-right anchored)
   const dropdownBottom = 80; // px from bottom
@@ -154,10 +182,10 @@ export default function AlertsBubble() {
     <>
       {/* Floating bubble button */}
       <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2">
-        {/* Dismiss button */}
+        {/* Collapse-to-edge button */}
         <button
-          onClick={handleDismiss}
-          title="Hide alerts bubble"
+          onClick={handleCollapse}
+          title="Collapse to edge"
           className="w-5 h-5 rounded-full bg-gray-700 text-gray-300 hover:text-white flex items-center justify-center text-xs transition-colors"
         >
           <X size={11} />

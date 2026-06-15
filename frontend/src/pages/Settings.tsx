@@ -31,6 +31,7 @@ import {
   Moon,
   Sun,
   MapPin,
+  Network,
   Bell,
   Sliders,
   Webhook as WebhookIcon,
@@ -1087,28 +1088,11 @@ function ThemeTab() {
   const isDeveloper = user?.role === 'developer';
   const [confirmTheme, setConfirmTheme] = useState<Theme | null>(null);
 
-  const [compactMode, setCompactMode] = useState(() => {
-    try { return localStorage.getItem('hm_compact') === 'true'; } catch { return false; }
-  });
-  const [taktWarnings, setTaktWarnings] = useState(() => {
-    try { return localStorage.getItem('hm_takt_warn') !== 'false'; } catch { return true; }
-  });
-
   const handleThemeSelect = (preset: Theme) => {
     if (isDeveloper) {
       setConfirmTheme(preset);
     }
     // non-developers cannot change theme
-  };
-
-  const handleCompactMode = (v: boolean) => {
-    setCompactMode(v);
-    try { localStorage.setItem('hm_compact', String(v)); } catch { /* ignore */ }
-  };
-
-  const handleTaktWarnings = (v: boolean) => {
-    setTaktWarnings(v);
-    try { localStorage.setItem('hm_takt_warn', String(v)); } catch { /* ignore */ }
   };
 
   return (
@@ -1241,24 +1225,6 @@ function ThemeTab() {
               </div>
             </div>
             <Toggle checked={darkMode} onChange={setDarkMode} />
-          </div>
-          <div className="flex items-center justify-between py-3.5 gap-4">
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-gray-800">Compact Mode</div>
-              <div className="text-xs text-gray-500 mt-0.5">
-                Reduce spacing and padding throughout the interface
-              </div>
-            </div>
-            <Toggle checked={compactMode} onChange={handleCompactMode} />
-          </div>
-          <div className="flex items-center justify-between py-3.5 gap-4">
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-gray-800">Show Takt Time Warnings</div>
-              <div className="text-xs text-gray-500 mt-0.5">
-                Highlight steps that exceed takt time with visual indicators
-              </div>
-            </div>
-            <Toggle checked={taktWarnings} onChange={handleTaktWarnings} />
           </div>
         </div>
       </div>
@@ -2165,24 +2131,115 @@ function SiteModal({ site, onClose, onSaved, onError }: {
   );
 }
 
+function WorkstationsMini({
+  siteId,
+  departmentId,
+  stations,
+  onChange,
+}: {
+  siteId: string;
+  departmentId: string;
+  stations: any[];
+  onChange: () => void;
+}) {
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const handleAdd = async () => {
+    if (!newName.trim()) return;
+    setSaving(true);
+    try {
+      await api.createStation({ name: newName.trim(), department_id: departmentId, site_id: siteId });
+      setNewName('');
+      setAdding(false);
+      onChange();
+    } catch { /* ignore */ } finally { setSaving(false); }
+  };
+
+  const handleDelete = async (id: string, name: string) => {
+    if (!confirm(`Delete workstation "${name}"?`)) return;
+    setDeletingId(id);
+    try {
+      await api.deleteStation(id);
+      onChange();
+    } catch { /* ignore */ } finally { setDeletingId(null); }
+  };
+
+  return (
+    <div className="mt-1.5 ml-5 pl-3 border-l border-gray-100 space-y-1">
+      {stations.length === 0 && !adding ? (
+        <div className="text-[11px] text-gray-300 py-0.5">No workstations</div>
+      ) : (
+        stations.map(s => (
+          <div key={s.id} className="flex items-center justify-between gap-2 py-0.5">
+            <span className="text-[11px] text-gray-600">{s.name}</span>
+            <button
+              onClick={() => handleDelete(s.id, s.name)}
+              disabled={deletingId === s.id}
+              className="p-0.5 rounded text-gray-300 hover:text-red-500 transition-colors"
+            >
+              <Trash2 size={10} />
+            </button>
+          </div>
+        ))
+      )}
+      {adding ? (
+        <div className="flex items-center gap-1.5 pt-1">
+          <input
+            className="input-field flex-1 text-[11px] py-1"
+            placeholder="Workstation name"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') handleAdd(); }}
+            autoFocus
+          />
+          <button onClick={handleAdd} disabled={!newName.trim() || saving} className="btn-primary text-[11px] py-1 px-2">
+            {saving ? '…' : 'Add'}
+          </button>
+          <button onClick={() => { setAdding(false); setNewName(''); }} className="text-[11px] text-gray-400 hover:text-gray-600">Cancel</button>
+        </div>
+      ) : (
+        <button
+          onClick={() => setAdding(true)}
+          className="text-[11px] text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1 pt-0.5"
+        >
+          <Plus size={10} /> Add workstation
+        </button>
+      )}
+    </div>
+  );
+}
+
 function DepartmentsMini({ siteId }: { siteId: string }) {
   const [depts, setDepts] = useState<any[]>([]);
+  const [stations, setStations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const load = () => {
     setLoading(true);
-    api.getDepartments({ site_id: siteId })
-      .then(setDepts)
-      .catch(() => setDepts([]))
+    Promise.all([
+      api.getDepartments({ site_id: siteId }).catch(() => []),
+      api.getStations({ site_id: siteId }).catch(() => []),
+    ])
+      .then(([d, s]) => { setDepts(d); setStations(s); })
       .finally(() => setLoading(false));
   };
 
+  const loadStations = () => {
+    api.getStations({ site_id: siteId }).then(setStations).catch(() => {});
+  };
+
   useEffect(load, [siteId]);
+
+  const stationsByDept = (id: string) => stations.filter(s => s.department_id === id);
 
   const handleAdd = async () => {
     if (!newName.trim()) return;
@@ -2222,21 +2279,44 @@ function DepartmentsMini({ siteId }: { siteId: string }) {
         <div className="text-xs text-gray-400 py-1">No departments yet</div>
       ) : (
         <div className="space-y-1">
-          {depts.map(d => (
-            <div key={d.id} className="flex items-center justify-between gap-2 py-1">
-              <div>
-                <span className="text-xs font-medium text-gray-700">{d.name}</span>
-                {d.description && <span className="text-xs text-gray-400 ml-2">{d.description}</span>}
+          {depts.map(d => {
+            const deptStations = stationsByDept(d.id);
+            const expanded = expandedId === d.id;
+            return (
+              <div key={d.id} className="py-1">
+                <div className="flex items-center justify-between gap-2">
+                  <button
+                    onClick={() => setExpandedId(expanded ? null : d.id)}
+                    className="flex items-center gap-1.5 text-left min-w-0"
+                  >
+                    {expanded
+                      ? <ChevronDown size={12} className="text-gray-400 flex-shrink-0" />
+                      : <ChevronRight size={12} className="text-gray-400 flex-shrink-0" />}
+                    <span className="text-xs font-medium text-gray-700 truncate">{d.name}</span>
+                    {d.description && <span className="text-xs text-gray-400 ml-1 truncate">{d.description}</span>}
+                    <span className="text-[10px] text-gray-400 bg-gray-100 rounded-full px-1.5 py-0.5 flex-shrink-0">
+                      {deptStations.length} workstation{deptStations.length === 1 ? '' : 's'}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => handleDelete(d.id, d.name)}
+                    disabled={deletingId === d.id}
+                    className="p-0.5 rounded text-gray-300 hover:text-red-500 transition-colors flex-shrink-0"
+                  >
+                    <Trash2 size={11} />
+                  </button>
+                </div>
+                {expanded && (
+                  <WorkstationsMini
+                    siteId={siteId}
+                    departmentId={d.id}
+                    stations={deptStations}
+                    onChange={loadStations}
+                  />
+                )}
               </div>
-              <button
-                onClick={() => handleDelete(d.id, d.name)}
-                disabled={deletingId === d.id}
-                className="p-0.5 rounded text-gray-300 hover:text-red-500 transition-colors"
-              >
-                <Trash2 size={11} />
-              </button>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
       {adding && (
@@ -2307,6 +2387,13 @@ function SitesTab() {
 
   return (
     <div className="max-w-3xl space-y-6">
+      <div className="rounded-xl bg-blue-50/60 border border-blue-100 p-3.5 flex items-start gap-2.5">
+        <Network size={16} className="text-blue-500 flex-shrink-0 mt-0.5" />
+        <div className="text-xs text-gray-600 leading-relaxed">
+          <span className="font-semibold text-gray-800">Set up your physical organisation here.</span> This is the one place to manage your hierarchy:
+          {' '}<span className="font-medium text-gray-700">Sites (facilities) → Departments → Workstations</span>. Apps and work orders are assigned to these.
+        </div>
+      </div>
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-600">Manage the sites / plants in your organisation.</p>
         <button onClick={() => setModalSite(null)} className="btn-primary flex items-center gap-2">
@@ -3333,20 +3420,20 @@ const MODULE_GUIDES: ModuleGuide[] = [
   },
   {
     icon: <Building2 size={16} />,
-    title: 'Plant View & Stations',
+    title: 'Command Center / Live Floor View',
     summary: 'See the live status of your entire floor and manage your work centers.',
-    link: '/plant',
-    linkLabel: 'Open Plant View',
+    link: '/dashboard',
+    linkLabel: 'Open Command Center',
     color: '#f59e0b',
     steps: [
       'Go to Stations → "New Station" to add each physical workstation on your floor.',
       'Assign an App to each station so operators always know what to run there.',
       'Organize stations into Departments (Assembly, QC, Packaging, etc.) for grouped views.',
-      'Plant View shows live throughput, OEE, and machine status for every station.',
+      'The Command Center Live Floor View shows live throughput, OEE, and machine status for every station.',
       'Click any station card to see its real-time metrics and recent completions.',
     ],
     tips: [
-      'Put Plant View on a TV in the production area -- it auto-refreshes.',
+      'Put the Command Center on a TV in the production area -- it auto-refreshes.',
       'Departments aggregate KPIs so managers can see section-level performance at a glance.',
     ],
   },
@@ -3602,7 +3689,7 @@ function HelpTab() {
             ['OEE', 'Availability × Performance × Quality. World class = 85%+'],
             ['NCR', 'Non-Conformance Report -- a logged quality issue.'],
             ['App vs Work Order', 'An App is the instruction set; a Work Order is the job that runs it.'],
-            ['Plant View', 'Live floor dashboard -- designed for a TV visible to the whole team.'],
+            ['Live Floor View', 'Live floor dashboard in the Command Center -- designed for a TV visible to the whole team.'],
             ['Direct message', 'Select a specific user in the message composer instead of "Everyone".'],
           ].map(([term, def]) => (
             <div key={term} className="py-2 border-b border-gray-50 last:border-0">
@@ -3639,7 +3726,7 @@ export default function SettingsPage() {
     { id: 'sidebar',  label: 'Navigation',     icon: <PanelLeft size={15} /> },
     { id: 'export',   label: 'Data Export',    icon: <Download size={15} /> },
     { id: 'users',         label: 'Users & Access', icon: <Users size={15} />,   minRole: 'manager' },
-    { id: 'sites',         label: 'Sites',          icon: <MapPin size={15} />,   minRole: 'manager' },
+    { id: 'sites',         label: 'Facility Setup', icon: <Network size={15} />,  minRole: 'manager' },
     { id: 'notifications', label: 'Notifications',  icon: <Bell size={15} />,     minRole: 'manager' },
     { id: 'developer',     label: 'Developer',      icon: <Code size={15} />,     minRole: 'manager' },
     { id: 'help',          label: 'Help & Guides',  icon: <HelpCircle size={15} /> },

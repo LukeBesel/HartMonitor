@@ -20,7 +20,7 @@ router.get('/', (req, res) => {
 });
 
 router.post('/', (req, res) => {
-  const { name, description = '', department_id, site_id } = req.body;
+  const { name, description = '', department_id, site_id, station_id, show_takt_warnings } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
 
   // Plan limit check — base tier limit plus purchased add-on slots
@@ -40,8 +40,8 @@ router.post('/', (req, res) => {
 
   const id = uuidv4();
   const defaultStep = [{ id: uuidv4(), name: 'Step 1', order: 0, widgets: [] }];
-  db.prepare('INSERT INTO apps (id, name, description, steps, company_id, department_id, site_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
-    .run(id, name, description, JSON.stringify(defaultStep), req.companyId, department_id || null, site_id || null);
+  db.prepare('INSERT INTO apps (id, name, description, steps, company_id, department_id, site_id, station_id, show_takt_warnings) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, name, description, JSON.stringify(defaultStep), req.companyId, department_id || null, site_id || null, station_id || null, show_takt_warnings === undefined ? 1 : (show_takt_warnings ? 1 : 0));
   logActivity(req.companyId, 'app', id, `App "${name}" created`, req.user?.display_name);
   const app = db.prepare('SELECT * FROM apps WHERE id = ?').get(id);
   res.status(201).json({ ...app, steps: JSON.parse(app.steps), variables: JSON.parse(app.variables) });
@@ -54,7 +54,7 @@ router.get('/:id', (req, res) => {
 });
 
 router.put('/:id', (req, res) => {
-  const { name, description, steps, variables, status, department_id, site_id } = req.body;
+  const { name, description, steps, variables, status, department_id, site_id, station_id, show_takt_warnings } = req.body;
   const app = db.prepare('SELECT * FROM apps WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!app) return res.status(404).json({ error: 'Not found' });
 
@@ -66,10 +66,12 @@ router.put('/:id', (req, res) => {
     status: status ?? app.status,
     department_id: department_id !== undefined ? (department_id || null) : app.department_id,
     site_id: site_id !== undefined ? (site_id || null) : app.site_id,
+    station_id: station_id !== undefined ? (station_id || null) : app.station_id,
+    show_takt_warnings: show_takt_warnings !== undefined ? (show_takt_warnings ? 1 : 0) : app.show_takt_warnings,
   };
 
-  db.prepare(`UPDATE apps SET name=?, description=?, steps=?, variables=?, status=?, department_id=?, site_id=?, updated_at=datetime('now') WHERE id=?`)
-    .run(updates.name, updates.description, updates.steps, updates.variables, updates.status, updates.department_id, updates.site_id, req.params.id);
+  db.prepare(`UPDATE apps SET name=?, description=?, steps=?, variables=?, status=?, department_id=?, site_id=?, station_id=?, show_takt_warnings=?, updated_at=datetime('now') WHERE id=?`)
+    .run(updates.name, updates.description, updates.steps, updates.variables, updates.status, updates.department_id, updates.site_id, updates.station_id, updates.show_takt_warnings, req.params.id);
 
   const updated = db.prepare('SELECT * FROM apps WHERE id = ?').get(req.params.id);
   res.json({ ...updated, steps: JSON.parse(updated.steps), variables: JSON.parse(updated.variables) });
