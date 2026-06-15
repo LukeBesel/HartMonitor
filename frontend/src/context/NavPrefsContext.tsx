@@ -4,6 +4,8 @@ import type { SectionId } from '../config/navigation';
 const HIDDEN_KEY = 'hm_hidden_nav';
 const HIDDEN_SECTIONS_KEY = 'hm_hidden_sections';
 const FOCUS_KEY = 'hm_nav_focus';
+const ORDER_KEY = 'hm_nav_order';
+const PRO_SIDEBAR_KEY = 'hm_show_pro_sidebar';
 
 export type Focus = SectionId;
 
@@ -25,6 +27,14 @@ function saveSet(key: string, set: Set<string>) {
   }
 }
 
+function loadOrder(): Record<string, string[]> {
+  try {
+    const raw = localStorage.getItem(ORDER_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore */ }
+  return {};
+}
+
 interface NavPrefsContextValue {
   // Individual item visibility (advanced)
   hiddenItems: Set<string>;
@@ -37,6 +47,13 @@ interface NavPrefsContextValue {
   // Which workspace is currently focused (also the persisted default)
   focus: Focus;
   setFocus: (f: Focus) => void;
+  // Custom item ordering per section (developer-controlled). Maps sectionId →
+  // an ordered list of item `to` paths. Items not listed keep their natural order.
+  itemOrder: Record<string, string[]>;
+  moveItem: (sectionId: string, to: string, direction: 'up' | 'down', currentOrder: string[]) => void;
+  // Developer preview: show Pro-locked items in the sidebar even on Free.
+  showProSidebar: boolean;
+  setShowProSidebar: (v: boolean) => void;
   resetNavPrefs: () => void;
 }
 
@@ -47,6 +64,10 @@ export function NavPrefsProvider({ children }: { children: ReactNode }) {
   // Planning is off by default — it stays out of the sidebar until the user
   // explicitly enables it in Settings (then the toggle reveals it).
   const [hiddenSections, setHiddenSections] = useState<Set<string>>(() => loadSet(HIDDEN_SECTIONS_KEY, ['planning']));
+  const [itemOrder, setItemOrder] = useState<Record<string, string[]>>(() => loadOrder());
+  const [showProSidebar, setShowProSidebarState] = useState<boolean>(() => {
+    try { return localStorage.getItem(PRO_SIDEBAR_KEY) === 'true'; } catch { return false; }
+  });
   const [focus, setFocusState] = useState<Focus>(() => {
     try {
       const stored = localStorage.getItem(FOCUS_KEY);
@@ -80,13 +101,41 @@ export function NavPrefsProvider({ children }: { children: ReactNode }) {
     try { localStorage.setItem(FOCUS_KEY, f); } catch { /* ignore */ }
   };
 
+  const setShowProSidebar = (v: boolean) => {
+    setShowProSidebarState(v);
+    try {
+      if (v) localStorage.setItem(PRO_SIDEBAR_KEY, 'true');
+      else localStorage.removeItem(PRO_SIDEBAR_KEY);
+    } catch { /* ignore */ }
+  };
+
+  // Reorder one item within a section. `currentOrder` is the section's current
+  // displayed order of item paths; we swap the target with its neighbour and persist.
+  const moveItem = (sectionId: string, to: string, direction: 'up' | 'down', currentOrder: string[]) => {
+    const order = [...currentOrder];
+    const i = order.indexOf(to);
+    if (i === -1) return;
+    const j = direction === 'up' ? i - 1 : i + 1;
+    if (j < 0 || j >= order.length) return;
+    [order[i], order[j]] = [order[j], order[i]];
+    setItemOrder(prev => {
+      const next = { ...prev, [sectionId]: order };
+      try { localStorage.setItem(ORDER_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+  };
+
   const resetNavPrefs = () => {
     setHiddenItems(new Set());
-    setHiddenSections(new Set());
+    setHiddenSections(new Set(['planning']));
+    setItemOrder({});
     setFocusState('production');
     saveSet(HIDDEN_KEY, new Set());
-    saveSet(HIDDEN_SECTIONS_KEY, new Set());
-    try { localStorage.setItem(FOCUS_KEY, 'production'); } catch { /* ignore */ }
+    saveSet(HIDDEN_SECTIONS_KEY, new Set(['planning']));
+    try {
+      localStorage.setItem(FOCUS_KEY, 'production');
+      localStorage.removeItem(ORDER_KEY);
+    } catch { /* ignore */ }
   };
 
   return (
@@ -100,6 +149,10 @@ export function NavPrefsProvider({ children }: { children: ReactNode }) {
         toggleSection,
         focus,
         setFocus,
+        itemOrder,
+        moveItem,
+        showProSidebar,
+        setShowProSidebar,
         resetNavPrefs,
       }}
     >

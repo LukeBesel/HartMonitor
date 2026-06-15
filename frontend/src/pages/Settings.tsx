@@ -27,6 +27,7 @@ import {
   PanelLeft,
   RotateCcw,
   ChevronDown,
+  ChevronUp,
   ChevronRight,
   Moon,
   Sun,
@@ -124,6 +125,7 @@ const MONTHS = [
 ];
 
 const PRESET_LABELS: Record<string, string> = {
+  midnight: 'Midnight (Pink Glow)',
   blue: 'Ocean Blue',
   indigo: 'Deep Indigo',
   purple: 'Royal Purple',
@@ -1301,20 +1303,28 @@ function SidebarTab() {
     isItemHidden, toggleItem,
     isSectionHidden, toggleSection,
     focus, setFocus, resetNavPrefs,
+    itemOrder, moveItem,
+    showProSidebar, setShowProSidebar,
   } = useNavPrefs();
+  const { user } = useAuth();
+  const isDeveloper = user?.role === 'developer';
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showProSidebar, setShowProSidebar] = useState(
-    () => localStorage.getItem('hm_show_pro_sidebar') === 'true'
-  );
 
   const enabledSections = SECTIONS.filter(s => !isSectionHidden(s.id));
   // Keep the default-view selector honest if the focused section is now hidden.
   const focusValid = enabledSections.some(s => s.id === focus);
 
-  const handleProSidebarToggle = (val: boolean) => {
-    setShowProSidebar(val);
-    if (val) localStorage.setItem('hm_show_pro_sidebar', 'true');
-    else localStorage.removeItem('hm_show_pro_sidebar');
+  // Apply the saved custom order to a section's items (matches the sidebar).
+  const orderedItems = (section: typeof SECTIONS[number]) => {
+    const order = itemOrder[section.id];
+    if (!order || order.length === 0) return section.items;
+    return [...section.items].sort((a, b) => {
+      const ia = order.indexOf(a.to); const ib = order.indexOf(b.to);
+      if (ia === -1 && ib === -1) return 0;
+      if (ia === -1) return 1;
+      if (ib === -1) return -1;
+      return ia - ib;
+    });
   };
 
   return (
@@ -1377,33 +1387,59 @@ function SidebarTab() {
             <div className="text-sm font-medium text-gray-800">Show Pro feature previews in sidebar</div>
             <div className="text-xs text-gray-500 mt-0.5">Adds locked Pro items back to the sidebar (developer use only)</div>
           </div>
-          <Toggle checked={showProSidebar} onChange={handleProSidebarToggle} />
+          <Toggle checked={showProSidebar} onChange={setShowProSidebar} />
         </div>
       </div>
 
-      {/* Advanced: per-item visibility */}
+      {/* Advanced: per-item visibility + (developers) reordering */}
       <div>
         <button
           onClick={() => setShowAdvanced(v => !v)}
           className="flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-gray-900"
         >
           {showAdvanced ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          Advanced -- show or hide individual items
+          Advanced -- show, hide{isDeveloper ? ', and reorder' : ''} individual items
         </button>
         {showAdvanced && (
           <div className="space-y-5 mt-3 pl-1">
-            {SECTIONS.map(section => (
+            {isDeveloper && (
+              <p className="text-xs text-gray-500">Use the arrows to reorder items within a section — the order is shared across your sidebar.</p>
+            )}
+            {SECTIONS.map(section => {
+              const ordered = orderedItems(section);
+              const orderPaths = ordered.map(i => i.to);
+              return (
               <div key={section.id}>
                 <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1.5">
                   <section.icon size={11} /> {section.label}
                 </div>
                 <div className="divide-y divide-gray-50">
-                  {section.items.map(item => {
+                  {ordered.map((item, idx) => {
                     const Icon = item.icon;
                     const sectionOff = isSectionHidden(section.id);
                     return (
-                      <div key={item.to} className="flex items-center justify-between py-2.5 gap-4">
+                      <div key={item.to} className="flex items-center justify-between py-2.5 gap-3">
                         <div className="flex items-center gap-2.5 min-w-0">
+                          {isDeveloper && (
+                            <div className="flex flex-col -my-1">
+                              <button
+                                onClick={() => moveItem(section.id, item.to, 'up', orderPaths)}
+                                disabled={idx === 0}
+                                className="text-gray-300 hover:text-gray-600 disabled:opacity-30 disabled:hover:text-gray-300"
+                                title="Move up"
+                              >
+                                <ChevronUp size={13} />
+                              </button>
+                              <button
+                                onClick={() => moveItem(section.id, item.to, 'down', orderPaths)}
+                                disabled={idx === ordered.length - 1}
+                                className="text-gray-300 hover:text-gray-600 disabled:opacity-30 disabled:hover:text-gray-300"
+                                title="Move down"
+                              >
+                                <ChevronDown size={13} />
+                              </button>
+                            </div>
+                          )}
                           <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
                             style={{ backgroundColor: 'var(--accent-light)', color: 'var(--accent)' }}>
                             <Icon size={14} />
@@ -1419,7 +1455,8 @@ function SidebarTab() {
                   })}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -2170,7 +2207,7 @@ function WorkstationsMini({
   return (
     <div className="mt-1.5 ml-5 pl-3 border-l border-gray-100 space-y-1">
       {stations.length === 0 && !adding ? (
-        <div className="text-[11px] text-gray-300 py-0.5">No workstations</div>
+        <div className="text-[11px] text-gray-400 py-0.5">No workstations yet — add the machines/cells in this department</div>
       ) : (
         stations.map(s => (
           <div key={s.id} className="flex items-center justify-between gap-2 py-0.5">
