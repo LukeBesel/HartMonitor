@@ -6,6 +6,7 @@ import {
   ChevronLeft, ChevronRight, CheckCircle, X, Clock, Factory,
   AlertCircle, Loader2, AlertTriangle, Zap, Tag
 } from 'lucide-react';
+import { CanvasStage } from '../components/app/WidgetView';
 
 export default function AppPlayer() {
   const { id } = useParams<{ id: string }>();
@@ -429,7 +430,7 @@ export default function AppPlayer() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto flex justify-center py-8 px-4">
-        <div className="w-full max-w-2xl space-y-4">
+        <div className={`w-full space-y-4 ${currentStep?.layoutMode === 'canvas' ? 'max-w-3xl' : 'max-w-2xl'}`}>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-2xl font-bold text-white">{currentStep?.name}</h2>
             {stepTaktSeconds > 0 && (
@@ -447,19 +448,32 @@ export default function AppPlayer() {
               {validationError}
             </div>
           )}
-          {currentStep?.widgets.map(widget => (
-            <PlayerWidget
-              key={widget.id}
-              widget={widget}
-              value={formData[widget.config.variableName || widget.id]}
-              onChange={(val) => updateField(widget.config.variableName || widget.id, val)}
+          {currentStep?.layoutMode === 'canvas' ? (
+            <CanvasStage
+              widgets={currentStep.widgets}
+              height={currentStep.canvasHeight ?? 560}
+              background={currentStep.canvasBackground}
+              values={formData}
+              onChange={(key, val) => updateField(key, val)}
               onNext={goNext}
               onPrev={goPrev}
               onComplete={complete}
-              isLastStep={currentStepIdx === app.steps.length - 1}
-              isFirstStep={currentStepIdx === 0}
             />
-          ))}
+          ) : (
+            currentStep?.widgets.map(widget => (
+              <PlayerWidget
+                key={widget.id}
+                widget={widget}
+                value={formData[widget.config.variableName || widget.id]}
+                onChange={(val) => updateField(widget.config.variableName || widget.id, val)}
+                onNext={goNext}
+                onPrev={goPrev}
+                onComplete={complete}
+                isLastStep={currentStepIdx === app.steps.length - 1}
+                isFirstStep={currentStepIdx === 0}
+              />
+            ))
+          )}
         </div>
       </div>
 
