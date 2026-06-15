@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { MESTable, TableRecord, TableField, FieldType } from '../types';
 import { Plus, Trash2, ChevronLeft, X, Edit3, Check, Database, Settings } from 'lucide-react';
 import { v4 as uuidv4 } from '../utils/uuid';
+import { useAuth } from '../context/AuthContext';
 
 const FIELD_TYPES: { value: FieldType; label: string }[] = [
   { value: 'text', label: 'Text' },
@@ -23,6 +24,7 @@ export default function TableDetail() {
   const [newRecord, setNewRecord] = useState<Record<string, any>>({});
   const [showFieldEditor, setShowFieldEditor] = useState(false);
   const [editingFields, setEditingFields] = useState<TableField[]>([]);
+  const { canEdit } = useAuth();
 
   const loadTable = () => {
     if (!id) return;
@@ -43,6 +45,7 @@ export default function TableDetail() {
   };
 
   const handleEditRecord = (record: TableRecord) => {
+    if (!canEdit) return;
     setEditingRecord(record.id);
     setEditData({ ...record.data });
   };
@@ -142,14 +145,16 @@ export default function TableDetail() {
             {table.description && <p className="text-gray-500 text-xs">{table.description}</p>}
           </div>
         </div>
-        <div className="flex gap-2">
-          <button onClick={() => { setEditingFields([...table.fields]); setShowFieldEditor(true); }} className="btn-secondary text-xs">
-            <Settings size={13} /> Manage Fields
-          </button>
-          <button onClick={() => setShowAddRecord(true)} className="btn-primary text-xs">
-            <Plus size={14} /> Add Record
-          </button>
-        </div>
+        {canEdit && (
+          <div className="flex gap-2">
+            <button onClick={() => { setEditingFields([...table.fields]); setShowFieldEditor(true); }} className="btn-secondary text-xs">
+              <Settings size={13} /> Manage Fields
+            </button>
+            <button onClick={() => setShowAddRecord(true)} className="btn-primary text-xs">
+              <Plus size={14} /> Add Record
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="text-xs text-gray-400">{records.length} records · {table.fields.length} fields</div>
@@ -198,19 +203,21 @@ export default function TableDetail() {
                     </td>
                   ))}
                   <td className="px-3 py-3">
-                    <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {editingRecord === record.id ? (
-                        <>
-                          <button onClick={() => handleSaveRecord(record)} className="p-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700"><Check size={12} /></button>
-                          <button onClick={() => setEditingRecord(null)} className="p-1.5 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300"><X size={12} /></button>
-                        </>
-                      ) : (
-                        <>
-                          <button onClick={() => handleEditRecord(record)} className="p-1.5 hover:bg-blue-50 rounded-lg text-gray-400 hover:text-blue-600"><Edit3 size={12} /></button>
-                          <button onClick={() => handleDeleteRecord(record.id)} className="p-1.5 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-600"><Trash2 size={12} /></button>
-                        </>
-                      )}
-                    </div>
+                    {canEdit && (
+                      <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {editingRecord === record.id ? (
+                          <>
+                            <button onClick={() => handleSaveRecord(record)} className="p-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700"><Check size={12} /></button>
+                            <button onClick={() => setEditingRecord(null)} className="p-1.5 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300"><X size={12} /></button>
+                          </>
+                        ) : (
+                          <>
+                            <button onClick={() => handleEditRecord(record)} className="p-1.5 hover:bg-blue-50 rounded-lg text-gray-400 hover:text-blue-600"><Edit3 size={12} /></button>
+                            <button onClick={() => handleDeleteRecord(record.id)} className="p-1.5 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-600"><Trash2 size={12} /></button>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}

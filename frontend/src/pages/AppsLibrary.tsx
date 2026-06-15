@@ -21,7 +21,7 @@ export default function AppsLibrary() {
   const [loadingSample, setLoadingSample] = useState(false);
   const [sampleError, setSampleError] = useState('');
   const { refresh: refreshPlan } = usePlan();
-  const { isAtLeast } = useAuth();
+  const { isAtLeast, canEdit } = useAuth();
   const navigate = useNavigate();
 
   const load = () => api.getApps().then(setApps).finally(() => setLoading(false));
@@ -96,10 +96,12 @@ export default function AppsLibrary() {
           <h1 className="text-2xl font-bold text-gray-900">App Library</h1>
           <p className="text-gray-500 text-sm mt-0.5">Build and manage manufacturing process apps</p>
         </div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary">
-          <Plus size={16} />
-          New App
-        </button>
+        {canEdit && (
+          <button onClick={() => setShowCreate(true)} className="btn-primary">
+            <Plus size={16} />
+            New App
+          </button>
+        )}
       </div>
 
       {/* Search */}
@@ -130,17 +132,19 @@ export default function AppsLibrary() {
           <FileText size={40} className="mx-auto mb-3 opacity-30" />
           <p className="font-medium">No apps found</p>
           <p className="text-sm">Create your first manufacturing app to get started</p>
-          <div className="flex items-center justify-center gap-2 mt-4">
-            <button onClick={() => setShowCreate(true)} className="btn-primary">
-              <Plus size={14} /> Create App
-            </button>
-            {isAtLeast('manager') && (
-              <button onClick={handleLoadSampleData} disabled={loadingSample} className="btn-secondary">
-                {loadingSample ? <RefreshCw size={14} className="animate-spin" /> : <Database size={14} />}
-                Load Sample Data
+          {canEdit && (
+            <div className="flex items-center justify-center gap-2 mt-4">
+              <button onClick={() => setShowCreate(true)} className="btn-primary">
+                <Plus size={14} /> Create App
               </button>
-            )}
-          </div>
+              {isAtLeast('manager') && (
+                <button onClick={handleLoadSampleData} disabled={loadingSample} className="btn-secondary">
+                  {loadingSample ? <RefreshCw size={14} className="animate-spin" /> : <Database size={14} />}
+                  Load Sample Data
+                </button>
+              )}
+            </div>
+          )}
           {sampleError && (
             <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mt-3 max-w-sm mx-auto">{sampleError}</p>
           )}
@@ -151,6 +155,7 @@ export default function AppsLibrary() {
             <AppCard
               key={app.id}
               app={app}
+              canEdit={canEdit}
               onDelete={handleDelete}
               onPublish={handlePublish}
             />
@@ -208,7 +213,7 @@ export default function AppsLibrary() {
   );
 }
 
-function AppCard({ app, onDelete, onPublish }: { app: App; onDelete: any; onPublish: any }) {
+function AppCard({ app, canEdit, onDelete, onPublish }: { app: App; canEdit: boolean; onDelete: any; onPublish: any }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -254,7 +259,7 @@ function AppCard({ app, onDelete, onPublish }: { app: App; onDelete: any; onPubl
           </button>
           {menuOpen && (
             <div className="absolute right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-10 py-1 w-48">
-              {app.status === 'draft' && (
+              {canEdit && app.status === 'draft' && (
                 <button
                   onClick={e => { setMenuOpen(false); onPublish(app.id, e); }}
                   className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 w-full text-green-600"
@@ -276,12 +281,14 @@ function AppCard({ app, onDelete, onPublish }: { app: App; onDelete: any; onPubl
               >
                 <Download size={13} /> Export app bundle (JSON)
               </button>
-              <button
-                onClick={e => { setMenuOpen(false); onDelete(app.id, e); }}
-                className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 w-full text-red-600"
-              >
-                <Trash2 size={13} /> Delete
-              </button>
+              {canEdit && (
+                <button
+                  onClick={e => { setMenuOpen(false); onDelete(app.id, e); }}
+                  className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 w-full text-red-600"
+                >
+                  <Trash2 size={13} /> Delete
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -293,12 +300,14 @@ function AppCard({ app, onDelete, onPublish }: { app: App; onDelete: any; onPubl
       </div>
 
       <div className="flex gap-2 mt-auto pt-2 border-t border-gray-100">
-        <Link
-          to={`/apps/${app.id}/build`}
-          className="btn-secondary flex-1 justify-center text-xs"
-        >
-          <Edit3 size={12} /> Edit
-        </Link>
+        {canEdit && (
+          <Link
+            to={`/apps/${app.id}/build`}
+            className="btn-secondary flex-1 justify-center text-xs"
+          >
+            <Edit3 size={12} /> Edit
+          </Link>
+        )}
         {app.status === 'published' && (
           <Link
             to={`/play/${app.id}`}

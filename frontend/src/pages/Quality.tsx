@@ -8,6 +8,7 @@ import {
 import { api } from '../api/client';
 import ActivityLog from '../components/shared/ActivityLog';
 import SavedViewsBar from '../components/shared/SavedViewsBar';
+import { useAuth } from '../context/AuthContext';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -205,6 +206,7 @@ function CommentThread({ ncrId, comments, onAdded }: {
   comments: NCRComment[];
   onAdded: () => void;
 }) {
+  const { canEdit } = useAuth();
   const [author, setAuthor] = useState('');
   const [body, setBody] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -246,27 +248,29 @@ function CommentThread({ ncrId, comments, onAdded }: {
         ))}
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-2">
-        <input
-          className="input-field"
-          placeholder="Your name"
-          value={author}
-          onChange={e => setAuthor(e.target.value)}
-          required
-        />
-        <textarea
-          className="input-field resize-none"
-          rows={2}
-          placeholder="Add a comment…"
-          value={body}
-          onChange={e => setBody(e.target.value)}
-          required
-        />
-        <button type="submit" className="btn-primary" disabled={submitting || !author.trim() || !body.trim()}>
-          <Send size={14} />
-          {submitting ? 'Posting…' : 'Post Comment'}
-        </button>
-      </form>
+      {canEdit && (
+        <form onSubmit={handleSubmit} className="space-y-2">
+          <input
+            className="input-field"
+            placeholder="Your name"
+            value={author}
+            onChange={e => setAuthor(e.target.value)}
+            required
+          />
+          <textarea
+            className="input-field resize-none"
+            rows={2}
+            placeholder="Add a comment…"
+            value={body}
+            onChange={e => setBody(e.target.value)}
+            required
+          />
+          <button type="submit" className="btn-primary" disabled={submitting || !author.trim() || !body.trim()}>
+            <Send size={14} />
+            {submitting ? 'Posting…' : 'Post Comment'}
+          </button>
+        </form>
+      )}
     </div>
   );
 }
@@ -285,6 +289,7 @@ function NCRDetail({ ncrId, onClose, onRefresh }: {
   const [savingField, setSavingField] = useState<string | null>(null);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const { canEdit } = useAuth();
   const navigate = useNavigate();
 
   const load = useCallback(async () => {
@@ -473,6 +478,7 @@ function NCRDetail({ ncrId, onClose, onRefresh }: {
                 value={rootCause}
                 onChange={e => setRootCause(e.target.value)}
                 onBlur={() => handleBlurSave('root_cause', rootCause)}
+                readOnly={!canEdit}
               />
             </div>
             <div>
@@ -487,12 +493,14 @@ function NCRDetail({ ncrId, onClose, onRefresh }: {
                 value={correctiveAction}
                 onChange={e => setCorrectiveAction(e.target.value)}
                 onBlur={() => handleBlurSave('corrective_action', correctiveAction)}
+                readOnly={!canEdit}
               />
             </div>
           </div>
         </div>
 
         {/* Status actions */}
+        {canEdit && (
         <div>
           <p className="section-label">Actions</p>
           <div className="flex flex-wrap items-center gap-2">
@@ -520,6 +528,7 @@ function NCRDetail({ ncrId, onClose, onRefresh }: {
             </div>
           </div>
         </div>
+        )}
 
         {/* Comments */}
         <div>
@@ -540,6 +549,7 @@ function NCRDetail({ ncrId, onClose, onRefresh }: {
         </div>
 
         {/* Danger zone */}
+        {canEdit && (
         <div className="border-t border-gray-100 pt-4">
           {!confirmDelete ? (
             <button
@@ -556,6 +566,7 @@ function NCRDetail({ ncrId, onClose, onRefresh }: {
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   );
@@ -818,6 +829,7 @@ interface NCRViewFilters {
 export default function Quality() {
   const { id } = useParams<{ id?: string }>();
   const navigate = useNavigate();
+  const { canEdit } = useAuth();
 
   const [ncrs, setNcrs] = useState<NCR[]>([]);
   const [summary, setSummary] = useState<QualitySummary | null>(null);
@@ -894,9 +906,11 @@ export default function Quality() {
               <button onClick={() => api.downloadExport('ncrs')} className="btn-secondary whitespace-nowrap">
                 <Download size={14} /> Export CSV
               </button>
-              <button className="btn-danger whitespace-nowrap" onClick={() => setShowCreate(true)}>
-                <Plus size={14} /> New NCR
-              </button>
+              {canEdit && (
+                <button className="btn-danger whitespace-nowrap" onClick={() => setShowCreate(true)}>
+                  <Plus size={14} /> New NCR
+                </button>
+              )}
             </div>
           </div>
 

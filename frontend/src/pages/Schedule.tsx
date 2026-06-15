@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, Fragment } from 'react';
 import { api } from '../api/client';
 import { useHighlight } from '../hooks/useHighlight';
 import { useSite } from '../context/SiteContext';
+import { useAuth } from '../context/AuthContext';
 import ActivityLog from '../components/shared/ActivityLog';
 import SavedViewsBar from '../components/shared/SavedViewsBar';
 import {
@@ -364,6 +365,7 @@ type ViewMode = 'list' | 'gantt';
 
 export default function Schedule() {
   const { selectedSiteId } = useSite();
+  const { canEdit } = useAuth();
   const { highlightId, isHighlighted, highlightRef } = useHighlight();
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [apps, setApps] = useState<App[]>([]);
@@ -538,10 +540,12 @@ export default function Schedule() {
           </div>
           <p className="text-gray-500 text-sm mt-0.5">Work order management and production scheduling</p>
         </div>
-        <button onClick={openCreate} className="btn-primary flex-shrink-0 whitespace-nowrap self-start sm:self-auto">
-          <Plus size={16} />
-          New Work Order
-        </button>
+        {canEdit && (
+          <button onClick={openCreate} className="btn-primary flex-shrink-0 whitespace-nowrap self-start sm:self-auto">
+            <Plus size={16} />
+            New Work Order
+          </button>
+        )}
       </div>
 
       {/* Filter Bar */}
@@ -613,6 +617,7 @@ export default function Schedule() {
           onComplete={handleMarkComplete}
           isHighlighted={isHighlighted}
           highlightRef={highlightRef}
+          canEdit={canEdit}
         />
       ) : (
         <GanttView
@@ -686,6 +691,7 @@ function ListView({
   onComplete,
   isHighlighted,
   highlightRef,
+  canEdit,
 }: {
   workOrders: WorkOrder[];
   onEdit: (wo: WorkOrder) => void;
@@ -693,6 +699,7 @@ function ListView({
   onComplete: (wo: WorkOrder) => void;
   isHighlighted: (id: string) => boolean;
   highlightRef: (id: string) => (el: HTMLElement | null) => void;
+  canEdit: boolean;
 }) {
   if (workOrders.length === 0) {
     return (
@@ -762,31 +769,33 @@ function ListView({
                     </span>
                   </td>
                   <td className="px-4 py-3">
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        onClick={() => onEdit(wo)}
-                        title="Edit"
-                        className="p-1.5 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors"
-                      >
-                        <Edit2 size={13} />
-                      </button>
-                      {wo.status !== 'completed' && (
+                    {canEdit && (
+                      <div className="flex items-center gap-1.5">
                         <button
-                          onClick={() => onComplete(wo)}
-                          title="Mark Complete"
-                          className="p-1.5 rounded-lg hover:bg-green-50 text-gray-400 hover:text-green-600 transition-colors"
+                          onClick={() => onEdit(wo)}
+                          title="Edit"
+                          className="p-1.5 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors"
                         >
-                          <CheckSquare size={13} />
+                          <Edit2 size={13} />
                         </button>
-                      )}
-                      <button
-                        onClick={() => onDelete(wo)}
-                        title="Delete"
-                        className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
+                        {wo.status !== 'completed' && (
+                          <button
+                            onClick={() => onComplete(wo)}
+                            title="Mark Complete"
+                            className="p-1.5 rounded-lg hover:bg-green-50 text-gray-400 hover:text-green-600 transition-colors"
+                          >
+                            <CheckSquare size={13} />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => onDelete(wo)}
+                          title="Delete"
+                          className="p-1.5 rounded-lg hover:bg-red-50 text-gray-400 hover:text-red-600 transition-colors"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    )}
                   </td>
                 </tr>
               );
