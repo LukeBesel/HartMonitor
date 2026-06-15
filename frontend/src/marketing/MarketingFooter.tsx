@@ -27,7 +27,6 @@ const COLUMNS = [
       { label: 'Privacy', href: '/privacy' },
       { label: 'Terms', href: '/terms' },
       { label: 'Get started', href: '/login?mode=signup' },
-      { label: '🏭 Play DOWNTIME Buster', href: '/game' },
     ],
   },
 ];
