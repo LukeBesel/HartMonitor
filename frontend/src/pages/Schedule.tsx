@@ -235,7 +235,7 @@ function WOCommentsPanel({ woId, currentUserId }: { woId: string; currentUserId?
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
-    try { setComments(await (api as any).getWorkOrderComments(woId)); } catch { /* ignore */ }
+    try { setComments(await api.getWorkOrderComments(woId)); } catch { /* ignore */ }
   }, [woId]);
 
   useEffect(() => { load(); }, [load]);
@@ -248,7 +248,7 @@ function WOCommentsPanel({ woId, currentUserId }: { woId: string; currentUserId?
     if (!draft.trim()) return;
     setSubmitting(true);
     try {
-      await (api as any).addWorkOrderComment(woId, draft.trim());
+      await api.addWorkOrderComment(woId, draft.trim());
       setDraft('');
       await load();
     } catch { /* ignore */ } finally { setSubmitting(false); }
@@ -256,7 +256,7 @@ function WOCommentsPanel({ woId, currentUserId }: { woId: string; currentUserId?
 
   const deleteComment = async (id: string) => {
     try {
-      await (api as any).deleteWorkOrderComment(woId, id);
+      await api.deleteWorkOrderComment(woId, id);
       await load();
     } catch { /* ignore */ }
   };
@@ -594,9 +594,9 @@ export default function Schedule() {
     try {
       const siteParams = { site_id: selectedSiteId || undefined };
       const [wos, appList, deptList] = await Promise.all([
-        (api as any).getWorkOrders(siteParams),
+        api.getWorkOrders(siteParams),
         api.getApps(),
-        (api as any).getDepartments(siteParams).catch(() => []),
+        api.getDepartments(siteParams).catch(() => []),
       ]);
       setWorkOrders(wos ?? []);
       setApps(appList ?? []);
@@ -640,7 +640,7 @@ export default function Schedule() {
   const handleSaveCreate = async () => {
     setSaving(true);
     try {
-      await (api as any).createWorkOrder(form);
+      await api.createWorkOrder(form);
       setShowCreate(false);
       await load();
     } catch (e: any) {
@@ -654,7 +654,7 @@ export default function Schedule() {
     if (!editTarget) return;
     setSaving(true);
     try {
-      await (api as any).updateWorkOrder(editTarget.id, form);
+      await api.updateWorkOrder(editTarget.id, form);
       setEditTarget(null);
       await load();
     } catch (e: any) {
@@ -668,7 +668,7 @@ export default function Schedule() {
     if (!deleteTarget) return;
     setSaving(true);
     try {
-      await (api as any).deleteWorkOrder(deleteTarget.id);
+      await api.deleteWorkOrder(deleteTarget.id);
       setDeleteTarget(null);
       await load();
     } catch (e: any) {
@@ -680,7 +680,7 @@ export default function Schedule() {
 
   const handleMarkComplete = async (wo: WorkOrder) => {
     try {
-      await (api as any).updateWorkOrder(wo.id, { ...wo, status: 'completed' });
+      await api.updateWorkOrder(wo.id, { ...wo, status: 'completed' });
       await load();
     } catch { /* ignore */ }
   };

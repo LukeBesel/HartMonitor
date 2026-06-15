@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Outlet, NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Settings, Activity, ChevronLeft, ChevronRight,
-  LogOut, ChevronDown, Menu, X, Plus,
+  LogOut, ChevronDown, Menu, X, Plus, Download,
 } from 'lucide-react';
 import { usePlan } from '../../context/PlanContext';
 import { useAuth } from '../../context/AuthContext';
@@ -61,6 +61,8 @@ export default function Layout() {
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   // Set to a feature label when a Free user clicks a locked Pro nav item.
   const [lockedModal, setLockedModal] = useState<string | null>(null);
+  // PWA install prompt
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
   const { isFree, isEnterprise } = usePlan();
   const { user, logout } = useAuth();
   const { companyName, logoUrl } = useBranding();
@@ -105,8 +107,7 @@ export default function Layout() {
     if (!item.pinned && isItemHidden(item.to)) return false;
     // Enterprise-only features are hidden entirely below that tier.
     if (item.enterpriseOnly && !isEnterprise) return false;
-    // Pro-only items: always hidden for free users unless developer preview toggle is on.
-    if (item.proOnly && isFree && !showProSidebar) return false;
+    // Pro-only items are always shown — clicking them opens the upgrade modal for free users.
     return true;
   };
 
@@ -162,6 +163,12 @@ export default function Layout() {
   useEffect(() => {
     localStorage.setItem('hm_sidebar', collapsed ? 'collapsed' : 'open');
   }, [collapsed]);
+
+  useEffect(() => {
+    const handler = (e: Event) => { e.preventDefault(); setInstallPrompt(e); };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
 
   useEffect(() => {
     setLogoError(false);
@@ -285,6 +292,24 @@ export default function Layout() {
             <div className="pb-1.5">
               <SiteSwitcher />
             </div>
+          )}
+
+          {/* Install App button — shows when browser supports PWA install */}
+          {installPrompt && (
+            <button
+              onClick={async () => {
+                installPrompt.prompt();
+                const { outcome } = await installPrompt.userChoice;
+                if (outcome === 'accepted') setInstallPrompt(null);
+              }}
+              title="Install HartMonitor as an app"
+              className={`flex items-center rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-white/8 transition-all w-full ${
+                effectiveCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
+              }`}
+            >
+              <Download size={14} className="flex-shrink-0" />
+              {!effectiveCollapsed && <span>Install App</span>}
+            </button>
           )}
 
           {/* Collapse toggle is a desktop-only concept — the mobile drawer is always expanded */}

@@ -1308,8 +1308,8 @@ function ReceivingTab({ canEdit }: { canEdit: boolean }) {
   const loadPOs = useCallback(async () => {
     try {
       const [sent, partial] = await Promise.all([
-        (api as any).getPurchaseOrders({ status: 'sent' }).catch(() => [] as PurchaseOrder[]),
-        (api as any).getPurchaseOrders({ status: 'partial' }).catch(() => [] as PurchaseOrder[]),
+        api.getPurchaseOrders({ status: 'sent' }).catch(() => [] as PurchaseOrder[]),
+        api.getPurchaseOrders({ status: 'partial' }).catch(() => [] as PurchaseOrder[]),
       ]);
       const combined: PurchaseOrder[] = [...(sent ?? []), ...(partial ?? [])];
       const seen = new Set<string>();
@@ -1328,7 +1328,7 @@ function ReceivingTab({ canEdit }: { canEdit: boolean }) {
       const withLines = await Promise.all(
         unique.map(async po => {
           try {
-            const detail = await (api as any).getPurchaseOrder(po.id);
+            const detail = await api.getPurchaseOrder(po.id);
             return { ...po, lines: detail.lines ?? [] };
           } catch {
             return { ...po, lines: [] };

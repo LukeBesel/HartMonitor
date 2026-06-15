@@ -216,7 +216,7 @@ export default function InventoryRequirements() {
 
   const loadData = async () => {
     try {
-      const result = await (api as any).getInventoryRequirements();
+      const result = await api.getInventoryRequirements();
       setData(result);
       setError('');
     } catch (e: any) {

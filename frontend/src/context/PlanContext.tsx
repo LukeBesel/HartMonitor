@@ -44,9 +44,9 @@ export function PlanProvider({ children }: { children: ReactNode }) {
   const canCreateApp = !plan || appLimit < 0 || (plan.app_count ?? 0) < appLimit;
   const canCreateDashboard = !plan || dashLimit < 0 || (plan.dashboard_count ?? 0) < dashLimit;
 
-  // Free accounts only see Pro-only nav items/sections once they've hit a
-  // limit (and would actually benefit from upgrading). Pro/Enterprise always see them.
-  const showProFeatures = !isFree || !canCreateApp || !canCreateDashboard;
+  // Always show all modules so customers can see what's available and upgrade
+  // per-module. Locked items show an upgrade prompt instead of being hidden.
+  const showProFeatures = true;
 
   return (
     <PlanContext.Provider value={{ plan, loading, refresh, canCreateApp, canCreateDashboard, isPro, isEnterprise, isFree, showProFeatures }}>

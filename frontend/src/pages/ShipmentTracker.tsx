@@ -467,8 +467,8 @@ export default function ShipmentTracker() {
   const loadData = async () => {
     try {
       const [shipmentsData, posData] = await Promise.all([
-        (api as any).getShipments().catch(() => []),
-        (api as any).getPurchaseOrders().catch(() => []),
+        api.getShipments().catch(() => []),
+        api.getPurchaseOrders().catch(() => []),
       ]);
       setShipments(shipmentsData ?? []);
       setPOs(posData ?? []);
@@ -489,7 +489,7 @@ export default function ShipmentTracker() {
   };
 
   const handleCreate = async (data: ShipmentFormData) => {
-    await (api as any).createShipment({
+    await api.createShipment({
       carrier: data.carrier,
       tracking_number: data.tracking_number,
       origin: data.origin,
@@ -505,7 +505,7 @@ export default function ShipmentTracker() {
 
   const handleUpdate = async (data: ShipmentFormData) => {
     if (!editing) return;
-    await (api as any).updateShipment(editing.id, {
+    await api.updateShipment(editing.id, {
       carrier: data.carrier,
       tracking_number: data.tracking_number,
       origin: data.origin,
@@ -521,7 +521,7 @@ export default function ShipmentTracker() {
 
   const handleDelete = async () => {
     if (!deleting) return;
-    await (api as any).deleteShipment(deleting.id);
+    await api.deleteShipment(deleting.id);
     setDeleting(null);
     await loadData();
   };

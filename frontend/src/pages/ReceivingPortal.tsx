@@ -260,8 +260,8 @@ export default function ReceivingPortal() {
   const loadPOs = async () => {
     try {
       const [sent, partial] = await Promise.all([
-        (api as any).getPurchaseOrders({ status: 'sent' }).catch(() => []),
-        (api as any).getPurchaseOrders({ status: 'partial' }).catch(() => []),
+        api.getPurchaseOrders({ status: 'sent' }).catch(() => []),
+        api.getPurchaseOrders({ status: 'partial' }).catch(() => []),
       ]);
       const combined: PurchaseOrder[] = [...(sent ?? []), ...(partial ?? [])];
       // De-duplicate by id (shouldn't overlap, but be safe)
