@@ -317,7 +317,7 @@ function CompanyTab() {
               </div>
               <div>
                 <h3 className="font-semibold text-gray-900">Change company branding?</h3>
-                <p className="text-xs text-gray-500">This affects all users in your organisation.</p>
+                <p className="text-xs text-gray-500">This affects all users in your organization.</p>
               </div>
             </div>
             <p className="text-sm text-gray-700 mb-5">
@@ -348,7 +348,7 @@ function CompanyTab() {
 
       {/* Identity */}
       <div>
-        <SectionHeader title="Identity" subtitle="Basic information about your organisation" />
+        <SectionHeader title="Identity" subtitle="Basic information about your organization" />
         {!isDeveloper && (
           <div className="mb-4 flex items-center gap-2 px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-500">
             <Key size={13} className="text-gray-400 flex-shrink-0" />
@@ -473,7 +473,7 @@ function CompanyTab() {
 
       {/* Preferences */}
       <div>
-        <SectionHeader title="Preferences" subtitle="Localisation and formatting" />
+        <SectionHeader title="Preferences" subtitle="Localization and formatting" />
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Timezone</label>
@@ -1108,7 +1108,7 @@ function ThemeTab() {
                 <AlertCircle size={20} className="text-amber-600" />
               </div>
               <div>
-                <h3 className="font-semibold text-gray-900">Change organisation theme?</h3>
+                <h3 className="font-semibold text-gray-900">Change organization theme?</h3>
                 <p className="text-xs text-gray-500">This affects all users immediately.</p>
               </div>
             </div>
@@ -1123,13 +1123,13 @@ function ThemeTab() {
       {!isDeveloper && (
         <div className="flex items-center gap-2 px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-500 mb-4">
           <Key size={13} className="text-gray-400 flex-shrink-0" />
-          Theme changes are restricted to developers. Contact your developer to update the colour scheme.
+          Theme changes are restricted to developers. Contact your developer to update the color scheme.
         </div>
       )}
 
       {/* Color Themes grid */}
       <div>
-        <SectionHeader title="Color Themes" subtitle={isDeveloper ? "Choose an accent colour for your workspace" : "Theme is set by your developer"} />
+        <SectionHeader title="Color Themes" subtitle={isDeveloper ? "Choose an accent color for your workspace" : "Theme is set by your developer"} />
         <div className={`grid grid-cols-4 gap-4 ${!isDeveloper ? 'opacity-50 pointer-events-none' : ''}`}>
           {THEME_PRESETS.map((preset) => {
             const isSelected = theme.name === preset.name;
@@ -1175,7 +1175,7 @@ function ThemeTab() {
               style={{ backgroundColor: theme.accent }}
             />
             <div className="min-w-0">
-              <div className="text-[11px] font-semibold text-gray-700">Primary colour</div>
+              <div className="text-[11px] font-semibold text-gray-700">Primary color</div>
               <div className="text-[10px] text-gray-400 truncate">{theme.accent}</div>
             </div>
             <input
@@ -1195,7 +1195,7 @@ function ThemeTab() {
               style={{ background: `linear-gradient(135deg, ${theme.accent}, ${theme.secondary})` }}
             />
             <div className="min-w-0">
-              <div className="text-[11px] font-semibold text-gray-700">Secondary colour</div>
+              <div className="text-[11px] font-semibold text-gray-700">Secondary color</div>
               <div className="text-[10px] text-gray-400 truncate">{theme.secondary}</div>
             </div>
             <input
@@ -1208,13 +1208,13 @@ function ThemeTab() {
         </div>
         )}
         <p className="text-xs text-gray-400 mt-2">
-          The secondary colour shapes branded gradients -- logos, avatars, leaderboard cards, and upgrade banners.
+          The secondary color shapes branded gradients -- logos, avatars, leaderboard cards, and upgrade banners.
         </p>
       </div>
 
       {/* Additional settings */}
       <div>
-        <SectionHeader title="Display Preferences" subtitle="Interface behaviour stored locally" />
+        <SectionHeader title="Display Preferences" subtitle="Interface behavior stored locally" />
         <div className="space-y-1 divide-y divide-gray-50">
           <div className="flex items-center justify-between py-3.5 gap-4">
             <div className="flex-1 min-w-0">
@@ -1223,7 +1223,7 @@ function ThemeTab() {
                 Dark Mode
               </div>
               <div className="text-xs text-gray-500 mt-0.5">
-                Switch the interface to a dark colour scheme
+                Switch the interface to a dark color scheme
               </div>
             </div>
             <Toggle checked={darkMode} onChange={setDarkMode} />
@@ -1233,7 +1233,7 @@ function ThemeTab() {
 
       {/* Live Preview Strip */}
       <div>
-        <SectionHeader title="Live Preview" subtitle="How your colours look across UI elements" />
+        <SectionHeader title="Live Preview" subtitle="How your colors look across UI elements" />
         <div className="rounded-xl border border-gray-100 overflow-hidden">
           <div className="px-4 py-2 bg-gray-50 text-xs font-medium text-gray-400 border-b border-gray-100 flex items-center gap-2">
             <span>{PRESET_LABELS[theme.name] ?? theme.name}</span>
@@ -1241,7 +1241,7 @@ function ThemeTab() {
             <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: theme.secondary }} />{theme.secondary}</span>
           </div>
           <div className="p-4 flex flex-wrap items-center gap-3 bg-white">
-            {/* Branded gradient (uses both colours) */}
+            {/* Branded gradient (uses both colors) */}
             <div
               className="w-10 h-10 rounded-xl shadow-sm flex-shrink-0"
               style={{ background: `linear-gradient(135deg, ${theme.accent}, ${theme.secondary})` }}
@@ -1500,7 +1500,7 @@ const EXPORT_CARDS: ExportCard[] = [
   {
     icon: <Package size={20} />,
     title: 'Inventory',
-    description: 'Current stock levels and item catalogue',
+    description: 'Current stock levels and item catalog',
     type: 'inventory',
   },
   {
@@ -2427,12 +2427,12 @@ function SitesTab() {
       <div className="rounded-xl bg-blue-50/60 border border-blue-100 p-3.5 flex items-start gap-2.5">
         <Network size={16} className="text-blue-500 flex-shrink-0 mt-0.5" />
         <div className="text-xs text-gray-600 leading-relaxed">
-          <span className="font-semibold text-gray-800">Set up your physical organisation here.</span> This is the one place to manage your hierarchy:
+          <span className="font-semibold text-gray-800">Set up your physical organization here.</span> This is the one place to manage your hierarchy:
           {' '}<span className="font-medium text-gray-700">Sites (facilities) → Departments → Workstations</span>. Apps and work orders are assigned to these.
         </div>
       </div>
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-600">Manage the sites / plants in your organisation.</p>
+        <p className="text-sm text-gray-600">Manage the sites / plants in your organization.</p>
         <button onClick={() => setModalSite(null)} className="btn-primary flex items-center gap-2">
           <Plus size={15} /> Add Site
         </button>
@@ -3878,7 +3878,7 @@ export default function SettingsPage() {
         </div>
         <div>
           <h1 className="text-xl font-bold text-gray-900 tracking-tight">Settings</h1>
-          <p className="text-xs text-gray-500 mt-0.5">Manage your account, organisation, and appearance</p>
+          <p className="text-xs text-gray-500 mt-0.5">Manage your account, organization, and appearance</p>
         </div>
       </div>
 

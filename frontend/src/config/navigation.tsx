@@ -78,7 +78,7 @@ export const SECTIONS: NavSection[] = [
     id: 'reporting',
     label: 'Reporting',
     icon: BarChart3,
-    description: 'Analyse results and quality',
+    description: 'Analyze results and quality',
     items: [
       { to: '/dashboards',       icon: LayoutGrid,  label: 'Dashboards' },
       { to: '/leaderboard',      icon: Trophy,      label: 'Leaderboard' },
