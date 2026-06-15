@@ -148,6 +148,9 @@ export const api = {
   updateWorkOrder: (id: string, data: any) => request<any>(`/work-orders/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteWorkOrder: (id: string) => request<any>(`/work-orders/${id}`, { method: 'DELETE' }),
   completeWorkOrder: (id: string) => request<any>(`/work-orders/${id}/complete`, { method: 'PUT' }),
+  getWorkOrderComments: (id: string) => request<any[]>(`/work-orders/${id}/comments`),
+  addWorkOrderComment: (id: string, body: string) => request<any>(`/work-orders/${id}/comments`, { method: 'POST', body: JSON.stringify({ body }) }),
+  deleteWorkOrderComment: (woId: string, commentId: string) => request<any>(`/work-orders/${woId}/comments/${commentId}`, { method: 'DELETE' }),
 
   // ── Product Types
   getProductTypes: (appId: string) => request<any[]>(`/product-types?app_id=${appId}`),

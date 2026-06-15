@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Outlet, NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Settings, Activity, ChevronLeft, ChevronRight,
-  LogOut, ChevronDown, Menu, X,
+  LogOut, ChevronDown, Menu, X, Plus,
 } from 'lucide-react';
 import { usePlan } from '../../context/PlanContext';
 import { useAuth } from '../../context/AuthContext';
@@ -13,6 +13,7 @@ import { PINNED_ITEMS, SECTIONS, NavItem } from '../../config/navigation';
 import AlertsBubble from './AlertsBubble';
 import SiteSwitcher from './SiteSwitcher';
 import UpgradeModal from './UpgradeModal';
+import QuickCreateModal from './QuickCreateModal';
 
 function ProBadge() {
   return (
@@ -56,6 +57,7 @@ export default function Layout() {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('hm_sidebar') === 'collapsed');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   // Set to a feature label when a Free user clicks a locked Pro nav item.
   const [lockedModal, setLockedModal] = useState<string | null>(null);
   const { isFree, isEnterprise } = usePlan();
@@ -377,6 +379,22 @@ export default function Layout() {
 
       {/* Floating alerts bubble — fixed bottom-right corner */}
       <AlertsBubble />
+
+      {/* Quick-create FAB — visible for manager+ roles */}
+      {user && ['manager', 'developer', 'supervisor'].includes(user.role) && (
+        <button
+          onClick={() => setQuickCreateOpen(true)}
+          title="Quick-create work order"
+          className="fixed bottom-20 right-5 z-40 w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-95"
+          style={{ background: 'linear-gradient(135deg, #6366f1, #ec4899)' }}
+        >
+          <Plus size={22} className="text-white" strokeWidth={2.5} />
+        </button>
+      )}
+
+      {quickCreateOpen && (
+        <QuickCreateModal onClose={() => setQuickCreateOpen(false)} />
+      )}
 
       {lockedModal && (
         <UpgradeModal

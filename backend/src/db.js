@@ -682,6 +682,20 @@ for (const t of ['stations', 'departments', 'work_orders', 'locations']) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_${t}_site ON ${t}(site_id)`);
 }
 
+// ─── Work order comments ──────────────────────────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS wo_comments (
+    id TEXT PRIMARY KEY,
+    work_order_id TEXT NOT NULL REFERENCES work_orders(id) ON DELETE CASCADE,
+    author_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    author_name TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_wo_comments_wo ON wo_comments(work_order_id, created_at);
+`);
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function isoOffset(days, hours = 8) {
