@@ -58,16 +58,19 @@ function ProductRow({ eyebrow, title, body, points, src, alt, phone = false, rev
       <Reveal delay={120}>
         {phone ? (
           <div className="flex justify-center">
-            <div className="relative w-[260px] rounded-[2.5rem] border-[10px] border-[#1a1f2b] bg-[#1a1f2b] shadow-2xl shadow-black/60">
-              <div className="rounded-[1.8rem] overflow-hidden bg-[#0a1628]">
-                <img src={src} alt={alt} loading="lazy" className="w-full block" />
+            <div className="relative">
+              <div className="absolute -inset-8 rounded-full opacity-40 blur-3xl" style={{ background: 'radial-gradient(circle, #ec4899, transparent 70%)' }} />
+              <div className="relative w-[260px] rounded-[2.5rem] border-[10px] border-[#1a1f2b] bg-[#1a1f2b] glow-pink">
+                <div className="rounded-[1.8rem] overflow-hidden bg-[#0a1628]">
+                  <img src={src} alt={alt} loading="lazy" className="w-full block" />
+                </div>
               </div>
             </div>
           </div>
         ) : (
           <div className="relative">
-            <div className="absolute -inset-6 rounded-3xl opacity-30 blur-3xl" style={{ background: GRADIENT }} />
-            <BrowserFrame src={src} alt={alt} className="relative" />
+            <div className="absolute -inset-6 rounded-3xl opacity-45 blur-3xl" style={{ background: 'radial-gradient(ellipse at center, #ec4899, #6366f1 65%, transparent 80%)' }} />
+            <BrowserFrame src={src} alt={alt} className="relative rounded-xl glow-pink" />
           </div>
         )}
       </Reveal>
@@ -98,7 +101,7 @@ function MockupCard({ icon: Icon, label, caption, children }: {
 }) {
   return (
     <Reveal className="h-full">
-      <div className="group h-full flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] overflow-hidden transition-all hover:border-pink-500/30 hover:bg-white/[0.05]">
+      <div className="group h-full flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] overflow-hidden transition-all hover:border-pink-500/50 hover:bg-white/[0.05] hover:-translate-y-1 hover:glow-pink">
         {/* chrome bar */}
         <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/10 bg-[#0a0e27]/60">
           <span className="w-2.5 h-2.5 rounded-full bg-rose-400/70" />
@@ -324,17 +327,17 @@ export default function Landing() {
 
       {/* ── Hero ───────────────────────────────────────────────────────── */}
       <section className="relative pt-32 pb-20 md:pt-44 md:pb-28">
-        {/* background glows — midnight navy base with a pink + indigo aurora */}
+        {/* background glows — midnight navy base with a vivid pink + indigo aurora */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute -top-48 left-1/2 -translate-x-1/2 w-[900px] h-[900px] rounded-full opacity-25 blur-[120px]" style={{ background: GRADIENT }} />
-          <div className="absolute -top-24 right-[10%] w-[520px] h-[520px] rounded-full opacity-30 blur-[130px]" style={{ background: 'radial-gradient(circle, #ec4899, transparent 70%)' }} />
-          <div className="absolute top-40 left-[5%] w-[460px] h-[460px] rounded-full opacity-25 blur-[130px]" style={{ background: 'radial-gradient(circle, #6366f1, transparent 70%)' }} />
-          <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)', backgroundSize: '64px 64px' }} />
+          <div className="aurora-orb animate-aurora absolute -top-48 left-1/2 -translate-x-1/2 w-[820px] h-[820px]" style={{ background: 'radial-gradient(circle, #ec4899, transparent 70%)', opacity: 0.45 }} />
+          <div className="aurora-orb animate-aurora absolute -top-24 right-[6%] w-[560px] h-[560px]" style={{ background: 'radial-gradient(circle, #f472b6, transparent 70%)', opacity: 0.4 }} />
+          <div className="aurora-orb animate-aurora absolute top-40 left-[2%] w-[500px] h-[500px]" style={{ background: 'radial-gradient(circle, #6366f1, transparent 70%)', opacity: 0.4 }} />
+          <div className="absolute inset-0 opacity-[0.05]" style={{ backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)', backgroundSize: '64px 64px' }} />
         </div>
 
         <div className="relative max-w-5xl mx-auto px-6 text-center">
           <Reveal>
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-white/10 bg-white/5 text-xs font-medium text-gray-300 mb-8">
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-pink-400/30 bg-pink-500/10 ring-glow-pink text-xs font-medium text-pink-100 mb-8">
               <Sparkles size={13} className="text-pink-400" />
               The modern manufacturing execution system
             </div>
@@ -343,7 +346,7 @@ export default function Landing() {
             <h1 className="text-5xl md:text-7xl font-semibold tracking-tight leading-[1.05]">
               Run your shop floor
               <br />
-              like the <span className="bg-gradient-to-r from-indigo-400 to-pink-400 bg-clip-text text-transparent">future</span>.
+              like the <span className="text-gradient-pink text-glow-pink">future</span>.
             </h1>
           </Reveal>
           <Reveal delay={160}>
@@ -356,7 +359,7 @@ export default function Landing() {
             <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
               <Link
                 to="/login?mode=signup"
-                className="group inline-flex items-center gap-2 px-7 py-3.5 rounded-full text-white font-semibold text-base transition-all hover:scale-[1.03] shadow-lg shadow-pink-500/30"
+                className="group inline-flex items-center gap-2 px-7 py-3.5 rounded-full text-white font-semibold text-base transition-all hover:scale-[1.03] animate-pulse-glow"
                 style={{ background: GRADIENT }}
               >
                 Start free
@@ -374,8 +377,8 @@ export default function Landing() {
         <div className="relative max-w-6xl mx-auto px-6 mt-16 md:mt-20">
           <Reveal delay={120}>
             <div className="relative">
-              <div className="absolute -inset-4 md:-inset-8 rounded-3xl opacity-30 blur-3xl" style={{ background: GRADIENT }} />
-              <BrowserFrame src="/shot-dashboard.png" alt="HartMonitor command center dashboard" className="relative" />
+              <div className="absolute -inset-4 md:-inset-10 rounded-3xl opacity-50 blur-3xl" style={{ background: 'radial-gradient(ellipse at center, #ec4899, #6366f1 60%, transparent 80%)' }} />
+              <BrowserFrame src="/shot-dashboard.png" alt="HartMonitor command center dashboard" className="relative rounded-xl glow-pink-lg" />
             </div>
           </Reveal>
         </div>
@@ -386,7 +389,7 @@ export default function Landing() {
         <div className="max-w-6xl mx-auto px-6 py-12 grid grid-cols-2 md:grid-cols-4 gap-8">
           {STATS.map((s, i) => (
             <Reveal key={s.label} delay={i * 80} className="text-center">
-              <div className="text-3xl md:text-4xl font-semibold bg-gradient-to-r from-indigo-400 to-pink-400 bg-clip-text text-transparent">{s.value}</div>
+              <div className="text-3xl md:text-4xl font-bold text-gradient-pink">{s.value}</div>
               <div className="mt-2 text-sm text-gray-500">{s.label}</div>
             </Reveal>
           ))}
@@ -426,7 +429,8 @@ export default function Landing() {
       {/* ── MES preview gallery (self-contained mockups) ───────────────── */}
       <section id="previews" className="relative border-t border-white/10 bg-white/[0.02]">
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-0 left-1/4 w-[600px] h-[600px] rounded-full opacity-10 blur-[140px]" style={{ background: PINK }} />
+          <div className="absolute top-0 left-1/4 w-[600px] h-[600px] rounded-full opacity-25 blur-[140px]" style={{ background: PINK }} />
+          <div className="absolute bottom-0 right-1/4 w-[480px] h-[480px] rounded-full opacity-20 blur-[140px]" style={{ background: '#6366f1' }} />
         </div>
         <div className="relative max-w-6xl mx-auto px-6 py-24 md:py-32">
           <Reveal className="text-center max-w-2xl mx-auto">
@@ -456,8 +460,8 @@ export default function Landing() {
           <div className="mt-16 grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {FEATURES.map((f, i) => (
               <Reveal key={f.title} delay={(i % 3) * 80}>
-                <div className="h-full rounded-2xl border border-white/10 bg-white/[0.03] p-7 hover:bg-white/[0.05] hover:border-white/20 transition-all">
-                  <div className="w-11 h-11 rounded-xl flex items-center justify-center mb-5" style={{ background: GRADIENT }}>
+                <div className="group h-full rounded-2xl border border-white/10 bg-white/[0.03] p-7 hover:bg-white/[0.05] hover:border-pink-500/30 transition-all">
+                  <div className="w-11 h-11 rounded-xl flex items-center justify-center mb-5 transition-transform group-hover:scale-110 group-hover:glow-pink" style={{ background: GRADIENT }}>
                     <f.icon size={20} className="text-white" />
                   </div>
                   <h3 className="text-lg font-semibold text-white">{f.title}</h3>
@@ -481,9 +485,9 @@ export default function Landing() {
             const featured = key === 'pro';
             return (
               <Reveal key={key} delay={i * 90}>
-                <div className={`relative h-full rounded-2xl p-8 border ${featured ? 'border-pink-500/40 bg-gradient-to-b from-pink-500/[0.08] to-transparent' : 'border-white/10 bg-white/[0.03]'}`}>
+                <div className={`relative h-full rounded-2xl p-8 border ${featured ? 'border-pink-500/50 bg-gradient-to-b from-pink-500/[0.12] to-transparent glow-pink' : 'border-white/10 bg-white/[0.03]'}`}>
                   {featured && (
-                    <span className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-[11px] font-bold text-white" style={{ background: GRADIENT }}>
+                    <span className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-[11px] font-bold text-white animate-pulse-glow" style={{ background: GRADIENT }}>
                       MOST POPULAR
                     </span>
                   )}
@@ -515,14 +519,15 @@ export default function Landing() {
       {/* ── Final CTA ──────────────────────────────────────────────────── */}
       <section className="px-6 pb-28">
         <Reveal>
-          <div className="relative max-w-5xl mx-auto rounded-3xl overflow-hidden border border-white/10 px-8 py-16 md:py-24 text-center">
-            <div className="absolute inset-0 opacity-25 blur-2xl" style={{ background: GRADIENT }} />
+          <div className="relative max-w-5xl mx-auto rounded-3xl overflow-hidden border border-pink-500/20 px-8 py-16 md:py-24 text-center glow-pink">
+            <div className="absolute inset-0 opacity-40 blur-2xl" style={{ background: 'radial-gradient(ellipse at center, #ec4899, #6366f1 60%, transparent 80%)' }} />
             <div className="relative">
-              <h2 className="text-4xl md:text-5xl font-semibold tracking-tight">Start running your floor today.</h2>
+              <h2 className="text-4xl md:text-5xl font-semibold tracking-tight">Start running your floor <span className="text-gradient-pink text-glow-pink">today</span>.</h2>
               <p className="mt-5 text-lg text-gray-300 max-w-xl mx-auto">Set up your workspace in minutes. No credit card, no sales call — just open the app and build.</p>
               <Link
                 to="/login?mode=signup"
-                className="mt-9 inline-flex items-center gap-2 px-8 py-4 rounded-full bg-white text-gray-900 font-semibold text-base transition-all hover:scale-[1.03] shadow-xl"
+                className="mt-9 inline-flex items-center gap-2 px-8 py-4 rounded-full text-white font-semibold text-base transition-all hover:scale-[1.03] animate-pulse-glow"
+                style={{ background: GRADIENT }}
               >
                 Get started free <ArrowRight size={18} />
               </Link>

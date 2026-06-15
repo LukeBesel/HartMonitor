@@ -46,10 +46,10 @@ export default function Pricing() {
       {/* Header */}
       <section className="relative pt-36 pb-12 md:pt-44 text-center px-6">
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[800px] h-[800px] rounded-full opacity-15 blur-[120px]" style={{ background: GRADIENT }} />
+          <div className="aurora-orb animate-aurora absolute -top-40 left-1/2 -translate-x-1/2 w-[760px] h-[760px]" style={{ background: 'radial-gradient(circle, #ec4899, transparent 70%)', opacity: 0.4 }} />
         </div>
         <Reveal className="relative">
-          <h1 className="text-5xl md:text-6xl font-semibold tracking-tight">Pricing that scales with you.</h1>
+          <h1 className="text-5xl md:text-6xl font-semibold tracking-tight">Pricing that <span className="text-gradient-pink text-glow-pink">scales</span> with you.</h1>
           <p className="mt-6 text-lg text-gray-400 max-w-2xl mx-auto">Start free and only pay when you grow. Every plan includes the full operator experience.</p>
         </Reveal>
       </section>
@@ -61,9 +61,9 @@ export default function Pricing() {
             const featured = key === 'pro';
             return (
               <Reveal key={key} delay={i * 90}>
-                <div className={`relative h-full rounded-2xl p-8 border flex flex-col ${featured ? 'border-pink-500/40 bg-gradient-to-b from-pink-500/[0.1] to-transparent' : 'border-white/10 bg-white/[0.03]'}`}>
+                <div className={`relative h-full rounded-2xl p-8 border flex flex-col ${featured ? 'border-pink-500/50 bg-gradient-to-b from-pink-500/[0.14] to-transparent glow-pink-lg' : 'border-white/10 bg-white/[0.03]'}`}>
                   {featured && (
-                    <span className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-[11px] font-bold text-white" style={{ background: GRADIENT }}>
+                    <span className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-[11px] font-bold text-white animate-pulse-glow" style={{ background: GRADIENT }}>
                       MOST POPULAR
                     </span>
                   )}
@@ -79,7 +79,7 @@ export default function Pricing() {
                   <button
                     onClick={() => goBuy(key)}
                     className={`mt-6 w-full py-3 rounded-full font-semibold text-sm transition-all hover:scale-[1.02] ${
-                      featured ? 'text-white shadow-lg shadow-pink-500/30' : 'text-white border border-white/15 hover:bg-white/5'
+                      featured ? 'text-white animate-pulse-glow' : 'text-white border border-white/15 hover:bg-white/5 hover:border-pink-500/40'
                     }`}
                     style={featured ? { background: GRADIENT } : undefined}
                   >
@@ -154,12 +154,12 @@ export default function Pricing() {
       {/* CTA */}
       <section className="px-6 pb-28">
         <Reveal>
-          <div className="relative max-w-4xl mx-auto rounded-3xl overflow-hidden border border-white/10 px-8 py-16 text-center">
-            <div className="absolute inset-0 opacity-25 blur-2xl" style={{ background: GRADIENT }} />
+          <div className="relative max-w-4xl mx-auto rounded-3xl overflow-hidden border border-pink-500/20 px-8 py-16 text-center glow-pink">
+            <div className="absolute inset-0 opacity-40 blur-2xl" style={{ background: 'radial-gradient(ellipse at center, #ec4899, #6366f1 60%, transparent 80%)' }} />
             <div className="relative">
               <h2 className="text-3xl md:text-4xl font-semibold tracking-tight">Ready to get started?</h2>
               <p className="mt-4 text-gray-300">Spin up your workspace free in under five minutes.</p>
-              <Link to="/login?mode=signup" className="mt-8 inline-flex items-center gap-2 px-8 py-4 rounded-full bg-white text-gray-900 font-semibold transition-all hover:scale-[1.03] shadow-xl">
+              <Link to="/login?mode=signup" className="mt-8 inline-flex items-center gap-2 px-8 py-4 rounded-full text-white font-semibold transition-all hover:scale-[1.03] animate-pulse-glow" style={{ background: GRADIENT }}>
                 Create your workspace <ArrowRight size={18} />
               </Link>
             </div>
