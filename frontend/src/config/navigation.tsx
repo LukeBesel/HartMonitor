@@ -1,9 +1,10 @@
 import {
-  LayoutDashboard, AppWindow, Database, BarChart3, Monitor,
+  LayoutDashboard, AppWindow, Database, BarChart3,
   Calendar, ClipboardList, Trophy,
-  Timer, Users, Cpu, LayoutGrid,
+  Users, Cpu, LayoutGrid,
   Package, ShoppingCart, ShieldCheck, Building2,
   Factory, CalendarRange, Layers, History, Tablet, Network, GitBranch,
+  HeartPulse,
 } from 'lucide-react';
 
 export type NavItem = {
@@ -34,7 +35,6 @@ export type NavSection = {
 // Always visible, independent of the chosen workspace.
 export const PINNED_ITEMS: NavItem[] = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Command Center', exact: true, pinned: true },
-  { to: '/operator',  icon: Tablet,          label: 'Operator Portal', pinned: true, standalone: true },
 ];
 
 // The app is organised into three plain-language workspaces so a new user can
@@ -48,6 +48,8 @@ export const SECTIONS: NavSection[] = [
     items: [
       { to: '/apps',        icon: AppWindow,  label: 'App Library' },
       { to: '/departments', icon: Building2,  label: 'Departments' },
+      { to: '/sqdc',        icon: HeartPulse, label: 'SQDC' },
+      { to: '/operator',    icon: Tablet,     label: 'Operator Portal', standalone: true },
     ],
   },
   {
@@ -74,8 +76,7 @@ export const SECTIONS: NavSection[] = [
       { to: '/dashboards',       icon: LayoutGrid,  label: 'Dashboards' },
       { to: '/leaderboard',      icon: Trophy,      label: 'Leaderboard' },
       { to: '/oee',              icon: Cpu,         label: 'OEE Tracker',      minRole: 'supervisor', proOnly: true },
-      { to: '/step-metrics',     icon: Timer,       label: 'Step Metrics',     minRole: 'supervisor' },
-      { to: '/analytics',        icon: BarChart3,   label: 'Analytics' },
+      { to: '/analytics',        icon: BarChart3,   label: 'Operation Analytics' },
       { to: '/quality',          icon: ShieldCheck, label: 'NCR / Quality',    proOnly: true },
       { to: '/facilities',       icon: Network,     label: 'Facilities',       minRole: 'manager', enterpriseOnly: true },
       { to: '/tables',           icon: Database,    label: 'Tables',           minRole: 'supervisor', proOnly: true },

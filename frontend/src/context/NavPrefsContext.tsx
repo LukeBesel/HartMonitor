@@ -7,14 +7,14 @@ const FOCUS_KEY = 'hm_nav_focus';
 
 export type Focus = SectionId;
 
-function loadSet(key: string): Set<string> {
+function loadSet(key: string, fallback: string[] = []): Set<string> {
   try {
     const raw = localStorage.getItem(key);
     if (raw) return new Set(JSON.parse(raw));
   } catch {
     // ignore
   }
-  return new Set();
+  return new Set(fallback);
 }
 
 function saveSet(key: string, set: Set<string>) {
@@ -44,7 +44,9 @@ const NavPrefsContext = createContext<NavPrefsContextValue | null>(null);
 
 export function NavPrefsProvider({ children }: { children: ReactNode }) {
   const [hiddenItems, setHiddenItems] = useState<Set<string>>(() => loadSet(HIDDEN_KEY));
-  const [hiddenSections, setHiddenSections] = useState<Set<string>>(() => loadSet(HIDDEN_SECTIONS_KEY));
+  // Planning is off by default — it stays out of the sidebar until the user
+  // explicitly enables it in Settings (then the toggle reveals it).
+  const [hiddenSections, setHiddenSections] = useState<Set<string>>(() => loadSet(HIDDEN_SECTIONS_KEY, ['planning']));
   const [focus, setFocusState] = useState<Focus>(() => {
     try {
       const stored = localStorage.getItem(FOCUS_KEY);

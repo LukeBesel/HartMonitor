@@ -24,7 +24,9 @@ const Analytics        = lazy(() => import('./pages/Analytics'));
 const Stations         = lazy(() => import('./pages/Stations'));
 const Schedule         = lazy(() => import('./pages/Schedule'));
 const DepartmentView   = lazy(() => import('./pages/DepartmentView'));
+const DepartmentTV     = lazy(() => import('./pages/DepartmentTV'));
 const Departments      = lazy(() => import('./pages/Departments'));
+const SQDC             = lazy(() => import('./pages/SQDC'));
 const StationView      = lazy(() => import('./pages/StationView'));
 const ManagerView      = lazy(() => import('./pages/ManagerView'));
 const CompletionDetail = lazy(() => import('./pages/CompletionDetail'));
@@ -67,6 +69,25 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// The management/report portal. Operators are shop-floor only — bounce them to
+// the Operator Portal instead of analytics, settings, etc.
+function ReportPortalRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading, canAccessReportPortal } = useAuth();
+  if (loading) return <Spinner />;
+  if (!user) return <Navigate to="/login" replace />;
+  if (!canAccessReportPortal) return <Navigate to="/operator" replace />;
+  return <>{children}</>;
+}
+
+// The Operator Portal. Open to every role except view-only viewers.
+function OperatorRoute({ children }: { children: React.ReactNode }) {
+  const { user, loading, canAccessOperatorPortal } = useAuth();
+  if (loading) return <Spinner />;
+  if (!user) return <Navigate to="/login" replace />;
+  if (!canAccessOperatorPortal) return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+}
+
 export default function App() {
   return (
     <AuthProvider>
@@ -90,12 +111,13 @@ export default function App() {
 
               <Route path="/login" element={<Login />} />
               <Route path="/sso/callback" element={<SSOCallback />} />
-              <Route path="/play/:id" element={<ProtectedRoute><AppPlayer /></ProtectedRoute>} />
-              <Route path="/operator" element={<ProtectedRoute><OperatorPortal /></ProtectedRoute>} />
+              <Route path="/play/:id" element={<OperatorRoute><AppPlayer /></OperatorRoute>} />
+              <Route path="/operator" element={<OperatorRoute><OperatorPortal /></OperatorRoute>} />
+              <Route path="/departments/:id/tv" element={<ProtectedRoute><DepartmentTV /></ProtectedRoute>} />
               <Route path="/leaderboard/tv" element={<ProtectedRoute><LeaderboardTV /></ProtectedRoute>} />
 
-              {/* Protected app — lives under /dashboard and friends */}
-              <Route element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+              {/* Management / report portal — operators are redirected to the floor */}
+              <Route element={<ReportPortalRoute><Layout /></ReportPortalRoute>}>
                 <Route path="/dashboard" element={<Dashboard />} />
                 <Route path="/apps" element={<AppsLibrary />} />
                 <Route path="/apps/:id/build" element={<AppBuilder />} />
@@ -103,6 +125,7 @@ export default function App() {
                 <Route path="/tables" element={<Tables />} />
                 <Route path="/tables/:id" element={<TableDetail />} />
                 <Route path="/analytics" element={<Analytics />} />
+                <Route path="/sqdc" element={<SQDC />} />
                 <Route path="/stations" element={<Stations />} />
                 <Route path="/stations/:id" element={<StationView />} />
                 <Route path="/schedule" element={<Schedule />} />

@@ -2,14 +2,19 @@ import { useState } from 'react';
 
 const HIDDEN_KEY = 'hm_hidden_dashboard';
 
-export type DashboardSectionId = 'attention' | 'kpis' | 'due_soon' | 'output' | 'quick_actions';
+export type DashboardSectionId =
+  | 'attention' | 'kpis' | 'floor' | 'floor_departments' | 'floor_throughput'
+  | 'floor_activity' | 'due_soon' | 'output';
 
 export const DASHBOARD_SECTIONS: { id: DashboardSectionId; label: string; description: string }[] = [
-  { id: 'attention',     label: 'Needs Attention',  description: 'Overdue work orders, down stations, critical alerts' },
-  { id: 'kpis',          label: 'Key Metrics',       description: 'Completed today, schedule adherence, pass rate, active now' },
-  { id: 'due_soon',      label: 'Due in 48 Hours',   description: 'Work orders coming due soon' },
-  { id: 'output',        label: 'Output Chart',      description: 'Completions over the last 7 days' },
-  { id: 'quick_actions', label: 'Quick Actions',     description: 'Shortcuts to common tasks' },
+  { id: 'attention',         label: 'Needs Attention',     description: 'Overdue work orders, down stations, critical alerts' },
+  { id: 'kpis',              label: 'Key Metrics',          description: 'Completed today, schedule adherence, pass rate, active now' },
+  { id: 'floor',             label: 'Live Floor View',      description: 'Real-time plant status section (master toggle)' },
+  { id: 'floor_departments', label: '— Department Cards',   description: 'Live performance by department inside the floor view' },
+  { id: 'floor_throughput',  label: '— Hourly Throughput',  description: 'Units-per-hour chart inside the floor view' },
+  { id: 'floor_activity',    label: '— Alerts & Completions', description: 'Active alerts and recent completions inside the floor view' },
+  { id: 'due_soon',          label: 'Due in 48 Hours',      description: 'Work orders coming due soon' },
+  { id: 'output',            label: 'Output Chart',         description: 'Completions over the last 7 days' },
 ];
 
 function loadHidden(): Set<DashboardSectionId> {
