@@ -4,9 +4,10 @@ import { api } from '../api/client';
 import { App } from '../types';
 import {
   Plus, Play, Edit3, Trash2, Search, CheckCircle,
-  Clock, FileText, MoreVertical, Globe, Lock, Copy, Download, RefreshCw, Database
+  Clock, FileText, MoreVertical, Globe, Lock, Copy, Download, RefreshCw, Database, AppWindow
 } from 'lucide-react';
 import UpgradeModal from '../components/shared/UpgradeModal';
+import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import { usePlan } from '../context/PlanContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -77,6 +78,19 @@ export default function AppsLibrary() {
 
   return (
     <div className="p-6 space-y-6">
+      <ModuleOnboarding
+        moduleId="apps"
+        title="App Library"
+        description="Apps are digital work instructions and data-collection forms. Build them once, run them on any station."
+        steps={[
+          "Browse published apps in the library",
+          "Click an app to preview its steps",
+          "Use App Builder to create or edit apps",
+          "Publish when ready — operators see it instantly",
+        ]}
+        icon={AppWindow}
+        color="#8b5cf6"
+      />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">App Library</h1>

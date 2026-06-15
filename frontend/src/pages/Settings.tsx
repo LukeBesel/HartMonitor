@@ -48,6 +48,9 @@ import {
   Tablet,
   PlayCircle,
   BarChart3,
+  CalendarRange,
+  Cpu,
+  GitBranch,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme, THEME_PRESETS, Theme, buildCustomTheme, applySecondary } from '../context/ThemeContext';
@@ -139,9 +142,10 @@ const FREE_FEATURES = [
 ];
 
 const PRO_FEATURES = [
-  'Unlimited production apps',
-  'Unlimited dashboards',
-  'Advanced analytics & OEE',
+  'Up to 50 production apps',
+  'Up to 10 dashboards',
+  'Product Routing & Scheduling',
+  'OEE Tracker & advanced analytics',
   'Full data export (JSON bundle)',
   'Purchase orders & vendors',
   'NCR / Quality management',
@@ -286,22 +290,22 @@ function CompanyTab() {
             <label className="block text-xs font-medium text-gray-700 mb-1">Logo URL</label>
             <input
               className="input-field w-full"
-              placeholder="https://example.com/logo.png"
+              placeholder="https://example.com/logo.png (direct image URL)"
               value={form.logo_url}
               onChange={set('logo_url')}
             />
             <p className="text-xs text-gray-400 mt-1">
-              Shown in the top-left of the sidebar in place of the default mark. "Powered by HartMonitor" stays visible underneath.
+              Must be a direct image URL (ending in .png, .jpg, .svg, etc.). Shown in the top-left of the sidebar in place of the default mark.
             </p>
             {form.logo_url && (
               <div className="mt-2 flex items-center gap-3">
                 <img
                   src={form.logo_url}
-                  alt="Company logo preview"
-                  className="h-10 rounded border border-gray-200 bg-gray-50 object-contain"
-                  onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+                  alt="Logo preview"
+                  className="w-12 h-12 rounded-xl object-contain bg-gray-100 border border-gray-200"
+                  onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
                 />
-                <span className="text-xs text-gray-400">Logo preview</span>
+                <span className="text-xs text-gray-500">Logo preview (enter a direct image URL)</span>
               </div>
             )}
           </div>
@@ -803,6 +807,44 @@ function PlanTab() {
               onRemove={() => handleRemoveAddon('dashboard_slot')}
             />
           </div>
+        </div>
+      )}
+
+      {/* Pro feature preview for Free accounts */}
+      {isFree && (
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5">
+          <div className="flex items-center gap-2 mb-3">
+            <Star size={16} className="text-amber-500" />
+            <h3 className="text-sm font-semibold text-amber-900">Unlock Pro Features</h3>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
+            {([
+              { icon: GitBranch,   label: 'Product Routing',      desc: 'Step-by-step manufacturing sequences with cycle times' },
+              { icon: Cpu,         label: 'OEE Tracker',          desc: 'Overall Equipment Effectiveness tracking and reporting' },
+              { icon: Package,     label: 'Inventory',            desc: 'Manage raw materials, WIP, and finished goods' },
+              { icon: ShoppingCart,label: 'Purchasing',           desc: 'Purchase orders and vendor management' },
+              { icon: ShieldCheck, label: 'NCR / Quality',        desc: 'Non-conformance reporting and resolution workflow' },
+              { icon: BarChart3,   label: 'Advanced Analytics',   desc: 'Deep throughput and efficiency reports' },
+              { icon: AppWindow,   label: '50 App Slots',         desc: 'Scale up to 50 production apps' },
+              { icon: LayoutGrid,  label: '10 Dashboard Slots',   desc: 'Build up to 10 custom dashboards' },
+              { icon: CalendarRange, label: 'Scheduling & Planning', desc: 'Manager view, capacity planning, work order scheduling' },
+              { icon: ClipboardList, label: 'Tables & Data',       desc: 'Custom data tables with full import/export' },
+            ] as Array<{ icon: React.ElementType; label: string; desc: string }>).map(({ icon: Icon, label, desc }) => (
+              <div key={label} className="flex items-start gap-2.5 p-2.5 bg-white rounded-xl border border-amber-100">
+                <Icon size={15} className="text-amber-500 flex-shrink-0 mt-0.5" />
+                <div>
+                  <div className="text-xs font-semibold text-gray-800">{label}</div>
+                  <div className="text-[11px] text-gray-500">{desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <button
+            onClick={() => tiers && startPurchase({ kind: 'tier', tier: 'pro', name: 'Pro Plan', quantity: 1, unitPrice: tiers.pro?.monthly_price ?? 299 })}
+            className="w-full py-2.5 rounded-xl text-sm font-semibold bg-amber-500 hover:bg-amber-600 text-white transition-colors"
+          >
+            Upgrade to Pro — $299/month
+          </button>
         </div>
       )}
 

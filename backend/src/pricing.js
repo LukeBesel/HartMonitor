@@ -16,9 +16,9 @@ const PRICING = {
     pro: {
       name: 'Pro',
       monthly_price: 299,
-      app_limit: -1,
-      dashboard_limit: -1,
-      features: ['Unlimited Apps', 'Unlimited Dashboards', 'Inventory Management', 'Purchasing & Vendors', 'Quality / NCR Management', 'Full Data Export (CSV/JSON)', 'Advanced Analytics', 'Priority Support'],
+      app_limit: 50,
+      dashboard_limit: 10,
+      features: ['Up to 50 production apps', 'Up to 10 dashboards', 'Product Routing & Scheduling', 'Inventory Management', 'Purchasing & Vendors', 'Quality / NCR Management', 'OEE Tracker', 'Full Data Export (CSV/JSON)', 'Advanced Analytics', 'Priority Support'],
     },
     enterprise: {
       name: 'Enterprise',

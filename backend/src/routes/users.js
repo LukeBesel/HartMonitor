@@ -15,7 +15,8 @@ router.use(requireAuth, requireRole('manager'));
 
 router.get('/', (req, res) => {
   const users = db.prepare(`
-    SELECT id, email, display_name, role, is_active, last_login, created_at, updated_at
+    SELECT id, email, display_name, role, is_active, last_login, created_at, updated_at,
+           department_id, job_title
     FROM users WHERE company_id = ? ORDER BY CASE role
       WHEN 'developer' THEN 1 WHEN 'manager' THEN 2 WHEN 'supervisor' THEN 3
       WHEN 'operator' THEN 4 ELSE 5 END, display_name
@@ -46,8 +47,10 @@ router.post('/', requireRole('developer'), (req, res) => {
 // ─── GET /:id — get user ──────────────────────────────────────────────────────
 
 router.get('/:id', (req, res) => {
-  const user = db.prepare('SELECT id, email, display_name, role, is_active, last_login, created_at FROM users WHERE id = ? AND company_id = ?')
-    .get(req.params.id, req.companyId);
+  const user = db.prepare(`
+    SELECT id, email, display_name, role, is_active, last_login, created_at, department_id, job_title
+    FROM users WHERE id = ? AND company_id = ?
+  `).get(req.params.id, req.companyId);
   if (!user) return res.status(404).json({ error: 'Not found' });
   res.json(user);
 });
@@ -58,7 +61,7 @@ router.put('/:id', requireRole('developer'), (req, res) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!user) return res.status(404).json({ error: 'Not found' });
 
-  const { email, display_name, role, is_active, password } = req.body;
+  const { email, display_name, role, is_active, password, department_id, job_title } = req.body;
   if (role && !VALID_ROLES.includes(role)) return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
 
   const updates = {
@@ -67,6 +70,8 @@ router.put('/:id', requireRole('developer'), (req, res) => {
     role: role ?? user.role,
     is_active: is_active !== undefined ? (is_active ? 1 : 0) : user.is_active,
     password_hash: password ? hashPassword(password) : user.password_hash,
+    department_id: department_id !== undefined ? (department_id || null) : user.department_id,
+    job_title: job_title !== undefined ? job_title : (user.job_title ?? ''),
   };
 
   // Can't deactivate the last developer in the organization
@@ -76,8 +81,8 @@ router.put('/:id', requireRole('developer'), (req, res) => {
     if (devCount === 0) return res.status(409).json({ error: 'Cannot deactivate the last developer account' });
   }
 
-  db.prepare(`UPDATE users SET email=?, display_name=?, role=?, is_active=?, password_hash=?, updated_at=datetime('now') WHERE id=?`)
-    .run(updates.email, updates.display_name, updates.role, updates.is_active, updates.password_hash, req.params.id);
+  db.prepare(`UPDATE users SET email=?, display_name=?, role=?, is_active=?, password_hash=?, department_id=?, job_title=?, updated_at=datetime('now') WHERE id=?`)
+    .run(updates.email, updates.display_name, updates.role, updates.is_active, updates.password_hash, updates.department_id, updates.job_title, req.params.id);
 
   if (password) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(req.params.id);
 
@@ -88,7 +93,7 @@ router.put('/:id', requireRole('developer'), (req, res) => {
     logActivity(req.companyId, 'user', req.params.id, `User "${updates.display_name}" ${updates.is_active ? 'activated' : 'deactivated'}`, req.user.display_name);
   }
 
-  res.json(db.prepare('SELECT id, email, display_name, role, is_active, last_login, created_at, updated_at FROM users WHERE id = ?').get(req.params.id));
+  res.json(db.prepare('SELECT id, email, display_name, role, is_active, last_login, created_at, updated_at, department_id, job_title FROM users WHERE id = ?').get(req.params.id));
 });
 
 // ─── DELETE /:id — delete user ────────────────────────────────────────────────

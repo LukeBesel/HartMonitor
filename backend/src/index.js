@@ -40,6 +40,8 @@ const developerRouter    = require('./routes/developer');
 const notificationsRouter = require('./routes/notifications');
 const v1Router           = require('./routes/v1');
 const gameRouter         = require('./routes/game');
+const routingsRouter     = require('./routes/routings');
+const uploadRouter       = require('./routes/upload');
 const { requireAuth }    = require('./middleware/auth');
 const { requirePlan }    = require('./middleware/plan');
 const { apiKeyAuth }     = require('./middleware/apiKeyAuth');
@@ -165,7 +167,7 @@ app.use('/api/analytics',     analyticsRouter);
 app.use('/api/work-orders',   writeRole('supervisor'), workOrdersRouter);
 app.use('/api/departments',   writeRole('supervisor'), departmentsRouter);
 app.use('/api/product-types', writeRole('supervisor'), productTypesRouter);
-app.use('/api/oee',           oeeRouter);
+app.use('/api/oee',           requirePlan('pro'), oeeRouter);
 app.use('/api/dashboards',    writeRole('supervisor'), dashboardsRouter);
 // Pro-tier features — enforced at the API layer, not just hidden in the UI.
 // Operators can file NCRs from the floor; resolving/deleting them needs supervisor (guarded inside).
@@ -182,11 +184,17 @@ app.use('/api/sites',         sitesRouter);
 app.use('/api/permissions',   permissionsRouter);
 app.use('/api/developer',     developerRouter);
 app.use('/api/notifications', notificationsRouter);
+app.use('/api/routings',      requirePlan('pro'), routingsRouter);
+app.use('/api/upload',        uploadRouter);
 
 // Unknown API routes return JSON 404 (not the SPA shell).
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));
 
 // ─── Static frontend + SPA fallback ───────────────────────────────────────────
+const uploadsDir = path.join(__dirname, '..', 'uploads');
+require('fs').mkdirSync(uploadsDir, { recursive: true });
+app.use('/uploads', express.static(uploadsDir));
+
 const frontendDist = path.join(__dirname, '..', '..', 'frontend', 'dist');
 app.use(express.static(frontendDist));
 app.get('*', (_req, res) => {

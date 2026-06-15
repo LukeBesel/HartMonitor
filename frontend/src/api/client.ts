@@ -403,4 +403,20 @@ export const api = {
 
   // ── SSO
   getSSOProviders: () => request<SSOProviderInfo[]>('/auth/sso/providers'),
+
+  // ── Product Routings
+  getRoutings: () => request<any[]>('/routings'),
+  getRouting: (id: string) => request<any>(`/routings/${id}`),
+  createRouting: (data: any) => request<any>('/routings', { method: 'POST', body: JSON.stringify(data) }),
+  updateRouting: (id: string, data: any) => request<any>(`/routings/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteRouting: (id: string) => request<any>(`/routings/${id}`, { method: 'DELETE' }),
+  createRoutingStep: (routingId: string, data: any) => request<any>(`/routings/${routingId}/steps`, { method: 'POST', body: JSON.stringify(data) }),
+  updateRoutingStep: (routingId: string, stepId: string, data: any) => request<any>(`/routings/${routingId}/steps/${stepId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteRoutingStep: (routingId: string, stepId: string) => request<any>(`/routings/${routingId}/steps/${stepId}`, { method: 'DELETE' }),
+  reorderRoutingSteps: (routingId: string, steps: { id: string; step_number: number }[]) =>
+    request<any>(`/routings/${routingId}/steps/reorder`, { method: 'PUT', body: JSON.stringify({ steps }) }),
+
+  // ── File upload
+  uploadImage: (data: string, mimeType: string, filename: string) =>
+    request<{ url: string }>('/upload/image', { method: 'POST', body: JSON.stringify({ data, mimeType, filename }) }),
 };

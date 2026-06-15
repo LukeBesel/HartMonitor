@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Station, App, Department } from '../types';
 import { Plus, Trash2, Monitor, Edit3, X, Check, Play, MapPin, Activity } from 'lucide-react';
+import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import { useSite } from '../context/SiteContext';
 
 const STATUS_COLORS: Record<Station['status'], string> = {
@@ -59,6 +60,19 @@ export default function Stations() {
 
   return (
     <div className="p-6 space-y-6">
+      <ModuleOnboarding
+        moduleId="stations"
+        title="Stations"
+        description="Stations are your physical workstations linked to apps. Configure each station's ideal cycle time and shift hours."
+        steps={[
+          "Create a station for each physical workstation",
+          "Assign an app to define what operators see",
+          "Set ideal cycle time for OEE tracking",
+          "Monitor status from Plant View or Command Center",
+        ]}
+        icon={Monitor}
+        color="#f59e0b"
+      />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Stations</h1>

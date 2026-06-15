@@ -9,6 +9,7 @@ import {
 import { api } from '../api/client';
 import SavedViewsBar from '../components/shared/SavedViewsBar';
 import BarcodeScannerModal from '../components/shared/BarcodeScannerModal';
+import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import { useSite } from '../context/SiteContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -744,6 +745,19 @@ export default function Inventory() {
 
   return (
     <div className="p-6 space-y-5 bg-[#f8fafc] min-h-full">
+      <ModuleOnboarding
+        moduleId="inventory"
+        title="Inventory"
+        description="Inventory tracks your raw materials, WIP, and finished goods across storage locations."
+        steps={[
+          "Add items with SKU, unit of measure, and reorder point",
+          "Set up storage locations for each area of the plant",
+          "Record stock movements as materials flow",
+          "Reorder alerts trigger when stock falls below minimum",
+        ]}
+        icon={Package}
+        color="#f97316"
+      />
       {/* Modals */}
       {showItemModal && (
         <ItemModal
