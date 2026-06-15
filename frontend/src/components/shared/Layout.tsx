@@ -61,7 +61,7 @@ export default function Layout() {
   const { isFree, isEnterprise } = usePlan();
   const { user, logout } = useAuth();
   const { companyName, logoUrl } = useBranding();
-  const { isItemHidden, isSectionHidden, focus, setFocus } = useNavPrefs();
+  const { isItemHidden, isSectionHidden, focus, setFocus, itemOrder, showProSidebar } = useNavPrefs();
   const { canShowNavItem } = usePermissions();
   const [logoError, setLogoError] = useState(false);
   const navigate = useNavigate();
@@ -71,8 +71,18 @@ export default function Layout() {
   // desktop-only "collapsed" preference.
   const effectiveCollapsed = collapsed && isDesktop;
 
-  // Developer preview: show pro sidebar items even for free users when toggle is on
-  const showProSidebar = localStorage.getItem('hm_show_pro_sidebar') === 'true';
+  // Apply any developer-defined custom ordering to a section's items.
+  const orderItems = (sectionId: string, items: NavItem[]): NavItem[] => {
+    const order = itemOrder[sectionId];
+    if (!order || order.length === 0) return items;
+    return [...items].sort((a, b) => {
+      const ia = order.indexOf(a.to); const ib = order.indexOf(b.to);
+      if (ia === -1 && ib === -1) return 0;
+      if (ia === -1) return 1;
+      if (ib === -1) return -1;
+      return ia - ib;
+    });
+  };
 
   // Sections the user has kept enabled in Settings. Planning is off by default
   // (see NavPrefsContext) but once a user enables it, the toggle reveals it
@@ -98,25 +108,8 @@ export default function Layout() {
   };
 
   const renderItem = (item: NavItem) => {
-    const { to, icon: Icon, label, exact, proOnly, standalone } = item;
+    const { to, icon: Icon, label, exact, proOnly } = item;
     const isLocked = proOnly && isFree;
-    // Standalone launchers (e.g. the operator kiosk) get an accented, button-like
-    // treatment so they stand out as the "go here to start working" entry point.
-    if (standalone) {
-      return (
-        <NavLink
-          key={to}
-          to={to}
-          title={effectiveCollapsed ? label : undefined}
-          className={`flex items-center rounded-xl text-sm font-semibold transition-all border border-blue-500/30 bg-blue-500/10 text-blue-200 hover:bg-blue-500/20 hover:text-white ${
-            effectiveCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
-          }`}
-        >
-          <Icon size={15} className="flex-shrink-0" />
-          {!effectiveCollapsed && <span className="flex-1">{label}</span>}
-        </NavLink>
-      );
-    }
     // Locked Pro items open the upgrade modal (only shown when developer preview is on)
     if (isLocked) {
       return (
@@ -256,21 +249,15 @@ export default function Layout() {
           </div>
         )}
 
-        {/* Site switcher — only rendered for multi-site orgs */}
-        {!effectiveCollapsed && (
-          <div className="px-2 pt-2">
-            <SiteSwitcher />
-          </div>
-        )}
-
         <nav className="flex-1 p-2 overflow-y-auto space-y-4 mt-1">
-          {/* Pinned items (e.g. Command Center) — always shown */}
-          <div className="space-y-0.5">
-            {PINNED_ITEMS.filter(canShow).map(renderItem)}
-          </div>
+          {PINNED_ITEMS.filter(canShow).length > 0 && (
+            <div className="space-y-0.5">
+              {PINNED_ITEMS.filter(canShow).map(renderItem)}
+            </div>
+          )}
 
           {visibleSections.map(section => {
-            const items = section.items.filter(canShow);
+            const items = orderItems(section.id, section.items).filter(canShow);
             if (items.length === 0) return null;
             return (
               <div key={section.id}>
@@ -290,6 +277,13 @@ export default function Layout() {
         </nav>
 
         <div className="p-2 border-t border-white/10 flex-shrink-0 space-y-0.5">
+          {/* Site switcher — the active plant, anchored at the bottom of the bar */}
+          {!effectiveCollapsed && (
+            <div className="pb-1.5">
+              <SiteSwitcher />
+            </div>
+          )}
+
           {/* Collapse toggle is a desktop-only concept — the mobile drawer is always expanded */}
           <button
             onClick={() => setCollapsed(c => !c)}

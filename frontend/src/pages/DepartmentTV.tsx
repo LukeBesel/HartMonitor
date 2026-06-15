@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import {
   Activity, CheckCircle2, Calendar, AlertTriangle, Crown, Medal, Award,
-  X, Building2,
+  X, Building2, Timer,
 } from 'lucide-react';
 import {
   BarChart, Bar, ResponsiveContainer, XAxis, Tooltip, Cell,
@@ -18,6 +18,11 @@ interface TVData {
   hourly: { hour: string; count: number }[];
   issues: { type: string; label: string; detail: string }[];
   leaderboard: { operator_name: string; app_name?: string; duration_minutes: number }[];
+  behind_takt?: {
+    work_order_number: string; operator_name: string; station: string;
+    takt_minutes: number; over_by_minutes: number; live: boolean;
+  }[];
+  any_behind?: boolean;
 }
 
 const RANK_ICON: Record<number, React.ReactNode> = {
@@ -52,10 +57,10 @@ function Tile({
   icon: Icon, value, label, accent,
 }: { icon: React.ElementType; value: number; label: string; accent: string }) {
   return (
-    <div className="flex-1 bg-white/5 border border-white/10 rounded-3xl px-8 py-7 flex flex-col items-center justify-center">
-      <Icon size={32} style={{ color: accent }} className="mb-3" />
-      <div className="text-7xl font-bold tabular-nums tracking-tight">{value}</div>
-      <div className="text-sm uppercase tracking-[0.2em] text-white/40 mt-2">{label}</div>
+    <div className="flex-1 bg-white/5 border border-white/10 rounded-3xl px-6 py-5 flex flex-col items-center justify-center">
+      <Icon size={26} style={{ color: accent }} className="mb-2" />
+      <div className="text-6xl font-bold tabular-nums tracking-tight leading-none">{value}</div>
+      <div className="text-xs uppercase tracking-[0.2em] text-white/40 mt-2">{label}</div>
     </div>
   );
 }
@@ -85,21 +90,23 @@ export default function DepartmentTV() {
 
   const accent = data?.department.color || '#6366f1';
   const maxHour = Math.max(1, ...(data?.hourly.map(h => h.count) ?? [1]));
+  const behind = data?.behind_takt ?? [];
+  const anyBehind = !!data?.any_behind && behind.length > 0;
 
   return (
-    <div className="min-h-screen w-full bg-slate-950 text-white flex flex-col overflow-hidden">
+    <div className="h-screen w-full bg-slate-950 text-white flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-12 py-7 border-b border-white/10">
-        <div className="flex items-center gap-5">
+      <div className="flex-shrink-0 flex items-center justify-between px-10 py-4 border-b border-white/10">
+        <div className="flex items-center gap-4">
           <div
-            className="w-16 h-16 rounded-2xl flex items-center justify-center"
+            className="w-12 h-12 rounded-2xl flex items-center justify-center"
             style={{ backgroundColor: `${accent}33`, color: accent }}
           >
-            <Building2 size={32} />
+            <Building2 size={26} />
           </div>
           <div>
-            <h1 className="text-5xl font-bold tracking-tight">{data?.department.name ?? 'Department'}</h1>
-            <p className="text-white/40 mt-1 flex items-center gap-3">
+            <h1 className="text-4xl font-bold tracking-tight leading-none">{data?.department.name ?? 'Department'}</h1>
+            <p className="text-white/40 mt-1 flex items-center gap-3 text-sm">
               {data?.department.manager_name && <span>{data.department.manager_name}</span>}
               <span className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
@@ -108,20 +115,41 @@ export default function DepartmentTV() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-8">
+        <div className="flex items-center gap-6">
           <div className="text-right">
-            <div className="text-5xl font-mono font-bold tabular-nums">
+            <div className="text-4xl font-mono font-bold tabular-nums leading-none">
               {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
             </div>
-            <div className="text-sm text-white/40">
+            <div className="text-xs text-white/40 mt-1">
               {now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
             </div>
           </div>
           <Link to={`/departments/${id ?? ''}`} className="text-white/30 hover:text-white/70 transition-colors">
-            <X size={26} />
+            <X size={24} />
           </Link>
         </div>
       </div>
+
+      {/* Behind-takt alert banner */}
+      {anyBehind && (
+        <div className="flex-shrink-0 bg-red-600 animate-pulse px-10 py-3 flex items-center gap-5 border-b border-red-400/40">
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <Timer size={28} className="text-white" />
+            <span className="text-2xl font-extrabold tracking-wide uppercase">Behind Takt</span>
+            <span className="bg-white/25 text-white text-sm font-bold px-2.5 py-0.5 rounded-full">{behind.length}</span>
+          </div>
+          <div className="flex items-center gap-3 overflow-x-auto">
+            {behind.slice(0, 4).map((b, i) => (
+              <div key={i} className="flex-shrink-0 bg-white/15 rounded-xl px-4 py-1.5">
+                <span className="font-bold">{b.work_order_number}</span>
+                <span className="text-white/80 text-sm"> · {b.operator_name} @ {b.station}</span>
+                <span className="ml-2 font-bold tabular-nums">+{b.over_by_minutes}m</span>
+                <span className="text-white/70 text-xs"> over {b.takt_minutes}m takt{b.live ? ' (live)' : ''}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {error && !data ? (
         <div className="flex-1 flex items-center justify-center text-white/40 text-2xl">
@@ -130,20 +158,20 @@ export default function DepartmentTV() {
       ) : !data ? (
         <div className="flex-1 flex items-center justify-center text-white/40 text-2xl">Loading…</div>
       ) : (
-        <div className="flex-1 grid grid-cols-3 gap-8 p-12">
+        <div className="flex-1 min-h-0 grid grid-cols-3 gap-6 p-6">
           {/* Left + center column: tiles, chart, issues */}
-          <div className="col-span-2 flex flex-col gap-8">
+          <div className="col-span-2 flex flex-col gap-6 min-h-0">
             {/* Status tiles */}
-            <div className="flex gap-8">
+            <div className="flex gap-6 flex-shrink-0">
               <Tile icon={Activity} value={data.status.running} label="Running Now" accent="#38bdf8" />
               <Tile icon={CheckCircle2} value={data.status.completed_today} label="Completed Today" accent="#34d399" />
               <Tile icon={Calendar} value={data.status.upcoming} label="Upcoming" accent="#fbbf24" />
             </div>
 
             {/* Hourly throughput chart */}
-            <div className="flex-1 bg-white/5 border border-white/10 rounded-3xl p-8 flex flex-col">
-              <h2 className="text-xl font-semibold text-white/70 mb-4">Hourly Throughput</h2>
-              <div className="flex-1 min-h-[220px]">
+            <div className="flex-1 min-h-0 bg-white/5 border border-white/10 rounded-3xl p-6 flex flex-col">
+              <h2 className="text-lg font-semibold text-white/70 mb-3 flex-shrink-0">Hourly Throughput</h2>
+              <div className="flex-1 min-h-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={data.hourly} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
                     <XAxis
@@ -169,10 +197,10 @@ export default function DepartmentTV() {
             </div>
 
             {/* Issues */}
-            <div className="bg-white/5 border border-white/10 rounded-3xl p-8">
-              <div className="flex items-center gap-3 mb-4">
-                <AlertTriangle size={22} className="text-red-400" />
-                <h2 className="text-xl font-semibold text-white/70">Active Issues</h2>
+            <div className="flex-shrink-0 bg-white/5 border border-white/10 rounded-3xl p-5">
+              <div className="flex items-center gap-3 mb-3">
+                <AlertTriangle size={20} className="text-red-400" />
+                <h2 className="text-lg font-semibold text-white/70">Active Issues</h2>
                 {data.issues.length > 0 && (
                   <span className="bg-red-500/20 text-red-300 text-sm font-bold px-3 py-0.5 rounded-full">
                     {data.issues.length}
@@ -180,18 +208,18 @@ export default function DepartmentTV() {
                 )}
               </div>
               {data.issues.length === 0 ? (
-                <div className="flex items-center gap-3 text-emerald-400 text-xl">
-                  <CheckCircle2 size={24} />
+                <div className="flex items-center gap-3 text-emerald-400 text-lg">
+                  <CheckCircle2 size={22} />
                   <span>All clear — no active issues.</span>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 gap-4">
-                  {data.issues.slice(0, 6).map((iss, i) => (
-                    <div key={i} className="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-2xl px-5 py-4">
-                      <AlertTriangle size={20} className="text-red-400 mt-0.5 flex-shrink-0" />
+                <div className="grid grid-cols-2 gap-3">
+                  {data.issues.slice(0, 4).map((iss, i) => (
+                    <div key={i} className="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-2xl px-4 py-3">
+                      <AlertTriangle size={18} className="text-red-400 mt-0.5 flex-shrink-0" />
                       <div className="min-w-0">
-                        <div className="font-bold text-red-200 text-lg">{iss.label}</div>
-                        <div className="text-red-300/70 text-sm truncate">{iss.detail}</div>
+                        <div className="font-bold text-red-200 text-base">{iss.label}</div>
+                        <div className="text-red-300/70 text-xs truncate">{iss.detail}</div>
                       </div>
                     </div>
                   ))}
@@ -201,35 +229,35 @@ export default function DepartmentTV() {
           </div>
 
           {/* Right column: leaderboard */}
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-8 flex flex-col">
-            <div className="flex items-center gap-3 mb-6">
-              <Crown size={26} className="text-amber-400" />
-              <h2 className="text-2xl font-bold">Fastest Today</h2>
+          <div className="bg-white/5 border border-white/10 rounded-3xl p-6 flex flex-col min-h-0">
+            <div className="flex items-center gap-3 mb-4 flex-shrink-0">
+              <Crown size={24} className="text-amber-400" />
+              <h2 className="text-xl font-bold">Fastest Today</h2>
             </div>
             {data.leaderboard.length === 0 ? (
               <div className="flex-1 flex items-center justify-center text-white/30 text-center text-lg">
                 No completed runs yet today.
               </div>
             ) : (
-              <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-3 overflow-y-auto min-h-0">
                 {data.leaderboard.map((l, i) => {
                   const rank = i + 1;
                   return (
                     <div
                       key={`${l.operator_name}-${i}`}
-                      className={`flex items-center gap-4 rounded-2xl border px-5 py-4 ${
+                      className={`flex items-center gap-3 rounded-2xl border px-4 py-3 ${
                         RANK_RING[rank] ?? 'border-white/10 bg-white/5'
                       }`}
                     >
-                      <div className="w-10 flex items-center justify-center flex-shrink-0">
-                        {RANK_ICON[rank] ?? <span className="text-2xl font-bold text-white/30">{rank}</span>}
+                      <div className="w-9 flex items-center justify-center flex-shrink-0">
+                        {RANK_ICON[rank] ?? <span className="text-xl font-bold text-white/30">{rank}</span>}
                       </div>
                       <div className="flex-1 min-w-0">
-                        <div className="text-xl font-semibold truncate">{l.operator_name}</div>
-                        {l.app_name && <div className="text-sm text-white/40 truncate">{l.app_name}</div>}
+                        <div className="text-lg font-semibold truncate">{l.operator_name}</div>
+                        {l.app_name && <div className="text-xs text-white/40 truncate">{l.app_name}</div>}
                       </div>
                       <div
-                        className="text-2xl font-bold tabular-nums flex-shrink-0"
+                        className="text-xl font-bold tabular-nums flex-shrink-0"
                         style={{ color: rank === 1 ? '#fbbf24' : '#fff' }}
                       >
                         {fmtDuration(l.duration_minutes)}

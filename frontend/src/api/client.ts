@@ -3,6 +3,7 @@ import type {
   BroadcastMessage, MessageSeverity, PricingCatalog,
   Site, NotificationPrefs, NotificationLogEntry, RolePermissionMap, ApiKey, Webhook, WebhookDelivery,
   AuditLogEntry, SSOProviderInfo,
+  InventoryTrackerSummary, InventoryMovement,
 } from '../types';
 
 const BASE = '/api';
@@ -200,6 +201,9 @@ export const api = {
     return request<any[]>(`/inventory/items?${qs}`);
   },
   getInventorySummary: () => request<any>('/inventory/items/summary'),
+  // Richer rollup for the Inventory Tracker Overview tab (KPIs + low-stock list +
+  // stock value by category for the chart).
+  getInventoryTrackerSummary: () => request<InventoryTrackerSummary>('/inventory/summary'),
   getInventoryItem: (id: string) => request<any>(`/inventory/items/${id}`),
   createInventoryItem: (data: any) => request<any>('/inventory/items', { method: 'POST', body: JSON.stringify(data) }),
   updateInventoryItem: (id: string, data: any) => request<any>(`/inventory/items/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -219,7 +223,7 @@ export const api = {
     if (params?.movement_type) qs.set('movement_type', params.movement_type);
     if (params?.days)          qs.set('days', String(params.days));
     if (params?.limit)         qs.set('limit', String(params.limit));
-    return request<any[]>(`/inventory/movements?${qs}`);
+    return request<InventoryMovement[]>(`/inventory/movements?${qs}`);
   },
 
   // ── Purchasing
@@ -280,6 +284,17 @@ export const api = {
     const s = qs.toString();
     return request<any>(`/sqdc/department/${id}${s ? `?${s}` : ''}`);
   },
+  getSQDCDetail: (category: string, params?: { date?: string; department_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.date)          qs.set('date', params.date);
+    if (params?.department_id) qs.set('department_id', params.department_id);
+    const s = qs.toString();
+    return request<any>(`/sqdc/${category}/detail${s ? `?${s}` : ''}`);
+  },
+  createSQDCEntry: (payload: {
+    category: string; subtype?: string; department_id?: string;
+    location?: string; description?: string; value?: number | null; entry_date?: string;
+  }) => request<any>('/sqdc/entries', { method: 'POST', body: JSON.stringify(payload) }),
 
   // ── Activity log
   getActivityLog: (entityType: 'work_order' | 'purchase_order' | 'ncr', entityId: string) =>

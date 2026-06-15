@@ -4,7 +4,7 @@ import {
   Users, Cpu, LayoutGrid,
   Package, ShoppingCart, ShieldCheck, Building2,
   Factory, CalendarRange, Layers, History, Tablet, Network, GitBranch,
-  HeartPulse,
+  HeartPulse, Boxes,
 } from 'lucide-react';
 
 export type NavItem = {
@@ -19,7 +19,7 @@ export type NavItem = {
   enterpriseOnly?: boolean;
 };
 
-export type SectionId = 'production' | 'planning' | 'reporting';
+export type SectionId = 'production' | 'planning' | 'reporting' | 'inventory';
 
 export type NavSection = {
   id: SectionId;
@@ -32,13 +32,11 @@ export type NavSection = {
   proOnly?: boolean;
 };
 
-// Always visible, independent of the chosen workspace.
-export const PINNED_ITEMS: NavItem[] = [
-  { to: '/dashboard', icon: LayoutDashboard, label: 'Command Center', exact: true, pinned: true },
-];
+// Nothing is permanently pinned anymore — the Command Center lives in Production.
+export const PINNED_ITEMS: NavItem[] = [];
 
-// The app is organised into three plain-language workspaces so a new user can
-// pick the one that matches their job instead of scanning every feature.
+// The app is organised into plain-language workspaces so a new user can pick the
+// one that matches their job instead of scanning every feature.
 export const SECTIONS: NavSection[] = [
   {
     id: 'production',
@@ -46,6 +44,7 @@ export const SECTIONS: NavSection[] = [
     icon: Factory,
     description: 'Run the floor day to day',
     items: [
+      { to: '/dashboard',   icon: LayoutDashboard, label: 'Command Center', exact: true },
       { to: '/apps',        icon: AppWindow,  label: 'App Library' },
       { to: '/departments', icon: Building2,  label: 'Departments' },
       { to: '/sqdc',        icon: HeartPulse, label: 'SQDC' },
@@ -63,15 +62,23 @@ export const SECTIONS: NavSection[] = [
       { to: '/routings',   icon: GitBranch,    label: 'Routings',       proOnly: true, minRole: 'supervisor' },
       { to: '/manager',    icon: ClipboardList, label: 'Manager View',  minRole: 'manager' },
       { to: '/capacity',   icon: Users,        label: 'Capacity Plan',  minRole: 'manager' },
-      { to: '/inventory',  icon: Package,      label: 'Inventory',      proOnly: true },
-      { to: '/purchasing', icon: ShoppingCart, label: 'Purchasing',     proOnly: true, minRole: 'supervisor' },
+    ],
+  },
+  {
+    id: 'inventory',
+    label: 'Inventory',
+    icon: Boxes,
+    description: 'Track stock and purchasing',
+    items: [
+      { to: '/inventory',  icon: Package,       label: 'Inventory Tracker', proOnly: true },
+      { to: '/purchasing', icon: ShoppingCart,  label: 'Purchasing',        proOnly: true, minRole: 'supervisor' },
     ],
   },
   {
     id: 'reporting',
     label: 'Reporting',
     icon: BarChart3,
-    description: 'Analyse results and quality',
+    description: 'Analyze results and quality',
     items: [
       { to: '/dashboards',       icon: LayoutGrid,  label: 'Dashboards' },
       { to: '/leaderboard',      icon: Trophy,      label: 'Leaderboard' },
@@ -89,3 +96,4 @@ export const ALL_SECTION_ITEMS: NavItem[] = SECTIONS.flatMap(s => s.items);
 
 // Icon used for the "All" workspace option (kept for backwards compatibility but not used in UI).
 export const ALL_WORKSPACE_ICON = Layers;
+

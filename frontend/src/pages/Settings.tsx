@@ -27,6 +27,7 @@ import {
   PanelLeft,
   RotateCcw,
   ChevronDown,
+  ChevronUp,
   ChevronRight,
   Moon,
   Sun,
@@ -124,6 +125,7 @@ const MONTHS = [
 ];
 
 const PRESET_LABELS: Record<string, string> = {
+  midnight: 'Midnight (Pink Glow)',
   blue: 'Ocean Blue',
   indigo: 'Deep Indigo',
   purple: 'Royal Purple',
@@ -315,7 +317,7 @@ function CompanyTab() {
               </div>
               <div>
                 <h3 className="font-semibold text-gray-900">Change company branding?</h3>
-                <p className="text-xs text-gray-500">This affects all users in your organisation.</p>
+                <p className="text-xs text-gray-500">This affects all users in your organization.</p>
               </div>
             </div>
             <p className="text-sm text-gray-700 mb-5">
@@ -346,7 +348,7 @@ function CompanyTab() {
 
       {/* Identity */}
       <div>
-        <SectionHeader title="Identity" subtitle="Basic information about your organisation" />
+        <SectionHeader title="Identity" subtitle="Basic information about your organization" />
         {!isDeveloper && (
           <div className="mb-4 flex items-center gap-2 px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-500">
             <Key size={13} className="text-gray-400 flex-shrink-0" />
@@ -471,7 +473,7 @@ function CompanyTab() {
 
       {/* Preferences */}
       <div>
-        <SectionHeader title="Preferences" subtitle="Localisation and formatting" />
+        <SectionHeader title="Preferences" subtitle="Localization and formatting" />
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Timezone</label>
@@ -1106,7 +1108,7 @@ function ThemeTab() {
                 <AlertCircle size={20} className="text-amber-600" />
               </div>
               <div>
-                <h3 className="font-semibold text-gray-900">Change organisation theme?</h3>
+                <h3 className="font-semibold text-gray-900">Change organization theme?</h3>
                 <p className="text-xs text-gray-500">This affects all users immediately.</p>
               </div>
             </div>
@@ -1121,13 +1123,13 @@ function ThemeTab() {
       {!isDeveloper && (
         <div className="flex items-center gap-2 px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-500 mb-4">
           <Key size={13} className="text-gray-400 flex-shrink-0" />
-          Theme changes are restricted to developers. Contact your developer to update the colour scheme.
+          Theme changes are restricted to developers. Contact your developer to update the color scheme.
         </div>
       )}
 
       {/* Color Themes grid */}
       <div>
-        <SectionHeader title="Color Themes" subtitle={isDeveloper ? "Choose an accent colour for your workspace" : "Theme is set by your developer"} />
+        <SectionHeader title="Color Themes" subtitle={isDeveloper ? "Choose an accent color for your workspace" : "Theme is set by your developer"} />
         <div className={`grid grid-cols-4 gap-4 ${!isDeveloper ? 'opacity-50 pointer-events-none' : ''}`}>
           {THEME_PRESETS.map((preset) => {
             const isSelected = theme.name === preset.name;
@@ -1173,7 +1175,7 @@ function ThemeTab() {
               style={{ backgroundColor: theme.accent }}
             />
             <div className="min-w-0">
-              <div className="text-[11px] font-semibold text-gray-700">Primary colour</div>
+              <div className="text-[11px] font-semibold text-gray-700">Primary color</div>
               <div className="text-[10px] text-gray-400 truncate">{theme.accent}</div>
             </div>
             <input
@@ -1193,7 +1195,7 @@ function ThemeTab() {
               style={{ background: `linear-gradient(135deg, ${theme.accent}, ${theme.secondary})` }}
             />
             <div className="min-w-0">
-              <div className="text-[11px] font-semibold text-gray-700">Secondary colour</div>
+              <div className="text-[11px] font-semibold text-gray-700">Secondary color</div>
               <div className="text-[10px] text-gray-400 truncate">{theme.secondary}</div>
             </div>
             <input
@@ -1206,13 +1208,13 @@ function ThemeTab() {
         </div>
         )}
         <p className="text-xs text-gray-400 mt-2">
-          The secondary colour shapes branded gradients -- logos, avatars, leaderboard cards, and upgrade banners.
+          The secondary color shapes branded gradients -- logos, avatars, leaderboard cards, and upgrade banners.
         </p>
       </div>
 
       {/* Additional settings */}
       <div>
-        <SectionHeader title="Display Preferences" subtitle="Interface behaviour stored locally" />
+        <SectionHeader title="Display Preferences" subtitle="Interface behavior stored locally" />
         <div className="space-y-1 divide-y divide-gray-50">
           <div className="flex items-center justify-between py-3.5 gap-4">
             <div className="flex-1 min-w-0">
@@ -1221,7 +1223,7 @@ function ThemeTab() {
                 Dark Mode
               </div>
               <div className="text-xs text-gray-500 mt-0.5">
-                Switch the interface to a dark colour scheme
+                Switch the interface to a dark color scheme
               </div>
             </div>
             <Toggle checked={darkMode} onChange={setDarkMode} />
@@ -1231,7 +1233,7 @@ function ThemeTab() {
 
       {/* Live Preview Strip */}
       <div>
-        <SectionHeader title="Live Preview" subtitle="How your colours look across UI elements" />
+        <SectionHeader title="Live Preview" subtitle="How your colors look across UI elements" />
         <div className="rounded-xl border border-gray-100 overflow-hidden">
           <div className="px-4 py-2 bg-gray-50 text-xs font-medium text-gray-400 border-b border-gray-100 flex items-center gap-2">
             <span>{PRESET_LABELS[theme.name] ?? theme.name}</span>
@@ -1239,7 +1241,7 @@ function ThemeTab() {
             <span className="inline-flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: theme.secondary }} />{theme.secondary}</span>
           </div>
           <div className="p-4 flex flex-wrap items-center gap-3 bg-white">
-            {/* Branded gradient (uses both colours) */}
+            {/* Branded gradient (uses both colors) */}
             <div
               className="w-10 h-10 rounded-xl shadow-sm flex-shrink-0"
               style={{ background: `linear-gradient(135deg, ${theme.accent}, ${theme.secondary})` }}
@@ -1301,20 +1303,28 @@ function SidebarTab() {
     isItemHidden, toggleItem,
     isSectionHidden, toggleSection,
     focus, setFocus, resetNavPrefs,
+    itemOrder, moveItem,
+    showProSidebar, setShowProSidebar,
   } = useNavPrefs();
+  const { user } = useAuth();
+  const isDeveloper = user?.role === 'developer';
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [showProSidebar, setShowProSidebar] = useState(
-    () => localStorage.getItem('hm_show_pro_sidebar') === 'true'
-  );
 
   const enabledSections = SECTIONS.filter(s => !isSectionHidden(s.id));
   // Keep the default-view selector honest if the focused section is now hidden.
   const focusValid = enabledSections.some(s => s.id === focus);
 
-  const handleProSidebarToggle = (val: boolean) => {
-    setShowProSidebar(val);
-    if (val) localStorage.setItem('hm_show_pro_sidebar', 'true');
-    else localStorage.removeItem('hm_show_pro_sidebar');
+  // Apply the saved custom order to a section's items (matches the sidebar).
+  const orderedItems = (section: typeof SECTIONS[number]) => {
+    const order = itemOrder[section.id];
+    if (!order || order.length === 0) return section.items;
+    return [...section.items].sort((a, b) => {
+      const ia = order.indexOf(a.to); const ib = order.indexOf(b.to);
+      if (ia === -1 && ib === -1) return 0;
+      if (ia === -1) return 1;
+      if (ib === -1) return -1;
+      return ia - ib;
+    });
   };
 
   return (
@@ -1377,33 +1387,59 @@ function SidebarTab() {
             <div className="text-sm font-medium text-gray-800">Show Pro feature previews in sidebar</div>
             <div className="text-xs text-gray-500 mt-0.5">Adds locked Pro items back to the sidebar (developer use only)</div>
           </div>
-          <Toggle checked={showProSidebar} onChange={handleProSidebarToggle} />
+          <Toggle checked={showProSidebar} onChange={setShowProSidebar} />
         </div>
       </div>
 
-      {/* Advanced: per-item visibility */}
+      {/* Advanced: per-item visibility + (developers) reordering */}
       <div>
         <button
           onClick={() => setShowAdvanced(v => !v)}
           className="flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-gray-900"
         >
           {showAdvanced ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          Advanced -- show or hide individual items
+          Advanced -- show, hide{isDeveloper ? ', and reorder' : ''} individual items
         </button>
         {showAdvanced && (
           <div className="space-y-5 mt-3 pl-1">
-            {SECTIONS.map(section => (
+            {isDeveloper && (
+              <p className="text-xs text-gray-500">Use the arrows to reorder items within a section — the order is shared across your sidebar.</p>
+            )}
+            {SECTIONS.map(section => {
+              const ordered = orderedItems(section);
+              const orderPaths = ordered.map(i => i.to);
+              return (
               <div key={section.id}>
                 <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1.5">
                   <section.icon size={11} /> {section.label}
                 </div>
                 <div className="divide-y divide-gray-50">
-                  {section.items.map(item => {
+                  {ordered.map((item, idx) => {
                     const Icon = item.icon;
                     const sectionOff = isSectionHidden(section.id);
                     return (
-                      <div key={item.to} className="flex items-center justify-between py-2.5 gap-4">
+                      <div key={item.to} className="flex items-center justify-between py-2.5 gap-3">
                         <div className="flex items-center gap-2.5 min-w-0">
+                          {isDeveloper && (
+                            <div className="flex flex-col -my-1">
+                              <button
+                                onClick={() => moveItem(section.id, item.to, 'up', orderPaths)}
+                                disabled={idx === 0}
+                                className="text-gray-300 hover:text-gray-600 disabled:opacity-30 disabled:hover:text-gray-300"
+                                title="Move up"
+                              >
+                                <ChevronUp size={13} />
+                              </button>
+                              <button
+                                onClick={() => moveItem(section.id, item.to, 'down', orderPaths)}
+                                disabled={idx === ordered.length - 1}
+                                className="text-gray-300 hover:text-gray-600 disabled:opacity-30 disabled:hover:text-gray-300"
+                                title="Move down"
+                              >
+                                <ChevronDown size={13} />
+                              </button>
+                            </div>
+                          )}
                           <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
                             style={{ backgroundColor: 'var(--accent-light)', color: 'var(--accent)' }}>
                             <Icon size={14} />
@@ -1419,7 +1455,8 @@ function SidebarTab() {
                   })}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -1463,7 +1500,7 @@ const EXPORT_CARDS: ExportCard[] = [
   {
     icon: <Package size={20} />,
     title: 'Inventory',
-    description: 'Current stock levels and item catalogue',
+    description: 'Current stock levels and item catalog',
     type: 'inventory',
   },
   {
@@ -2170,7 +2207,7 @@ function WorkstationsMini({
   return (
     <div className="mt-1.5 ml-5 pl-3 border-l border-gray-100 space-y-1">
       {stations.length === 0 && !adding ? (
-        <div className="text-[11px] text-gray-300 py-0.5">No workstations</div>
+        <div className="text-[11px] text-gray-400 py-0.5">No workstations yet — add the machines/cells in this department</div>
       ) : (
         stations.map(s => (
           <div key={s.id} className="flex items-center justify-between gap-2 py-0.5">
@@ -2390,12 +2427,12 @@ function SitesTab() {
       <div className="rounded-xl bg-blue-50/60 border border-blue-100 p-3.5 flex items-start gap-2.5">
         <Network size={16} className="text-blue-500 flex-shrink-0 mt-0.5" />
         <div className="text-xs text-gray-600 leading-relaxed">
-          <span className="font-semibold text-gray-800">Set up your physical organisation here.</span> This is the one place to manage your hierarchy:
+          <span className="font-semibold text-gray-800">Set up your physical organization here.</span> This is the one place to manage your hierarchy:
           {' '}<span className="font-medium text-gray-700">Sites (facilities) → Departments → Workstations</span>. Apps and work orders are assigned to these.
         </div>
       </div>
       <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-600">Manage the sites / plants in your organisation.</p>
+        <p className="text-sm text-gray-600">Manage the sites / plants in your organization.</p>
         <button onClick={() => setModalSite(null)} className="btn-primary flex items-center gap-2">
           <Plus size={15} /> Add Site
         </button>
@@ -3841,7 +3878,7 @@ export default function SettingsPage() {
         </div>
         <div>
           <h1 className="text-xl font-bold text-gray-900 tracking-tight">Settings</h1>
-          <p className="text-xs text-gray-500 mt-0.5">Manage your account, organisation, and appearance</p>
+          <p className="text-xs text-gray-500 mt-0.5">Manage your account, organization, and appearance</p>
         </div>
       </div>
 

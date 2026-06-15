@@ -154,7 +154,7 @@ export default function Departments() {
           {selectedDeptId && (
             <Link
               to={`/departments/${selectedDeptId}/tv`}
-              className="flex items-center gap-2 px-3 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 shadow-sm"
+              className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 shadow-sm"
               title="Open full-screen TV mode for this department"
             >
               <Tv size={14} />

@@ -86,6 +86,68 @@ router.get('/items/summary', (req, res) => {
   res.json({ total_items, total_value, low_stock, categories, today_receives, today_consumes });
 });
 
+// ─── GET /summary ───────────────────────────────────────────────────────────
+// Richer rollup for the Inventory Tracker Overview tab: KPI totals, the actual
+// low-stock list, out-of-stock count, and stock value broken down by category
+// (for the chart). All scoped by company.
+
+router.get('/summary', (req, res) => {
+  const cid = req.companyId;
+
+  const rows = db.prepare(`
+    SELECT i.id, i.sku, i.name, i.category, i.unit_of_measure, i.unit_cost,
+           i.reorder_point, i.reorder_qty,
+           COALESCE(SUM(sl.quantity), 0) as total_quantity,
+           COALESCE(SUM(sl.quantity * i.unit_cost), 0) as total_value
+    FROM items i
+    LEFT JOIN stock_levels sl ON sl.item_id = i.id
+    WHERE i.is_active = 1 AND i.company_id = ?
+    GROUP BY i.id
+  `).all(cid);
+
+  const total_items = rows.length;
+  const total_value = rows.reduce((s, r) => s + r.total_value, 0);
+  const out_of_stock = rows.filter(r => r.total_quantity <= 0).length;
+  const low_stock_rows = rows
+    .filter(r => r.total_quantity <= (r.reorder_point ?? 0))
+    .sort((a, b) => (a.total_quantity - a.reorder_point) - (b.total_quantity - b.reorder_point));
+  const low_stock = low_stock_rows.length;
+
+  // Stock value by category (chart series), highest value first.
+  const byCatMap = {};
+  for (const r of rows) {
+    const cat = r.category || 'Uncategorized';
+    if (!byCatMap[cat]) byCatMap[cat] = { category: cat, value: 0, quantity: 0, items: 0 };
+    byCatMap[cat].value += r.total_value;
+    byCatMap[cat].quantity += r.total_quantity;
+    byCatMap[cat].items += 1;
+  }
+  const value_by_category = Object.values(byCatMap).sort((a, b) => b.value - a.value);
+
+  const categories = [...new Set(rows.map(r => r.category).filter(Boolean))].sort();
+
+  const today_receives = db.prepare(`
+    SELECT COUNT(*) as c FROM stock_movements sm JOIN items i ON i.id = sm.item_id
+    WHERE i.company_id = ? AND sm.movement_type = 'receive' AND date(sm.created_at) = date('now')
+  `).get(cid).c;
+  const today_consumes = db.prepare(`
+    SELECT ABS(COALESCE(SUM(sm.quantity),0)) as c FROM stock_movements sm JOIN items i ON i.id = sm.item_id
+    WHERE i.company_id = ? AND sm.movement_type = 'consume' AND date(sm.created_at) = date('now')
+  `).get(cid).c;
+
+  res.json({
+    total_items,
+    total_value,
+    low_stock,
+    out_of_stock,
+    today_receives,
+    today_consumes,
+    categories,
+    value_by_category,
+    low_stock_list: low_stock_rows.slice(0, 50),
+  });
+});
+
 // ─── GET /items/:id ───────────────────────────────────────────────────────────
 
 router.get('/items/:id', (req, res) => {
@@ -186,7 +248,7 @@ router.delete('/locations/:id', (req, res) => {
 // ─── POST /movements ──────────────────────────────────────────────────────────
 
 router.post('/movements', (req, res) => {
-  const { item_id, location_id, movement_type, quantity, unit_cost = 0,
+  const { item_id, location_id, to_location_id, movement_type, quantity, unit_cost = 0,
           reference_type = '', reference_id = '', notes = '', operator_name = '' } = req.body;
   if (!item_id || !movement_type || quantity === undefined) {
     return res.status(400).json({ error: 'item_id, movement_type, quantity required' });
@@ -197,20 +259,42 @@ router.post('/movements', (req, res) => {
     const loc = db.prepare('SELECT id FROM locations WHERE id = ? AND company_id = ?').get(location_id, req.companyId);
     if (!loc) return res.status(404).json({ error: 'Location not found' });
   }
+  if (to_location_id) {
+    const loc = db.prepare('SELECT id FROM locations WHERE id = ? AND company_id = ?').get(to_location_id, req.companyId);
+    if (!loc) return res.status(404).json({ error: 'Destination location not found' });
+  }
 
   const validTypes = ['receive', 'consume', 'adjust', 'transfer', 'ship', 'scrap', 'return'];
   if (!validTypes.includes(movement_type)) return res.status(400).json({ error: `movement_type must be one of: ${validTypes.join(', ')}` });
+  if (movement_type === 'transfer' && (!location_id || !to_location_id)) {
+    return res.status(400).json({ error: 'transfer requires both location_id (from) and to_location_id' });
+  }
 
   const id = uuidv4();
   const qty = parseFloat(quantity);
+  if (Number.isNaN(qty)) return res.status(400).json({ error: 'quantity must be a number' });
   const signedQty = ['receive', 'return'].includes(movement_type) ? Math.abs(qty)
     : ['consume', 'ship', 'scrap'].includes(movement_type) ? -Math.abs(qty)
     : qty; // adjust and transfer use signed quantity as-is
 
-  db.prepare(`INSERT INTO stock_movements (id, item_id, location_id, movement_type, quantity, unit_cost, reference_type, reference_id, notes, operator_name) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, item_id, location_id || null, movement_type, signedQty, unit_cost, reference_type, reference_id, notes, operator_name);
+  // Attribute the movement to the authenticated user (display name preferred).
+  const createdBy = (req.user && (req.user.display_name || req.user.email)) || operator_name || '';
 
-  if (location_id) updateStockLevel(item_id, location_id, signedQty);
+  // Record the movement and adjust stock levels atomically.
+  const apply = db.transaction(() => {
+    db.prepare(`INSERT INTO stock_movements (id, item_id, location_id, movement_type, quantity, unit_cost, reference_type, reference_id, notes, operator_name, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, item_id, location_id || null, movement_type, signedQty, unit_cost, reference_type, reference_id, notes, operator_name || createdBy, createdBy);
+
+    if (movement_type === 'transfer') {
+      // Move stock from `location_id` to `to_location_id` using the absolute qty.
+      const moveQty = Math.abs(qty);
+      updateStockLevel(item_id, location_id, -moveQty);
+      updateStockLevel(item_id, to_location_id, moveQty);
+    } else if (location_id) {
+      updateStockLevel(item_id, location_id, signedQty);
+    }
+  });
+  apply();
 
   // Fire a low-stock alert the moment total quantity crosses at-or-below the reorder point.
   if (item.reorder_point > 0) {

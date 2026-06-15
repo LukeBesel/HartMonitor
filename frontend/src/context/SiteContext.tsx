@@ -38,11 +38,14 @@ export function SiteProvider({ children }: { children: ReactNode }) {
     else { setSites([]); setLoading(false); }
   }, [user, refresh]);
 
-  // If the persisted site no longer exists once sites have loaded, reset to "All Sites".
+  // Always keep exactly one site selected (no "All sites"). Once sites load,
+  // fall back to the primary (or first) site if the saved one is gone / unset.
   useEffect(() => {
-    if (loading) return;
-    if (selectedSiteId && !sites.some(s => s.id === selectedSiteId)) {
-      setSelectedSiteId(null);
+    if (loading || sites.length === 0) return;
+    const valid = selectedSiteId && sites.some(s => s.id === selectedSiteId);
+    if (!valid) {
+      const primary = sites.find(s => (s as any).is_primary) ?? sites[0];
+      setSelectedSiteId(primary.id);
     }
   }, [loading, sites, selectedSiteId, setSelectedSiteId]);
 

@@ -16,7 +16,6 @@ const SEVERITY_DOT: Record<MessageSeverity, string> = {
 };
 
 const DROPDOWN_WIDTH = 340;
-const COLLAPSED_KEY = 'hm_alerts_collapsed';
 
 // A unified feed row — either a live "needs attention" alert or a team message.
 type FeedRow =
@@ -33,19 +32,16 @@ export default function AlertsBubble() {
   const navigate = useNavigate();
 
   const [open, setOpen] = useState(false);
-  // "Collapsed" tucks the bubble into a thin tab on the right edge instead of
-  // hiding it outright, so it's always one click away.
-  const [collapsed, setCollapsed] = useState(() => localStorage.getItem(COLLAPSED_KEY) === 'true');
   const [composing, setComposing] = useState(false);
   const [body, setBody] = useState('');
   const [severity, setSeverity] = useState<MessageSeverity>('info');
   const [recipientId, setRecipientId] = useState('');
   const [users, setUsers] = useState<{ id: string; display_name: string }[]>([]);
   const [sending, setSending] = useState(false);
+  // Briefly pulse the edge tab when a new notification arrives.
+  const [pulse, setPulse] = useState(false);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-
-  // Track previous badge count to force-show bubble when new notifications arrive
   const prevTotalRef = useRef(0);
 
   useEffect(() => {
@@ -64,14 +60,16 @@ export default function AlertsBubble() {
   const criticalCount = items.filter(i => i.severity === 'red').length;
   const totalBadge = items.length + unreadCount;
 
-  // Pop the bubble back out when a new notification arrives while collapsed.
+  // Pulse the tab whenever the notification count grows.
   useEffect(() => {
-    if (collapsed && totalBadge > prevTotalRef.current) {
-      setCollapsed(false);
-      localStorage.removeItem(COLLAPSED_KEY);
+    if (totalBadge > prevTotalRef.current) {
+      setPulse(true);
+      const t = setTimeout(() => setPulse(false), 2500);
+      prevTotalRef.current = totalBadge;
+      return () => clearTimeout(t);
     }
     prevTotalRef.current = totalBadge;
-  }, [totalBadge, collapsed]);
+  }, [totalBadge]);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -124,17 +122,6 @@ export default function AlertsBubble() {
     });
   };
 
-  const handleCollapse = () => {
-    setCollapsed(true);
-    setOpen(false);
-    localStorage.setItem(COLLAPSED_KEY, 'true');
-  };
-
-  const handleExpand = () => {
-    setCollapsed(false);
-    localStorage.removeItem(COLLAPSED_KEY);
-  };
-
   const handleSend = async () => {
     if (!body.trim() || sending) return;
     setSending(true);
@@ -151,62 +138,32 @@ export default function AlertsBubble() {
     }
   };
 
-  // Collapsed: a thin tab tucked against the right edge that slides the bubble
-  // back out when clicked. Always reachable, never fully gone.
-  if (collapsed) {
-    return createPortal(
+  // Position dropdown above the tab (bottom-right anchored)
+  const dropdownBottom = 80; // px from bottom
+  const dropdownRight = 16; // px from right
+
+  return createPortal(
+    <>
+      {/* Edge tab — always tucked against the right side, jutting out a little.
+          Shows a count badge and pulses when a new notification arrives. */}
       <button
-        onClick={handleExpand}
-        title="Show alerts & messages"
-        className="fixed bottom-24 right-0 z-50 flex items-center gap-1 pl-2 pr-1.5 py-2 rounded-l-xl bg-gray-900 hover:bg-gray-800 text-white shadow-lg transition-all hover:pr-2.5"
+        ref={buttonRef}
+        onClick={toggleOpen}
+        title="Alerts & Messages"
+        className={`fixed bottom-24 right-0 z-50 flex items-center gap-1.5 pl-2.5 pr-2 py-2.5 rounded-l-xl bg-gray-900 hover:bg-gray-800 text-white shadow-lg transition-all hover:pr-3 ${
+          pulse ? 'animate-pulse ring-2 ring-pink-400' : ''
+        } ${open ? 'pr-3' : ''}`}
       >
-        <ChevronLeft size={14} />
-        <Bell size={16} />
+        <ChevronLeft size={14} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+        <Bell size={17} />
         {totalBadge > 0 && (
-          <span className={`flex items-center justify-center text-[10px] font-bold rounded-full text-white min-w-[16px] h-[16px] px-1 ${
+          <span className={`flex items-center justify-center text-[10px] font-bold rounded-full text-white min-w-[17px] h-[17px] px-1 ${
             criticalCount > 0 ? 'bg-red-500' : unreadCount > 0 ? 'bg-blue-500' : 'bg-amber-500'
           }`}>
             {totalBadge > 9 ? '9+' : totalBadge}
           </span>
         )}
-      </button>,
-      document.body
-    );
-  }
-
-  // Position dropdown above the button (bottom-right anchored)
-  const dropdownBottom = 80; // px from bottom
-  const dropdownRight = 24; // px from right
-
-  return createPortal(
-    <>
-      {/* Floating bubble button */}
-      <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-2">
-        {/* Collapse-to-edge button */}
-        <button
-          onClick={handleCollapse}
-          title="Collapse to edge"
-          className="w-5 h-5 rounded-full bg-gray-700 text-gray-300 hover:text-white flex items-center justify-center text-xs transition-colors"
-        >
-          <X size={11} />
-        </button>
-
-        <button
-          ref={buttonRef}
-          onClick={toggleOpen}
-          title="Alerts & Messages"
-          className="relative w-12 h-12 rounded-full bg-gray-900 hover:bg-gray-800 text-white shadow-lg transition-all hover:shadow-xl hover:scale-105 flex items-center justify-center"
-        >
-          <Bell size={20} />
-          {totalBadge > 0 && (
-            <span className={`absolute -top-1 -right-1 flex items-center justify-center text-[10px] font-bold rounded-full text-white min-w-[18px] h-[18px] px-1 ${
-              criticalCount > 0 ? 'bg-red-500' : unreadCount > 0 ? 'bg-blue-500' : 'bg-amber-500'
-            }`}>
-              {totalBadge > 9 ? '9+' : totalBadge}
-            </span>
-          )}
-        </button>
-      </div>
+      </button>
 
       {/* Dropdown panel */}
       {open && (

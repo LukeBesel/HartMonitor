@@ -192,6 +192,7 @@ export interface StockMovement {
   movement_type: MovementType; quantity: number; unit_cost: number;
   reference_type: string; reference_id: string;
   notes: string; operator_name: string;
+  created_by?: string;
   item_name?: string; sku?: string; location_name?: string; location_code?: string;
   created_at: string;
 }
@@ -517,4 +518,45 @@ export interface BroadcastMessage {
   /** When set, the message is a direct message to this user (not company-wide). */
   recipient_id?: string | null;
   recipient_name?: string | null;
+}
+
+// ─── Inventory Tracker ────────────────────────────────────────────────────────
+
+/** A single stock movement (transaction) in the inventory ledger. Re-exports the
+ *  existing StockMovement type under the tracker's name for the Inventory page. */
+export type InventoryMovement = StockMovement;
+
+/** A low-stock row surfaced on the Overview tab. */
+export interface InventoryLowStockRow {
+  id: string;
+  sku: string;
+  name: string;
+  category: string | null;
+  unit_of_measure: string;
+  unit_cost: number;
+  reorder_point: number;
+  reorder_qty: number;
+  total_quantity: number;
+  total_value: number;
+}
+
+/** Stock value rolled up by category (Overview chart series). */
+export interface InventoryCategoryValue {
+  category: string;
+  value: number;
+  quantity: number;
+  items: number;
+}
+
+/** Rollup powering the Inventory Tracker Overview tab. */
+export interface InventoryTrackerSummary {
+  total_items: number;
+  total_value: number;
+  low_stock: number;
+  out_of_stock: number;
+  today_receives: number;
+  today_consumes: number;
+  categories: string[];
+  value_by_category: InventoryCategoryValue[];
+  low_stock_list: InventoryLowStockRow[];
 }
