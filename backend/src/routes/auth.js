@@ -202,9 +202,13 @@ router.post('/reset-password', (req, res) => {
 
 // ─── SSO ───────────────────────────────────────────────────────────────────────
 
-// GET /sso/providers — which SSO buttons to show, and whether each is live or demo.
+// GET /sso/providers — only return providers with real credentials configured.
 router.get('/sso/providers', (req, res) => {
-  res.json(Object.keys(PROVIDERS).map(id => ({ id, name: PROVIDERS[id].name, mode: isConfigured(id) ? 'live' : 'demo' })));
+  res.json(
+    Object.keys(PROVIDERS)
+      .filter(id => isConfigured(id))
+      .map(id => ({ id, name: PROVIDERS[id].name }))
+  );
 });
 
 // GET /sso/:provider/start — kick off the OAuth redirect (or demo login).

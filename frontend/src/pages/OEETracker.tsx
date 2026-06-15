@@ -230,7 +230,7 @@ export default function OEETracker() {
   const load = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
     try {
-      const data = await (api as any).getOEE();
+      const data = await api.getOEE();
       setMachines(data);
       setLastUpdated(new Date());
     } catch (err) {
@@ -248,7 +248,7 @@ export default function OEETracker() {
   }, [load]);
 
   const handleLogEvent = async (id: string, data: { event_type: string; reason: string }) => {
-    const updated = await (api as any).logOEEEvent(id, data);
+    const updated = await api.logOEEEvent(id, data);
     setMachines(prev => prev.map(m => (m.id === id ? updated : m)));
     setLastUpdated(new Date());
   };

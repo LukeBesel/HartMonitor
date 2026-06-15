@@ -53,7 +53,11 @@ const ResetPassword    = lazy(() => import('./pages/ResetPassword'));
 const AuditLog         = lazy(() => import('./pages/AuditLog'));
 const TransactionLog   = lazy(() => import('./pages/AuditLog'));
 const Facilities       = lazy(() => import('./pages/Facilities'));
-const Routings         = lazy(() => import('./pages/Routings'));
+const Routings             = lazy(() => import('./pages/Routings'));
+const ReceivingPortal      = lazy(() => import('./pages/ReceivingPortal'));
+const ShipmentTracker      = lazy(() => import('./pages/ShipmentTracker'));
+const InventoryRequirements = lazy(() => import('./pages/InventoryRequirements'));
+const Training             = lazy(() => import('./pages/Training'));
 
 function Spinner() {
   return (
@@ -145,10 +149,15 @@ export default function App() {
                 <Route path="/dashboards/:id/:mode" element={<DashboardView />} />
                 <Route path="/inventory" element={<Inventory />} />
                 <Route path="/inventory/:id" element={<Inventory />} />
+                <Route path="/receiving" element={<ReceivingPortal />} />
+                <Route path="/requirements" element={<InventoryRequirements />} />
+                <Route path="/shipments" element={<ShipmentTracker />} />
                 <Route path="/purchasing" element={<Purchasing />} />
                 <Route path="/purchasing/:tab" element={<Purchasing />} />
                 <Route path="/quality" element={<Quality />} />
                 <Route path="/quality/:id" element={<Quality />} />
+                <Route path="/training" element={<Training />} />
+                <Route path="/training/:tab" element={<Training />} />
                 <Route path="/leaderboard" element={<Leaderboard />} />
                 <Route path="/facilities" element={<Facilities />} />
                 <Route path="/audit-log" element={<AuditLog />} />

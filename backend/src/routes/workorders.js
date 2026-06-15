@@ -275,4 +275,46 @@ router.delete('/:id', (req, res) => {
   res.json({ success: true });
 });
 
+// ─── GET /:id/comments ────────────────────────────────────────────────────────
+
+router.get('/:id/comments', (req, res) => {
+  const wo = db.prepare('SELECT id FROM work_orders WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
+  if (!wo) return res.status(404).json({ error: 'Work order not found' });
+  const rows = db.prepare('SELECT * FROM wo_comments WHERE work_order_id = ? ORDER BY created_at ASC').all(req.params.id);
+  res.json(rows);
+});
+
+// ─── POST /:id/comments ───────────────────────────────────────────────────────
+
+router.post('/:id/comments', (req, res) => {
+  const wo = db.prepare('SELECT id FROM work_orders WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
+  if (!wo) return res.status(404).json({ error: 'Work order not found' });
+  const { body } = req.body;
+  if (!body || !body.trim()) return res.status(400).json({ error: 'Comment body is required' });
+
+  const id = uuidv4();
+  const authorName = req.user?.display_name || 'Unknown';
+  const authorId = req.user?.id || null;
+  db.prepare('INSERT INTO wo_comments (id, work_order_id, author_id, author_name, body) VALUES (?, ?, ?, ?, ?)')
+    .run(id, req.params.id, authorId, authorName, body.trim());
+
+  logActivity(req.companyId, 'work_order', req.params.id, `Comment added by ${authorName}`, authorName, { department_id: wo.department_id || null });
+  res.status(201).json(db.prepare('SELECT * FROM wo_comments WHERE id = ?').get(id));
+});
+
+// ─── DELETE /:id/comments/:commentId ─────────────────────────────────────────
+
+router.delete('/:id/comments/:commentId', (req, res) => {
+  const comment = db.prepare(
+    `SELECT c.* FROM wo_comments c
+     JOIN work_orders wo ON wo.id = c.work_order_id
+     WHERE c.id = ? AND wo.company_id = ?`
+  ).get(req.params.commentId, req.companyId);
+  if (!comment) return res.status(404).json({ error: 'Comment not found' });
+  const canDelete = req.user?.role === 'manager' || req.user?.role === 'developer' || comment.author_id === req.user?.id;
+  if (!canDelete) return res.status(403).json({ error: 'Not authorized' });
+  db.prepare('DELETE FROM wo_comments WHERE id = ?').run(req.params.commentId);
+  res.json({ success: true });
+});
+
 module.exports = { router, calcScheduleStatus };

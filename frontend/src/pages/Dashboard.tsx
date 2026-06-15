@@ -246,7 +246,7 @@ export default function Dashboard() {
 
   const loadPlantData = useCallback(async () => {
     try {
-      const result = await (api as any).getPlantView({ site_id: selectedSiteId || undefined });
+      const result = await api.getPlantView({ site_id: selectedSiteId || undefined });
       setPlantData(result);
     } catch {
       // keep stale data

@@ -1,7 +1,8 @@
 export type WidgetType =
   | 'text' | 'instruction' | 'image' | 'button'
   | 'text-input' | 'number-input' | 'select-input' | 'checkbox'
-  | 'timer' | 'counter' | 'pass-fail' | 'separator' | 'signature';
+  | 'timer' | 'counter' | 'pass-fail' | 'separator' | 'signature'
+  | 'video' | 'model-viewer';
 
 export interface WidgetConfig {
   text?: string; content?: string; fontSize?: number; fontWeight?: string;
@@ -15,6 +16,11 @@ export interface WidgetConfig {
   duration?: number; autoStart?: boolean;
   imageUrl?: string; imageAlt?: string; imageFit?: 'contain' | 'cover';
   opacity?: number; borderRadius?: number;
+  // Video widget
+  videoUrl?: string; videoType?: 'youtube' | 'upload'; videoAutoplay?: boolean; videoControls?: boolean;
+  // 3D model viewer
+  modelUrl?: string; modelAlt?: string; modelAutoRotate?: boolean; modelCameraOrbit?: string;
+  modelExposure?: number; modelShadowIntensity?: number;
 }
 
 /** Free-form placement of a widget on a canvas-mode step. All values are in
@@ -30,6 +36,15 @@ export interface Widget {
   layout?: WidgetLayout;
 }
 
+/** A part or material required for a specific step. */
+export interface PartItem {
+  name: string;
+  sku?: string;
+  quantity: number;
+  unit?: string;
+  notes?: string;
+}
+
 export interface Step {
   id: string; name: string; order: number; widgets: Widget[];
   takt_time_seconds?: number; description?: string;
@@ -37,6 +52,8 @@ export interface Step {
   layoutMode?: 'flow' | 'canvas';
   canvasHeight?: number;
   canvasBackground?: string;
+  /** Parts and materials needed for this step — shown to operators as an info overlay. */
+  parts_list?: PartItem[];
 }
 
 export interface AppVariable {
@@ -437,9 +454,17 @@ export interface PricingAddon {
   description: string;
 }
 
+export interface PricingModule {
+  name: string;
+  monthly_price: number;
+  description: string;
+  features: string[];
+}
+
 export interface PricingCatalog {
   tiers: Record<string, PricingTier>;
   addons: Record<string, PricingAddon>;
+  modules?: Record<string, PricingModule>;
 }
 
 // ── Sites (multi-site / multi-plant) ──────────────────────────────────────────
@@ -535,6 +560,7 @@ export interface InventoryLowStockRow {
   unit_of_measure: string;
   unit_cost: number;
   reorder_point: number;
+  reorder_max?: number;
   reorder_qty: number;
   total_quantity: number;
   total_value: number;

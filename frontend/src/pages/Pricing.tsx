@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Check, ArrowRight, Plus } from 'lucide-react';
+import { Check, ArrowRight, Plus, Layers } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import type { PricingCatalog } from '../types';
@@ -13,7 +13,8 @@ const GRADIENT = 'linear-gradient(135deg, #6366f1, #ec4899)';
 
 const FAQ = [
   { q: 'Is there really a free plan?', a: 'Yes. The Free plan includes 5 production apps, 2 dashboards, work orders, scheduling, OEE tracking, the operator portal, and CSV export — no credit card required.' },
-  { q: 'How do add-on slots work?', a: 'On the Free plan you can buy individual extra app or dashboard slots if you only need a little more room, without jumping to Pro. Pro and Enterprise already include unlimited apps and dashboards.' },
+  { q: 'What are module add-ons?', a: 'Module add-ons (Manufacturing, Inventory, Quality, Training) let Free users unlock a specific pro module without upgrading to the full Pro plan. Pro automatically includes all four modules.' },
+  { q: 'How do slot add-ons work?', a: 'On the Free plan you can buy individual extra app or dashboard slots if you only need a little more room, without jumping to Pro. Pro and Enterprise already include generous limits.' },
   { q: 'Can I change plans later?', a: 'Anytime. Upgrade, downgrade, or buy add-ons from your workspace settings — changes take effect immediately and billing is prorated.' },
   { q: 'What happens to my data?', a: 'Your data stays yours. Export everything to CSV or JSON whenever you like, and downgrading never deletes your historical records.' },
 ];
@@ -101,12 +102,49 @@ export default function Pricing() {
         </div>
       </section>
 
-      {/* Add-ons */}
+      {/* Module Add-ons */}
+      {pricing?.modules && (
+        <section className="max-w-6xl mx-auto px-6 py-16">
+          <Reveal className="text-center mb-10">
+            <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">Unlock modules à la carte</h2>
+            <p className="mt-3 text-gray-400">Add individual pro modules to any Free workspace — or get them all with Pro.</p>
+          </Reveal>
+          <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-5">
+            {Object.entries(pricing.modules).map(([key, mod], i) => (
+              <Reveal key={key} delay={i * 80}>
+                <div className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 flex flex-col h-full">
+                  <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 mb-4" style={{ background: GRADIENT }}>
+                    <Layers size={18} className="text-white" />
+                  </div>
+                  <div className="flex items-baseline gap-2 mb-1">
+                    <span className="font-semibold text-white">{mod.name}</span>
+                  </div>
+                  <div className="flex items-baseline gap-1 mb-3">
+                    <span className="text-2xl font-semibold text-white">${mod.monthly_price}</span>
+                    <span className="text-sm text-gray-500">/mo</span>
+                  </div>
+                  <p className="text-xs text-gray-400 mb-4 flex-1">{mod.description}</p>
+                  <ul className="space-y-1.5">
+                    {mod.features.map(f => (
+                      <li key={f} className="flex items-start gap-2 text-xs text-gray-300">
+                        <Check size={12} className="text-pink-400 flex-shrink-0 mt-0.5" strokeWidth={2.5} />
+                        {f}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </Reveal>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Slot Add-ons */}
       {pricing && (
         <section className="max-w-6xl mx-auto px-6 py-16">
           <Reveal className="text-center mb-10">
-            <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">Need just a little more?</h2>
-            <p className="mt-3 text-gray-400">On the Free plan, add capacity à la carte — no need to jump to Pro.</p>
+            <h2 className="text-2xl md:text-3xl font-semibold tracking-tight">Need just a little more room?</h2>
+            <p className="mt-3 text-gray-400">On the Free plan, add extra app or dashboard slots without jumping to Pro.</p>
           </Reveal>
           <div className="grid sm:grid-cols-2 gap-5 max-w-3xl mx-auto">
             {Object.entries(pricing.addons).map(([key, addon], i) => (

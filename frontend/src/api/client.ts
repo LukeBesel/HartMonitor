@@ -148,6 +148,9 @@ export const api = {
   updateWorkOrder: (id: string, data: any) => request<any>(`/work-orders/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteWorkOrder: (id: string) => request<any>(`/work-orders/${id}`, { method: 'DELETE' }),
   completeWorkOrder: (id: string) => request<any>(`/work-orders/${id}/complete`, { method: 'PUT' }),
+  getWorkOrderComments: (id: string) => request<any[]>(`/work-orders/${id}/comments`),
+  addWorkOrderComment: (id: string, body: string) => request<any>(`/work-orders/${id}/comments`, { method: 'POST', body: JSON.stringify({ body }) }),
+  deleteWorkOrderComment: (woId: string, commentId: string) => request<any>(`/work-orders/${woId}/comments/${commentId}`, { method: 'DELETE' }),
 
   // ── Product Types
   getProductTypes: (appId: string) => request<any[]>(`/product-types?app_id=${appId}`),
@@ -226,6 +229,15 @@ export const api = {
     if (params?.limit)         qs.set('limit', String(params.limit));
     return request<InventoryMovement[]>(`/inventory/movements?${qs}`);
   },
+
+  // ── Inventory Shipments
+  getShipments: () => request<any[]>('/inventory/shipments'),
+  createShipment: (data: any) => request<any>('/inventory/shipments', { method: 'POST', body: JSON.stringify(data) }),
+  updateShipment: (id: string, data: any) => request<any>(`/inventory/shipments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteShipment: (id: string) => request<any>(`/inventory/shipments/${id}`, { method: 'DELETE' }),
+
+  // ── Inventory Requirements (MRP)
+  getInventoryRequirements: () => request<any>('/inventory/requirements'),
 
   // ── Purchasing
   getVendors: (params?: { search?: string }) => {
@@ -510,4 +522,43 @@ export const api = {
   // ── File upload
   uploadImage: (data: string, mimeType: string, filename: string) =>
     request<{ url: string }>('/upload/image', { method: 'POST', body: JSON.stringify({ data, mimeType, filename }) }),
+
+  // ── Training & Skills Matrix
+  getTrainingSummary: () => request<any>('/training/summary'),
+  getTrainingMatrix: (departmentId?: string) => {
+    const qs = departmentId ? `?department_id=${departmentId}` : '';
+    return request<any>(`/training/matrix${qs}`);
+  },
+  getTrainingRecords: (params?: { user_id?: string; app_id?: string; status?: string }) => {
+    const qs = new URLSearchParams(params as any).toString();
+    return request<any[]>(`/training/records${qs ? '?' + qs : ''}`);
+  },
+  upsertTrainingRecord: (data: any) =>
+    request<any>('/training/records', { method: 'POST', body: JSON.stringify(data) }),
+  updateTrainingRecord: (id: string, data: any) =>
+    request<any>(`/training/records/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTrainingRecord: (id: string) =>
+    request<any>(`/training/records/${id}`, { method: 'DELETE' }),
+
+  getCertifications: (userId?: string) => {
+    const qs = userId ? `?user_id=${userId}` : '';
+    return request<any[]>(`/training/certifications${qs}`);
+  },
+  createCertification: (data: any) =>
+    request<any>('/training/certifications', { method: 'POST', body: JSON.stringify(data) }),
+  updateCertification: (id: string, data: any) =>
+    request<any>(`/training/certifications/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCertification: (id: string) =>
+    request<any>(`/training/certifications/${id}`, { method: 'DELETE' }),
+
+  getTrainingPlans: (params?: { user_id?: string; status?: string }) => {
+    const qs = new URLSearchParams(params as any).toString();
+    return request<any[]>(`/training/plans${qs ? '?' + qs : ''}`);
+  },
+  createTrainingPlan: (data: any) =>
+    request<any>('/training/plans', { method: 'POST', body: JSON.stringify(data) }),
+  updateTrainingPlan: (id: string, data: any) =>
+    request<any>(`/training/plans/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteTrainingPlan: (id: string) =>
+    request<any>(`/training/plans/${id}`, { method: 'DELETE' }),
 };

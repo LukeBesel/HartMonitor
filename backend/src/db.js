@@ -682,6 +682,104 @@ for (const t of ['stations', 'departments', 'work_orders', 'locations']) {
   db.exec(`CREATE INDEX IF NOT EXISTS idx_${t}_site ON ${t}(site_id)`);
 }
 
+// ─── Work order comments ──────────────────────────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS wo_comments (
+    id TEXT PRIMARY KEY,
+    work_order_id TEXT NOT NULL REFERENCES work_orders(id) ON DELETE CASCADE,
+    author_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    author_name TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_wo_comments_wo ON wo_comments(work_order_id, created_at);
+`);
+
+// ─── Inventory shipments ──────────────────────────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS shipments (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id),
+    po_id TEXT REFERENCES purchase_orders(id) ON DELETE SET NULL,
+    carrier TEXT DEFAULT '',
+    tracking_number TEXT DEFAULT '',
+    origin TEXT DEFAULT '',
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending','in_transit','out_for_delivery','delivered','delayed','exception')),
+    shipped_date TEXT,
+    estimated_arrival TEXT,
+    actual_arrival TEXT,
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_shipments_company ON shipments(company_id, created_at DESC);
+`);
+
+// ─── Training & Skills Matrix ─────────────────────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS training_records (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    app_id TEXT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    status TEXT DEFAULT 'not_started' CHECK(status IN ('not_started','in_training','certified','expired','needs_refresh')),
+    certified_date TEXT,
+    expiry_date TEXT,
+    certified_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    score REAL,
+    attempts INTEGER DEFAULT 0,
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(company_id, user_id, app_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_training_records_company ON training_records(company_id);
+  CREATE INDEX IF NOT EXISTS idx_training_records_user ON training_records(user_id);
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS certifications (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    issuer TEXT DEFAULT '',
+    cert_number TEXT DEFAULT '',
+    issued_date TEXT,
+    expiry_date TEXT,
+    document_url TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_certifications_company ON certifications(company_id, user_id);
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS training_plans (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    app_id TEXT REFERENCES apps(id) ON DELETE CASCADE,
+    assigned_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    target_date TEXT,
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending','in_progress','completed','overdue')),
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_training_plans_company ON training_plans(company_id, user_id);
+`);
+
+// Migration: reorder_max on items
+{
+  const itemsCols = db.prepare('PRAGMA table_info(items)').all().map(r => r.name);
+  if (!itemsCols.includes('reorder_max')) db.exec('ALTER TABLE items ADD COLUMN reorder_max REAL DEFAULT 0');
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function isoOffset(days, hours = 8) {

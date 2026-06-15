@@ -115,7 +115,7 @@ export default function PlantView() {
   const load = useCallback(async (showSpinner = false) => {
     if (showSpinner) setRefreshing(true);
     try {
-      const result = await (api as any).getPlantView({ site_id: selectedSiteId || undefined });
+      const result = await api.getPlantView({ site_id: selectedSiteId || undefined });
       setData(result);
       setLastRefresh(new Date());
     } catch {

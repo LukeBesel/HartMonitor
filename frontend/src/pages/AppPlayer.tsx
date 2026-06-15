@@ -4,7 +4,7 @@ import { api } from '../api/client';
 import { App, Widget, Step, WorkOrder, ProductType, Station } from '../types';
 import {
   ChevronLeft, ChevronRight, CheckCircle, X, Clock, Factory,
-  AlertCircle, Loader2, AlertTriangle, Zap, Tag
+  AlertCircle, Loader2, AlertTriangle, Zap, Tag, Info, Package,
 } from 'lucide-react';
 import { CanvasStage } from '../components/app/WidgetView';
 
@@ -31,6 +31,7 @@ export default function AppPlayer() {
   const [taktExceededSteps, setTaktExceededSteps] = useState<number[]>([]);
   const [flashPhase, setFlashPhase] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [showPartsOverlay, setShowPartsOverlay] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -136,6 +137,7 @@ export default function AppPlayer() {
       return;
     }
     setValidationError(null);
+    setShowPartsOverlay(false);
     recordStepTime(currentStepIdx);
     setCurrentStepIdx(i => i + 1);
     setStepStartTime(Date.now());
@@ -144,6 +146,7 @@ export default function AppPlayer() {
 
   const goPrev = () => {
     setValidationError(null);
+    setShowPartsOverlay(false);
     recordStepTime(currentStepIdx);
     setCurrentStepIdx(i => Math.max(0, i - 1));
     setStepStartTime(Date.now());
@@ -431,17 +434,64 @@ export default function AppPlayer() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto flex justify-center py-8 px-4">
         <div className={`w-full space-y-4 ${currentStep?.layoutMode === 'canvas' ? 'max-w-3xl' : 'max-w-2xl'}`}>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-2xl font-bold text-white">{currentStep?.name}</h2>
-            {stepTaktSeconds > 0 && (
-              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium ${
-                isOverTakt ? 'bg-red-800/60 text-red-300' : 'bg-white/10 text-gray-300'
-              }`}>
-                <Clock size={13} />
-                Takt: {formatDur(stepTaktSeconds)} · Now: {formatDur(stepElapsed)}
-              </div>
-            )}
+          <div className="flex items-center justify-between mb-4 gap-3">
+            <h2 className="text-2xl font-bold text-white flex-1">{currentStep?.name}</h2>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {(currentStep?.parts_list?.length ?? 0) > 0 && (
+                <button
+                  onClick={() => setShowPartsOverlay(o => !o)}
+                  title="View parts & materials for this step"
+                  className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-500/90 text-white text-xs font-medium transition-colors"
+                >
+                  <Package size={13} />
+                  Parts
+                  <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-pink-500 rounded-full text-[9px] flex items-center justify-center font-bold">
+                    {currentStep!.parts_list!.length}
+                  </span>
+                </button>
+              )}
+              {stepTaktSeconds > 0 && (
+                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium ${
+                  isOverTakt ? 'bg-red-800/60 text-red-300' : 'bg-white/10 text-gray-300'
+                }`}>
+                  <Clock size={13} />
+                  Takt: {formatDur(stepTaktSeconds)} · Now: {formatDur(stepElapsed)}
+                </div>
+              )}
+            </div>
           </div>
+
+          {/* Parts overlay — slides in below the step header */}
+          {showPartsOverlay && currentStep?.parts_list && currentStep.parts_list.length > 0 && (
+            <div className="mb-4 bg-indigo-950/80 border border-indigo-500/30 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2 text-white font-semibold text-sm">
+                  <Package size={15} className="text-indigo-400" />
+                  Parts &amp; Materials — {currentStep.name}
+                </div>
+                <button onClick={() => setShowPartsOverlay(false)} className="p-1 rounded-lg hover:bg-white/10 text-gray-400">
+                  <X size={14} />
+                </button>
+              </div>
+              <div className="space-y-1">
+                {currentStep.parts_list.map((part, i) => (
+                  <div key={i} className="flex items-center gap-3 py-1.5 border-b border-white/5 last:border-0">
+                    <div className="w-6 h-6 rounded-md bg-indigo-800/60 flex items-center justify-center flex-shrink-0">
+                      <Package size={11} className="text-indigo-300" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-white text-sm font-medium">{part.name}</span>
+                      {part.sku && <span className="text-gray-400 text-xs ml-2">#{part.sku}</span>}
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <span className="text-indigo-300 font-bold text-sm">{part.quantity}</span>
+                      {part.unit && <span className="text-gray-400 text-xs ml-1">{part.unit}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {validationError && (
             <div className="flex items-center gap-2 px-4 py-3 bg-red-900/40 border border-red-700 rounded-xl text-red-300 text-sm font-medium">
               <AlertCircle size={16} className="flex-shrink-0" />
