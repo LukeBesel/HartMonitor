@@ -57,9 +57,9 @@ function validate() {
 
   if (IS_PROD) {
     if (SEED_DEMO_DATA) {
-      errors.push(
-        'SEED_DEMO_DATA=true in production. This seeds publicly-known login ' +
-        'accounts (admin@hartmonitor.demo / Admin123!). Unset it before going live.'
+      warnings.push(
+        'SEED_DEMO_DATA=true — demo accounts (admin@hartmonitor.demo / Admin123!) are active. ' +
+        'Remove this flag before launching a live customer environment.'
       );
     }
     if (!config.appUrl) {

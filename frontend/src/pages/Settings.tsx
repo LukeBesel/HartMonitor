@@ -47,6 +47,7 @@ import {
   HelpCircle,
   Tablet,
   PlayCircle,
+  BarChart3,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme, THEME_PRESETS, Theme, buildCustomTheme, applySecondary } from '../context/ThemeContext';
@@ -446,7 +447,7 @@ function CheckoutModal({ item, onClose, onComplete }: {
       refresh();
       onComplete(item.kind === 'tier'
         ? `Welcome to ${item.name}! Your workspace has been upgraded.`
-        : `${item.name} ×${item.quantity} added — capacity unlocked instantly.`);
+        : `${item.name} ×${item.quantity} added -- capacity unlocked instantly.`);
       onClose();
     } catch (err: any) {
       setError(err.message || 'Payment failed');
@@ -516,7 +517,7 @@ function CheckoutModal({ item, onClose, onComplete }: {
             )}
           </button>
           <p className="text-center text-xs text-gray-400">
-            Demo checkout — no real payment is processed. Any card details work.
+            Demo checkout -- no real payment is processed. Any card details work.
           </p>
         </form>
       </div>
@@ -549,7 +550,7 @@ function AddonCard({ addonType, addon, owned, onPurchase, onRemove }: {
           <div className="text-xs text-gray-500 mt-0.5">{addon.description}</div>
           {owned > 0 && (
             <div className="text-xs mt-1.5 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 font-medium">
-              <Check size={10} /> {owned} owned — ${owned * addon.monthly_price}/mo
+              <Check size={10} /> {owned} owned -- ${owned * addon.monthly_price}/mo
             </div>
           )}
         </div>
@@ -563,7 +564,7 @@ function AddonCard({ addonType, addon, owned, onPurchase, onRemove }: {
             className="px-2.5 py-1.5 text-gray-500 hover:bg-gray-50 text-sm font-bold">+</button>
         </div>
         <button onClick={() => onPurchase(qty)} className="btn-primary flex-1 text-sm py-2 flex items-center justify-center gap-1.5">
-          <Plus size={13} /> Add — ${addon.monthly_price * qty}/mo
+          <Plus size={13} /> Add -- ${addon.monthly_price * qty}/mo
         </button>
         {owned > 0 && (
           <button onClick={onRemove} title="Remove one slot"
@@ -600,8 +601,8 @@ function PlanTab() {
     const params = new URLSearchParams(window.location.search);
     const result = params.get('checkout');
     if (!result) return;
-    if (result === 'success') { showToast('Payment successful — your plan is now active.'); refresh(); }
-    else if (result === 'cancel') showToast('Checkout canceled — no charge was made.', 'error');
+    if (result === 'success') { showToast('Payment successful -- your plan is now active.'); refresh(); }
+    else if (result === 'cancel') showToast('Checkout canceled -- no charge was made.', 'error');
     params.delete('checkout');
     const qs = params.toString();
     window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''));
@@ -686,7 +687,7 @@ function PlanTab() {
           <span>
             <strong>Demo billing.</strong> Upgrades apply instantly without charge. To accept real
             payments that pay out to your bank, set a Stripe secret key (and webhook secret) on the
-            server — checkout then switches to Stripe automatically.
+            server -- checkout then switches to Stripe automatically.
           </span>
         </div>
       )}
@@ -779,7 +780,7 @@ function PlanTab() {
         </div>
       </div>
 
-      {/* À-la-carte add-ons — only useful on a limited tier */}
+      {/* À-la-carte add-ons -- only useful on a limited tier */}
       {isFree && addons && (
         <div>
           <div className="mb-4">
@@ -1024,7 +1025,7 @@ function ThemeTab() {
           </label>
         </div>
         <p className="text-xs text-gray-400 mt-2">
-          The secondary colour shapes branded gradients — logos, avatars, leaderboard cards, and upgrade banners.
+          The secondary colour shapes branded gradients -- logos, avatars, leaderboard cards, and upgrade banners.
         </p>
       </div>
 
@@ -1150,7 +1151,7 @@ function SidebarTab() {
       <div>
         <SectionHeader
           title="Workspaces"
-          subtitle="Pick the areas you actually use. Turn one off and it disappears from the sidebar entirely — keeping things simple."
+          subtitle="Pick the areas you actually use. Turn one off and it disappears from the sidebar entirely -- keeping things simple."
         />
         <div className="grid sm:grid-cols-3 gap-3">
           {SECTIONS.map(section => {
@@ -1204,7 +1205,7 @@ function SidebarTab() {
           className="flex items-center gap-1.5 text-sm font-medium text-gray-600 hover:text-gray-900"
         >
           {showAdvanced ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          Advanced — show or hide individual items
+          Advanced -- show or hide individual items
         </button>
         {showAdvanced && (
           <div className="space-y-5 mt-3 pl-1">
@@ -1713,7 +1714,7 @@ function UsersTab() {
                     <td key={i} className="px-3 py-2.5 text-center">
                       {allowed
                         ? <span className="text-emerald-500 font-bold">✓</span>
-                        : <span className="text-gray-200">—</span>}
+                        : <span className="text-gray-200">--</span>}
                     </td>
                   ))}
                 </tr>
@@ -2152,13 +2153,13 @@ function NotificationsTab() {
           prefs.email_configured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
         }`}>
           <Mail size={12} />
-          {prefs.email_configured ? 'Email — Configured' : 'Email — Demo mode (will log instead of send)'}
+          {prefs.email_configured ? 'Email -- Configured' : 'Email -- Demo mode (will log instead of send)'}
         </span>
         <span className={`text-xs font-semibold px-2.5 py-1 rounded-full inline-flex items-center gap-1.5 ${
           prefs.sms_configured ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'
         }`}>
           <MessageSquare size={12} />
-          {prefs.sms_configured ? 'SMS — Configured' : 'SMS — Demo mode (will log instead of send)'}
+          {prefs.sms_configured ? 'SMS -- Configured' : 'SMS -- Demo mode (will log instead of send)'}
         </span>
       </div>
 
@@ -2280,7 +2281,7 @@ function NotificationsTab() {
                         </span>
                       )}
                       {entry.status === 'simulated' && (
-                        <span title="Demo mode — logged instead of sent" className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
+                        <span title="Demo mode -- logged instead of sent" className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
                           <AlertCircle size={14} /> Simulated
                         </span>
                       )}
@@ -2507,7 +2508,7 @@ function RevealKeyModal({ apiKey, onClose }: { apiKey: ApiKey & { key: string };
         <div className="p-6 space-y-4">
           <div className="flex items-start gap-2.5 text-xs bg-amber-50 text-amber-800 rounded-xl px-3.5 py-2.5 border border-amber-100">
             <AlertCircle size={15} className="flex-shrink-0 mt-0.5" />
-            <span>This key will only be shown once — copy it now. You won't be able to view it again.</span>
+            <span>This key will only be shown once -- copy it now. You won't be able to view it again.</span>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">{apiKey.name}</label>
@@ -2634,7 +2635,7 @@ function WebhookDeliveriesModal({ webhook, onClose }: { webhook: Webhook; onClos
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] overflow-y-auto">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 sticky top-0 bg-white">
-          <h3 className="font-semibold text-gray-800">Deliveries — {webhook.name}</h3>
+          <h3 className="font-semibold text-gray-800">Deliveries -- {webhook.name}</h3>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
         </div>
         <div className="p-6">
@@ -2660,13 +2661,13 @@ function WebhookDeliveriesModal({ webhook, onClose }: { webhook: Webhook; onClos
                   {deliveries.map(d => (
                     <tr key={d.id} className="hover:bg-gray-50/50">
                       <td className="px-4 py-2.5 text-gray-700">{d.event}</td>
-                      <td className="px-4 py-2.5 text-center text-gray-600">{d.status_code ?? '—'}</td>
+                      <td className="px-4 py-2.5 text-center text-gray-600">{d.status_code ?? '--'}</td>
                       <td className="px-4 py-2.5 text-center">
                         {d.success
                           ? <CheckCircle2 size={14} className="text-emerald-500 inline" />
                           : <XCircle size={14} className="text-red-500 inline" />}
                       </td>
-                      <td className="px-4 py-2.5 text-gray-500 text-xs">{d.error || '—'}</td>
+                      <td className="px-4 py-2.5 text-gray-500 text-xs">{d.error || '--'}</td>
                       <td className="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap">
                         {new Date(d.created_at + 'Z').toLocaleString()}
                       </td>
@@ -2934,37 +2935,309 @@ function DeveloperTab() {
 
 // ─── Help & Guides tab ────────────────────────────────────────────────────────
 
+interface ModuleGuide {
+  icon: React.ReactNode;
+  title: string;
+  summary: string;
+  link: string;
+  linkLabel: string;
+  steps: string[];
+  tips: string[];
+  color: string;
+}
+
+const MODULE_GUIDES: ModuleGuide[] = [
+  {
+    icon: <Activity size={16} />,
+    title: 'Command Center',
+    summary: 'Your home dashboard -- everything that needs attention in one place.',
+    link: '/dashboard',
+    linkLabel: 'Open Command Center',
+    color: '#3b82f6',
+    steps: [
+      'The top row shows today\'s output, pass rate, and active work orders at a glance.',
+      'Overdue work orders and open quality alerts are surfaced automatically.',
+      'Click any metric card to drill into the detail page for that area.',
+      'Live throughput updates every 30 seconds via WebSocket -- no refresh needed.',
+    ],
+    tips: [
+      'Check here first thing each shift to spot problems early.',
+      'The "Quick Actions" panel lets you log a downtime event or create a work order without leaving the dashboard.',
+    ],
+  },
+  {
+    icon: <Tablet size={16} />,
+    title: 'Operator Portal',
+    summary: 'The dedicated full-screen screen your operators use on the shop floor.',
+    link: '/operator',
+    linkLabel: 'Open Operator Portal',
+    color: '#10b981',
+    steps: [
+      'Click the blue "Operator Portal" launcher in the sidebar -- it opens full-screen.',
+      'The operator selects their name, then picks a Work Order and App to run.',
+      'They follow the step-by-step guided instructions (checkboxes, inputs, pass/fail).',
+      'On completion the record is saved, OEE data is logged, and the next job loads.',
+      'Operators can also report a quality issue (NCR) directly from any step.',
+    ],
+    tips: [
+      'Set this up on a dedicated tablet or touchscreen at each workstation.',
+      'The portal works offline -- completions sync when the connection restores.',
+    ],
+  },
+  {
+    icon: <AppWindow size={16} />,
+    title: 'App Library & Builder',
+    summary: 'Build and publish digital work instructions for your production processes.',
+    link: '/apps',
+    linkLabel: 'Open App Library',
+    color: '#8b5cf6',
+    steps: [
+      'Go to App Library → click "New App" to start building.',
+      'Add Steps (one per major task) using the "+" button.',
+      'Drag widgets into each step: text instructions, checkboxes, number inputs, pass/fail, photos, timers, etc.',
+      'Preview the app at any time with the "Preview" button to see exactly what operators will see.',
+      'Click "Publish" to make it live -- published apps appear in the Operator Portal immediately.',
+    ],
+    tips: [
+      'Keep each step focused on one task. Too many widgets per step = confused operators.',
+      'Use the "Instruction" widget with a yellow background to highlight safety warnings.',
+      'Set takt times per step -- the system tracks if operators exceed the target.',
+    ],
+  },
+  {
+    icon: <Building2 size={16} />,
+    title: 'Plant View & Stations',
+    summary: 'See the live status of your entire floor and manage your work centers.',
+    link: '/plant',
+    linkLabel: 'Open Plant View',
+    color: '#f59e0b',
+    steps: [
+      'Go to Stations → "New Station" to add each physical workstation on your floor.',
+      'Assign an App to each station so operators always know what to run there.',
+      'Organize stations into Departments (Assembly, QC, Packaging, etc.) for grouped views.',
+      'Plant View shows live throughput, OEE, and machine status for every station.',
+      'Click any station card to see its real-time metrics and recent completions.',
+    ],
+    tips: [
+      'Put Plant View on a TV in the production area -- it auto-refreshes.',
+      'Departments aggregate KPIs so managers can see section-level performance at a glance.',
+    ],
+  },
+  {
+    icon: <ClipboardList size={16} />,
+    title: 'Work Orders & Schedule',
+    summary: 'Plan and track production jobs from creation to completion.',
+    link: '/schedule',
+    linkLabel: 'Open Schedule',
+    color: '#ec4899',
+    steps: [
+      'Go to Schedule → "New Work Order" and enter part number, quantity, and due date.',
+      'Assign a Department and takt time target so the system can track pace vs. plan.',
+      'Set priority (Critical / High / Medium / Low) -- overdue high-priority WOs show red in the dashboard.',
+      'As operators complete jobs in the portal, quantity_completed updates automatically.',
+      'Manager View gives a drag-and-drop calendar view of all open work orders by department.',
+    ],
+    tips: [
+      'Takt time is the "goal" cycle time per unit. Set it accurately for meaningful OEE data.',
+      'Use the "Overdue" filter in Schedule to find WOs that slipped past their end date.',
+    ],
+  },
+  {
+    icon: <Package size={16} />,
+    title: 'Inventory',
+    summary: 'Track raw materials, components, and finished goods across your warehouse locations.',
+    link: '/inventory',
+    linkLabel: 'Open Inventory',
+    color: '#0ea5e9',
+    steps: [
+      'Create Locations first (Main Warehouse, Assembly Floor, QC Hold, Finished Goods).',
+      'Add Items with SKU, unit cost, reorder point, and reorder quantity.',
+      'Record stock movements: Receive (incoming PO), Consume (production), Adjust, Scrap.',
+      'Items below their reorder point appear in red on the Inventory dashboard.',
+      'Stock levels update instantly as movements are logged.',
+    ],
+    tips: [
+      'Inventory is a Pro feature. Upgrade in Settings → Plan to unlock it.',
+      'Link items to NCRs when scrapping defective stock to keep traceability.',
+    ],
+  },
+  {
+    icon: <ShoppingCart size={16} />,
+    title: 'Purchasing',
+    summary: 'Create and track purchase orders from draft to receiving.',
+    link: '/purchasing',
+    linkLabel: 'Open Purchasing',
+    color: '#14b8a6',
+    steps: [
+      'Add Vendors first with contact details and payment terms.',
+      'Create a Purchase Order, pick the vendor, and add line items (item + qty + cost).',
+      'Change PO status: Draft → Sent → Received. When received, stock levels update automatically.',
+      'PO history lets you compare actual vs. planned cost and lead times over time.',
+    ],
+    tips: [
+      'Purchasing is a Pro feature. Reorder-point alerts show when to create a new PO.',
+      'Set Lead Time Days on each vendor to anticipate when stock will arrive.',
+    ],
+  },
+  {
+    icon: <ShieldCheck size={16} />,
+    title: 'Quality / NCR',
+    summary: 'Track non-conformances, assign ownership, and drive corrective action.',
+    link: '/quality',
+    linkLabel: 'Open Quality',
+    color: '#ef4444',
+    steps: [
+      'Create an NCR from the Quality page -- or operators can log one directly from the portal mid-job.',
+      'Set severity (Minor, Major, Critical) and assign it to a team member.',
+      'Investigate: record root cause and corrective action in the NCR detail.',
+      'Add comments to keep a timestamped audit trail of the investigation.',
+      'Close the NCR once corrective action is verified -- the history is preserved.',
+    ],
+    tips: [
+      'Quality is a Pro feature. Link NCRs to work orders and inventory items for full traceability.',
+      'The dashboard shows open critical NCRs front-and-center so nothing slips through.',
+    ],
+  },
+  {
+    icon: <BarChart3 size={16} />,
+    title: 'Analytics & OEE',
+    summary: 'Measure throughput, cycle time, and equipment effectiveness over time.',
+    link: '/analytics',
+    linkLabel: 'Open Analytics',
+    color: '#6366f1',
+    steps: [
+      'Analytics → pick a date range to see throughput, cycle time, and pass rates by app and operator.',
+      'OEE Tracker breaks down Availability, Performance, and Quality losses by station.',
+      'Step Metrics shows per-step cycle times -- spot which step is the bottleneck.',
+      'Leaderboard ranks operators by completed units -- great for gamification.',
+      'Build custom Dashboards with cards for any combination of metrics.',
+    ],
+    tips: [
+      'OEE < 85% is a flag. Dig into Availability (downtime), Performance (slow cycles), or Quality (rework) to find the root cause.',
+      'Publish a Dashboard in "kiosk" mode to put live metrics on a production TV.',
+    ],
+  },
+  {
+    icon: <Bell size={16} />,
+    title: 'Alerts & Messages',
+    summary: 'Stay in sync with your team via broadcasts and direct messages.',
+    link: '/dashboard',
+    linkLabel: 'Open Dashboard',
+    color: '#f97316',
+    steps: [
+      'Click the bell icon at the bottom of the sidebar to open the Alerts & Messages panel.',
+      'To broadcast to the whole team: type your message, leave "To: Everyone" selected, and send.',
+      'For a direct message: click the "To: Everyone" dropdown and pick a specific teammate.',
+      'Alerts (machine down, overdue WO) float to the top automatically with red/amber badges.',
+      'Recipients see your message in real time -- no email or Slack needed for shift handoff.',
+    ],
+    tips: [
+      'Use "Urgent" severity for critical issues -- it shows with a red badge and sounds an alert for receivers.',
+      'Direct messages are private -- only the sender and recipient can see them.',
+    ],
+  },
+  {
+    icon: <Users size={16} />,
+    title: 'Team & Permissions',
+    summary: 'Invite users, assign roles, and control what each role can see and do.',
+    link: '/settings?tab=users',
+    linkLabel: 'Open Team Settings',
+    color: '#84cc16',
+    steps: [
+      'Settings → Users → "Invite User" to add a teammate by email.',
+      'Assign one of five roles: Developer (full access), Manager, Supervisor, Operator, Viewer.',
+      'Settings → Permissions lets you show or hide specific nav items per role.',
+      'Viewers can see everything but can\'t create, edit, or delete anything.',
+      'Operators can log completions and NCRs; Supervisors can also manage apps and stations.',
+    ],
+    tips: [
+      'Most shop-floor workers should be Operator role -- they can use the portal and log issues.',
+      'The Permissions tab lets you, for example, hide Planning from operators who don\'t need it.',
+    ],
+  },
+];
+
+function HelpModuleCard({ guide, isOpen, onToggle }: {
+  guide: ModuleGuide; isOpen: boolean; onToggle: () => void;
+}) {
+  const navigate = useNavigate();
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-gray-50 transition-colors"
+      >
+        <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 text-white"
+          style={{ backgroundColor: guide.color }}>
+          {guide.icon}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-semibold text-gray-900">{guide.title}</div>
+          <div className="text-xs text-gray-500 mt-0.5 truncate">{guide.summary}</div>
+        </div>
+        <ChevronDown size={15} className={`text-gray-400 flex-shrink-0 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      {isOpen && (
+        <div className="border-t border-gray-100 px-4 pb-4 pt-3 space-y-3">
+          <div>
+            <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">How to use it</div>
+            <ol className="space-y-1.5">
+              {guide.steps.map((s, i) => (
+                <li key={i} className="flex gap-2 text-sm text-gray-700">
+                  <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 mt-0.5"
+                    style={{ backgroundColor: guide.color }}>
+                    {i + 1}
+                  </span>
+                  {s}
+                </li>
+              ))}
+            </ol>
+          </div>
+          {guide.tips.length > 0 && (
+            <div className="bg-amber-50 border border-amber-100 rounded-lg px-3 py-2.5 space-y-1">
+              <div className="text-xs font-semibold text-amber-700">Pro tips</div>
+              {guide.tips.map((t, i) => (
+                <p key={i} className="text-xs text-amber-800 leading-relaxed">💡 {t}</p>
+              ))}
+            </div>
+          )}
+          <button
+            onClick={() => navigate(guide.link)}
+            className="text-sm font-semibold flex items-center gap-1.5 transition-colors"
+            style={{ color: guide.color }}
+          >
+            {guide.linkLabel} <ChevronRight size={14} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function HelpTab() {
   const navigate = useNavigate();
+  const [openGuide, setOpenGuide] = useState<string | null>(null);
 
   const replayTour = () => {
-    // The wizard re-opens (bypassing the completed flag) when it mounts on the
-    // dashboard and finds this flag.
     localStorage.setItem(REPLAY_FLAG, '1');
     navigate('/dashboard');
   };
 
-  const GUIDES: { icon: React.ReactNode; title: string; body: string }[] = [
-    { icon: <Activity size={16} />,      title: 'Command Center',       body: 'Your home base — see what needs attention, today’s output, and quick links into every area.' },
-    { icon: <Tablet size={16} />,        title: 'Operator Portal',      body: 'The shop-floor screen. Operators pick their name, a job, and a part, then start working — no settings to get lost in.' },
-    { icon: <AppWindow size={16} />,     title: 'App Library & Builder',body: 'Build step-by-step digital work instructions, publish them, and run them at stations.' },
-    { icon: <ClipboardList size={16} />, title: 'Planning',             body: 'Schedule work orders, plan capacity, and (on paid plans) run inventory and purchasing.' },
-    { icon: <Activity size={16} />,      title: 'Reporting & Analytics',body: 'Throughput, cycle time, OEE, leaderboards, and custom dashboards.' },
-    { icon: <ShieldCheck size={16} />,   title: 'Quality & NCR',        body: 'Capture pass/fail and log non-conformance reports, including straight from the operator portal.' },
-  ];
-
   return (
     <div className="max-w-3xl space-y-6">
+      {/* Product tour */}
       <div className="bg-white rounded-2xl border border-gray-200 p-6">
         <div className="flex items-start gap-4">
-          <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0" style={{ backgroundColor: 'var(--accent-light)', color: 'var(--accent)' }}>
+          <div className="w-11 h-11 rounded-xl flex items-center justify-center flex-shrink-0"
+            style={{ backgroundColor: 'var(--accent-light)', color: 'var(--accent)' }}>
             <PlayCircle size={22} />
           </div>
           <div className="flex-1 min-w-0">
             <h3 className="font-semibold text-gray-900">Product tour</h3>
             <p className="text-sm text-gray-500 mt-1">
-              New here, or want a refresher? Replay the guided walkthrough that introduces every
-              area of the app, step by step.
+              New here, or want a refresher? Replay the 12-step guided walkthrough that introduces
+              every area of the app.
             </p>
             <button onClick={replayTour} className="btn-primary mt-4">
               <PlayCircle size={15} /> Replay product tour
@@ -2973,19 +3246,41 @@ function HelpTab() {
         </div>
       </div>
 
+      {/* Per-module guides */}
+      <div>
+        <h3 className="font-semibold text-gray-900 mb-1">Module guides</h3>
+        <p className="text-sm text-gray-500 mb-4">
+          Click any module for a step-by-step walkthrough and tips.
+        </p>
+        <div className="space-y-2">
+          {MODULE_GUIDES.map(guide => (
+            <HelpModuleCard
+              key={guide.title}
+              guide={guide}
+              isOpen={openGuide === guide.title}
+              onToggle={() => setOpenGuide(o => o === guide.title ? null : guide.title)}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Quick reference card */}
       <div className="bg-white rounded-2xl border border-gray-200 p-6">
-        <h3 className="font-semibold text-gray-900 mb-1">Section guides</h3>
-        <p className="text-sm text-gray-500 mb-4">A quick reference for what each part of the app does.</p>
-        <div className="grid sm:grid-cols-2 gap-3">
-          {GUIDES.map(g => (
-            <div key={g.title} className="flex items-start gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50/50">
-              <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 bg-white border border-gray-200 text-gray-500">
-                {g.icon}
-              </div>
-              <div className="min-w-0">
-                <div className="text-sm font-semibold text-gray-800">{g.title}</div>
-                <div className="text-xs text-gray-500 mt-0.5">{g.body}</div>
-              </div>
+        <h3 className="font-semibold text-gray-900 mb-4">Quick reference</h3>
+        <div className="grid sm:grid-cols-2 gap-x-6 gap-y-2">
+          {[
+            ['Roles', 'Developer → Manager → Supervisor → Operator → Viewer'],
+            ['Plan tiers', 'Free (5 apps) → Pro (unlimited + Inventory/Quality) → Enterprise (SSO + Facilities)'],
+            ['Takt time', 'Target seconds per unit. Used to calculate OEE Performance score.'],
+            ['OEE', 'Availability × Performance × Quality. World class = 85%+'],
+            ['NCR', 'Non-Conformance Report -- a logged quality issue.'],
+            ['App vs Work Order', 'An App is the instruction set; a Work Order is the job that runs it.'],
+            ['Plant View', 'Live floor dashboard -- designed for a TV visible to the whole team.'],
+            ['Direct message', 'Select a specific user in the message composer instead of "Everyone".'],
+          ].map(([term, def]) => (
+            <div key={term} className="py-2 border-b border-gray-50 last:border-0">
+              <span className="text-xs font-semibold text-gray-700">{term}: </span>
+              <span className="text-xs text-gray-500">{def}</span>
             </div>
           ))}
         </div>

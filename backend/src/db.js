@@ -1331,33 +1331,87 @@ function nextSampleWONumber(companyId) {
   return `${prefix}${String(seq + 1).padStart(3, '0')}`;
 }
 
-// ─── Seed: users ──────────────────────────────────────────────────────────────
+// ─── Seed: users (legacy — only runs on a completely empty DB) ───────────────
 
 function seedUsers() {
   if (db.prepare('SELECT COUNT(*) as c FROM users').get().c > 0) return;
-  const crypto = require('crypto');
-  function hashPw(password) {
-    const salt = crypto.randomBytes(16).toString('hex');
-    const hash = crypto.scryptSync(password, salt, 64).toString('hex');
-    return `${salt}:${hash}`;
-  }
-  const users = [
-    { id: uuidv4(), email: 'admin@hartmonitor.demo',    display_name: 'Admin User',      password: 'Admin123!',    role: 'developer' },
-    { id: uuidv4(), email: 'manager@hartmonitor.demo',  display_name: 'Sarah Manager',   password: 'Manager123',   role: 'manager'   },
-    { id: uuidv4(), email: 'operator@hartmonitor.demo', display_name: 'Bob Operator',    password: 'Operator123',  role: 'operator'  },
-    { id: uuidv4(), email: 'demo@hartmonitor.demo',     display_name: 'Demo User',       password: 'demo',         role: 'viewer'    },
+  const demoUsers = [
+    { email: 'admin@hartmonitor.demo',    display_name: 'Admin User',   password: 'Admin123!',  role: 'developer' },
+    { email: 'manager@hartmonitor.demo',  display_name: 'Sarah Manager',password: 'Manager123', role: 'manager'   },
+    { email: 'operator@hartmonitor.demo', display_name: 'Bob Operator', password: 'Operator123',role: 'operator'  },
+    { email: 'demo@hartmonitor.demo',     display_name: 'Demo User',    password: 'demo',       role: 'viewer'    },
   ];
   const ins = db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role) VALUES (?, ?, ?, ?, ?)`);
-  for (const u of users) ins.run(u.id, u.email, u.display_name, hashPw(u.password), u.role);
+  for (const u of demoUsers) ins.run(uuidv4(), u.email, u.display_name, hashPwDemo(u.password), u.role);
+}
+
+// Runs on every boot when SEED_DEMO_DATA is active — idempotent. Ensures the
+// four demo accounts exist in their own dedicated org regardless of whether the
+// DB was previously empty or already had real signup data.
+function ensureDemoUsers() {
+  // Find or create the dedicated demo organization.
+  let demoOrg = db.prepare("SELECT id FROM organizations WHERE slug = 'hartmonitor-demo'").get();
+  if (!demoOrg) {
+    const orgId = uuidv4();
+    db.prepare("INSERT INTO organizations (id, name, slug) VALUES (?, 'HartMonitor Demo Co', 'hartmonitor-demo')").run(orgId);
+    demoOrg = { id: orgId };
+    const insSetting = db.prepare(`INSERT OR IGNORE INTO org_settings (company_id, key, value) VALUES (?, ?, ?)`);
+    for (const [k, v] of [
+      ['company_name', 'HartMonitor Demo Co'], ['timezone', 'America/New_York'],
+      ['date_format', 'MM/DD/YYYY'], ['currency', 'USD'],
+    ]) insSetting.run(orgId, k, v);
+  }
+
+  // Ensure a primary site exists for the demo org.
+  if (!db.prepare('SELECT id FROM sites WHERE company_id = ? LIMIT 1').get(demoOrg.id)) {
+    db.prepare("INSERT INTO sites (id, company_id, name, code, is_primary) VALUES (?, ?, 'Main Site', 'MAIN', 1)")
+      .run(uuidv4(), demoOrg.id);
+  }
+
+  // Keep the demo plan on free tier so upsell flows are properly showcased.
+  const plan = db.prepare('SELECT id FROM plan WHERE company_id = ?').get(demoOrg.id);
+  if (!plan) {
+    db.prepare("INSERT INTO plan (tier, app_limit, dashboard_limit, company_id) VALUES ('free', 5, 2, ?)").run(demoOrg.id);
+  } else {
+    db.prepare("UPDATE plan SET tier = 'free', app_limit = 5, dashboard_limit = 2 WHERE company_id = ?").run(demoOrg.id);
+  }
+
+  // Upsert each demo account — ensures correct password and role every boot.
+  const demoUsers = [
+    { email: 'admin@hartmonitor.demo',    name: 'Admin User',    password: 'Admin123!',  role: 'developer' },
+    { email: 'manager@hartmonitor.demo',  name: 'Sarah Manager', password: 'Manager123', role: 'manager'   },
+    { email: 'operator@hartmonitor.demo', name: 'Bob Operator',  password: 'Operator123',role: 'operator'  },
+    { email: 'demo@hartmonitor.demo',     name: 'Demo User',     password: 'demo',       role: 'viewer'    },
+  ];
+  for (const u of demoUsers) {
+    const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(u.email);
+    if (!existing) {
+      db.prepare("INSERT INTO users (id, email, display_name, password_hash, role, company_id, is_active) VALUES (?, ?, ?, ?, ?, ?, 1)")
+        .run(uuidv4(), u.email, u.name, hashPwDemo(u.password), u.role, demoOrg.id);
+    } else {
+      // Reset credentials and ensure the user is active and in the demo org.
+      db.prepare("UPDATE users SET password_hash = ?, role = ?, company_id = ?, is_active = 1 WHERE email = ?")
+        .run(hashPwDemo(u.password), u.role, demoOrg.id, u.email);
+    }
+  }
+}
+
+function hashPwDemo(password) {
+  const crypto = require('crypto');
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
 }
 
 // ─── Run all seeds (DEVELOPMENT ONLY) ─────────────────────────────────────────
 // Demo company + sample login accounts (admin@hartmonitor.demo, etc.) and fake
 // production data. Gated behind SEED_DEMO_DATA so a production database starts
 // empty and the first real user creates their own organization via /signup.
-// Shipping these accounts to production would expose publicly-known credentials.
+// Shipping these accounts to a real customer environment would expose known creds.
 
 if (config.seedDemoData) {
+  // Always runs first — ensures demo accounts exist regardless of prior DB state.
+  ensureDemoUsers();
   seedUsers();
   seedPlan();
   seedCompanySettings();
@@ -1454,6 +1508,19 @@ if (!freeLimitBumped) {
   db.prepare("UPDATE plan SET app_limit = 5, updated_at = datetime('now') WHERE tier = 'free' AND app_limit = 3").run();
   db.prepare("INSERT INTO schema_meta (key, value) VALUES ('free_tier_app_limit_v2', '1')").run();
 }
+
+// ─── Public game leaderboard (no tenant scope) ────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS game_scores (
+    id TEXT PRIMARY KEY,
+    player_name TEXT NOT NULL,
+    company TEXT DEFAULT '',
+    score INTEGER NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_game_scores_score ON game_scores(score DESC, created_at ASC);
+`);
 
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;
