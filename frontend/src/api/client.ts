@@ -111,9 +111,10 @@ export const api = {
   deleteRecord: (tableId: string, recordId: string) => request<any>(`/tables/${tableId}/records/${recordId}`, { method: 'DELETE' }),
 
   // ── Stations
-  getStations: (params?: { site_id?: string }) => {
+  getStations: (params?: { site_id?: string; department_id?: string }) => {
     const qs = new URLSearchParams();
     if (params?.site_id) qs.set('site_id', params.site_id);
+    if (params?.department_id) qs.set('department_id', params.department_id);
     const s = qs.toString();
     return request<any[]>(`/stations${s ? `?${s}` : ''}`);
   },

@@ -2168,239 +2168,25 @@ function SiteModal({ site, onClose, onSaved, onError }: {
   );
 }
 
-function WorkstationsMini({
-  siteId,
-  departmentId,
-  stations,
-  onChange,
-}: {
-  siteId: string;
-  departmentId: string;
-  stations: any[];
-  onChange: () => void;
-}) {
-  const [adding, setAdding] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  const handleAdd = async () => {
-    if (!newName.trim()) return;
-    setSaving(true);
-    try {
-      await api.createStation({ name: newName.trim(), department_id: departmentId, site_id: siteId });
-      setNewName('');
-      setAdding(false);
-      onChange();
-    } catch { /* ignore */ } finally { setSaving(false); }
-  };
-
-  const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`Delete workstation "${name}"?`)) return;
-    setDeletingId(id);
-    try {
-      await api.deleteStation(id);
-      onChange();
-    } catch { /* ignore */ } finally { setDeletingId(null); }
-  };
-
-  return (
-    <div className="mt-1.5 ml-5 pl-3 border-l border-gray-100 space-y-1">
-      {stations.length === 0 && !adding ? (
-        <div className="text-[11px] text-gray-400 py-0.5">No workstations yet — add the machines/cells in this department</div>
-      ) : (
-        stations.map(s => (
-          <div key={s.id} className="flex items-center justify-between gap-2 py-0.5">
-            <span className="text-[11px] text-gray-600">{s.name}</span>
-            <button
-              onClick={() => handleDelete(s.id, s.name)}
-              disabled={deletingId === s.id}
-              className="p-0.5 rounded text-gray-300 hover:text-red-500 transition-colors"
-            >
-              <Trash2 size={10} />
-            </button>
-          </div>
-        ))
-      )}
-      {adding ? (
-        <div className="flex items-center gap-1.5 pt-1">
-          <input
-            className="input-field flex-1 text-[11px] py-1"
-            placeholder="Workstation name"
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter') handleAdd(); }}
-            autoFocus
-          />
-          <button onClick={handleAdd} disabled={!newName.trim() || saving} className="btn-primary text-[11px] py-1 px-2">
-            {saving ? '…' : 'Add'}
-          </button>
-          <button onClick={() => { setAdding(false); setNewName(''); }} className="text-[11px] text-gray-400 hover:text-gray-600">Cancel</button>
-        </div>
-      ) : (
-        <button
-          onClick={() => setAdding(true)}
-          className="text-[11px] text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1 pt-0.5"
-        >
-          <Plus size={10} /> Add workstation
-        </button>
-      )}
-    </div>
-  );
-}
-
-function DepartmentsMini({ siteId }: { siteId: string }) {
-  const [depts, setDepts] = useState<any[]>([]);
-  const [stations, setStations] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [adding, setAdding] = useState(false);
-  const [newName, setNewName] = useState('');
-  const [newDesc, setNewDesc] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  const load = () => {
-    setLoading(true);
-    Promise.all([
-      api.getDepartments({ site_id: siteId }).catch(() => []),
-      api.getStations({ site_id: siteId }).catch(() => []),
-    ])
-      .then(([d, s]) => { setDepts(d); setStations(s); })
-      .finally(() => setLoading(false));
-  };
-
-  const loadStations = () => {
-    api.getStations({ site_id: siteId }).then(setStations).catch(() => {});
-  };
-
-  useEffect(load, [siteId]);
-
-  const stationsByDept = (id: string) => stations.filter(s => s.department_id === id);
-
-  const handleAdd = async () => {
-    if (!newName.trim()) return;
-    setSaving(true);
-    try {
-      await api.createDepartment({ name: newName.trim(), description: newDesc.trim(), site_id: siteId });
-      setNewName('');
-      setNewDesc('');
-      setAdding(false);
-      load();
-    } catch { /* ignore */ } finally { setSaving(false); }
-  };
-
-  const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`Delete department "${name}"?`)) return;
-    setDeletingId(id);
-    try {
-      await api.deleteDepartment(id);
-      load();
-    } catch { /* ignore */ } finally { setDeletingId(null); }
-  };
-
-  return (
-    <div className="mt-4 pl-4 border-l-2 border-gray-100">
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Departments</span>
-        <button
-          onClick={() => setAdding(a => !a)}
-          className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
-        >
-          <Plus size={12} /> Add
-        </button>
-      </div>
-      {loading ? (
-        <div className="text-xs text-gray-400 py-2">Loading…</div>
-      ) : depts.length === 0 && !adding ? (
-        <div className="text-xs text-gray-400 py-1">No departments yet</div>
-      ) : (
-        <div className="space-y-1">
-          {depts.map(d => {
-            const deptStations = stationsByDept(d.id);
-            const expanded = expandedId === d.id;
-            return (
-              <div key={d.id} className="py-1">
-                <div className="flex items-center justify-between gap-2">
-                  <button
-                    onClick={() => setExpandedId(expanded ? null : d.id)}
-                    className="flex items-center gap-1.5 text-left min-w-0"
-                  >
-                    {expanded
-                      ? <ChevronDown size={12} className="text-gray-400 flex-shrink-0" />
-                      : <ChevronRight size={12} className="text-gray-400 flex-shrink-0" />}
-                    <span className="text-xs font-medium text-gray-700 truncate">{d.name}</span>
-                    {d.description && <span className="text-xs text-gray-400 ml-1 truncate">{d.description}</span>}
-                    <span className="text-[10px] text-gray-400 bg-gray-100 rounded-full px-1.5 py-0.5 flex-shrink-0">
-                      {deptStations.length} workstation{deptStations.length === 1 ? '' : 's'}
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => handleDelete(d.id, d.name)}
-                    disabled={deletingId === d.id}
-                    className="p-0.5 rounded text-gray-300 hover:text-red-500 transition-colors flex-shrink-0"
-                  >
-                    <Trash2 size={11} />
-                  </button>
-                </div>
-                {expanded && (
-                  <WorkstationsMini
-                    siteId={siteId}
-                    departmentId={d.id}
-                    stations={deptStations}
-                    onChange={loadStations}
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-      {adding && (
-        <div className="mt-2 space-y-1.5">
-          <input
-            className="input-field w-full text-xs"
-            placeholder="Department name"
-            value={newName}
-            onChange={e => setNewName(e.target.value)}
-            autoFocus
-          />
-          <input
-            className="input-field w-full text-xs"
-            placeholder="Description (optional)"
-            value={newDesc}
-            onChange={e => setNewDesc(e.target.value)}
-          />
-          <div className="flex items-center gap-2">
-            <button onClick={handleAdd} disabled={!newName.trim() || saving} className="btn-primary text-xs py-1 px-3">
-              {saving ? 'Saving…' : 'Add'}
-            </button>
-            <button onClick={() => setAdding(false)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 function SitesTab() {
   const [sites, setSites] = useState<Site[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [modalSite, setModalSite] = useState<Site | null | false>(false); // false=closed, null=new, obj=edit
-  const [deletingId, setDeletingId] = useState<string | null>(null);
-  const [expandedSiteId, setExpandedSiteId] = useState<string | null>(null);
+  const [depts, setDepts] = useState<any[]>([]);
+  const [stations, setStations] = useState<any[]>([]);
+  const [loadingSites, setLoadingSites] = useState(true);
+  const [loadingDepts, setLoadingDepts] = useState(false);
+  const [loadingStations, setLoadingStations] = useState(false);
+  const [selectedSite, setSelectedSite] = useState<Site | null>(null);
+  const [selectedDept, setSelectedDept] = useState<any | null>(null);
+  const [modalSite, setModalSite] = useState<Site | null | false>(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const load = () => {
-    setLoading(true);
-    api.getSites()
-      .then(setSites)
-      .catch(() => setSites([]))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(load, []);
+  const [addingDept, setAddingDept] = useState(false);
+  const [newDeptName, setNewDeptName] = useState('');
+  const [savingDept, setSavingDept] = useState(false);
+  const [addingStation, setAddingStation] = useState(false);
+  const [newStationName, setNewStationName] = useState('');
+  const [savingStation, setSavingStation] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
@@ -2408,108 +2194,332 @@ function SitesTab() {
     toastTimer.current = setTimeout(() => setToast(null), 3000);
   };
 
-  const handleDelete = async (site: Site) => {
+  const loadSites = (keepSelected?: boolean) => {
+    setLoadingSites(true);
+    api.getSites()
+      .then(data => {
+        setSites(data);
+        if (!keepSelected) {
+          const primary = data.find((s: Site) => s.is_primary) ?? data[0];
+          if (primary) { setSelectedSite(primary); loadDepts(primary.id); }
+        } else if (selectedSite) {
+          const refreshed = data.find((s: Site) => s.id === selectedSite.id);
+          if (refreshed) setSelectedSite(refreshed);
+        }
+      })
+      .catch(() => setSites([]))
+      .finally(() => setLoadingSites(false));
+  };
+
+  const loadDepts = (siteId: string) => {
+    setLoadingDepts(true);
+    api.getDepartments({ site_id: siteId })
+      .then(setDepts)
+      .catch(() => setDepts([]))
+      .finally(() => setLoadingDepts(false));
+  };
+
+  const loadStations = (deptId: string) => {
+    setLoadingStations(true);
+    api.getStations({ department_id: deptId })
+      .then(setStations)
+      .catch(() => setStations([]))
+      .finally(() => setLoadingStations(false));
+  };
+
+  useEffect(() => { loadSites(); }, []);
+
+  const handleSelectSite = (site: Site) => {
+    setSelectedSite(site);
+    setSelectedDept(null);
+    setStations([]);
+    setAddingDept(false);
+    setAddingStation(false);
+    loadDepts(site.id);
+  };
+
+  const handleSelectDept = (dept: any) => {
+    setSelectedDept(dept);
+    setAddingStation(false);
+    loadStations(dept.id);
+  };
+
+  const handleAddDept = async () => {
+    if (!newDeptName.trim() || !selectedSite) return;
+    setSavingDept(true);
+    try {
+      await api.createDepartment({ name: newDeptName.trim(), site_id: selectedSite.id });
+      setNewDeptName(''); setAddingDept(false);
+      loadDepts(selectedSite.id);
+    } catch (err: any) { showToast(err.message || 'Failed to add department', 'error'); }
+    finally { setSavingDept(false); }
+  };
+
+  const handleDeleteDept = async (id: string, name: string) => {
+    if (!confirm(`Delete department "${name}"? This cannot be undone.`)) return;
+    setDeletingId(id);
+    try {
+      await api.deleteDepartment(id);
+      if (selectedDept?.id === id) { setSelectedDept(null); setStations([]); }
+      if (selectedSite) loadDepts(selectedSite.id);
+    } catch (err: any) { showToast(err.message || 'Failed to delete department', 'error'); }
+    finally { setDeletingId(null); }
+  };
+
+  const handleAddStation = async () => {
+    if (!newStationName.trim() || !selectedDept) return;
+    setSavingStation(true);
+    try {
+      await api.createStation({ name: newStationName.trim(), department_id: selectedDept.id, site_id: selectedSite!.id });
+      setNewStationName(''); setAddingStation(false);
+      loadStations(selectedDept.id);
+    } catch (err: any) { showToast(err.message || 'Failed to add workstation', 'error'); }
+    finally { setSavingStation(false); }
+  };
+
+  const handleDeleteStation = async (id: string, name: string) => {
+    if (!confirm(`Delete workstation "${name}"?`)) return;
+    setDeletingId(id);
+    try {
+      await api.deleteStation(id);
+      if (selectedDept) loadStations(selectedDept.id);
+    } catch (err: any) { showToast(err.message || 'Failed to delete workstation', 'error'); }
+    finally { setDeletingId(null); }
+  };
+
+  const handleDeleteSite = async (site: Site) => {
     if (!confirm(`Delete site "${site.name}"? This cannot be undone.`)) return;
     setDeletingId(site.id);
     try {
       await api.deleteSite(site.id);
       showToast(`Site "${site.name}" deleted`);
-      load();
-    } catch (err: any) {
-      showToast(err.message || 'Failed to delete site', 'error');
-    } finally {
-      setDeletingId(null);
-    }
+      if (selectedSite?.id === site.id) { setSelectedSite(null); setDepts([]); setStations([]); }
+      loadSites(true);
+    } catch (err: any) { showToast(err.message || 'Failed to delete site', 'error'); }
+    finally { setDeletingId(null); }
   };
 
+  const colCls = 'flex flex-col border border-gray-100 rounded-xl overflow-hidden bg-white shadow-sm';
+  const headCls = 'flex items-center justify-between px-3 py-2.5 bg-gray-50 border-b border-gray-100 flex-shrink-0';
+  const emptyCls = 'p-6 text-center text-xs text-gray-400 flex flex-col items-center gap-2 flex-1 justify-center';
+
   return (
-    <div className="max-w-3xl space-y-6">
+    <div className="max-w-5xl space-y-4">
       <div className="rounded-xl bg-blue-50/60 border border-blue-100 p-3.5 flex items-start gap-2.5">
         <Network size={16} className="text-blue-500 flex-shrink-0 mt-0.5" />
         <div className="text-xs text-gray-600 leading-relaxed">
-          <span className="font-semibold text-gray-800">Set up your physical organization here.</span> This is the one place to manage your hierarchy:
-          {' '}<span className="font-medium text-gray-700">Sites (facilities) → Departments → Workstations</span>. Apps and work orders are assigned to these.
+          <span className="font-semibold text-gray-800">Build your facility hierarchy here.</span>
+          {' '}Click a <span className="font-medium text-gray-700">Site</span> to see its departments,
+          then click a <span className="font-medium text-gray-700">Department</span> to manage its workstations.
+          Apps and work orders are then assigned to these.
         </div>
-      </div>
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-600">Manage the sites / plants in your organization.</p>
-        <button onClick={() => setModalSite(null)} className="btn-primary flex items-center gap-2">
-          <Plus size={15} /> Add Site
-        </button>
       </div>
 
-      {loading ? (
-        <div className="text-center py-12 text-gray-400 text-sm">Loading sites…</div>
-      ) : sites.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-gray-200 py-10 text-center">
-          <MapPin size={24} className="mx-auto text-gray-300 mb-2" />
-          <p className="text-sm text-gray-400">No sites yet</p>
-          <p className="text-xs text-gray-400 mt-0.5">Add your first site to get started.</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {sites.map(site => (
-            <div key={site.id} className="card p-4">
-              <div className="flex items-start justify-between gap-4">
-                <div className="flex items-start gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0"
-                    style={{ backgroundColor: 'var(--accent-light)', color: 'var(--accent)' }}>
-                    <MapPin size={18} />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-semibold text-gray-800">{site.name}</span>
-                      {site.code && <span className="text-xs font-mono text-gray-400">{site.code}</span>}
-                      {!!site.is_primary && (
-                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Primary</span>
-                      )}
-                    </div>
-                    {site.address && <div className="text-xs text-gray-500 mt-0.5">{site.address}</div>}
-                    <div className="text-xs text-gray-400 mt-0.5">{site.timezone}</div>
-                    <div className="flex items-center gap-3 mt-2 text-xs text-gray-500 flex-wrap">
-                      <span>{site.station_count ?? 0} stations</span>
-                      <span>·</span>
-                      <button
-                        onClick={() => setExpandedSiteId(expandedSiteId === site.id ? null : site.id)}
-                        className="text-blue-600 hover:text-blue-700 font-medium"
-                      >
-                        {site.department_count ?? 0} departments
-                      </button>
-                      <span>·</span>
-                      <span>{site.work_order_count ?? 0} work orders</span>
-                      <span>·</span>
-                      <span>{site.location_count ?? 0} locations</span>
-                    </div>
+      <div className="grid grid-cols-3 gap-3" style={{ height: 500 }}>
+        {/* Column 1: Sites */}
+        <div className={colCls}>
+          <div className={headCls}>
+            <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Sites</span>
+            <button onClick={() => setModalSite(null)} className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1">
+              <Plus size={11} /> Add
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {loadingSites ? (
+              <div className={emptyCls}>Loading…</div>
+            ) : sites.length === 0 ? (
+              <div className={emptyCls}>
+                <MapPin size={22} className="text-gray-200" />
+                Add your first site to get started
+              </div>
+            ) : sites.map(site => (
+              <button
+                key={site.id}
+                onClick={() => handleSelectSite(site)}
+                className={`w-full text-left px-3 py-2.5 flex items-center gap-2.5 border-b border-gray-50 transition-colors group ${
+                  selectedSite?.id === site.id ? 'bg-[var(--accent)] text-white' : 'hover:bg-gray-50'
+                }`}
+              >
+                <MapPin size={13} className="flex-shrink-0 opacity-70" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium truncate">{site.name}</div>
+                  <div className={`text-[10px] truncate ${selectedSite?.id === site.id ? 'text-white/70' : 'text-gray-400'}`}>
+                    {site.code ? `${site.code} · ` : ''}{site.department_count ?? 0} dept{(site.department_count ?? 0) !== 1 ? 's' : ''}
                   </div>
                 </div>
-                <div className="flex items-center gap-1 flex-shrink-0">
-                  <button onClick={() => setModalSite(site)}
-                    className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
-                    <Edit2 size={14} />
+                <div className="flex items-center gap-0.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {!!site.is_primary && (
+                    <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full mr-1 ${selectedSite?.id === site.id ? 'bg-white/20 text-white' : 'bg-emerald-100 text-emerald-700'}`}>
+                      PRIMARY
+                    </span>
+                  )}
+                  <button
+                    onClick={e => { e.stopPropagation(); setModalSite(site); }}
+                    className={`p-1 rounded ${selectedSite?.id === site.id ? 'text-white/70 hover:text-white hover:bg-white/10' : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'}`}
+                  >
+                    <Edit2 size={11} />
                   </button>
                   {!site.is_primary && (
                     <button
-                      onClick={() => handleDelete(site)}
+                      onClick={e => { e.stopPropagation(); handleDeleteSite(site); }}
                       disabled={deletingId === site.id}
-                      className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors">
-                      <Trash2 size={14} />
+                      className={`p-1 rounded ${selectedSite?.id === site.id ? 'text-white/70 hover:text-white hover:bg-white/10' : 'text-gray-400 hover:text-red-600 hover:bg-red-50'}`}
+                    >
+                      <Trash2 size={11} />
                     </button>
                   )}
                 </div>
-              </div>
-              {expandedSiteId === site.id && (
-                <DepartmentsMini siteId={site.id} />
-              )}
-            </div>
-          ))}
+                {!!site.is_primary && selectedSite?.id !== site.id && (
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-700 flex-shrink-0 group-hover:hidden">
+                    PRIMARY
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
         </div>
-      )}
+
+        {/* Column 2: Departments */}
+        <div className={colCls}>
+          <div className={headCls}>
+            <div className="min-w-0 flex items-center gap-1.5 overflow-hidden">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex-shrink-0">Departments</span>
+              {selectedSite && <span className="text-xs text-gray-400 truncate">· {selectedSite.name}</span>}
+            </div>
+            {selectedSite && (
+              <button onClick={() => setAddingDept(a => !a)} className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1 flex-shrink-0 ml-2">
+                <Plus size={11} /> Add
+              </button>
+            )}
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {!selectedSite ? (
+              <div className={emptyCls}>
+                <ChevronRight size={22} className="text-gray-200" />
+                Select a site first
+              </div>
+            ) : loadingDepts ? (
+              <div className={emptyCls}>Loading…</div>
+            ) : depts.length === 0 && !addingDept ? (
+              <div className={emptyCls}>
+                <Building2 size={22} className="text-gray-200" />
+                No departments yet — click Add
+              </div>
+            ) : depts.map(dept => (
+              <button
+                key={dept.id}
+                onClick={() => handleSelectDept(dept)}
+                className={`w-full text-left px-3 py-2.5 flex items-center gap-2.5 border-b border-gray-50 transition-colors group ${
+                  selectedDept?.id === dept.id ? 'bg-[var(--accent)] text-white' : 'hover:bg-gray-50'
+                }`}
+              >
+                <Building2 size={13} className="flex-shrink-0 opacity-70" />
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm font-medium truncate">{dept.name}</div>
+                  {dept.description && (
+                    <div className={`text-[10px] truncate ${selectedDept?.id === dept.id ? 'text-white/70' : 'text-gray-400'}`}>{dept.description}</div>
+                  )}
+                </div>
+                <button
+                  onClick={e => { e.stopPropagation(); handleDeleteDept(dept.id, dept.name); }}
+                  disabled={deletingId === dept.id}
+                  className={`p-1 rounded flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity ${
+                    selectedDept?.id === dept.id ? 'text-white/70 hover:text-white hover:bg-white/10' : 'text-gray-400 hover:text-red-600 hover:bg-red-50'
+                  }`}
+                >
+                  <Trash2 size={11} />
+                </button>
+              </button>
+            ))}
+          </div>
+          {selectedSite && addingDept && (
+            <div className="border-t border-gray-100 p-2.5 flex-shrink-0 space-y-1.5">
+              <input
+                className="input-field w-full text-xs"
+                placeholder="Department name (e.g. Assembly)"
+                value={newDeptName}
+                onChange={e => setNewDeptName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleAddDept(); if (e.key === 'Escape') setAddingDept(false); }}
+                autoFocus
+              />
+              <div className="flex gap-1.5">
+                <button onClick={handleAddDept} disabled={!newDeptName.trim() || savingDept} className="btn-primary text-xs py-1 px-3 flex-1">
+                  {savingDept ? 'Saving…' : 'Add Department'}
+                </button>
+                <button onClick={() => { setAddingDept(false); setNewDeptName(''); }} className="text-xs text-gray-400 hover:text-gray-600 px-2">✕</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Column 3: Workstations */}
+        <div className={colCls}>
+          <div className={headCls}>
+            <div className="min-w-0 flex items-center gap-1.5 overflow-hidden">
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex-shrink-0">Workstations</span>
+              {selectedDept && <span className="text-xs text-gray-400 truncate">· {selectedDept.name}</span>}
+            </div>
+            {selectedDept && (
+              <button onClick={() => setAddingStation(a => !a)} className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1 flex-shrink-0 ml-2">
+                <Plus size={11} /> Add
+              </button>
+            )}
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {!selectedDept ? (
+              <div className={emptyCls}>
+                <Cpu size={22} className="text-gray-200" />
+                Select a department first
+              </div>
+            ) : loadingStations ? (
+              <div className={emptyCls}>Loading…</div>
+            ) : stations.length === 0 && !addingStation ? (
+              <div className={emptyCls}>
+                <Cpu size={22} className="text-gray-200" />
+                No workstations yet — click Add
+              </div>
+            ) : stations.map(s => (
+              <div key={s.id} className="flex items-center justify-between px-3 py-2.5 border-b border-gray-50 hover:bg-gray-50 group">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <Cpu size={13} className="text-gray-400 flex-shrink-0" />
+                  <span className="text-sm text-gray-700 font-medium truncate">{s.name}</span>
+                </div>
+                <button
+                  onClick={() => handleDeleteStation(s.id, s.name)}
+                  disabled={deletingId === s.id}
+                  className="p-1 rounded text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors opacity-0 group-hover:opacity-100"
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
+            ))}
+          </div>
+          {selectedDept && addingStation && (
+            <div className="border-t border-gray-100 p-2.5 flex-shrink-0 space-y-1.5">
+              <input
+                className="input-field w-full text-xs"
+                placeholder="Workstation name (e.g. Station A-1)"
+                value={newStationName}
+                onChange={e => setNewStationName(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') handleAddStation(); if (e.key === 'Escape') setAddingStation(false); }}
+                autoFocus
+              />
+              <div className="flex gap-1.5">
+                <button onClick={handleAddStation} disabled={!newStationName.trim() || savingStation} className="btn-primary text-xs py-1 px-3 flex-1">
+                  {savingStation ? 'Saving…' : 'Add Workstation'}
+                </button>
+                <button onClick={() => { setAddingStation(false); setNewStationName(''); }} className="text-xs text-gray-400 hover:text-gray-600 px-2">✕</button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
 
       {modalSite !== false && (
         <SiteModal
           site={modalSite}
           onClose={() => setModalSite(false)}
-          onSaved={(msg) => { showToast(msg); load(); }}
+          onSaved={(msg) => { showToast(msg); loadSites(true); }}
           onError={(msg) => showToast(msg, 'error')}
         />
       )}
