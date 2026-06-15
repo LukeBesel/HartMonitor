@@ -311,6 +311,11 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_activity_log_company_created ON activity_log(company_id, created_at DESC);
 `);
 
+// ─── Migrations: activity_log (department/station scoping for the transaction log) ─
+const activityLogCols = db.prepare('PRAGMA table_info(activity_log)').all().map(r => r.name);
+if (!activityLogCols.includes('department_id')) db.exec('ALTER TABLE activity_log ADD COLUMN department_id TEXT');
+if (!activityLogCols.includes('station_id'))    db.exec('ALTER TABLE activity_log ADD COLUMN station_id TEXT');
+
 // ─── Migrations: plan (à-la-carte add-on slots) ──────────────────────────────
 
 const planCols = db.prepare('PRAGMA table_info(plan)').all().map(r => r.name);

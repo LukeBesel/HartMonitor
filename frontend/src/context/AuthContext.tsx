@@ -16,6 +16,13 @@ interface AuthContextValue {
   signup: (companyName: string, displayName: string, email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   isAtLeast: (role: 'developer' | 'manager' | 'supervisor' | 'operator' | 'viewer') => boolean;
+  /** The management/report portal (dashboards, analytics, settings). Operators are
+   *  shop-floor only and cannot reach it; everyone else can (viewers read-only). */
+  canAccessReportPortal: boolean;
+  /** The shop-floor Operator Portal. Open to all roles except view-only viewers. */
+  canAccessOperatorPortal: boolean;
+  /** Viewers can see the report portal but cannot create, edit, or delete anything. */
+  canEdit: boolean;
 }
 
 const ROLE_LEVELS: Record<string, number> = { developer: 5, manager: 4, supervisor: 3, operator: 2, viewer: 1 };
@@ -71,8 +78,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return (ROLE_LEVELS[user.role] ?? 0) >= (ROLE_LEVELS[role] ?? 99);
   };
 
+  // Portal access is role-shaped, not a simple ladder: operators live on the
+  // shop floor, viewers live in the office. Everyone above them gets both.
+  const canAccessReportPortal = !!user && user.role !== 'operator';
+  const canAccessOperatorPortal = !!user && user.role !== 'viewer';
+  const canEdit = !!user && user.role !== 'viewer' && user.role !== 'operator'
+    ? (ROLE_LEVELS[user.role] ?? 0) >= ROLE_LEVELS.supervisor
+    : false;
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, signup, logout, isAtLeast }}>
+    <AuthContext.Provider value={{
+      user, loading, login, signup, logout, isAtLeast,
+      canAccessReportPortal, canAccessOperatorPortal, canEdit,
+    }}>
       {children}
     </AuthContext.Provider>
   );

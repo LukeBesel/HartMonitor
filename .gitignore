@@ -8,3 +8,4 @@ backend/mes.db
 .env
 .env.local
 !.env.example
+.claude/

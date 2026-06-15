@@ -33,7 +33,7 @@ router.post('/', (req, res) => {
   const id = uuidv4();
   db.prepare('INSERT INTO stations (id, name, description, location, department_id, site_id, company_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
     .run(id, name, description, location, department_id || null, site_id || null, req.companyId);
-  logActivity(req.companyId, 'station', id, `Station "${name}" created`, req.user?.display_name);
+  logActivity(req.companyId, 'station', id, `Station "${name}" created`, req.user?.display_name, { department_id: department_id || null, station_id: id });
   const station = db.prepare(STATION_SELECT + ' WHERE s.id = ?').get(id);
   res.status(201).json({ ...station, completion_count: 0 });
 });
@@ -55,7 +55,7 @@ router.put('/:id', (req, res) => {
     .run(updates.name, updates.description, updates.location, updates.status, updates.current_app_id, updates.department_id, updates.site_id, req.params.id);
 
   if (updates.status !== station.status) {
-    logActivity(req.companyId, 'station', req.params.id, `Status changed from ${station.status} to ${updates.status}`, req.user?.display_name);
+    logActivity(req.companyId, 'station', req.params.id, `Status changed from ${station.status} to ${updates.status}`, req.user?.display_name, { department_id: updates.department_id || null, station_id: req.params.id });
   }
 
   const updated = db.prepare(STATION_SELECT + ' WHERE s.id = ?').get(req.params.id);
@@ -66,7 +66,7 @@ router.delete('/:id', (req, res) => {
   const station = db.prepare('SELECT * FROM stations WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!station) return res.status(404).json({ error: 'Not found' });
   db.prepare('DELETE FROM stations WHERE id = ? AND company_id = ?').run(req.params.id, req.companyId);
-  logActivity(req.companyId, 'station', req.params.id, `Station "${station.name}" deleted`, req.user?.display_name);
+  logActivity(req.companyId, 'station', req.params.id, `Station "${station.name}" deleted`, req.user?.display_name, { department_id: station.department_id || null, station_id: req.params.id });
   res.json({ success: true });
 });
 

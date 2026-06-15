@@ -132,7 +132,7 @@ router.post('/', (req, res) => {
   );
 
   const wo = db.prepare(ENRICHED_SELECT + ' WHERE wo.id = ?').get(id);
-  logActivity(req.companyId, 'work_order', id, 'Work order created', req.user?.display_name);
+  logActivity(req.companyId, 'work_order', id, 'Work order created', req.user?.display_name, { department_id: department_id || null });
   res.status(201).json(enrichWorkOrder(wo));
 });
 
@@ -199,7 +199,7 @@ router.put('/:id', (req, res) => {
     changes.push(`Quantity changed from ${wo.quantity} to ${updates.quantity}`);
   }
   for (const change of changes) {
-    logActivity(req.companyId, 'work_order', req.params.id, change, req.user?.display_name);
+    logActivity(req.companyId, 'work_order', req.params.id, change, req.user?.display_name, { department_id: updates.department_id || null });
   }
 
   const updated = db.prepare(ENRICHED_SELECT + ' WHERE wo.id = ?').get(req.params.id);
@@ -234,7 +234,7 @@ router.put('/:id/complete', (req, res) => {
   `).run(req.params.id);
 
   if (wo.status !== 'completed') {
-    logActivity(req.companyId, 'work_order', req.params.id, 'Marked as completed', req.user?.display_name);
+    logActivity(req.companyId, 'work_order', req.params.id, 'Marked as completed', req.user?.display_name, { department_id: wo.department_id || null });
   }
 
   const updated = db.prepare(ENRICHED_SELECT + ' WHERE wo.id = ?').get(req.params.id);
@@ -259,7 +259,7 @@ router.post('/:id/increment', (req, res) => {
   `).run(newQty, newStatus, req.params.id);
 
   if (newStatus !== wo.status) {
-    logActivity(req.companyId, 'work_order', req.params.id, `Status changed from ${STATUS_LABELS[wo.status] || wo.status} to ${STATUS_LABELS[newStatus] || newStatus}`, req.user?.display_name);
+    logActivity(req.companyId, 'work_order', req.params.id, `Status changed from ${STATUS_LABELS[wo.status] || wo.status} to ${STATUS_LABELS[newStatus] || newStatus}`, req.user?.display_name, { department_id: wo.department_id || null });
   }
 
   const updated = db.prepare(ENRICHED_SELECT + ' WHERE wo.id = ?').get(req.params.id);

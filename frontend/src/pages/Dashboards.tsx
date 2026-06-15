@@ -93,7 +93,7 @@ export default function Dashboards() {
             <LayoutGrid size={20} className="text-blue-600" />
             <h1 className="text-2xl font-bold text-gray-900">Dashboards</h1>
           </div>
-          <p className="text-gray-500 text-sm mt-0.5">Custom analytics dashboards — your own Power BI built-in</p>
+          <p className="text-gray-500 text-sm mt-0.5">Build custom analytics dashboards from your production data</p>
         </div>
         <button
           onClick={() => setCreating(true)}

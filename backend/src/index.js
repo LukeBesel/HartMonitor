@@ -196,8 +196,21 @@ require('fs').mkdirSync(uploadsDir, { recursive: true });
 app.use('/uploads', express.static(uploadsDir));
 
 const frontendDist = path.join(__dirname, '..', '..', 'frontend', 'dist');
-app.use(express.static(frontendDist));
+// Fingerprinted build assets (index-<hash>.js, etc.) never change for a given
+// hash, so cache them aggressively. index.html is served below with no-cache so
+// a redeploy is always picked up on the next refresh (it points at new hashes).
+app.use(express.static(frontendDist, {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('index.html')) {
+      res.setHeader('Cache-Control', 'no-cache, must-revalidate');
+    } else if (/[/\\]assets[/\\]/.test(filePath)) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    }
+  },
+}));
 app.get('*', (_req, res) => {
+  // Never let the SPA shell be cached — it references the current asset hashes.
+  res.setHeader('Cache-Control', 'no-cache, must-revalidate');
   res.sendFile(path.join(frontendDist, 'index.html'));
 });
 
