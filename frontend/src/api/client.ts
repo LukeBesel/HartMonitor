@@ -3,6 +3,7 @@ import type {
   BroadcastMessage, MessageSeverity, PricingCatalog,
   Site, NotificationPrefs, NotificationLogEntry, RolePermissionMap, ApiKey, Webhook, WebhookDelivery,
   AuditLogEntry, SSOProviderInfo,
+  InventoryTrackerSummary, InventoryMovement,
 } from '../types';
 
 const BASE = '/api';
@@ -200,6 +201,9 @@ export const api = {
     return request<any[]>(`/inventory/items?${qs}`);
   },
   getInventorySummary: () => request<any>('/inventory/items/summary'),
+  // Richer rollup for the Inventory Tracker Overview tab (KPIs + low-stock list +
+  // stock value by category for the chart).
+  getInventoryTrackerSummary: () => request<InventoryTrackerSummary>('/inventory/summary'),
   getInventoryItem: (id: string) => request<any>(`/inventory/items/${id}`),
   createInventoryItem: (data: any) => request<any>('/inventory/items', { method: 'POST', body: JSON.stringify(data) }),
   updateInventoryItem: (id: string, data: any) => request<any>(`/inventory/items/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
@@ -219,7 +223,7 @@ export const api = {
     if (params?.movement_type) qs.set('movement_type', params.movement_type);
     if (params?.days)          qs.set('days', String(params.days));
     if (params?.limit)         qs.set('limit', String(params.limit));
-    return request<any[]>(`/inventory/movements?${qs}`);
+    return request<InventoryMovement[]>(`/inventory/movements?${qs}`);
   },
 
   // ── Purchasing

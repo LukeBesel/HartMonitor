@@ -1582,5 +1582,24 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_game_scores_score ON game_scores(score DESC, created_at ASC);
 `);
 
+// ─── Inventory Tracker additions (additive, PRAGMA-guarded) ───────────────────
+// Owned by the Inventory Tracker work. Kept in a single block at the very end of
+// the file to minimize merge conflicts with other agents appending here.
+//
+// The inventory system already models stock per-location via `stock_levels` and
+// logs every movement in `stock_movements` (receive/consume/adjust/transfer/…).
+// The required reorder/location/unit_cost/category fields already exist on
+// `items`, so the only gap for the tracker is attributing movements to the
+// authenticated user. We add `created_by` to `stock_movements` if missing, and a
+// couple of indexes to keep the global movements log fast.
+{
+  const stockMovementCols = db.prepare('PRAGMA table_info(stock_movements)').all().map(r => r.name);
+  if (!stockMovementCols.includes('created_by')) {
+    db.exec("ALTER TABLE stock_movements ADD COLUMN created_by TEXT DEFAULT ''");
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_stock_movements_item ON stock_movements(item_id, created_at DESC)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(created_at DESC)');
+}
+
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;
