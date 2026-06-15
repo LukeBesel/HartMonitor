@@ -18,7 +18,10 @@ import { useDashboardPrefs, DASHBOARD_SECTIONS, DashboardSectionId } from '../ho
 import Toggle from '../components/shared/Toggle';
 import OnboardingWizard from '../components/shared/OnboardingWizard';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
-import { LayoutDashboard } from 'lucide-react';
+import {
+  LayoutDashboard, Tablet, AppWindow, Building2, CalendarRange,
+  GitBranch, ShieldCheck, Bell,
+} from 'lucide-react';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -200,8 +203,8 @@ export default function Dashboard() {
       <OnboardingWizard />
       <ModuleOnboarding
         moduleId="dashboard"
-        title="Command Center"
-        description="Your Command Center is the live heartbeat of your factory. See real-time production status, active work orders, OEE at a glance, and alerts that need attention."
+        title="Welcome to your MES"
+        description="This is your command center for running the shop floor — apps, work orders, stations, quality, and analytics, all in one place. Here's how the whole system fits together, and what to do on this page."
         steps={[
           "Check today's shift production stats",
           "Review open work orders and their status",
@@ -210,6 +213,19 @@ export default function Dashboard() {
         ]}
         icon={LayoutDashboard}
         color="#3b82f6"
+        overviewTitle="What's inside your MES"
+        overview={[
+          { icon: LayoutDashboard, label: 'Command Center', desc: "Your home base — live output, alerts, and what needs attention first." },
+          { icon: Tablet,          label: 'Operator Portal', desc: 'The shop-floor screen operators use to pick a job and start working.' },
+          { icon: AppWindow,       label: 'App Library & Builder', desc: 'Build drag-and-drop digital work instructions, then publish them.' },
+          { icon: Building2,       label: 'Plant View & Stations', desc: 'Define work centers and watch live status across the floor.' },
+          { icon: CalendarRange,   label: 'Planning & Schedule', desc: 'Schedule work orders, balance capacity, and plan inventory.' },
+          { icon: GitBranch,       label: 'Routings', desc: 'Define step-by-step manufacturing sequences with cycle times.' },
+          { icon: BarChart2,       label: 'Reporting & Analytics', desc: 'Track throughput, cycle times, OEE, and custom dashboards.' },
+          { icon: ShieldCheck,     label: 'Quality & NCR', desc: 'Capture pass/fail and log non-conformance reports from the floor.' },
+          { icon: Bell,            label: 'Alerts & Messages', desc: 'Combines what needs attention with team broadcasts and DMs.' },
+          { icon: Monitor,         label: 'Per-module guides', desc: 'Each section shows a quick how-to the first time you open it.' },
+        ]}
       />
 
       {/* Header */}
