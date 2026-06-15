@@ -57,9 +57,9 @@ export default function ForgotPassword() {
                     we've sent a link to reset your password. It expires in 1 hour.
                   </p>
                 </div>
-                {devUrl && (
+                {devUrl && !(import.meta as any).env?.PROD && (
                   <div className="text-left rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-                    <p className="text-xs font-semibold text-amber-700 mb-1">Email isn't configured on this server</p>
+                    <p className="text-xs font-semibold text-amber-700 mb-1">Dev mode — SMTP not configured</p>
                     <p className="text-xs text-amber-700/80 mb-2">Use this one-time link to continue:</p>
                     <a href={devUrl} className="text-xs font-medium text-blue-600 hover:underline break-all">{devUrl}</a>
                   </div>

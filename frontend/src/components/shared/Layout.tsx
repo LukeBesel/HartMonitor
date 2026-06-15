@@ -14,6 +14,7 @@ import AlertsBubble from './AlertsBubble';
 import SiteSwitcher from './SiteSwitcher';
 import UpgradeModal from './UpgradeModal';
 import QuickCreateModal from './QuickCreateModal';
+import PWAUpdatePrompt from './PWAUpdatePrompt';
 
 function ProBadge() {
   return (
@@ -403,6 +404,8 @@ export default function Layout() {
           onPurchased={() => setLockedModal(null)}
         />
       )}
+
+      <PWAUpdatePrompt />
     </div>
   );
 }

@@ -17,22 +17,22 @@ const GRADIENT = 'linear-gradient(135deg, #6366f1, #ec4899)';
 const PINK = '#ec4899';
 
 const FEATURES = [
-  { icon: Blocks, title: 'No-code App Builder', body: 'Drag-and-drop 13 widget types into guided, step-by-step work instructions. Publish to the floor in minutes.' },
+  { icon: Blocks, title: 'No-code App Builder', body: 'Drag-and-drop widget types — including 3D CAD viewers and video — into guided, step-by-step work instructions. Publish in minutes.' },
   { icon: CalendarClock, title: 'Work Orders & Scheduling', body: 'Plan, sequence, and track every job with live schedule adherence and takt-time monitoring.' },
   { icon: Gauge, title: 'Real-time OEE', body: 'Availability, performance, and quality computed automatically from what operators actually do.' },
   { icon: ShieldCheck, title: 'Quality / NCR', body: 'Capture non-conformances at the source, route them, and close the loop with full audit history.' },
-  { icon: Package, title: 'Inventory & Purchasing', body: 'Track stock, locations, vendors, and purchase orders alongside production — one system of record.' },
+  { icon: Package, title: 'Inventory & Purchasing', body: 'Track stock levels with min/max gauges, receive against POs, and manage vendors — alongside production.' },
+  { icon: Sparkles, title: 'Training & Skills Matrix', body: 'Track operator certifications, app training status, and department coverage with a live skills matrix.' },
   { icon: Smartphone, title: 'Operator Portal', body: 'A touch-friendly, mobile-first portal so every operator sees their jobs and reports issues instantly.' },
-  { icon: MessageSquare, title: 'Live Messaging', body: 'Broadcast shift updates and urgent alerts to the whole floor in real time over WebSockets.' },
-  { icon: WifiOff, title: 'Offline-ready PWA', body: 'Install it like a native app. Keep working through dropouts — data syncs automatically on reconnect.' },
+  { icon: WifiOff, title: 'Offline-ready PWA', body: 'Install it like a native app on iOS or Android. Keep working through dropouts — data syncs on reconnect.' },
   { icon: ScanLine, title: 'Barcode Scanning', body: 'Scan work orders, parts, and SKUs with any device camera. No dedicated hardware required.' },
 ];
 
 const STATS = [
-  { value: '13', label: 'Widget types' },
+  { value: '15+', label: 'Widget types' },
   { value: '< 5 min', label: 'To publish an app' },
   { value: 'Real-time', label: 'OEE & analytics' },
-  { value: '100%', label: 'Offline-capable' },
+  { value: 'iOS + Android', label: 'Installable PWA' },
 ];
 
 function ProductRow({ eyebrow, title, body, points, src, alt, phone = false, reverse = false }: {
@@ -313,11 +313,26 @@ const MES_PREVIEWS = [
 
 export default function Landing() {
   const [pricing, setPricing] = useState<PricingCatalog | null>(null);
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
+  const [installed, setInstalled] = useState(false);
 
   useEffect(() => {
     api.getPublicPricing().then(setPricing).catch(() => {});
     document.title = 'HartMonitor — Manufacturing Execution System';
+
+    const handler = (e: Event) => { e.preventDefault(); setInstallPrompt(e); };
+    window.addEventListener('beforeinstallprompt', handler);
+    window.addEventListener('appinstalled', () => setInstalled(true));
+    return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
+
+  const handleInstall = async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    const { outcome } = await installPrompt.userChoice;
+    if (outcome === 'accepted') setInstalled(true);
+    setInstallPrompt(null);
+  };
 
   const fmt = (p: number | null) => (p === null ? 'Custom' : p === 0 ? '$0' : `$${p}`);
 
@@ -369,7 +384,28 @@ export default function Landing() {
                 See it in action
               </a>
             </div>
-            <p className="mt-5 text-sm text-gray-500">Free plan includes 5 apps & 2 dashboards · No credit card required</p>
+            {/* PWA install row */}
+            <div className="mt-5 flex flex-col items-center gap-2">
+              {installPrompt && !installed && (
+                <button
+                  onClick={handleInstall}
+                  className="inline-flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors border border-white/10 rounded-full px-5 py-2 hover:bg-white/5"
+                >
+                  <Smartphone size={14} className="text-pink-400" />
+                  Install app on this device
+                </button>
+              )}
+              {installed && (
+                <p className="text-sm text-emerald-400 flex items-center gap-1.5">
+                  <Check size={14} strokeWidth={3} /> App installed!
+                </p>
+              )}
+              {!installPrompt && !installed && (
+                <p className="text-sm text-gray-500">
+                  Free plan · 5 apps & 2 dashboards · No credit card required
+                </p>
+              )}
+            </div>
           </Reveal>
         </div>
 
@@ -516,6 +552,48 @@ export default function Landing() {
         </Reveal>
       </section>
 
+      {/* ── Install strip ──────────────────────────────────────────────── */}
+      <section className="border-t border-white/10">
+        <div className="max-w-6xl mx-auto px-6 py-16 text-center">
+          <Reveal>
+            <h2 className="text-3xl md:text-4xl font-semibold tracking-tight mb-4">Install on any device.</h2>
+            <p className="text-gray-400 max-w-xl mx-auto mb-8">
+              HartMonitor is a Progressive Web App — add it to your home screen on iOS or Android for a native-app feel with automatic updates every time we ship.
+            </p>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+              <div className="flex items-center gap-3 px-6 py-3.5 rounded-2xl border border-white/15 bg-white/[0.04]">
+                <svg viewBox="0 0 24 24" className="w-7 h-7 flex-shrink-0" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
+                <div className="text-left">
+                  <p className="text-[10px] text-gray-400 leading-none">Add to Home Screen on</p>
+                  <p className="text-sm font-semibold text-white">iPhone / iPad (iOS)</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3 px-6 py-3.5 rounded-2xl border border-white/15 bg-white/[0.04]">
+                <svg viewBox="0 0 24 24" className="w-7 h-7 flex-shrink-0" fill="currentColor"><path d="M17.523 15.341 4.63 22.573l9.913-9.913 3.04 2.681zM2.8 1.8C2.305 2.319 2 3.088 2 4.101v15.798c0 1.013.305 1.782.8 2.301l.116.116L11.7 13.44v-.221L2.916 4.584 2.8 1.8zm14.4 8.136-2.68-1.489-3.04 3.014 3.04 3.014 2.68-1.489c.766-.435.766-1.116 0-1.55l.048-.5zM4.63 1.427l12.893 7.232-3.04 2.641L4.63 1.427z"/></svg>
+                <div className="text-left">
+                  <p className="text-[10px] text-gray-400 leading-none">Install from browser on</p>
+                  <p className="text-sm font-semibold text-white">Android / Chrome</p>
+                </div>
+              </div>
+              {installPrompt && !installed && (
+                <button
+                  onClick={handleInstall}
+                  className="flex items-center gap-3 px-6 py-3.5 rounded-2xl transition-all hover:scale-[1.03] animate-pulse-glow"
+                  style={{ background: GRADIENT }}
+                >
+                  <Smartphone size={20} className="flex-shrink-0" />
+                  <div className="text-left">
+                    <p className="text-[10px] text-white/70 leading-none">This device is ready —</p>
+                    <p className="text-sm font-semibold text-white">Install now</p>
+                  </div>
+                </button>
+              )}
+            </div>
+            <p className="mt-6 text-xs text-gray-600">On iOS: tap Share → "Add to Home Screen". On Android: tap the browser menu → "Install app".</p>
+          </Reveal>
+        </div>
+      </section>
+
       {/* ── Final CTA ──────────────────────────────────────────────────── */}
       <section className="px-6 pb-28">
         <Reveal>
@@ -524,13 +602,21 @@ export default function Landing() {
             <div className="relative">
               <h2 className="text-4xl md:text-5xl font-semibold tracking-tight">Start running your floor <span className="text-gradient-pink text-glow-pink">today</span>.</h2>
               <p className="mt-5 text-lg text-gray-300 max-w-xl mx-auto">Set up your workspace in minutes. No credit card, no sales call — just open the app and build.</p>
-              <Link
-                to="/login?mode=signup"
-                className="mt-9 inline-flex items-center gap-2 px-8 py-4 rounded-full text-white font-semibold text-base transition-all hover:scale-[1.03] animate-pulse-glow"
-                style={{ background: GRADIENT }}
-              >
-                Get started free <ArrowRight size={18} />
-              </Link>
+              <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-4">
+                <Link
+                  to="/login?mode=signup"
+                  className="inline-flex items-center gap-2 px-8 py-4 rounded-full text-white font-semibold text-base transition-all hover:scale-[1.03] animate-pulse-glow"
+                  style={{ background: GRADIENT }}
+                >
+                  Get started free <ArrowRight size={18} />
+                </Link>
+                <Link
+                  to="/login"
+                  className="inline-flex items-center gap-2 px-8 py-4 rounded-full text-white font-semibold text-base border border-white/20 hover:bg-white/10 transition-all"
+                >
+                  Sign in
+                </Link>
+              </div>
             </div>
           </div>
         </Reveal>
