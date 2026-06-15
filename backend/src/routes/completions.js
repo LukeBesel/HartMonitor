@@ -1,8 +1,24 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { logActivity } = require('../activity');
 
 const router = express.Router();
+
+// Resolve the department a completion belongs to: its work order's department,
+// falling back to its station's department when it ran without a work order.
+// Used so production-advance log entries can be filtered by department.
+function resolveDepartmentId(completion) {
+  if (completion.work_order_id) {
+    const wo = db.prepare('SELECT department_id FROM work_orders WHERE id = ?').get(completion.work_order_id);
+    if (wo && wo.department_id) return wo.department_id;
+  }
+  if (completion.station_id) {
+    const st = db.prepare('SELECT department_id FROM stations WHERE id = ?').get(completion.station_id);
+    if (st && st.department_id) return st.department_id;
+  }
+  return null;
+}
 
 router.get('/', (req, res) => {
   const { limit = 50, status, operator_name } = req.query;
@@ -25,6 +41,14 @@ router.post('/', (req, res) => {
   db.prepare('INSERT INTO completions (id, app_id, app_name, station_id, operator_name, work_order_id, product_type_id, company_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
     .run(id, app_id, app.name, station_id || null, operator_name, work_order_id || null, product_type_id || null, req.companyId);
   const completion = db.prepare('SELECT * FROM completions WHERE id = ?').get(id);
+
+  // Production advance: an operator started a job. Logged so the Transaction Log
+  // shows shop-floor activity in real time.
+  logActivity(req.companyId, 'completion', id, `Started ${app.name}`, operator_name, {
+    department_id: resolveDepartmentId(completion),
+    station_id: station_id || null,
+  });
+
   res.status(201).json({ ...completion, data: JSON.parse(completion.data), step_times: JSON.parse(completion.step_times) });
 });
 
@@ -44,16 +68,31 @@ router.put('/:id', (req, res) => {
   db.prepare('UPDATE completions SET status=?, data=?, step_times=?, takt_exceeded_steps=?, completed_at=? WHERE id=?')
     .run(updates.status, updates.data, updates.step_times, updates.takt_exceeded_steps, updates.completed_at, req.params.id);
 
-  // Completing a run counts one unit against its work order
-  if (status === 'completed' && completion.status !== 'completed' && completion.work_order_id) {
-    const wo = db.prepare('SELECT * FROM work_orders WHERE id = ? AND company_id = ?').get(completion.work_order_id, req.companyId);
-    if (wo) {
-      const newQty    = Math.min(wo.quantity_completed + 1, wo.quantity);
-      const newStatus = newQty >= wo.quantity
-        ? 'completed'
-        : (wo.status === 'pending' ? 'in_progress' : wo.status);
-      db.prepare(`UPDATE work_orders SET quantity_completed=?, status=?, updated_at=datetime('now') WHERE id=?`)
-        .run(newQty, newStatus, wo.id);
+  // A run transitioning to 'completed' is a production advance: log the job
+  // finish and (when linked) the unit counted against its work order.
+  const justFinished = status === 'completed' && completion.status !== 'completed';
+  if (justFinished) {
+    const departmentId = resolveDepartmentId(completion);
+    logActivity(req.companyId, 'completion', req.params.id, `Finished ${completion.app_name}`, completion.operator_name, {
+      department_id: departmentId,
+      station_id: completion.station_id || null,
+    });
+
+    // Completing a run counts one unit against its work order
+    if (completion.work_order_id) {
+      const wo = db.prepare('SELECT * FROM work_orders WHERE id = ? AND company_id = ?').get(completion.work_order_id, req.companyId);
+      if (wo) {
+        const newQty    = Math.min(wo.quantity_completed + 1, wo.quantity);
+        const newStatus = newQty >= wo.quantity
+          ? 'completed'
+          : (wo.status === 'pending' ? 'in_progress' : wo.status);
+        db.prepare(`UPDATE work_orders SET quantity_completed=?, status=?, updated_at=datetime('now') WHERE id=?`)
+          .run(newQty, newStatus, wo.id);
+
+        logActivity(req.companyId, 'work_order', wo.id,
+          `Quantity advanced to ${newQty}/${wo.quantity}${newStatus === 'completed' ? ' (work order completed)' : ''}`,
+          completion.operator_name, { department_id: wo.department_id || departmentId || null });
+      }
     }
   }
 

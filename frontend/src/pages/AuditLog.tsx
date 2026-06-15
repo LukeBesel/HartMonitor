@@ -6,23 +6,17 @@ import type { AuditLogEntry } from '../types';
 const REFRESH_INTERVAL_MS = 10_000;
 
 // ── Entity type options ───────────────────────────────────────────────────────
+// The Transaction Log is a production log: it only surfaces shop-floor events
+// (jobs started/finished, units logged against work orders, NCRs, station
+// downtime, safety). Settings/admin entity types are intentionally excluded
+// from the dropdown, and the backend defaults to scope=production to match.
 
-const ENTITY_TYPES: { id: AuditLogEntry['entity_type']; label: string }[] = [
-  { id: 'work_order',      label: 'Work Order' },
-  { id: 'purchase_order',  label: 'Purchase Order' },
-  { id: 'ncr',             label: 'NCR' },
-  { id: 'site',            label: 'Site' },
-  { id: 'app',             label: 'App' },
-  { id: 'dashboard',       label: 'Dashboard' },
-  { id: 'station',         label: 'Station' },
-  { id: 'department',      label: 'Department' },
-  { id: 'user',            label: 'User' },
-  { id: 'plan',            label: 'Plan' },
-  { id: 'inventory_item',  label: 'Inventory Item' },
-  { id: 'vendor',          label: 'Vendor' },
-  { id: 'webhook',         label: 'Webhook' },
-  { id: 'api_key',         label: 'API Key' },
-  { id: 'settings',        label: 'Settings' },
+const ENTITY_TYPES: { id: string; label: string }[] = [
+  { id: 'work_order',  label: 'Work Order' },
+  { id: 'completion',  label: 'Production Run' },
+  { id: 'ncr',         label: 'NCR' },
+  { id: 'station',     label: 'Station / Downtime' },
+  { id: 'safety',      label: 'Safety' },
 ];
 
 const ENTITY_LABELS: Record<string, string> = ENTITY_TYPES.reduce(
@@ -32,20 +26,10 @@ const ENTITY_LABELS: Record<string, string> = ENTITY_TYPES.reduce(
 
 const ENTITY_BADGE_COLORS: Record<string, string> = {
   work_order:     'badge-blue',
-  purchase_order: 'badge-purple',
+  completion:     'badge-green',
   ncr:            'badge-red',
-  site:           'badge-green',
-  app:            'badge-blue',
-  dashboard:      'badge-purple',
   station:        'badge-amber',
-  department:     'badge-green',
-  user:           'badge-gray',
-  plan:           'badge-purple',
-  inventory_item: 'badge-amber',
-  vendor:         'badge-blue',
-  webhook:        'badge-gray',
-  api_key:        'badge-gray',
-  settings:       'badge-gray',
+  safety:         'badge-purple',
 };
 
 function entityLabel(entityType: string): string {
@@ -83,6 +67,9 @@ export default function AuditLog() {
   // the latest values without being recreated on every keystroke.
   const filterValues = {
     entity_type: entityType || undefined,
+    // Always scope to production events; an explicit entity_type still narrows
+    // within that set on the backend.
+    scope: 'production' as const,
     actor: actor || undefined,
     from: from || undefined,
     to: to || undefined,
@@ -144,7 +131,8 @@ export default function AuditLog() {
               </span>
             </div>
             <p className="text-xs text-gray-500 mt-0.5">
-              Timestamped history of changes for compliance and review. Auto-refreshes every 10s.
+              Live record of production activity — jobs started and finished, units logged, NCRs,
+              downtime and safety events. Auto-refreshes every 10s.
             </p>
           </div>
         </div>
@@ -160,13 +148,13 @@ export default function AuditLog() {
       {/* Filter bar */}
       <div className="card p-4 flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-500">Entity type</label>
+          <label className="text-xs font-medium text-gray-500">Event type</label>
           <select
             className="input-field w-48"
             value={entityType}
             onChange={e => setEntityType(e.target.value)}
           >
-            <option value="">All Types</option>
+            <option value="">All Production Events</option>
             {ENTITY_TYPES.map(t => (
               <option key={t.id} value={t.id}>{t.label}</option>
             ))}
@@ -265,10 +253,10 @@ export default function AuditLog() {
               <thead>
                 <tr className="text-[11px] text-gray-400 uppercase tracking-wide border-b border-gray-100">
                   <th className="text-left font-medium px-4 py-2.5">Timestamp</th>
-                  <th className="text-left font-medium px-4 py-2.5">Entity Type</th>
-                  <th className="text-left font-medium px-4 py-2.5">Entity ID</th>
+                  <th className="text-left font-medium px-4 py-2.5">Event Type</th>
+                  <th className="text-left font-medium px-4 py-2.5">Reference</th>
                   <th className="text-left font-medium px-4 py-2.5">Action</th>
-                  <th className="text-left font-medium px-4 py-2.5">Actor</th>
+                  <th className="text-left font-medium px-4 py-2.5">Operator</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">

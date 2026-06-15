@@ -1,5 +1,6 @@
 import type {
-  DailyBrief, LeaderboardResponse, LeaderboardPeriod, BroadcastMessage, MessageSeverity, PricingCatalog,
+  DailyBrief, LeaderboardResponse, LeaderboardDepartmentsResponse, LeaderboardPeriod,
+  BroadcastMessage, MessageSeverity, PricingCatalog,
   Site, NotificationPrefs, NotificationLogEntry, RolePermissionMap, ApiKey, Webhook, WebhookDelivery,
   AuditLogEntry, SSOProviderInfo,
 } from '../types';
@@ -348,8 +349,17 @@ export const api = {
     request<any>('/auth/change-password', { method: 'PUT', body: JSON.stringify({ current_password, new_password }) }),
 
   // ── Leaderboard
-  getLeaderboard: (period: LeaderboardPeriod = 'week') =>
-    request<LeaderboardResponse>(`/leaderboard?period=${period}`),
+  // Level 1: leaderboard ranked by department.
+  getLeaderboardDepartments: (period: LeaderboardPeriod = 'week') =>
+    request<LeaderboardDepartmentsResponse>(`/leaderboard/departments?period=${period}`),
+  // Level 2: per-(app, product) operator boards, optionally scoped to a
+  // department and/or a single app/operation for the drill-down view.
+  getLeaderboard: (period: LeaderboardPeriod = 'week', scope?: { department_id?: string; app_id?: string }) => {
+    const qs = new URLSearchParams({ period });
+    if (scope?.department_id) qs.set('department_id', scope.department_id);
+    if (scope?.app_id) qs.set('app_id', scope.app_id);
+    return request<LeaderboardResponse>(`/leaderboard?${qs}`);
+  },
 
   // ── Users
   getUsers: () => request<any[]>('/users'),
@@ -395,9 +405,13 @@ export const api = {
   testWebhook: (id: string) => request<any>(`/developer/webhooks/${id}/test`, { method: 'POST' }),
 
   // ── Audit log
-  getAuditLog: (params?: { entity_type?: string; actor?: string; from?: string; to?: string; department_id?: string; station_id?: string; limit?: number }) => {
+  // `scope` ('production' default | 'all') decides which entity types are
+  // returned when no explicit entity_type is set. The Transaction Log uses
+  // 'production' so it only shows shop-floor events, not settings/admin changes.
+  getAuditLog: (params?: { entity_type?: string; scope?: 'production' | 'all'; actor?: string; from?: string; to?: string; department_id?: string; station_id?: string; limit?: number }) => {
     const qs = new URLSearchParams();
     if (params?.entity_type)   qs.set('entity_type', params.entity_type);
+    if (params?.scope)         qs.set('scope', params.scope);
     if (params?.actor)         qs.set('actor', params.actor);
     if (params?.from)          qs.set('from', params.from);
     if (params?.to)            qs.set('to', params.to);
@@ -407,9 +421,10 @@ export const api = {
     const s = qs.toString();
     return request<AuditLogEntry[]>(`/activity${s ? `?${s}` : ''}`);
   },
-  downloadAuditLog: (params?: { entity_type?: string; actor?: string; from?: string; to?: string; department_id?: string; station_id?: string }) => {
+  downloadAuditLog: (params?: { entity_type?: string; scope?: 'production' | 'all'; actor?: string; from?: string; to?: string; department_id?: string; station_id?: string }) => {
     const qs = new URLSearchParams();
     if (params?.entity_type)   qs.set('entity_type', params.entity_type);
+    if (params?.scope)         qs.set('scope', params.scope);
     if (params?.actor)         qs.set('actor', params.actor);
     if (params?.from)          qs.set('from', params.from);
     if (params?.to)            qs.set('to', params.to);
