@@ -131,6 +131,40 @@ webhook activates their new plan automatically.
 
 ---
 
+## 4b. Turn on real Google / Microsoft sign-in (SSO)
+
+Until you add OAuth credentials, the "Continue with Google / Microsoft" buttons
+run in **demo mode** (they sign into the sample demo account). To enable real
+sign-in, register an OAuth app with each provider and add its credentials.
+
+> **Prerequisite:** `APP_URL` must be set to your real public URL (e.g.
+> `https://app.yourcompany.com`). The OAuth **redirect URIs** below are built from
+> it, and they must match *exactly* or the provider will reject the login.
+
+**Google:**
+1. Go to **https://console.cloud.google.com** → APIs & Services → **Credentials**.
+2. **Create Credentials → OAuth client ID** → Application type **Web application**.
+3. Under **Authorized redirect URIs**, add exactly:
+   `https://YOUR_URL/api/auth/sso/google/callback`
+4. Copy the **Client ID** and **Client secret**, then set in your host's env vars:
+   - `GOOGLE_CLIENT_ID=…`
+   - `GOOGLE_CLIENT_SECRET=…`
+
+**Microsoft:**
+1. Go to **https://portal.azure.com** → **Microsoft Entra ID** → **App registrations** → **New registration**.
+2. Set **Redirect URI** (platform: Web) to exactly:
+   `https://YOUR_URL/api/auth/sso/microsoft/callback`
+3. Under **Certificates & secrets**, create a **client secret** and copy its value.
+4. Copy the **Application (client) ID**, then set in your host's env vars:
+   - `MICROSOFT_CLIENT_ID=…`
+   - `MICROSOFT_CLIENT_SECRET=…`
+
+Redeploy. The boot banner will show `SSO: Google LIVE, Microsoft LIVE` once the
+keys are picked up. New users who sign in via SSO get their own organization
+automatically (same as a normal signup); existing users are matched by email.
+
+---
+
 ## 5. How customers pay to expand (the revenue model)
 
 The plans and pricing are already built in. Customers manage everything themselves
@@ -138,8 +172,8 @@ under **Settings → Plan & Billing**:
 
 | Plan | Price | What they get |
 |------|-------|---------------|
-| **Free** | $0 | 5 apps, 2 dashboards, work orders, OEE, basic analytics, operator portal |
-| **Pro** | $299/mo | Unlimited apps & dashboards, inventory, purchasing, quality/NCR, full export, advanced analytics |
+| **Free** | $0 | 5 apps, 2 dashboards, work orders, basic analytics, operator portal |
+| **Pro** | $299/mo | 50 apps, 10 dashboards, routings, OEE, inventory, purchasing, quality/NCR, full export, advanced analytics |
 | **Enterprise** | Custom | Everything in Pro + custom branding, SSO/SAML, API access & webhooks, SLA |
 
 Plus **add-ons** (à-la-carte): extra app slots ($29/mo each) and extra dashboard

@@ -389,6 +389,13 @@ export const api = {
     request<RolePermissionMap>('/permissions', { method: 'PUT', body: JSON.stringify({ overrides }) }),
   resetPermissions: () => request<RolePermissionMap>('/permissions/reset', { method: 'DELETE' }),
 
+  // ── Integrations setup status (Stripe / SSO) — managers+
+  getIntegrations: () => request<{
+    app_url: string; app_url_explicit: boolean;
+    payments: { configured: boolean; mode: string; webhook_url: string; events: string[]; env_vars: string[] };
+    sso: { id: string; name: string; configured: boolean; redirect_uri: string; env_vars: string[] }[];
+  }>('/config/integrations'),
+
   // ── Developer: API keys & webhooks (Enterprise)
   getDeveloperAvailability: () => request<{ available: boolean; events: string[] }>('/developer/availability'),
   getApiKeys: () => request<ApiKey[]>('/developer/api-keys'),

@@ -11,6 +11,7 @@ import {
   TrendingUp, BarChart3, PieChart as PieIcon, Table, Award, Clipboard, Hash
 } from 'lucide-react';
 import { v4 as uuidv4 } from '../utils/uuid';
+import { useAuth } from '../context/AuthContext';
 
 // ── Card palette config ───────────────────────────────────────────────────────
 
@@ -324,7 +325,8 @@ const SIZE_COLS: Record<string, string> = { sm: 'col-span-1', md: 'col-span-2', 
 export default function DashboardView() {
   const { id, mode } = useParams<{ id: string; mode?: string }>();
   const navigate = useNavigate();
-  const isEditMode = mode === 'edit';
+  const { canEdit } = useAuth();
+  const isEditMode = mode === 'edit' && canEdit;
 
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [cardData, setCardData] = useState<Record<string, any>>({});
@@ -458,11 +460,11 @@ export default function DashboardView() {
             <Link to={`/dashboards/${id}`} className="btn-primary text-xs py-1.5 px-3">
               Done Editing
             </Link>
-          ) : (
+          ) : canEdit ? (
             <Link to={`/dashboards/${id}/edit`} className="btn-secondary text-xs py-1.5 px-3">
               <Edit size={13} /> Edit
             </Link>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -510,9 +512,11 @@ export default function DashboardView() {
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm py-16 text-center">
           <BarChart3 size={40} className="mx-auto mb-3 text-gray-200" />
           <div className="text-gray-500 font-medium">No cards yet</div>
-          <Link to={`/dashboards/${id}/edit`} className="btn-primary mt-4 mx-auto text-sm">
-            <Settings size={14} /> Configure Dashboard
-          </Link>
+          {canEdit && (
+            <Link to={`/dashboards/${id}/edit`} className="btn-primary mt-4 mx-auto text-sm">
+              <Settings size={14} /> Configure Dashboard
+            </Link>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-4 gap-4">

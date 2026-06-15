@@ -20,7 +20,7 @@ export default function Dashboards() {
   const [loadingSample, setLoadingSample] = useState(false);
   const [sampleError, setSampleError] = useState('');
   const { refresh: refreshPlan } = usePlan();
-  const { isAtLeast } = useAuth();
+  const { isAtLeast, canEdit } = useAuth();
 
   const load = () => {
     setLoading(true);
@@ -95,16 +95,18 @@ export default function Dashboards() {
           </div>
           <p className="text-gray-500 text-sm mt-0.5">Build custom analytics dashboards from your production data</p>
         </div>
-        <button
-          onClick={() => setCreating(true)}
-          className="btn-primary"
-        >
-          <Plus size={16} /> New Dashboard
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => setCreating(true)}
+            className="btn-primary"
+          >
+            <Plus size={16} /> New Dashboard
+          </button>
+        )}
       </div>
 
       {/* Create form */}
-      {creating && (
+      {canEdit && creating && (
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 space-y-3">
           <div className="text-sm font-semibold text-gray-900">Create New Dashboard</div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -141,17 +143,19 @@ export default function Dashboards() {
           <BarChart3 size={40} className="mx-auto mb-3 text-gray-200" />
           <div className="text-gray-500 font-medium">No dashboards yet</div>
           <p className="text-gray-400 text-sm mt-1">Create your first custom analytics dashboard</p>
-          <div className="flex items-center justify-center gap-2 mt-4">
-            <button onClick={() => setCreating(true)} className="btn-primary">
-              <Plus size={16} /> Create Dashboard
-            </button>
-            {isAtLeast('manager') && (
-              <button onClick={handleLoadSampleData} disabled={loadingSample} className="btn-secondary">
-                {loadingSample ? <RefreshCw size={16} className="animate-spin" /> : <Database size={16} />}
-                Load Sample Data
+          {canEdit && (
+            <div className="flex items-center justify-center gap-2 mt-4">
+              <button onClick={() => setCreating(true)} className="btn-primary">
+                <Plus size={16} /> Create Dashboard
               </button>
-            )}
-          </div>
+              {isAtLeast('manager') && (
+                <button onClick={handleLoadSampleData} disabled={loadingSample} className="btn-secondary">
+                  {loadingSample ? <RefreshCw size={16} className="animate-spin" /> : <Database size={16} />}
+                  Load Sample Data
+                </button>
+              )}
+            </div>
+          )}
           {sampleError && (
             <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mt-3 max-w-sm mx-auto">{sampleError}</p>
           )}
@@ -184,20 +188,22 @@ export default function Dashboards() {
                   Updated {new Date(d.updated_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                 </div>
               </Link>
-              <div className="border-t border-gray-100 px-4 py-2.5 flex items-center justify-end gap-1">
-                <Link
-                  to={`/dashboards/${d.id}/edit`}
-                  className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-blue-600 px-2.5 py-1.5 rounded-lg hover:bg-blue-50 transition-colors"
-                >
-                  <Edit size={12} /> Edit
-                </Link>
-                <button
-                  onClick={() => handleDelete(d.id, d.name)}
-                  className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-red-500 px-2.5 py-1.5 rounded-lg hover:bg-red-50 transition-colors"
-                >
-                  <Trash2 size={12} /> Delete
-                </button>
-              </div>
+              {canEdit && (
+                <div className="border-t border-gray-100 px-4 py-2.5 flex items-center justify-end gap-1">
+                  <Link
+                    to={`/dashboards/${d.id}/edit`}
+                    className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-blue-600 px-2.5 py-1.5 rounded-lg hover:bg-blue-50 transition-colors"
+                  >
+                    <Edit size={12} /> Edit
+                  </Link>
+                  <button
+                    onClick={() => handleDelete(d.id, d.name)}
+                    className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-red-500 px-2.5 py-1.5 rounded-lg hover:bg-red-50 transition-colors"
+                  >
+                    <Trash2 size={12} /> Delete
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>

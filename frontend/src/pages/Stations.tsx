@@ -5,6 +5,7 @@ import { Station, App, Department } from '../types';
 import { Plus, Trash2, Monitor, Edit3, X, Check, Play, MapPin, Activity } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import { useSite } from '../context/SiteContext';
+import { useAuth } from '../context/AuthContext';
 
 const STATUS_COLORS: Record<Station['status'], string> = {
   active: 'bg-green-100 text-green-700',
@@ -14,6 +15,7 @@ const STATUS_COLORS: Record<Station['status'], string> = {
 
 export default function Stations() {
   const { selectedSiteId } = useSite();
+  const { canEdit } = useAuth();
   const [stations, setStations] = useState<Station[]>([]);
   const [apps, setApps] = useState<App[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -78,9 +80,11 @@ export default function Stations() {
           <h1 className="text-2xl font-bold text-gray-900">Stations</h1>
           <p className="text-gray-500 text-sm mt-0.5">Physical workstations and kiosks running apps</p>
         </div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary">
-          <Plus size={16} /> New Station
-        </button>
+        {canEdit && (
+          <button onClick={() => setShowCreate(true)} className="btn-primary">
+            <Plus size={16} /> New Station
+          </button>
+        )}
       </div>
 
       {/* Summary */}
@@ -95,7 +99,9 @@ export default function Stations() {
           <Monitor size={40} className="mx-auto mb-3 opacity-30" />
           <p className="font-medium">No stations yet</p>
           <p className="text-sm">Create workstations to deploy apps to the shop floor</p>
-          <button onClick={() => setShowCreate(true)} className="btn-primary mt-4"><Plus size={14} /> Add Station</button>
+          {canEdit && (
+            <button onClick={() => setShowCreate(true)} className="btn-primary mt-4"><Plus size={14} /> Add Station</button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -133,19 +139,21 @@ export default function Stations() {
                       </div>
                     </div>
                   </div>
-                  <div className="flex gap-1">
-                    {isEditing ? (
-                      <>
-                        <button onClick={() => handleSaveEdit(station.id)} className="p-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700"><Check size={13} /></button>
-                        <button onClick={() => setEditingId(null)} className="p-1.5 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300"><X size={13} /></button>
-                      </>
-                    ) : (
-                      <>
-                        <button onClick={() => handleEdit(station)} className="p-1.5 hover:bg-blue-50 rounded-lg text-gray-400 hover:text-blue-600"><Edit3 size={13} /></button>
-                        <button onClick={() => handleDelete(station.id)} className="p-1.5 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-600"><Trash2 size={13} /></button>
-                      </>
-                    )}
-                  </div>
+                  {canEdit && (
+                    <div className="flex gap-1">
+                      {isEditing ? (
+                        <>
+                          <button onClick={() => handleSaveEdit(station.id)} className="p-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700"><Check size={13} /></button>
+                          <button onClick={() => setEditingId(null)} className="p-1.5 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300"><X size={13} /></button>
+                        </>
+                      ) : (
+                        <>
+                          <button onClick={() => handleEdit(station)} className="p-1.5 hover:bg-blue-50 rounded-lg text-gray-400 hover:text-blue-600"><Edit3 size={13} /></button>
+                          <button onClick={() => handleDelete(station.id)} className="p-1.5 hover:bg-red-50 rounded-lg text-gray-400 hover:text-red-600"><Trash2 size={13} /></button>
+                        </>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {isEditing ? (
@@ -209,7 +217,7 @@ export default function Stations() {
       )}
 
       {/* Create modal */}
-      {showCreate && (
+      {canEdit && showCreate && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
             <div className="flex items-center justify-between p-5 border-b border-gray-200">

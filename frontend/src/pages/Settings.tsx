@@ -3097,6 +3097,99 @@ function WebhookDeliveriesModal({ webhook, onClose }: { webhook: Webhook; onClos
   );
 }
 
+// Stripe / SSO setup helper — shows live-vs-demo status and the exact URLs an
+// admin must register with each provider. Visible to managers regardless of plan.
+function IntegrationsPanel() {
+  const [data, setData] = useState<Awaited<ReturnType<typeof api.getIntegrations>> | null>(null);
+  const [copied, setCopied] = useState<string | null>(null);
+
+  useEffect(() => { api.getIntegrations().then(setData).catch(() => {}); }, []);
+
+  const copy = (text: string, id: string) => {
+    navigator.clipboard?.writeText(text).then(() => {
+      setCopied(id);
+      setTimeout(() => setCopied(null), 1500);
+    }).catch(() => {});
+  };
+
+  if (!data) return null;
+
+  const StatusBadge = ({ live }: { live: boolean }) => (
+    <span className={`text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-full ${
+      live ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'
+    }`}>
+      {live ? 'Live' : 'Demo'}
+    </span>
+  );
+
+  const CopyRow = ({ label, value, id }: { label: string; value: string; id: string }) => (
+    <div>
+      <div className="text-[11px] font-medium text-gray-400 mb-0.5">{label}</div>
+      <div className="flex items-center gap-2">
+        <code className="flex-1 min-w-0 truncate font-mono text-xs bg-gray-100 px-2 py-1.5 rounded-lg text-gray-700">{value}</code>
+        <button onClick={() => copy(value, id)} className="btn-secondary text-xs flex items-center gap-1 flex-shrink-0">
+          <Copy size={12} /> {copied === id ? 'Copied' : 'Copy'}
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-5">
+      <SectionHeader title="Integrations" subtitle="Connect real payments and single sign-on. Add the credentials to your host's environment variables, then redeploy." />
+
+      {!data.app_url_explicit && (
+        <div className="flex items-start gap-2 px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800">
+          <AlertCircle size={14} className="flex-shrink-0 mt-0.5" />
+          <span>Set the <code className="font-mono">APP_URL</code> environment variable to your real public URL so these callback/webhook URLs are correct.</span>
+        </div>
+      )}
+
+      {/* Payments */}
+      <div className="card p-4 space-y-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <CreditCard size={16} className="text-gray-500" />
+            <span className="text-sm font-semibold text-gray-800">Payments (Stripe)</span>
+          </div>
+          <StatusBadge live={data.payments.configured} />
+        </div>
+        {!data.payments.configured && (
+          <p className="text-xs text-gray-500">
+            Create a Stripe webhook pointing at the URL below (events: {data.payments.events.join(', ')}),
+            then set {data.payments.env_vars.map((v, i) => (
+              <span key={v}>{i > 0 ? ' and ' : ''}<code className="font-mono bg-gray-100 px-1 rounded">{v}</code></span>
+            ))} in your host and redeploy.
+          </p>
+        )}
+        <CopyRow label="Webhook endpoint URL" value={data.payments.webhook_url} id="stripe-webhook" />
+      </div>
+
+      {/* SSO */}
+      {data.sso.map(p => (
+        <div key={p.id} className="card p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Globe size={16} className="text-gray-500" />
+              <span className="text-sm font-semibold text-gray-800">{p.name} Sign-In (SSO)</span>
+            </div>
+            <StatusBadge live={p.configured} />
+          </div>
+          {!p.configured && (
+            <p className="text-xs text-gray-500">
+              Register an OAuth app with {p.name}, add the redirect URI below, then set{' '}
+              {p.env_vars.map((v, i) => (
+                <span key={v}>{i > 0 ? ' and ' : ''}<code className="font-mono bg-gray-100 px-1 rounded">{v}</code></span>
+              ))} in your host and redeploy.
+            </p>
+          )}
+          <CopyRow label="Authorized redirect URI" value={p.redirect_uri} id={`sso-${p.id}`} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DeveloperTab() {
   const [availability, setAvailability] = useState<{ available: boolean; events: string[] } | null>(null);
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
@@ -3173,14 +3266,15 @@ function DeveloperTab() {
 
   if (!availability.available) {
     return (
-      <div className="max-w-2xl">
+      <div className="max-w-3xl space-y-8">
+        <IntegrationsPanel />
         <div className="rounded-2xl border-2 border-amber-200 bg-amber-50 p-8 text-center">
           <div className="w-12 h-12 rounded-xl bg-amber-100 text-amber-600 flex items-center justify-center mx-auto mb-4">
             <Crown size={22} />
           </div>
-          <h3 className="text-base font-semibold text-gray-800 mb-1.5">Enterprise Feature</h3>
+          <h3 className="text-base font-semibold text-gray-800 mb-1.5">API Access &amp; Webhooks — Enterprise</h3>
           <p className="text-sm text-gray-600 max-w-md mx-auto">
-            API access and webhooks for ERP / external system integration are available on the
+            API keys and outbound webhooks for ERP / external system integration are available on the
             Enterprise plan. Generate API keys for the read-only REST API and configure webhooks
             to push real-time events to your other systems.
           </p>
@@ -3194,6 +3288,8 @@ function DeveloperTab() {
 
   return (
     <div className="max-w-3xl space-y-8">
+      <IntegrationsPanel />
+
       {/* API info card */}
       <div className="card p-5">
         <div className="flex items-start gap-3">

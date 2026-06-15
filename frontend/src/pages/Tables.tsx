@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { MESTable, TableField, FieldType } from '../types';
 import { Plus, Trash2, Database, ChevronRight, X, Edit3 } from 'lucide-react';
 import { v4 as uuidv4 } from '../utils/uuid';
+import { useAuth } from '../context/AuthContext';
 
 const FIELD_TYPES: { value: FieldType; label: string }[] = [
   { value: 'text', label: 'Text' },
@@ -21,6 +22,7 @@ export default function Tables() {
     { id: uuidv4(), name: '', type: 'text' }
   ]);
   const navigate = useNavigate();
+  const { canEdit } = useAuth();
 
   const load = () => api.getTables().then(setTables);
   useEffect(() => { load(); }, []);
@@ -59,9 +61,11 @@ export default function Tables() {
             tooling logs, calibration records, supplier lists, custom checklists. Define the columns once, then add rows.
           </p>
         </div>
-        <button onClick={() => setShowCreate(true)} className="btn-primary">
-          <Plus size={16} /> New Table
-        </button>
+        {canEdit && (
+          <button onClick={() => setShowCreate(true)} className="btn-primary">
+            <Plus size={16} /> New Table
+          </button>
+        )}
       </div>
 
       {tables.length === 0 ? (
@@ -69,9 +73,11 @@ export default function Tables() {
           <Database size={40} className="mx-auto mb-3 opacity-30" />
           <p className="font-medium">No tables yet</p>
           <p className="text-sm">Create a table to store manufacturing data</p>
-          <button onClick={() => setShowCreate(true)} className="btn-primary mt-4">
-            <Plus size={14} /> Create Table
-          </button>
+          {canEdit && (
+            <button onClick={() => setShowCreate(true)} className="btn-primary mt-4">
+              <Plus size={14} /> Create Table
+            </button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -85,14 +91,16 @@ export default function Tables() {
                 <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center">
                   <Database size={18} className="text-blue-600" />
                 </div>
-                <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={e => handleDelete(table.id, e)}
-                    className="p-1.5 hover:bg-red-50 rounded-lg text-gray-300 hover:text-red-500"
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
+                {canEdit && (
+                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={e => handleDelete(table.id, e)}
+                      className="p-1.5 hover:bg-red-50 rounded-lg text-gray-300 hover:text-red-500"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                )}
               </div>
               <h3 className="font-semibold text-gray-900">{table.name}</h3>
               {table.description && <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{table.description}</p>}

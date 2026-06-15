@@ -210,6 +210,32 @@ router.get('/plan/billing-config', (req, res) => {
   res.json({ configured: isConfigured(), mode: billingMode() });
 });
 
+// ─── GET /integrations — live/demo status + the exact URLs to register ────────
+// Powers the Settings → Developer "Integrations" panel so an admin can wire up
+// Stripe and SSO without digging through docs. Never returns any secret value.
+router.get('/integrations', requireRole('manager'), (req, res) => {
+  const { PROVIDERS, isConfigured: ssoConfigured } = require('../sso');
+  const base = appUrl(req);
+  res.json({
+    app_url: base,
+    app_url_explicit: !!process.env.APP_URL,
+    payments: {
+      configured: isConfigured(),
+      mode: billingMode(),
+      webhook_url: `${base}/api/webhooks/stripe`,
+      events: ['checkout.session.completed', 'customer.subscription.updated', 'customer.subscription.deleted', 'invoice.paid'],
+      env_vars: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'],
+    },
+    sso: Object.keys(PROVIDERS).map(id => ({
+      id,
+      name: PROVIDERS[id].name,
+      configured: ssoConfigured(id),
+      redirect_uri: `${base}/api/auth/sso/${id}/callback`,
+      env_vars: [PROVIDERS[id].clientIdEnv, PROVIDERS[id].clientSecretEnv],
+    })),
+  });
+});
+
 // ─── POST /plan/checkout — start a real Stripe Checkout session (manager+) ────
 // Returns { url } to redirect the browser to Stripe's hosted, PCI-compliant
 // payment page. Works for a tier upgrade or an à-la-carte add-on, both billed

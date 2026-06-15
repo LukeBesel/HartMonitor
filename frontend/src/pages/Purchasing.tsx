@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import ActivityLog from '../components/shared/ActivityLog';
 import SavedViewsBar from '../components/shared/SavedViewsBar';
+import { useAuth } from '../context/AuthContext';
 import {
   Plus, Search, Download, Eye, Trash2, Send, Package, Star,
   X, CheckCircle, Building2, Phone,
@@ -602,6 +603,7 @@ function PODetailModal({
   onClose: () => void;
   onRefresh: () => void;
 }) {
+  const { canEdit } = useAuth();
   const [po, setPO] = useState<PurchaseOrder | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -837,13 +839,13 @@ function PODetailModal({
 
         <div className="flex justify-between items-center pt-1">
           <div className="flex gap-2">
-            {canSend && (
+            {canEdit && canSend && (
               <button className="btn-primary" onClick={handleSend} disabled={sending}>
                 <Send className="w-4 h-4" />
                 {sending ? 'Sending…' : 'Send PO'}
               </button>
             )}
-            {canReceive && !showReceive && (
+            {canEdit && canReceive && !showReceive && (
               <button
                 className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium text-sm shadow-sm"
                 onClick={() => setShowReceive(true)}
@@ -868,6 +870,7 @@ interface POViewFilters {
 }
 
 function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
+  const { canEdit } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [pos, setPOs] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
@@ -962,9 +965,11 @@ function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
           <button className="btn-secondary whitespace-nowrap" onClick={() => api.downloadExport('purchase-orders')}>
             <Download className="w-4 h-4" /> Export CSV
           </button>
-          <button className="btn-primary whitespace-nowrap" onClick={() => setShowCreate(true)}>
-            <Plus className="w-4 h-4" /> New PO
-          </button>
+          {canEdit && (
+            <button className="btn-primary whitespace-nowrap" onClick={() => setShowCreate(true)}>
+              <Plus className="w-4 h-4" /> New PO
+            </button>
+          )}
         </div>
         <SavedViewsBar<POViewFilters>
           storageKey="hm_saved_views_purchase_orders"
@@ -1014,7 +1019,7 @@ function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
                         <button className="btn-ghost p-1.5 rounded-lg" onClick={() => setViewPO(po.id)} title="View">
                           <Eye className="w-4 h-4" />
                         </button>
-                        {po.status === 'draft' && (
+                        {canEdit && po.status === 'draft' && (
                           <button className="btn-ghost p-1.5 rounded-lg text-red-400 hover:text-red-600 hover:bg-red-50" onClick={() => handleDelete(po)} title="Delete">
                             <Trash2 className="w-4 h-4" />
                           </button>
@@ -1064,6 +1069,7 @@ function VendorPOsList({ vendorId, vendorName }: { vendorId: string; vendorName:
 // ── Vendors Tab ───────────────────────────────────────────────────────────────
 
 function VendorsTab({ onVendorsChange }: { onVendorsChange: (vendors: Vendor[]) => void }) {
+  const { canEdit } = useAuth();
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -1112,9 +1118,11 @@ function VendorsTab({ onVendorsChange }: { onVendorsChange: (vendors: Vendor[]) 
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input className="input-field pl-9 w-64" placeholder="Search vendors…" value={search} onChange={e => setSearch(e.target.value)} />
         </div>
-        <button className="btn-primary" onClick={() => setShowCreate(true)}>
-          <Plus className="w-4 h-4" /> New Vendor
-        </button>
+        {canEdit && (
+          <button className="btn-primary" onClick={() => setShowCreate(true)}>
+            <Plus className="w-4 h-4" /> New Vendor
+          </button>
+        )}
       </div>
 
       {loading ? (
@@ -1177,18 +1185,22 @@ function VendorsTab({ onVendorsChange }: { onVendorsChange: (vendors: Vendor[]) 
               </div>
 
               <div className="flex gap-2 pt-1 border-t border-gray-50">
-                <button className="btn-ghost text-xs flex-1 justify-center" onClick={() => setEditing(v)}>
-                  <Edit2 className="w-3.5 h-3.5" /> Edit
-                </button>
+                {canEdit && (
+                  <button className="btn-ghost text-xs flex-1 justify-center" onClick={() => setEditing(v)}>
+                    <Edit2 className="w-3.5 h-3.5" /> Edit
+                  </button>
+                )}
                 <button
                   className="btn-ghost text-xs flex-1 justify-center"
                   onClick={() => setOpenPOsFor(openPOsFor === v.id ? null : v.id)}
                 >
                   <Eye className="w-3.5 h-3.5" /> View POs
                 </button>
-                <button className="btn-ghost text-xs text-red-400 hover:text-red-600 hover:bg-red-50 px-2" onClick={() => handleDelete(v)} title="Deactivate">
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
+                {canEdit && (
+                  <button className="btn-ghost text-xs text-red-400 hover:text-red-600 hover:bg-red-50 px-2" onClick={() => handleDelete(v)} title="Deactivate">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
 
               {openPOsFor === v.id && (
