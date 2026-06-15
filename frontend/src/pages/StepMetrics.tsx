@@ -184,29 +184,22 @@ function StepCard({ step, expanded, onToggle }: { step: StepStat; expanded: bool
   );
 }
 
-export default function StepMetrics() {
-  const [apps, setApps] = useState<{ id: string; name: string }[]>([]);
-  const [selectedAppId, setSelectedAppId] = useState('');
-  const [days, setDays] = useState(30);
+// Reusable per-step metrics body for a single app/operation. Owns its own data
+// fetch so it can be embedded anywhere (the standalone Step Metrics page and the
+// Operation Analytics drill-down) by passing an appId + lookback window.
+export function StepMetricsPanel({ appId, days }: { appId: string; days: number }) {
   const [data, setData] = useState<StepMetricsData | null>(null);
   const [loading, setLoading] = useState(false);
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
 
   useEffect(() => {
-    api.getApps().then((list: any[]) => {
-      setApps(list.filter(a => a.status === 'published'));
-      if (list.length > 0) setSelectedAppId(list[0].id);
-    });
-  }, []);
-
-  useEffect(() => {
-    if (!selectedAppId) return;
+    if (!appId) { setData(null); return; }
     setLoading(true);
     setExpandedSteps(new Set());
-    api.getStepMetrics(selectedAppId, days)
+    api.getStepMetrics(appId, days)
       .then(setData)
       .finally(() => setLoading(false));
-  }, [selectedAppId, days]);
+  }, [appId, days]);
 
   const toggleStep = (idx: number) => {
     setExpandedSteps(prev => {
@@ -224,6 +217,115 @@ export default function StepMetrics() {
   const avgTaktAdherence = stepsWithTakt.length > 0
     ? Math.round(stepsWithTakt.reduce((s, step) => s + (100 - step.over_takt_pct), 0) / stepsWithTakt.length)
     : 100;
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <RefreshCw size={28} className="animate-spin text-blue-500" />
+      </div>
+    );
+  }
+  if (!data) {
+    return <div className="text-center py-16 text-gray-400">Select an app to view step metrics</div>;
+  }
+
+  return (
+    <div className="space-y-6">
+      {/* KPI summary */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+          <div className="text-2xl font-bold text-gray-900">{data.total_completions}</div>
+          <div className="text-xs text-gray-500 mt-0.5">Total Runs Analyzed</div>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+          <div className="text-2xl font-bold text-gray-900">{data.steps.length}</div>
+          <div className="text-xs text-gray-500 mt-0.5">Steps in Process</div>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+          <div className="text-2xl font-bold text-amber-600">{totalOverTakt}</div>
+          <div className="text-xs text-gray-500 mt-0.5">Takt Time Exceedances</div>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+          <div className={`text-2xl font-bold ${avgTaktAdherence >= 90 ? 'text-green-600' : avgTaktAdherence >= 75 ? 'text-amber-600' : 'text-red-500'}`}>
+            {avgTaktAdherence}%
+          </div>
+          <div className="text-xs text-gray-500 mt-0.5">Takt Adherence</div>
+        </div>
+      </div>
+
+      {/* Step overview bar chart */}
+      {data.steps.length > 0 && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+          <div className="flex items-center justify-between mb-4">
+            <div className="text-sm font-semibold text-gray-900">Average Time Per Step</div>
+            <div className="flex items-center gap-4 text-xs text-gray-500">
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-500 inline-block" />Avg Time</span>
+              <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-indigo-500 inline-block" />Takt Time</span>
+            </div>
+          </div>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart
+              data={data.steps.map(s => ({
+                name: s.name.length > 12 ? s.name.slice(0, 12) + '…' : s.name,
+                avg: s.avg_seconds,
+                takt: s.takt_seconds || undefined,
+              }))}
+              margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+            >
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+              <YAxis tickFormatter={fmt} tick={{ fontSize: 10 }} />
+              <Tooltip formatter={(v: any, name: string) => [fmt(Number(v)), name === 'avg' ? 'Avg Time' : 'Takt Time']} />
+              <Bar dataKey="avg" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Avg" />
+              <Bar dataKey="takt" fill="#6366f1" radius={[4, 4, 0, 0]} name="Takt" opacity={0.7} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* Steps list */}
+      <div>
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-base font-semibold text-gray-900">Step Breakdown</h2>
+          <div className="flex items-center gap-2">
+            <button onClick={expandAll} className="text-xs text-blue-600 hover:text-blue-700">Expand All</button>
+            <span className="text-gray-300">|</span>
+            <button onClick={collapseAll} className="text-xs text-gray-500 hover:text-gray-700">Collapse All</button>
+          </div>
+        </div>
+        <div className="space-y-3">
+          {data.steps.map(step => (
+            <StepCard
+              key={step.index}
+              step={step}
+              expanded={expandedSteps.has(step.index)}
+              onToggle={() => toggleStep(step.index)}
+            />
+          ))}
+        </div>
+      </div>
+
+      {data.steps.length === 0 && (
+        <div className="text-center py-16 text-gray-400">
+          <TrendingUp size={32} className="mx-auto mb-2 text-gray-300" />
+          No completion data yet for this app
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default function StepMetrics() {
+  const [apps, setApps] = useState<{ id: string; name: string }[]>([]);
+  const [selectedAppId, setSelectedAppId] = useState('');
+  const [days, setDays] = useState(30);
+
+  useEffect(() => {
+    api.getApps().then((list: any[]) => {
+      setApps(list.filter(a => a.status === 'published'));
+      if (list.length > 0) setSelectedAppId(list[0].id);
+    });
+  }, []);
 
   return (
     <div className="min-h-screen bg-[#f8fafc] p-6 space-y-6">
@@ -257,96 +359,9 @@ export default function StepMetrics() {
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex items-center justify-center h-64">
-          <RefreshCw size={28} className="animate-spin text-blue-500" />
-        </div>
-      ) : !data ? (
-        <div className="text-center py-16 text-gray-400">Select an app to view step metrics</div>
-      ) : (
-        <>
-          {/* KPI summary */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-              <div className="text-2xl font-bold text-gray-900">{data.total_completions}</div>
-              <div className="text-xs text-gray-500 mt-0.5">Total Runs Analyzed</div>
-            </div>
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-              <div className="text-2xl font-bold text-gray-900">{data.steps.length}</div>
-              <div className="text-xs text-gray-500 mt-0.5">Steps in Process</div>
-            </div>
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-              <div className="text-2xl font-bold text-amber-600">{totalOverTakt}</div>
-              <div className="text-xs text-gray-500 mt-0.5">Takt Time Exceedances</div>
-            </div>
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-              <div className={`text-2xl font-bold ${avgTaktAdherence >= 90 ? 'text-green-600' : avgTaktAdherence >= 75 ? 'text-amber-600' : 'text-red-500'}`}>
-                {avgTaktAdherence}%
-              </div>
-              <div className="text-xs text-gray-500 mt-0.5">Takt Adherence</div>
-            </div>
-          </div>
-
-          {/* Step overview bar chart */}
-          {data.steps.length > 0 && (
-            <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-              <div className="flex items-center justify-between mb-4">
-                <div className="text-sm font-semibold text-gray-900">Average Time Per Step</div>
-                <div className="flex items-center gap-4 text-xs text-gray-500">
-                  <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-blue-500 inline-block" />Avg Time</span>
-                  <span className="flex items-center gap-1"><span className="w-3 h-3 rounded-sm bg-indigo-500 inline-block" />Takt Time</span>
-                </div>
-              </div>
-              <ResponsiveContainer width="100%" height={220}>
-                <BarChart
-                  data={data.steps.map(s => ({
-                    name: s.name.length > 12 ? s.name.slice(0, 12) + '…' : s.name,
-                    avg: s.avg_seconds,
-                    takt: s.takt_seconds || undefined,
-                  }))}
-                  margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                  <YAxis tickFormatter={fmt} tick={{ fontSize: 10 }} />
-                  <Tooltip formatter={(v: any, name: string) => [fmt(Number(v)), name === 'avg' ? 'Avg Time' : 'Takt Time']} />
-                  <Bar dataKey="avg" fill="#3b82f6" radius={[4, 4, 0, 0]} name="Avg" />
-                  <Bar dataKey="takt" fill="#6366f1" radius={[4, 4, 0, 0]} name="Takt" opacity={0.7} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-
-          {/* Steps list */}
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-base font-semibold text-gray-900">Step Breakdown</h2>
-              <div className="flex items-center gap-2">
-                <button onClick={expandAll} className="text-xs text-blue-600 hover:text-blue-700">Expand All</button>
-                <span className="text-gray-300">|</span>
-                <button onClick={collapseAll} className="text-xs text-gray-500 hover:text-gray-700">Collapse All</button>
-              </div>
-            </div>
-            <div className="space-y-3">
-              {data.steps.map(step => (
-                <StepCard
-                  key={step.index}
-                  step={step}
-                  expanded={expandedSteps.has(step.index)}
-                  onToggle={() => toggleStep(step.index)}
-                />
-              ))}
-            </div>
-          </div>
-
-          {data.steps.length === 0 && (
-            <div className="text-center py-16 text-gray-400">
-              <TrendingUp size={32} className="mx-auto mb-2 text-gray-300" />
-              No completion data yet for this app
-            </div>
-          )}
-        </>
-      )}
+      {selectedAppId
+        ? <StepMetricsPanel appId={selectedAppId} days={days} />
+        : <div className="text-center py-16 text-gray-400">Select an app to view step metrics</div>}
     </div>
   );
 }

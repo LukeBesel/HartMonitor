@@ -5,8 +5,9 @@ import {
   AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis,
   Tooltip, ResponsiveContainer, CartesianGrid, Legend, PieChart, Pie, Cell
 } from 'recharts';
-import { TrendingUp, CheckCircle, Clock, Users, Activity, BarChart2, Filter, X } from 'lucide-react';
+import { TrendingUp, CheckCircle, Clock, Users, Activity, BarChart2, Filter, X, Timer, ChevronDown } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
+import { StepMetricsPanel } from './StepMetrics';
 
 const COLORS = ['#22c55e', '#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6'];
 const DAYS_OPTIONS = [7, 14, 30, 90];
@@ -27,6 +28,10 @@ export default function Analytics() {
   const [appId, setAppId] = useState('');
   const [productTypeId, setProductTypeId] = useState('');
   const [departmentId, setDepartmentId] = useState('');
+
+  // ── Step-metrics drill-down (revealed once a department + operation chosen) ──
+  const [drillAppId, setDrillAppId] = useState('');
+  const [drillOpen, setDrillOpen] = useState(true);
 
   // Load apps and departments once for the filter dropdowns
   useEffect(() => { api.getApps().then(setApps).catch(() => setApps([])); }, []);
@@ -62,7 +67,10 @@ export default function Analytics() {
   }, [days, appId, productTypeId, departmentId]);
 
   const hasFilters = !!appId || !!productTypeId || !!departmentId;
-  const clearFilters = () => { setAppId(''); setProductTypeId(''); setDepartmentId(''); };
+  const clearFilters = () => { setAppId(''); setProductTypeId(''); setDepartmentId(''); setDrillAppId(''); };
+
+  // When the department changes, reset the operation drill-down selection.
+  useEffect(() => { setDrillAppId(''); }, [departmentId]);
 
   const qualityPieData = overview ? [
     { name: 'Pass', value: overview.passRate },
@@ -86,8 +94,8 @@ export default function Analytics() {
       />
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>
-          <p className="text-gray-500 text-sm mt-0.5">Manufacturing performance metrics</p>
+          <h1 className="text-2xl font-bold text-gray-900">Operation Analytics</h1>
+          <p className="text-gray-500 text-sm mt-0.5">Manufacturing performance metrics — pick a department and operation to drill into step timing</p>
         </div>
         <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
           {DAYS_OPTIONS.map(d => (
@@ -160,6 +168,53 @@ export default function Analytics() {
             : 'Showing all production data'}
         </div>
       </div>
+
+      {/* ── Operation drill-down: department → operation → step metrics ── */}
+      {departmentId && (
+        <div className="card overflow-hidden">
+          <div className="flex flex-wrap items-center gap-3 p-4 border-b border-gray-100">
+            <div className="flex items-center gap-1.5 text-sm font-medium text-gray-700">
+              <Timer size={15} className="text-blue-600" /> Step Metrics
+            </div>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-gray-500">Operation</label>
+              <select
+                className="input-field text-sm py-1.5 min-w-[14rem]"
+                value={drillAppId}
+                onChange={e => setDrillAppId(e.target.value)}
+              >
+                <option value="">Select an operation…</option>
+                {apps
+                  .filter((a: any) => a.status === 'published')
+                  .map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <span className="text-xs text-gray-400">
+              for {departments.find((d: any) => d.id === departmentId)?.name ?? 'this department'}
+            </span>
+            {drillAppId && (
+              <button
+                onClick={() => setDrillOpen(o => !o)}
+                className="ml-auto flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800"
+              >
+                {drillOpen ? 'Hide' : 'Show'} detail
+                <ChevronDown size={14} className={`transition-transform ${drillOpen ? 'rotate-180' : ''}`} />
+              </button>
+            )}
+          </div>
+          {drillAppId ? (
+            drillOpen && (
+              <div className="p-4 bg-gray-50">
+                <StepMetricsPanel appId={drillAppId} days={days} />
+              </div>
+            )
+          ) : (
+            <div className="p-6 text-center text-sm text-gray-400">
+              Choose an operation above to see its per-step cycle times, takt adherence and trends.
+            </div>
+          )}
+        </div>
+      )}
 
       {/* KPI cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
