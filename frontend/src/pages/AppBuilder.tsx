@@ -9,7 +9,7 @@ import {
   PenTool, Eye, Settings, X, ChevronDown, Loader2, Tag,
   LayoutGrid, Rows3, MoveUp, MoveDown, MapPin, AlertTriangle,
   AlignLeft as AlignLeftIcon, AlignCenter, AlignRight,
-  Package, PlusCircle,
+  Package, PlusCircle, Video, Box,
 } from 'lucide-react';
 import CanvasEditor from '../components/app/CanvasEditor';
 import { defaultLayout, DEFAULT_CANVAS_H } from '../components/app/WidgetView';
@@ -30,6 +30,8 @@ const WIDGET_PALETTE: { type: WidgetType; icon: any; label: string; category: st
   { type: 'text', icon: Type, label: 'Text', category: 'Display' },
   { type: 'instruction', icon: AlignLeft, label: 'Instruction', category: 'Display' },
   { type: 'image', icon: Image, label: 'Image', category: 'Display' },
+  { type: 'video', icon: Video, label: 'Video', category: 'Display' },
+  { type: 'model-viewer', icon: Box, label: '3D Model / CAD', category: 'Display' },
   { type: 'separator', icon: Minus, label: 'Separator', category: 'Display' },
   { type: 'button', icon: MousePointer, label: 'Button', category: 'Actions' },
   { type: 'text-input', icon: TextCursor, label: 'Text Input', category: 'Inputs' },
@@ -59,7 +61,9 @@ function defaultWidget(type: WidgetType): Widget {
     case 'pass-fail': return { ...base, label: 'Quality Check', config: { variableName: `qc_${Date.now()}` } };
     case 'separator': return { ...base, label: '', config: {} };
     case 'image': return { ...base, label: '', config: { imageUrl: '', imageAlt: '' } };
-    case 'signature': return { ...base, label: 'Signature', config: { variableName: `sig_${Date.now()}` } };
+    case 'signature':     return { ...base, label: 'Signature', config: { variableName: `sig_${Date.now()}` } };
+    case 'video':         return { ...base, label: 'Video', config: { videoType: 'youtube', videoUrl: '', videoControls: true, videoAutoplay: false } };
+    case 'model-viewer':  return { ...base, label: '3D Model', config: { modelUrl: '', modelAlt: '3D Model', modelAutoRotate: true, modelShadowIntensity: 0.8, modelExposure: 1 } };
     default: return base;
   }
 }
@@ -1225,6 +1229,113 @@ function WidgetProperties({ widget, isCanvas, onUpdate, onUpdateConfig, onUpdate
               <option value="cover">Cover (fill, may crop)</option>
             </select>
           </Field>
+        </>
+      )}
+
+      {/* Video */}
+      {widget.type === 'video' && (
+        <>
+          <Field label="Video Type">
+            <select className="input-field" value={config.videoType || 'youtube'} onChange={e => onUpdateConfig({ videoType: e.target.value, videoUrl: '' })}>
+              <option value="youtube">YouTube / URL</option>
+              <option value="upload">Upload Video File</option>
+            </select>
+          </Field>
+          {config.videoType === 'upload' ? (
+            <Field label="Upload Video">
+              <label className="flex items-center gap-2 cursor-pointer w-full px-3 py-2 rounded-lg border border-dashed border-gray-300 hover:border-blue-400 hover:bg-blue-50/30 text-xs text-gray-500 hover:text-blue-600 transition-colors">
+                <Video size={13} />
+                {config.videoUrl ? 'Replace video…' : 'Choose video file (.mp4, .webm, .mov)'}
+                <input
+                  type="file"
+                  accept="video/mp4,video/webm,video/quicktime,.mov"
+                  className="hidden"
+                  onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = async (ev) => {
+                      try {
+                        const base64 = (ev.target?.result as string).split(',')[1];
+                        const result = await api.uploadImage(base64, file.type, file.name);
+                        onUpdateConfig({ videoUrl: result.url, videoType: 'upload' });
+                      } catch { /* silently fail */ }
+                    };
+                    reader.readAsDataURL(file);
+                  }}
+                />
+              </label>
+              {config.videoUrl && <p className="text-[11px] text-green-600 mt-1">✓ Video uploaded</p>}
+            </Field>
+          ) : (
+            <Field label="YouTube URL or Video Link">
+              <input
+                className="input-field text-xs"
+                value={config.videoUrl || ''}
+                onChange={e => onUpdateConfig({ videoUrl: e.target.value })}
+                placeholder="https://youtube.com/watch?v=... or https://..."
+              />
+              <p className="text-[11px] text-gray-400 mt-1">Paste a YouTube watch link, embed link, or any public video URL</p>
+            </Field>
+          )}
+          <div className="flex gap-3">
+            <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
+              <input type="checkbox" checked={!!config.videoControls} onChange={e => onUpdateConfig({ videoControls: e.target.checked })} className="rounded" />
+              Show controls
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
+              <input type="checkbox" checked={!!config.videoAutoplay} onChange={e => onUpdateConfig({ videoAutoplay: e.target.checked })} className="rounded" />
+              Autoplay
+            </label>
+          </div>
+        </>
+      )}
+
+      {/* 3D Model / CAD */}
+      {widget.type === 'model-viewer' && (
+        <>
+          <Field label="Upload 3D Model">
+            <label className="flex items-center gap-2 cursor-pointer w-full px-3 py-2 rounded-lg border border-dashed border-gray-300 hover:border-indigo-400 hover:bg-indigo-50/30 text-xs text-gray-500 hover:text-indigo-600 transition-colors">
+              <Box size={13} />
+              {config.modelUrl ? 'Replace model…' : 'Choose file (.glb, .gltf, .obj, .stl)'}
+              <input
+                type="file"
+                accept=".glb,.gltf,.obj,.stl,.3mf"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = async (ev) => {
+                    try {
+                      const base64 = (ev.target?.result as string).split(',')[1];
+                      const result = await api.uploadImage(base64, file.type || 'application/octet-stream', file.name);
+                      onUpdateConfig({ modelUrl: result.url });
+                    } catch { /* silently fail */ }
+                  };
+                  reader.readAsDataURL(file);
+                }}
+              />
+            </label>
+            {config.modelUrl && (
+              <p className="text-[11px] text-green-600 mt-1">✓ Model uploaded: {config.modelUrl.split('/').pop()}</p>
+            )}
+          </Field>
+          <Field label="Model URL (alternative)">
+            <input className="input-field text-xs" value={config.modelUrl || ''} onChange={e => onUpdateConfig({ modelUrl: e.target.value })} placeholder="https://... or /uploads/model.glb" />
+          </Field>
+          <Field label="Alt Text / Description">
+            <input className="input-field" value={config.modelAlt || ''} onChange={e => onUpdateConfig({ modelAlt: e.target.value })} placeholder="e.g. Hydraulic pump assembly" />
+          </Field>
+          <div className="flex gap-3">
+            <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer">
+              <input type="checkbox" checked={!!config.modelAutoRotate} onChange={e => onUpdateConfig({ modelAutoRotate: e.target.checked })} className="rounded" />
+              Auto-rotate
+            </label>
+          </div>
+          <div className="text-[11px] text-gray-400 bg-indigo-50 rounded-lg px-2.5 py-1.5">
+            Drag to rotate · Scroll to zoom · Supports .glb, .gltf, .obj, .stl
+          </div>
         </>
       )}
     </div>

@@ -95,7 +95,7 @@ function SummaryCard({ icon, iconBg, label, value, sub }: any) {
 
 const EMPTY_ITEM = {
   sku: '', name: '', description: '', category: '',
-  unit_of_measure: 'ea', unit_cost: '', reorder_point: '', reorder_qty: '', lead_time_days: '',
+  unit_of_measure: 'ea', unit_cost: '', reorder_point: '', reorder_max: '', reorder_qty: '', lead_time_days: '',
 };
 
 function ItemModal({ item, onClose, onSaved }: { item: any | null; onClose: () => void; onSaved: () => void }) {
@@ -107,6 +107,7 @@ function ItemModal({ item, onClose, onSaved }: { item: any | null; onClose: () =
     unit_of_measure: item.unit_of_measure ?? 'ea',
     unit_cost: item.unit_cost ?? '',
     reorder_point: item.reorder_point ?? '',
+    reorder_max: item.reorder_max ?? '',
     reorder_qty: item.reorder_qty ?? '',
     lead_time_days: item.lead_time_days ?? '',
   } : { ...EMPTY_ITEM });
@@ -131,6 +132,8 @@ function ItemModal({ item, onClose, onSaved }: { item: any | null; onClose: () =
       else delete payload.unit_cost;
       if (payload.reorder_point !== '') payload.reorder_point = parseFloat(payload.reorder_point);
       else delete payload.reorder_point;
+      if (payload.reorder_max !== '') payload.reorder_max = parseFloat(payload.reorder_max);
+      else delete payload.reorder_max;
       if (payload.reorder_qty !== '') payload.reorder_qty = parseFloat(payload.reorder_qty);
       else delete payload.reorder_qty;
       if (payload.lead_time_days !== '') payload.lead_time_days = parseInt(payload.lead_time_days);
@@ -184,14 +187,18 @@ function ItemModal({ item, onClose, onSaved }: { item: any | null; onClose: () =
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Unit Cost ($)</label>
               <input className="input-field" type="number" min="0" step="0.01" value={form.unit_cost} onChange={e => set('unit_cost', e.target.value)} placeholder="0.00" />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Reorder Point</label>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Min Stock (Reorder)</label>
               <input className="input-field" type="number" min="0" value={form.reorder_point} onChange={e => set('reorder_point', e.target.value)} placeholder="0" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Max Stock (Target)</label>
+              <input className="input-field" type="number" min="0" value={form.reorder_max} onChange={e => set('reorder_max', e.target.value)} placeholder="0" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -759,6 +766,66 @@ function OverviewTab({
           </>
         )}
       </div>
+
+      {/* Min/Max stock level gauges */}
+      {!loading && summary && summary.low_stock_list.filter(r => r.reorder_point > 0).length > 0 && (
+        <div className="card p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Layers size={15} className="text-blue-500" />
+            <h3 className="text-sm font-semibold text-gray-700">Stock Level Gauges</h3>
+            <span className="ml-auto text-xs text-gray-400 flex items-center gap-3">
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-red-400" />Below Min</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-emerald-400" />Healthy</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-amber-400" />Above Max</span>
+            </span>
+          </div>
+          <div className="space-y-3">
+            {summary.low_stock_list.filter(r => r.reorder_point > 0).slice(0, 12).map(row => {
+              const max = row.reorder_max && row.reorder_max > 0 ? row.reorder_max : row.reorder_point * 3;
+              const pct = Math.min(100, (row.total_quantity / max) * 100);
+              const minPct = (row.reorder_point / max) * 100;
+              const isBelow = row.total_quantity < row.reorder_point;
+              const isAbove = row.reorder_max && row.reorder_max > 0 && row.total_quantity > row.reorder_max;
+              const barColor = isBelow ? 'bg-red-400' : isAbove ? 'bg-amber-400' : 'bg-emerald-400';
+              return (
+                <div key={row.id} className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium text-gray-800 truncate max-w-[160px]">{row.name}</span>
+                    <span className={`font-mono font-semibold ${isBelow ? 'text-red-600' : isAbove ? 'text-amber-600' : 'text-emerald-700'}`}>
+                      {fmtNum(row.total_quantity)} <span className="text-gray-400 font-normal">{row.unit_of_measure}</span>
+                    </span>
+                  </div>
+                  <div className="relative h-2 bg-gray-100 rounded-full overflow-visible">
+                    <div className={`h-2 rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+                    {/* Min marker */}
+                    <div
+                      className="absolute top-0 bottom-0 w-0.5 bg-blue-400 rounded"
+                      style={{ left: `${minPct}%` }}
+                      title={`Min: ${fmtNum(row.reorder_point)}`}
+                    />
+                    {/* Max marker */}
+                    {row.reorder_max && row.reorder_max > 0 && (
+                      <div
+                        className="absolute top-0 bottom-0 w-0.5 bg-gray-400 rounded"
+                        style={{ left: '100%' }}
+                        title={`Max: ${fmtNum(row.reorder_max)}`}
+                      />
+                    )}
+                  </div>
+                  <div className="flex justify-between text-[10px] text-gray-400">
+                    <span>0</span>
+                    <span className="text-blue-500">min {fmtNum(row.reorder_point)}</span>
+                    {row.reorder_max && row.reorder_max > 0
+                      ? <span>max {fmtNum(row.reorder_max)}</span>
+                      : <span>{fmtNum(max)}</span>
+                    }
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Stock value by category chart */}

@@ -96,7 +96,7 @@ router.get('/summary', (req, res) => {
 
   const rows = db.prepare(`
     SELECT i.id, i.sku, i.name, i.category, i.unit_of_measure, i.unit_cost,
-           i.reorder_point, i.reorder_qty,
+           i.reorder_point, i.reorder_max, i.reorder_qty,
            COALESCE(SUM(sl.quantity), 0) as total_quantity,
            COALESCE(SUM(sl.quantity * i.unit_cost), 0) as total_value
     FROM items i
@@ -165,13 +165,13 @@ router.get('/items/:id', (req, res) => {
 
 router.post('/items', (req, res) => {
   const { sku, name, description = '', category = 'General', unit_of_measure = 'ea',
-          unit_cost = 0, reorder_point = 0, reorder_qty = 0, lead_time_days = 7 } = req.body;
+          unit_cost = 0, reorder_point = 0, reorder_max = 0, reorder_qty = 0, lead_time_days = 7 } = req.body;
   if (!sku || !name) return res.status(400).json({ error: 'sku and name required' });
   const existing = db.prepare('SELECT id FROM items WHERE sku = ? AND company_id = ?').get(sku, req.companyId);
   if (existing) return res.status(409).json({ error: 'SKU already exists' });
   const id = uuidv4();
-  db.prepare(`INSERT INTO items (id, sku, name, description, category, unit_of_measure, unit_cost, reorder_point, reorder_qty, lead_time_days, company_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, sku, name, description, category, unit_of_measure, unit_cost, reorder_point, reorder_qty, lead_time_days, req.companyId);
+  db.prepare(`INSERT INTO items (id, sku, name, description, category, unit_of_measure, unit_cost, reorder_point, reorder_max, reorder_qty, lead_time_days, company_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, sku, name, description, category, unit_of_measure, unit_cost, reorder_point, reorder_max, reorder_qty, lead_time_days, req.companyId);
   res.status(201).json(getItemWithStock(id, req.companyId));
 });
 
@@ -180,7 +180,7 @@ router.post('/items', (req, res) => {
 router.put('/items/:id', (req, res) => {
   const item = db.prepare('SELECT * FROM items WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!item) return res.status(404).json({ error: 'Not found' });
-  const fields = ['sku','name','description','category','unit_of_measure','unit_cost','reorder_point','reorder_qty','lead_time_days','is_active'];
+  const fields = ['sku','name','description','category','unit_of_measure','unit_cost','reorder_point','reorder_max','reorder_qty','lead_time_days','is_active'];
   const updates = {};
   for (const f of fields) if (req.body[f] !== undefined) updates[f] = req.body[f];
   if (Object.keys(updates).length === 0) return res.json(getItemWithStock(req.params.id, req.companyId));
@@ -332,6 +332,117 @@ router.get('/movements', (req, res) => {
   sql += ` ORDER BY sm.created_at DESC LIMIT ?`;
   params.push(parseInt(limit));
   res.json(db.prepare(sql).all(...params));
+});
+
+// ─── GET /requirements — MRP: what's needed for pending/in-progress WOs ──────
+
+router.get('/requirements', (req, res) => {
+  const wos = db.prepare(
+    `SELECT wo.*, a.steps FROM work_orders wo
+     LEFT JOIN apps a ON a.id = wo.app_id
+     WHERE wo.company_id = ? AND wo.status IN ('pending','in_progress')`
+  ).all(req.companyId);
+
+  // Parse step parts_list from each work order's app steps
+  const neededMap = {}; // name+sku → { sku, name, required_qty, work_orders[] }
+  for (const wo of wos) {
+    let steps = [];
+    try { steps = JSON.parse(wo.steps || '[]'); } catch { continue; }
+    for (const step of steps) {
+      const parts = step.parts_list || [];
+      for (const part of parts) {
+        const key = (part.sku || '').toUpperCase() || part.name.toLowerCase();
+        if (!neededMap[key]) {
+          neededMap[key] = { sku: part.sku || '', name: part.name, unit: part.unit || 'ea', required_qty: 0, work_orders: [] };
+        }
+        neededMap[key].required_qty += (part.quantity || 1) * (wo.quantity || 1);
+        const existing = neededMap[key].work_orders.find(w => w.wo_number === wo.work_order_number);
+        if (existing) { existing.needed += (part.quantity || 1) * (wo.quantity || 1); }
+        else { neededMap[key].work_orders.push({ wo_number: wo.work_order_number, part_name: wo.part_name, needed: (part.quantity || 1) * (wo.quantity || 1) }); }
+      }
+    }
+  }
+
+  const items = Object.values(neededMap).map(item => {
+    // Look up current stock by SKU or name
+    const dbItem = db.prepare(
+      `SELECT i.*, COALESCE(SUM(sl.quantity),0) as on_hand_qty
+       FROM items i LEFT JOIN stock_levels sl ON sl.item_id = i.id
+       WHERE i.company_id = ? AND (UPPER(i.sku)=UPPER(?) OR LOWER(i.name)=LOWER(?))
+       GROUP BY i.id LIMIT 1`
+    ).get(req.companyId, item.sku, item.name);
+    const onHand = dbItem ? Number(dbItem.on_hand_qty) : 0;
+    return {
+      ...item,
+      on_hand_qty: onHand,
+      shortage: Math.max(0, item.required_qty - onHand),
+    };
+  });
+
+  items.sort((a, b) => b.shortage - a.shortage);
+
+  res.json({
+    items,
+    summary: {
+      total_items_needed: items.length,
+      items_in_stock: items.filter(i => i.shortage === 0).length,
+      items_short: items.filter(i => i.shortage > 0).length,
+      work_orders_analyzed: wos.length,
+    },
+  });
+});
+
+// ─── GET /shipments ───────────────────────────────────────────────────────────
+
+router.get('/shipments', (req, res) => {
+  const rows = db.prepare(
+    `SELECT s.*, po.po_number
+     FROM shipments s
+     LEFT JOIN purchase_orders po ON po.id = s.po_id
+     WHERE s.company_id = ?
+     ORDER BY s.created_at DESC`
+  ).all(req.companyId);
+  res.json(rows);
+});
+
+// ─── POST /shipments ──────────────────────────────────────────────────────────
+
+router.post('/shipments', (req, res) => {
+  const { carrier = '', tracking_number = '', origin = '', status = 'pending', shipped_date, estimated_arrival, actual_arrival, notes = '', po_id } = req.body;
+  const { v4: uuidv4 } = require('uuid');
+  const id = uuidv4();
+  db.prepare(
+    `INSERT INTO shipments (id, company_id, po_id, carrier, tracking_number, origin, status, shipped_date, estimated_arrival, actual_arrival, notes)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, req.companyId, po_id || null, carrier, tracking_number, origin, status, shipped_date || null, estimated_arrival || null, actual_arrival || null, notes);
+  const row = db.prepare('SELECT s.*, po.po_number FROM shipments s LEFT JOIN purchase_orders po ON po.id = s.po_id WHERE s.id = ?').get(id);
+  res.status(201).json(row);
+});
+
+// ─── PUT /shipments/:id ───────────────────────────────────────────────────────
+
+router.put('/shipments/:id', (req, res) => {
+  const s = db.prepare('SELECT id FROM shipments WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
+  if (!s) return res.status(404).json({ error: 'Shipment not found' });
+  const { carrier, tracking_number, origin, status, shipped_date, estimated_arrival, actual_arrival, notes, po_id } = req.body;
+  db.prepare(
+    `UPDATE shipments SET carrier=?, tracking_number=?, origin=?, status=?, shipped_date=?, estimated_arrival=?, actual_arrival=?, notes=?, po_id=?, updated_at=datetime('now')
+     WHERE id=?`
+  ).run(
+    carrier ?? '', tracking_number ?? '', origin ?? '', status ?? 'pending',
+    shipped_date || null, estimated_arrival || null, actual_arrival || null,
+    notes ?? '', po_id || null, req.params.id
+  );
+  res.json(db.prepare('SELECT s.*, po.po_number FROM shipments s LEFT JOIN purchase_orders po ON po.id = s.po_id WHERE s.id = ?').get(req.params.id));
+});
+
+// ─── DELETE /shipments/:id ────────────────────────────────────────────────────
+
+router.delete('/shipments/:id', (req, res) => {
+  const s = db.prepare('SELECT id FROM shipments WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
+  if (!s) return res.status(404).json({ error: 'Shipment not found' });
+  db.prepare('DELETE FROM shipments WHERE id = ?').run(req.params.id);
+  res.json({ success: true });
 });
 
 module.exports = router;

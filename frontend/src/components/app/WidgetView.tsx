@@ -28,10 +28,12 @@ export function defaultLayout(type: WidgetType, index = 0): WidgetLayout {
     case 'checkbox':     return at(380, 56);
     case 'timer':        return at(320, 210);
     case 'counter':      return at(340, 170);
-    case 'pass-fail':    return at(440, 150);
-    case 'signature':    return at(440, 150);
-    case 'separator':    return at(640, 24);
-    default:             return at(360, 80);
+    case 'pass-fail':     return at(440, 150);
+    case 'signature':     return at(440, 150);
+    case 'separator':     return at(640, 24);
+    case 'video':         return at(560, 320);
+    case 'model-viewer':  return at(520, 380);
+    default:              return at(360, 80);
   }
 }
 
@@ -236,6 +238,68 @@ export function WidgetView({ widget, value, onChange, onNext, onPrev, onComplete
           style={{ backgroundColor: config.buttonColor || '#3b82f6', fontSize: config.buttonSize === 'lg' ? 20 : config.buttonSize === 'sm' ? 14 : 16, borderRadius: config.borderRadius }}>
           {config.buttonText || 'Next'}
         </button>
+      );
+    }
+
+    case 'video': {
+      const isYoutube = config.videoType === 'youtube' || (config.videoUrl || '').includes('youtube') || (config.videoUrl || '').includes('youtu.be');
+      if (!config.videoUrl) {
+        return (
+          <div className="w-full h-full bg-gray-900 rounded-xl flex flex-col items-center justify-center text-gray-400 border border-dashed border-gray-600">
+            <svg width="32" height="32" fill="currentColor" viewBox="0 0 24 24" className="mb-2 opacity-50"><path d="M21 5.5l-9 5.5 9 5.5V5.5z"/><path d="M3 5h10v14H3z"/></svg>
+            <span className="text-sm">Video</span>
+          </div>
+        );
+      }
+      if (isYoutube) {
+        // Convert any YouTube URL to embed
+        let embedUrl = config.videoUrl;
+        const ytMatch = config.videoUrl.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/);
+        if (ytMatch) embedUrl = `https://www.youtube.com/embed/${ytMatch[1]}?rel=0${config.videoAutoplay ? '&autoplay=1' : ''}`;
+        return (
+          <iframe
+            src={embedUrl}
+            className="w-full h-full rounded-xl"
+            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            allowFullScreen
+            title={widget.label || 'Video'}
+            style={{ border: 'none' }}
+          />
+        );
+      }
+      return (
+        <video
+          src={config.videoUrl}
+          controls={config.videoControls !== false}
+          autoPlay={!!config.videoAutoplay}
+          className="w-full h-full rounded-xl object-contain bg-black"
+          title={widget.label || 'Video'}
+        />
+      );
+    }
+
+    case 'model-viewer': {
+      if (!config.modelUrl) {
+        return (
+          <div className="w-full h-full bg-gray-800 rounded-xl flex flex-col items-center justify-center text-gray-400 border border-dashed border-gray-600">
+            <svg width="36" height="36" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" className="mb-2 opacity-50"><path strokeLinecap="round" strokeLinejoin="round" d="M21 7.5l-9-5.25L3 7.5m18 0l-9 5.25m9-5.25v9l-9 5.25M3 7.5l9 5.25M3 7.5v9l9 5.25m0-9v9" /></svg>
+            <span className="text-sm">3D Model / CAD</span>
+            <span className="text-xs opacity-60 mt-1">.glb · .gltf · .obj · .stl</span>
+          </div>
+        );
+      }
+      return (
+        // @ts-ignore — model-viewer is a custom web component loaded via CDN script
+        <model-viewer
+          src={config.modelUrl}
+          alt={config.modelAlt || widget.label || '3D Model'}
+          auto-rotate={config.modelAutoRotate ? '' : undefined}
+          camera-controls=""
+          camera-orbit={config.modelCameraOrbit || '0deg 75deg 105%'}
+          exposure={config.modelExposure ?? 1}
+          shadow-intensity={config.modelShadowIntensity ?? 0.8}
+          style={{ width: '100%', height: '100%', borderRadius: '12px', background: '#1e293b' }}
+        />
       );
     }
 
