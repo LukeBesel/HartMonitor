@@ -347,7 +347,7 @@ export default function Layout() {
           <button
             onClick={() => setMobileNavOpen(true)}
             aria-label="Open navigation menu"
-            className="p-1.5 -ml-1.5 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+            className="p-2.5 -ml-2 rounded-lg text-gray-600 hover:bg-gray-100 active:bg-gray-200 transition-colors"
           >
             <Menu size={20} />
           </button>
