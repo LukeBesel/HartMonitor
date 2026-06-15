@@ -143,4 +143,4 @@ function notify(companyId, event, { subject = '', body, force = false }) {
   }
 }
 
-module.exports = { notify, getPrefs, setPrefs, EVENTS, smtpConfigured, twilioConfigured };
+module.exports = { notify, sendRawEmail, getPrefs, setPrefs, EVENTS, smtpConfigured, twilioConfigured };
