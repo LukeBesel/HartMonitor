@@ -25,6 +25,7 @@ const Stations         = lazy(() => import('./pages/Stations'));
 const Schedule         = lazy(() => import('./pages/Schedule'));
 const PlantView        = lazy(() => import('./pages/PlantView'));
 const DepartmentView   = lazy(() => import('./pages/DepartmentView'));
+const Departments      = lazy(() => import('./pages/Departments'));
 const StationView      = lazy(() => import('./pages/StationView'));
 const ManagerView      = lazy(() => import('./pages/ManagerView'));
 const CompletionDetail = lazy(() => import('./pages/CompletionDetail'));
@@ -47,6 +48,7 @@ const Terms            = lazy(() => import('./pages/Terms'));
 const Privacy          = lazy(() => import('./pages/Privacy'));
 const SSOCallback      = lazy(() => import('./pages/SSOCallback'));
 const AuditLog         = lazy(() => import('./pages/AuditLog'));
+const TransactionLog   = lazy(() => import('./pages/AuditLog'));
 const Facilities       = lazy(() => import('./pages/Facilities'));
 const Game             = lazy(() => import('./pages/Game'));
 const Routings         = lazy(() => import('./pages/Routings'));
@@ -107,6 +109,7 @@ export default function App() {
                 <Route path="/schedule" element={<Schedule />} />
                 <Route path="/routings" element={<Routings />} />
                 <Route path="/plant" element={<PlantView />} />
+                <Route path="/departments" element={<Departments />} />
                 <Route path="/departments/:id" element={<DepartmentView />} />
                 <Route path="/manager" element={<ManagerView />} />
                 <Route path="/step-metrics" element={<StepMetrics />} />
@@ -125,6 +128,7 @@ export default function App() {
                 <Route path="/leaderboard" element={<Leaderboard />} />
                 <Route path="/facilities" element={<Facilities />} />
                 <Route path="/audit-log" element={<AuditLog />} />
+                <Route path="/transaction-log" element={<TransactionLog />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Route>

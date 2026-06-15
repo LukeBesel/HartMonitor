@@ -67,7 +67,7 @@ import type { PlanTier, AddonPricing, Site, NotificationPrefs, NotificationLogEn
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type TabId = 'company' | 'plan' | 'theme' | 'sidebar' | 'export' | 'users' | 'account'
-  | 'sites' | 'notifications' | 'permissions' | 'developer' | 'help';
+  | 'sites' | 'notifications' | 'developer' | 'help';
 
 interface CompanyForm {
   company_name: string;
@@ -213,8 +213,10 @@ function CompanyTab() {
   const [saved, setSaved] = useState<CompanyForm>(DEFAULT_FORM);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { refresh: refreshBranding } = useBranding();
 
   const isDirty = JSON.stringify(form) !== JSON.stringify(saved);
@@ -253,6 +255,29 @@ function CompanyTab() {
   const set = (key: keyof CompanyForm) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => setForm(f => ({ ...f, [key]: e.target.value }));
+
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (ev) => {
+        const result = ev.target?.result as string;
+        // result is "data:image/png;base64,..."
+        const [meta, data] = result.split(',');
+        const mimeType = meta.match(/data:([^;]+)/)?.[1] ?? file.type;
+        const { url } = await api.uploadImage(data, mimeType, file.name);
+        setForm(f => ({ ...f, logo_url: url }));
+        setUploading(false);
+        showToast('Image uploaded successfully');
+      };
+      reader.readAsDataURL(file);
+    } catch {
+      showToast('Failed to upload image', 'error');
+      setUploading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -297,6 +322,29 @@ function CompanyTab() {
             <p className="text-xs text-gray-400 mt-1">
               Must be a direct image URL (ending in .png, .jpg, .svg, etc.). Shown in the top-left of the sidebar in place of the default mark.
             </p>
+            {/* Upload from computer */}
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleLogoUpload}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploading}
+                className="btn-secondary text-xs flex items-center gap-1.5"
+              >
+                {uploading ? (
+                  <><span className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" /> Uploading…</>
+                ) : (
+                  <>Upload from computer</>
+                )}
+              </button>
+              <span className="text-xs text-gray-400">or paste a URL above</span>
+            </div>
             {form.logo_url && (
               <div className="mt-2 flex items-center gap-3">
                 <img
@@ -305,7 +353,7 @@ function CompanyTab() {
                   className="w-12 h-12 rounded-xl object-contain bg-gray-100 border border-gray-200"
                   onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
                 />
-                <span className="text-xs text-gray-500">Logo preview (enter a direct image URL)</span>
+                <span className="text-xs text-gray-500">Logo preview</span>
               </div>
             )}
           </div>
@@ -1182,10 +1230,19 @@ function SidebarTab() {
     focus, setFocus, resetNavPrefs,
   } = useNavPrefs();
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showProSidebar, setShowProSidebar] = useState(
+    () => localStorage.getItem('hm_show_pro_sidebar') === 'true'
+  );
 
   const enabledSections = SECTIONS.filter(s => !isSectionHidden(s.id));
   // Keep the default-view selector honest if the focused section is now hidden.
-  const focusValid = focus === 'all' || enabledSections.some(s => s.id === focus);
+  const focusValid = enabledSections.some(s => s.id === focus);
+
+  const handleProSidebarToggle = (val: boolean) => {
+    setShowProSidebar(val);
+    if (val) localStorage.setItem('hm_show_pro_sidebar', 'true');
+    else localStorage.removeItem('hm_show_pro_sidebar');
+  };
 
   return (
     <div className="space-y-8 max-w-2xl">
@@ -1230,14 +1287,25 @@ function SidebarTab() {
         <SectionHeader title="Default view" subtitle="Which workspace the sidebar opens to. You can switch anytime from the buttons at the top of the sidebar." />
         <select
           className="input-field text-sm max-w-xs"
-          value={focusValid ? focus : 'all'}
+          value={focusValid ? focus : (enabledSections[0]?.id ?? 'production')}
           onChange={e => setFocus(e.target.value as any)}
         >
-          <option value="all">Show everything</option>
           {enabledSections.map(s => (
-            <option key={s.id} value={s.id}>{s.label} only</option>
+            <option key={s.id} value={s.id}>{s.label}</option>
           ))}
         </select>
+      </div>
+
+      {/* Pro sidebar developer toggle */}
+      <div>
+        <SectionHeader title="Developer Preview" subtitle="For developers and demos only — shows Pro-locked items in the sidebar as grayed buttons." />
+        <div className="flex items-center justify-between max-w-sm p-3 bg-amber-50 border border-amber-200 rounded-xl">
+          <div>
+            <div className="text-sm font-medium text-gray-800">Show Pro feature previews in sidebar</div>
+            <div className="text-xs text-gray-500 mt-0.5">Adds locked Pro items back to the sidebar (developer use only)</div>
+          </div>
+          <Toggle checked={showProSidebar} onChange={handleProSidebarToggle} />
+        </div>
       </div>
 
       {/* Advanced: per-item visibility */}
@@ -1990,11 +2058,113 @@ function SiteModal({ site, onClose, onSaved, onError }: {
   );
 }
 
+function DepartmentsMini({ siteId }: { siteId: string }) {
+  const [depts, setDepts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newDesc, setNewDesc] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    api.getDepartments({ site_id: siteId })
+      .then(setDepts)
+      .catch(() => setDepts([]))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, [siteId]);
+
+  const handleAdd = async () => {
+    if (!newName.trim()) return;
+    setSaving(true);
+    try {
+      await api.createDepartment({ name: newName.trim(), description: newDesc.trim(), site_id: siteId });
+      setNewName('');
+      setNewDesc('');
+      setAdding(false);
+      load();
+    } catch { /* ignore */ } finally { setSaving(false); }
+  };
+
+  const handleDelete = async (id: string, name: string) => {
+    if (!confirm(`Delete department "${name}"?`)) return;
+    setDeletingId(id);
+    try {
+      await api.deleteDepartment(id);
+      load();
+    } catch { /* ignore */ } finally { setDeletingId(null); }
+  };
+
+  return (
+    <div className="mt-4 pl-4 border-l-2 border-gray-100">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Departments</span>
+        <button
+          onClick={() => setAdding(a => !a)}
+          className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+        >
+          <Plus size={12} /> Add
+        </button>
+      </div>
+      {loading ? (
+        <div className="text-xs text-gray-400 py-2">Loading…</div>
+      ) : depts.length === 0 && !adding ? (
+        <div className="text-xs text-gray-400 py-1">No departments yet</div>
+      ) : (
+        <div className="space-y-1">
+          {depts.map(d => (
+            <div key={d.id} className="flex items-center justify-between gap-2 py-1">
+              <div>
+                <span className="text-xs font-medium text-gray-700">{d.name}</span>
+                {d.description && <span className="text-xs text-gray-400 ml-2">{d.description}</span>}
+              </div>
+              <button
+                onClick={() => handleDelete(d.id, d.name)}
+                disabled={deletingId === d.id}
+                className="p-0.5 rounded text-gray-300 hover:text-red-500 transition-colors"
+              >
+                <Trash2 size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {adding && (
+        <div className="mt-2 space-y-1.5">
+          <input
+            className="input-field w-full text-xs"
+            placeholder="Department name"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            autoFocus
+          />
+          <input
+            className="input-field w-full text-xs"
+            placeholder="Description (optional)"
+            value={newDesc}
+            onChange={e => setNewDesc(e.target.value)}
+          />
+          <div className="flex items-center gap-2">
+            <button onClick={handleAdd} disabled={!newName.trim() || saving} className="btn-primary text-xs py-1 px-3">
+              {saving ? 'Saving…' : 'Add'}
+            </button>
+            <button onClick={() => setAdding(false)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SitesTab() {
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalSite, setModalSite] = useState<Site | null | false>(false); // false=closed, null=new, obj=edit
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [expandedSiteId, setExpandedSiteId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -2068,7 +2238,12 @@ function SitesTab() {
                     <div className="flex items-center gap-3 mt-2 text-xs text-gray-500 flex-wrap">
                       <span>{site.station_count ?? 0} stations</span>
                       <span>·</span>
-                      <span>{site.department_count ?? 0} departments</span>
+                      <button
+                        onClick={() => setExpandedSiteId(expandedSiteId === site.id ? null : site.id)}
+                        className="text-blue-600 hover:text-blue-700 font-medium"
+                      >
+                        {site.department_count ?? 0} departments
+                      </button>
                       <span>·</span>
                       <span>{site.work_order_count ?? 0} work orders</span>
                       <span>·</span>
@@ -2091,6 +2266,9 @@ function SitesTab() {
                   )}
                 </div>
               </div>
+              {expandedSiteId === site.id && (
+                <DepartmentsMini siteId={site.id} />
+              )}
             </div>
           ))}
         </div>
@@ -3342,7 +3520,7 @@ export default function SettingsPage() {
   const { isAtLeast } = useAuth();
   const [activeTab, setActiveTab] = useState<TabId>(() => {
     const tab = new URLSearchParams(window.location.search).get('tab');
-    const valid: TabId[] = ['account', 'company', 'plan', 'theme', 'sidebar', 'export', 'users', 'sites', 'notifications', 'permissions', 'developer', 'help'];
+    const valid: TabId[] = ['account', 'company', 'plan', 'theme', 'sidebar', 'export', 'users', 'sites', 'notifications', 'developer', 'help'];
     return (tab && valid.includes(tab as TabId)) ? (tab as TabId) : 'account';
   });
 
@@ -3353,11 +3531,10 @@ export default function SettingsPage() {
     { id: 'theme',    label: 'Visual Theme',   icon: <Palette size={15} /> },
     { id: 'sidebar',  label: 'Navigation',     icon: <PanelLeft size={15} /> },
     { id: 'export',   label: 'Data Export',    icon: <Download size={15} /> },
-    { id: 'users',    label: 'Users & Access', icon: <Users size={15} />,      minRole: 'manager' },
-    { id: 'sites',         label: 'Sites',          icon: <MapPin size={15} />,    minRole: 'manager' },
-    { id: 'notifications', label: 'Notifications',  icon: <Bell size={15} />,      minRole: 'manager' },
-    { id: 'permissions',   label: 'Permissions',    icon: <Sliders size={15} />,   minRole: 'manager' },
-    { id: 'developer',     label: 'Developer',      icon: <Code size={15} />,      minRole: 'manager' },
+    { id: 'users',         label: 'Users & Access', icon: <Users size={15} />,   minRole: 'manager' },
+    { id: 'sites',         label: 'Sites',          icon: <MapPin size={15} />,   minRole: 'manager' },
+    { id: 'notifications', label: 'Notifications',  icon: <Bell size={15} />,     minRole: 'manager' },
+    { id: 'developer',     label: 'Developer',      icon: <Code size={15} />,     minRole: 'manager' },
     { id: 'help',          label: 'Help & Guides',  icon: <HelpCircle size={15} /> },
   ];
   const TABS = ALL_TABS.filter(t => !t.minRole || isAtLeast(t.minRole as any));
@@ -3408,10 +3585,9 @@ export default function SettingsPage() {
         {activeTab === 'theme'    && <ThemeTab />}
         {activeTab === 'sidebar'  && <SidebarTab />}
         {activeTab === 'export'   && <ExportTab />}
-        {activeTab === 'users'    && <UsersTab />}
+        {activeTab === 'users'         && <><UsersTab /><div className="mt-8"><PermissionsTab /></div></>}
         {activeTab === 'sites'         && <SitesTab />}
         {activeTab === 'notifications' && <NotificationsTab />}
-        {activeTab === 'permissions'   && <PermissionsTab />}
         {activeTab === 'developer'     && <DeveloperTab />}
         {activeTab === 'help'          && <HelpTab />}
       </div>

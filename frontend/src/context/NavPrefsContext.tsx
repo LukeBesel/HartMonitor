@@ -5,7 +5,7 @@ const HIDDEN_KEY = 'hm_hidden_nav';
 const HIDDEN_SECTIONS_KEY = 'hm_hidden_sections';
 const FOCUS_KEY = 'hm_nav_focus';
 
-export type Focus = 'all' | SectionId;
+export type Focus = SectionId;
 
 function loadSet(key: string): Set<string> {
   try {
@@ -46,7 +46,11 @@ export function NavPrefsProvider({ children }: { children: ReactNode }) {
   const [hiddenItems, setHiddenItems] = useState<Set<string>>(() => loadSet(HIDDEN_KEY));
   const [hiddenSections, setHiddenSections] = useState<Set<string>>(() => loadSet(HIDDEN_SECTIONS_KEY));
   const [focus, setFocusState] = useState<Focus>(() => {
-    try { return (localStorage.getItem(FOCUS_KEY) as Focus) || 'all'; } catch { return 'all'; }
+    try {
+      const stored = localStorage.getItem(FOCUS_KEY);
+      if (stored && stored !== 'all') return stored as Focus;
+    } catch { /* ignore */ }
+    return 'production';
   });
 
   const toggleItem = (to: string) => {
@@ -77,10 +81,10 @@ export function NavPrefsProvider({ children }: { children: ReactNode }) {
   const resetNavPrefs = () => {
     setHiddenItems(new Set());
     setHiddenSections(new Set());
-    setFocusState('all');
+    setFocusState('production');
     saveSet(HIDDEN_KEY, new Set());
     saveSet(HIDDEN_SECTIONS_KEY, new Set());
-    try { localStorage.setItem(FOCUS_KEY, 'all'); } catch { /* ignore */ }
+    try { localStorage.setItem(FOCUS_KEY, 'production'); } catch { /* ignore */ }
   };
 
   return (

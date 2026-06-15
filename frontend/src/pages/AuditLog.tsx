@@ -114,7 +114,7 @@ export default function AuditLog() {
             <ScrollText size={18} />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-gray-900 tracking-tight">Audit Log</h1>
+            <h1 className="text-xl font-bold text-gray-900 tracking-tight">Transaction Log</h1>
             <p className="text-xs text-gray-500 mt-0.5">
               Timestamped history of changes for compliance and review.
             </p>

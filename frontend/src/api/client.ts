@@ -9,6 +9,7 @@ const BASE = '/api';
 export interface AnalyticsFilters {
   app_id?: string;
   product_type_id?: string;
+  department_id?: string;
 }
 
 // Build a query string from analytics filters plus any extra params, omitting
@@ -18,6 +19,7 @@ function filterQS(f?: AnalyticsFilters, extra?: Record<string, string | number>)
   if (extra) for (const [k, v] of Object.entries(extra)) qs.set(k, String(v));
   if (f?.app_id) qs.set('app_id', f.app_id);
   if (f?.product_type_id) qs.set('product_type_id', f.product_type_id);
+  if (f?.department_id) qs.set('department_id', f.department_id);
   const s = qs.toString();
   return s ? `?${s}` : '';
 }
