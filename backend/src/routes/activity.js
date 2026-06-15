@@ -27,10 +27,10 @@ function toCSV(rows, columns) {
 }
 
 // ─── GET / - org-wide audit log, filterable (supervisor+) ──────────────────────
-// Query params: entity_type, actor, from (date), to (date), limit
+// Query params: entity_type, actor, from (date), to (date), department_id, station_id, limit
 
 router.get('/', requireRole('supervisor'), (req, res) => {
-  const { entity_type, actor, from, to } = req.query;
+  const { entity_type, actor, from, to, department_id, station_id } = req.query;
   const limit = Math.min(parseInt(req.query.limit) || 100, 1000);
 
   const clauses = ['company_id = ?'];
@@ -39,6 +39,8 @@ router.get('/', requireRole('supervisor'), (req, res) => {
   if (actor) { clauses.push('actor LIKE ?'); params.push(`%${actor}%`); }
   if (from) { clauses.push('created_at >= ?'); params.push(from); }
   if (to) { clauses.push('created_at <= ?'); params.push(to); }
+  if (department_id) { clauses.push('department_id = ?'); params.push(department_id); }
+  if (station_id) { clauses.push('station_id = ?'); params.push(station_id); }
   params.push(limit);
 
   const rows = db.prepare(`
@@ -53,7 +55,7 @@ router.get('/', requireRole('supervisor'), (req, res) => {
 // ─── GET /export - audit log as CSV (supervisor+) ──────────────────────────────
 
 router.get('/export', requireRole('supervisor'), (req, res) => {
-  const { entity_type, actor, from, to } = req.query;
+  const { entity_type, actor, from, to, department_id, station_id } = req.query;
 
   const clauses = ['company_id = ?'];
   const params = [req.companyId];
@@ -61,6 +63,8 @@ router.get('/export', requireRole('supervisor'), (req, res) => {
   if (actor) { clauses.push('actor LIKE ?'); params.push(`%${actor}%`); }
   if (from) { clauses.push('created_at >= ?'); params.push(from); }
   if (to) { clauses.push('created_at <= ?'); params.push(to); }
+  if (department_id) { clauses.push('department_id = ?'); params.push(department_id); }
+  if (station_id) { clauses.push('station_id = ?'); params.push(station_id); }
 
   const rows = db.prepare(`
     SELECT created_at, entity_type, entity_id, action, actor FROM activity_log

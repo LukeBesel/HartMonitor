@@ -23,7 +23,6 @@ const TableDetail      = lazy(() => import('./pages/TableDetail'));
 const Analytics        = lazy(() => import('./pages/Analytics'));
 const Stations         = lazy(() => import('./pages/Stations'));
 const Schedule         = lazy(() => import('./pages/Schedule'));
-const PlantView        = lazy(() => import('./pages/PlantView'));
 const DepartmentView   = lazy(() => import('./pages/DepartmentView'));
 const Departments      = lazy(() => import('./pages/Departments'));
 const StationView      = lazy(() => import('./pages/StationView'));
@@ -108,7 +107,7 @@ export default function App() {
                 <Route path="/stations/:id" element={<StationView />} />
                 <Route path="/schedule" element={<Schedule />} />
                 <Route path="/routings" element={<Routings />} />
-                <Route path="/plant" element={<PlantView />} />
+                <Route path="/plant" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/departments" element={<Departments />} />
                 <Route path="/departments/:id" element={<DepartmentView />} />
                 <Route path="/manager" element={<ManagerView />} />
