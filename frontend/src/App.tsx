@@ -57,6 +57,7 @@ const Routings             = lazy(() => import('./pages/Routings'));
 const ReceivingPortal      = lazy(() => import('./pages/ReceivingPortal'));
 const ShipmentTracker      = lazy(() => import('./pages/ShipmentTracker'));
 const InventoryRequirements = lazy(() => import('./pages/InventoryRequirements'));
+const Training             = lazy(() => import('./pages/Training'));
 
 function Spinner() {
   return (
@@ -155,6 +156,8 @@ export default function App() {
                 <Route path="/purchasing/:tab" element={<Purchasing />} />
                 <Route path="/quality" element={<Quality />} />
                 <Route path="/quality/:id" element={<Quality />} />
+                <Route path="/training" element={<Training />} />
+                <Route path="/training/:tab" element={<Training />} />
                 <Route path="/leaderboard" element={<Leaderboard />} />
                 <Route path="/facilities" element={<Facilities />} />
                 <Route path="/audit-log" element={<AuditLog />} />

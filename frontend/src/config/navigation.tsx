@@ -5,6 +5,7 @@ import {
   Package, ShoppingCart, ShieldCheck, Building2,
   Factory, CalendarRange, Layers, History, Tablet, Network, GitBranch,
   HeartPulse, Boxes, PackageCheck, Truck, ListChecks,
+  GraduationCap, Award,
 } from 'lucide-react';
 
 export type NavItem = {
@@ -19,7 +20,7 @@ export type NavItem = {
   enterpriseOnly?: boolean;
 };
 
-export type SectionId = 'production' | 'planning' | 'reporting' | 'inventory';
+export type SectionId = 'production' | 'planning' | 'reporting' | 'inventory' | 'people';
 
 export type NavSection = {
   id: SectionId;
@@ -75,6 +76,18 @@ export const SECTIONS: NavSection[] = [
       { to: '/requirements',  icon: ListChecks,    label: 'Materials Required', proOnly: true, minRole: 'supervisor' },
       { to: '/shipments',     icon: Truck,         label: 'Shipments',          proOnly: true },
       { to: '/purchasing',    icon: ShoppingCart,  label: 'Purchasing',         proOnly: true, minRole: 'supervisor' },
+    ],
+  },
+  {
+    id: 'people',
+    label: 'People',
+    icon: Users,
+    description: 'Training, skills, and certifications',
+    proOnly: true,
+    items: [
+      { to: '/training',      icon: GraduationCap, label: 'Skills Matrix',      proOnly: true, minRole: 'supervisor' },
+      { to: '/training/certs',icon: Award,         label: 'Certifications',     proOnly: true, minRole: 'supervisor' },
+      { to: '/training/plans',icon: ClipboardList, label: 'Training Plans',     proOnly: true, minRole: 'supervisor' },
     ],
   },
   {
