@@ -67,7 +67,7 @@ import type { PlanTier, AddonPricing, Site, NotificationPrefs, NotificationLogEn
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type TabId = 'company' | 'plan' | 'theme' | 'sidebar' | 'export' | 'users' | 'account'
-  | 'sites' | 'notifications' | 'permissions' | 'developer' | 'help';
+  | 'sites' | 'notifications' | 'developer' | 'help';
 
 interface CompanyForm {
   company_name: string;
@@ -213,11 +213,19 @@ function CompanyTab() {
   const [saved, setSaved] = useState<CompanyForm>(DEFAULT_FORM);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [uploading, setUploading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [confirmPending, setConfirmPending] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const { refresh: refreshBranding } = useBranding();
+  const { user } = useAuth();
+  const isDeveloper = user?.role === 'developer';
 
   const isDirty = JSON.stringify(form) !== JSON.stringify(saved);
+
+  // Detect if branding fields changed (require confirmation for developers)
+  const brandingChanged = form.company_name !== saved.company_name || form.logo_url !== saved.logo_url;
 
   useEffect(() => {
     api.getCompanySettings()
@@ -236,7 +244,7 @@ function CompanyTab() {
     toastTimer.current = setTimeout(() => setToast(null), 3000);
   };
 
-  const handleSave = async () => {
+  const doSave = async () => {
     setSaving(true);
     try {
       await api.updateCompanySettings(form);
@@ -247,12 +255,44 @@ function CompanyTab() {
       showToast('Failed to save settings', 'error');
     } finally {
       setSaving(false);
+      setConfirmPending(false);
+    }
+  };
+
+  const handleSave = () => {
+    if (isDeveloper && brandingChanged) {
+      setConfirmPending(true);
+    } else {
+      doSave();
     }
   };
 
   const set = (key: keyof CompanyForm) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => setForm(f => ({ ...f, [key]: e.target.value }));
+
+  const handleLogoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const reader = new FileReader();
+      reader.onload = async (ev) => {
+        const result = ev.target?.result as string;
+        // result is "data:image/png;base64,..."
+        const [meta, data] = result.split(',');
+        const mimeType = meta.match(/data:([^;]+)/)?.[1] ?? file.type;
+        const { url } = await api.uploadImage(data, mimeType, file.name);
+        setForm(f => ({ ...f, logo_url: url }));
+        setUploading(false);
+        showToast('Image uploaded successfully');
+      };
+      reader.readAsDataURL(file);
+    } catch {
+      showToast('Failed to upload image', 'error');
+      setUploading(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -264,17 +304,66 @@ function CompanyTab() {
 
   return (
     <div className="space-y-8 max-w-2xl">
+      {/* Developer confirmation modal for branding changes */}
+      {confirmPending && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                <AlertCircle size={20} className="text-amber-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-900">Change company branding?</h3>
+                <p className="text-xs text-gray-500">This affects all users in your organisation.</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-700 mb-5">
+              You're about to update{' '}
+              {[
+                form.company_name !== saved.company_name && 'company name',
+                form.logo_url !== saved.logo_url && 'logo',
+              ].filter(Boolean).join(' and ')}
+              . This change will be visible to everyone immediately.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmPending(false)}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={doSave}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition-colors"
+              >
+                Yes, update branding
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Identity */}
       <div>
         <SectionHeader title="Identity" subtitle="Basic information about your organisation" />
+        {!isDeveloper && (
+          <div className="mb-4 flex items-center gap-2 px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-500">
+            <Key size={13} className="text-gray-400 flex-shrink-0" />
+            Company name and logo are managed by your developer. Contact them to update branding.
+          </div>
+        )}
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Company Name</label>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Company Name
+              {!isDeveloper && <span className="ml-1.5 text-[10px] text-gray-400 font-normal">(developer only)</span>}
+            </label>
             <input
-              className="input-field w-full"
+              className={`input-field w-full ${!isDeveloper ? 'opacity-60 cursor-not-allowed bg-gray-50' : ''}`}
               placeholder="Acme Manufacturing Co."
               value={form.company_name}
               onChange={set('company_name')}
+              readOnly={!isDeveloper}
             />
           </div>
           <div>
@@ -287,16 +376,45 @@ function CompanyTab() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Logo URL</label>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Logo URL
+              {!isDeveloper && <span className="ml-1.5 text-[10px] text-gray-400 font-normal">(developer only)</span>}
+            </label>
             <input
-              className="input-field w-full"
+              className={`input-field w-full ${!isDeveloper ? 'opacity-60 cursor-not-allowed bg-gray-50' : ''}`}
               placeholder="https://example.com/logo.png (direct image URL)"
               value={form.logo_url}
               onChange={set('logo_url')}
+              readOnly={!isDeveloper}
             />
             <p className="text-xs text-gray-400 mt-1">
               Must be a direct image URL (ending in .png, .jpg, .svg, etc.). Shown in the top-left of the sidebar in place of the default mark.
             </p>
+            {/* Upload from computer — developer only */}
+            {isDeveloper && (
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleLogoUpload}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="btn-secondary text-xs flex items-center gap-1.5"
+                >
+                  {uploading ? (
+                    <><span className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" /> Uploading…</>
+                  ) : (
+                    <>Upload from computer</>
+                  )}
+                </button>
+                <span className="text-xs text-gray-400">or paste a URL above</span>
+              </div>
+            )}
             {form.logo_url && (
               <div className="mt-2 flex items-center gap-3">
                 <img
@@ -305,7 +423,7 @@ function CompanyTab() {
                   className="w-12 h-12 rounded-xl object-contain bg-gray-100 border border-gray-200"
                   onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
                 />
-                <span className="text-xs text-gray-500">Logo preview (enter a direct image URL)</span>
+                <span className="text-xs text-gray-500">Logo preview</span>
               </div>
             )}
           </div>
@@ -965,6 +1083,9 @@ function PlanTab() {
 
 function ThemeTab() {
   const { theme, setTheme, darkMode, setDarkMode } = useTheme();
+  const { user } = useAuth();
+  const isDeveloper = user?.role === 'developer';
+  const [confirmTheme, setConfirmTheme] = useState<Theme | null>(null);
 
   const [compactMode, setCompactMode] = useState(() => {
     try { return localStorage.getItem('hm_compact') === 'true'; } catch { return false; }
@@ -974,7 +1095,10 @@ function ThemeTab() {
   });
 
   const handleThemeSelect = (preset: Theme) => {
-    setTheme(preset);
+    if (isDeveloper) {
+      setConfirmTheme(preset);
+    }
+    // non-developers cannot change theme
   };
 
   const handleCompactMode = (v: boolean) => {
@@ -989,17 +1113,46 @@ function ThemeTab() {
 
   return (
     <div className="space-y-8 max-w-2xl">
+      {/* Theme change confirmation (developer only) */}
+      {confirmTheme && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
+                <AlertCircle size={20} className="text-amber-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-900">Change organisation theme?</h3>
+                <p className="text-xs text-gray-500">This affects all users immediately.</p>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-4">
+              <button onClick={() => setConfirmTheme(null)} className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">Cancel</button>
+              <button onClick={() => { setTheme(confirmTheme); setConfirmTheme(null); }} className="flex-1 px-4 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition-colors">Apply theme</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!isDeveloper && (
+        <div className="flex items-center gap-2 px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-500 mb-4">
+          <Key size={13} className="text-gray-400 flex-shrink-0" />
+          Theme changes are restricted to developers. Contact your developer to update the colour scheme.
+        </div>
+      )}
+
       {/* Color Themes grid */}
       <div>
-        <SectionHeader title="Color Themes" subtitle="Choose an accent colour for your workspace" />
-        <div className="grid grid-cols-4 gap-4">
+        <SectionHeader title="Color Themes" subtitle={isDeveloper ? "Choose an accent colour for your workspace" : "Theme is set by your developer"} />
+        <div className={`grid grid-cols-4 gap-4 ${!isDeveloper ? 'opacity-50 pointer-events-none' : ''}`}>
           {THEME_PRESETS.map((preset) => {
             const isSelected = theme.name === preset.name;
             return (
               <button
                 key={preset.name}
                 onClick={() => handleThemeSelect(preset)}
-                className={`relative flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition-all hover:shadow-sm ${
+                disabled={!isDeveloper}
+                className={`relative flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition-all ${isDeveloper ? 'hover:shadow-sm' : 'cursor-not-allowed'} ${
                   isSelected ? 'shadow-md' : 'border-gray-100 hover:border-gray-200'
                 }`}
                 style={isSelected ? { borderColor: preset.accent, backgroundColor: preset.accentLight } : {}}
@@ -1021,7 +1174,8 @@ function ThemeTab() {
           })}
         </div>
 
-        {/* Custom accent + secondary colors */}
+        {/* Custom accent + secondary colors — developer only */}
+        {isDeveloper && (
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
           {/* Primary / accent */}
           <label
@@ -1066,6 +1220,7 @@ function ThemeTab() {
             />
           </label>
         </div>
+        )}
         <p className="text-xs text-gray-400 mt-2">
           The secondary colour shapes branded gradients -- logos, avatars, leaderboard cards, and upgrade banners.
         </p>
@@ -1182,10 +1337,19 @@ function SidebarTab() {
     focus, setFocus, resetNavPrefs,
   } = useNavPrefs();
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showProSidebar, setShowProSidebar] = useState(
+    () => localStorage.getItem('hm_show_pro_sidebar') === 'true'
+  );
 
   const enabledSections = SECTIONS.filter(s => !isSectionHidden(s.id));
   // Keep the default-view selector honest if the focused section is now hidden.
-  const focusValid = focus === 'all' || enabledSections.some(s => s.id === focus);
+  const focusValid = enabledSections.some(s => s.id === focus);
+
+  const handleProSidebarToggle = (val: boolean) => {
+    setShowProSidebar(val);
+    if (val) localStorage.setItem('hm_show_pro_sidebar', 'true');
+    else localStorage.removeItem('hm_show_pro_sidebar');
+  };
 
   return (
     <div className="space-y-8 max-w-2xl">
@@ -1230,14 +1394,25 @@ function SidebarTab() {
         <SectionHeader title="Default view" subtitle="Which workspace the sidebar opens to. You can switch anytime from the buttons at the top of the sidebar." />
         <select
           className="input-field text-sm max-w-xs"
-          value={focusValid ? focus : 'all'}
+          value={focusValid ? focus : (enabledSections[0]?.id ?? 'production')}
           onChange={e => setFocus(e.target.value as any)}
         >
-          <option value="all">Show everything</option>
           {enabledSections.map(s => (
-            <option key={s.id} value={s.id}>{s.label} only</option>
+            <option key={s.id} value={s.id}>{s.label}</option>
           ))}
         </select>
+      </div>
+
+      {/* Pro sidebar developer toggle */}
+      <div>
+        <SectionHeader title="Developer Preview" subtitle="For developers and demos only — shows Pro-locked items in the sidebar as grayed buttons." />
+        <div className="flex items-center justify-between max-w-sm p-3 bg-amber-50 border border-amber-200 rounded-xl">
+          <div>
+            <div className="text-sm font-medium text-gray-800">Show Pro feature previews in sidebar</div>
+            <div className="text-xs text-gray-500 mt-0.5">Adds locked Pro items back to the sidebar (developer use only)</div>
+          </div>
+          <Toggle checked={showProSidebar} onChange={handleProSidebarToggle} />
+        </div>
       </div>
 
       {/* Advanced: per-item visibility */}
@@ -1990,11 +2165,113 @@ function SiteModal({ site, onClose, onSaved, onError }: {
   );
 }
 
+function DepartmentsMini({ siteId }: { siteId: string }) {
+  const [depts, setDepts] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState('');
+  const [newDesc, setNewDesc] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    api.getDepartments({ site_id: siteId })
+      .then(setDepts)
+      .catch(() => setDepts([]))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(load, [siteId]);
+
+  const handleAdd = async () => {
+    if (!newName.trim()) return;
+    setSaving(true);
+    try {
+      await api.createDepartment({ name: newName.trim(), description: newDesc.trim(), site_id: siteId });
+      setNewName('');
+      setNewDesc('');
+      setAdding(false);
+      load();
+    } catch { /* ignore */ } finally { setSaving(false); }
+  };
+
+  const handleDelete = async (id: string, name: string) => {
+    if (!confirm(`Delete department "${name}"?`)) return;
+    setDeletingId(id);
+    try {
+      await api.deleteDepartment(id);
+      load();
+    } catch { /* ignore */ } finally { setDeletingId(null); }
+  };
+
+  return (
+    <div className="mt-4 pl-4 border-l-2 border-gray-100">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Departments</span>
+        <button
+          onClick={() => setAdding(a => !a)}
+          className="text-xs text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+        >
+          <Plus size={12} /> Add
+        </button>
+      </div>
+      {loading ? (
+        <div className="text-xs text-gray-400 py-2">Loading…</div>
+      ) : depts.length === 0 && !adding ? (
+        <div className="text-xs text-gray-400 py-1">No departments yet</div>
+      ) : (
+        <div className="space-y-1">
+          {depts.map(d => (
+            <div key={d.id} className="flex items-center justify-between gap-2 py-1">
+              <div>
+                <span className="text-xs font-medium text-gray-700">{d.name}</span>
+                {d.description && <span className="text-xs text-gray-400 ml-2">{d.description}</span>}
+              </div>
+              <button
+                onClick={() => handleDelete(d.id, d.name)}
+                disabled={deletingId === d.id}
+                className="p-0.5 rounded text-gray-300 hover:text-red-500 transition-colors"
+              >
+                <Trash2 size={11} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+      {adding && (
+        <div className="mt-2 space-y-1.5">
+          <input
+            className="input-field w-full text-xs"
+            placeholder="Department name"
+            value={newName}
+            onChange={e => setNewName(e.target.value)}
+            autoFocus
+          />
+          <input
+            className="input-field w-full text-xs"
+            placeholder="Description (optional)"
+            value={newDesc}
+            onChange={e => setNewDesc(e.target.value)}
+          />
+          <div className="flex items-center gap-2">
+            <button onClick={handleAdd} disabled={!newName.trim() || saving} className="btn-primary text-xs py-1 px-3">
+              {saving ? 'Saving…' : 'Add'}
+            </button>
+            <button onClick={() => setAdding(false)} className="text-xs text-gray-400 hover:text-gray-600">Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SitesTab() {
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalSite, setModalSite] = useState<Site | null | false>(false); // false=closed, null=new, obj=edit
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [expandedSiteId, setExpandedSiteId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -2068,7 +2345,12 @@ function SitesTab() {
                     <div className="flex items-center gap-3 mt-2 text-xs text-gray-500 flex-wrap">
                       <span>{site.station_count ?? 0} stations</span>
                       <span>·</span>
-                      <span>{site.department_count ?? 0} departments</span>
+                      <button
+                        onClick={() => setExpandedSiteId(expandedSiteId === site.id ? null : site.id)}
+                        className="text-blue-600 hover:text-blue-700 font-medium"
+                      >
+                        {site.department_count ?? 0} departments
+                      </button>
                       <span>·</span>
                       <span>{site.work_order_count ?? 0} work orders</span>
                       <span>·</span>
@@ -2091,6 +2373,9 @@ function SitesTab() {
                   )}
                 </div>
               </div>
+              {expandedSiteId === site.id && (
+                <DepartmentsMini siteId={site.id} />
+              )}
             </div>
           ))}
         </div>
@@ -3342,7 +3627,7 @@ export default function SettingsPage() {
   const { isAtLeast } = useAuth();
   const [activeTab, setActiveTab] = useState<TabId>(() => {
     const tab = new URLSearchParams(window.location.search).get('tab');
-    const valid: TabId[] = ['account', 'company', 'plan', 'theme', 'sidebar', 'export', 'users', 'sites', 'notifications', 'permissions', 'developer', 'help'];
+    const valid: TabId[] = ['account', 'company', 'plan', 'theme', 'sidebar', 'export', 'users', 'sites', 'notifications', 'developer', 'help'];
     return (tab && valid.includes(tab as TabId)) ? (tab as TabId) : 'account';
   });
 
@@ -3353,11 +3638,10 @@ export default function SettingsPage() {
     { id: 'theme',    label: 'Visual Theme',   icon: <Palette size={15} /> },
     { id: 'sidebar',  label: 'Navigation',     icon: <PanelLeft size={15} /> },
     { id: 'export',   label: 'Data Export',    icon: <Download size={15} /> },
-    { id: 'users',    label: 'Users & Access', icon: <Users size={15} />,      minRole: 'manager' },
-    { id: 'sites',         label: 'Sites',          icon: <MapPin size={15} />,    minRole: 'manager' },
-    { id: 'notifications', label: 'Notifications',  icon: <Bell size={15} />,      minRole: 'manager' },
-    { id: 'permissions',   label: 'Permissions',    icon: <Sliders size={15} />,   minRole: 'manager' },
-    { id: 'developer',     label: 'Developer',      icon: <Code size={15} />,      minRole: 'manager' },
+    { id: 'users',         label: 'Users & Access', icon: <Users size={15} />,   minRole: 'manager' },
+    { id: 'sites',         label: 'Sites',          icon: <MapPin size={15} />,   minRole: 'manager' },
+    { id: 'notifications', label: 'Notifications',  icon: <Bell size={15} />,     minRole: 'manager' },
+    { id: 'developer',     label: 'Developer',      icon: <Code size={15} />,     minRole: 'manager' },
     { id: 'help',          label: 'Help & Guides',  icon: <HelpCircle size={15} /> },
   ];
   const TABS = ALL_TABS.filter(t => !t.minRole || isAtLeast(t.minRole as any));
@@ -3408,10 +3692,9 @@ export default function SettingsPage() {
         {activeTab === 'theme'    && <ThemeTab />}
         {activeTab === 'sidebar'  && <SidebarTab />}
         {activeTab === 'export'   && <ExportTab />}
-        {activeTab === 'users'    && <UsersTab />}
+        {activeTab === 'users'         && <><UsersTab /><div className="mt-8"><PermissionsTab /></div></>}
         {activeTab === 'sites'         && <SitesTab />}
         {activeTab === 'notifications' && <NotificationsTab />}
-        {activeTab === 'permissions'   && <PermissionsTab />}
         {activeTab === 'developer'     && <DeveloperTab />}
         {activeTab === 'help'          && <HelpTab />}
       </div>

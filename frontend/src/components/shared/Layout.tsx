@@ -9,8 +9,8 @@ import { useAuth } from '../../context/AuthContext';
 import { useBranding } from '../../context/BrandingContext';
 import { useNavPrefs } from '../../context/NavPrefsContext';
 import { usePermissions } from '../../context/PermissionsContext';
-import { PINNED_ITEMS, SECTIONS, ALL_WORKSPACE_ICON, NavItem } from '../../config/navigation';
-import AlertsBell from './AlertsBell';
+import { PINNED_ITEMS, SECTIONS, NavItem } from '../../config/navigation';
+import AlertsBubble from './AlertsBubble';
 import SiteSwitcher from './SiteSwitcher';
 import UpgradeModal from './UpgradeModal';
 
@@ -58,7 +58,7 @@ export default function Layout() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // Set to a feature label when a Free user clicks a locked Pro nav item.
   const [lockedModal, setLockedModal] = useState<string | null>(null);
-  const { isFree, isEnterprise, showProFeatures } = usePlan();
+  const { isFree, isEnterprise } = usePlan();
   const { user, logout } = useAuth();
   const { companyName, logoUrl } = useBranding();
   const { isItemHidden, isSectionHidden, focus, setFocus } = useNavPrefs();
@@ -71,27 +71,32 @@ export default function Layout() {
   // desktop-only "collapsed" preference.
   const effectiveCollapsed = collapsed && isDesktop;
 
+  // Developer preview: show pro sidebar items even for free users when toggle is on
+  const showProSidebar = localStorage.getItem('hm_show_pro_sidebar') === 'true';
+
   // Sections the user has kept enabled in Settings, minus paid sections that
-  // a Free account hasn't grown into yet (kept hidden until they hit a limit).
+  // a Free account hasn't grown into yet.
   const enabledSections = SECTIONS.filter(s => {
     if (isSectionHidden(s.id)) return false;
     if (s.proOnly && isFree) return false;  // Planning section always hidden for Free users
     return true;
   });
-  // The focused workspace falls back to "all" if its section was turned off.
-  const effectiveFocus = (focus !== 'all' && enabledSections.some(s => s.id === focus)) ? focus : 'all';
-  const visibleSections = effectiveFocus === 'all'
-    ? enabledSections
-    : enabledSections.filter(s => s.id === effectiveFocus);
+
+  // Default to first enabled section if current focus is no longer valid
+  const effectiveFocus = enabledSections.some(s => s.id === focus)
+    ? focus
+    : (enabledSections[0]?.id ?? 'production');
+
+  // Always show only the focused section (no "all sections" view)
+  const visibleSections = enabledSections.filter(s => s.id === effectiveFocus);
 
   const canShow = (item: NavItem) => {
     if (!canShowNavItem(item)) return false;
     if (!item.pinned && isItemHidden(item.to)) return false;
     // Enterprise-only features are hidden entirely below that tier.
     if (item.enterpriseOnly && !isEnterprise) return false;
-    // Pro-only items stay out of the way for Free accounts until they've
-    // actually hit a limit — once shown, they're a locked upsell (see isLocked).
-    if (item.proOnly && isFree && !showProFeatures) return false;
+    // Pro-only items: always hidden for free users unless developer preview toggle is on.
+    if (item.proOnly && isFree && !showProSidebar) return false;
     return true;
   };
 
@@ -115,8 +120,7 @@ export default function Layout() {
         </NavLink>
       );
     }
-    // Locked Pro items open the upgrade modal instead of navigating to a page
-    // the API would reject — a clear, value-forward upsell moment.
+    // Locked Pro items open the upgrade modal (only shown when developer preview is on)
     if (isLocked) {
       return (
         <button
@@ -147,21 +151,16 @@ export default function Layout() {
           `flex items-center rounded-xl text-sm font-medium transition-all ${
             effectiveCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
           } ${
-            isLocked
-              ? 'text-gray-600 hover:text-gray-500 hover:bg-white/5'
-              : isActive
-                ? 'text-white shadow-sm'
-                : 'text-gray-400 hover:text-white hover:bg-white/8'
+            isActive
+              ? 'text-white shadow-sm'
+              : 'text-gray-400 hover:text-white hover:bg-white/8'
           }`
         }
-        style={({ isActive }) => (!isLocked && isActive) ? { backgroundColor: 'var(--nav-active)' } : {}}
+        style={({ isActive }) => isActive ? { backgroundColor: 'var(--nav-active)' } : {}}
       >
         <Icon size={15} className="flex-shrink-0" />
         {!effectiveCollapsed && (
-          <>
-            <span className="flex-1">{label}</span>
-            {isLocked && <ProBadge />}
-          </>
+          <span className="flex-1">{label}</span>
         )}
       </NavLink>
     );
@@ -243,16 +242,10 @@ export default function Layout() {
           )}
         </Link>
 
-        {/* Workspace switcher — focus the sidebar on one area at a time */}
+        {/* Workspace switcher — only show when there are multiple enabled sections */}
         {!effectiveCollapsed && enabledSections.length > 1 && (
           <div className="px-2 pt-2.5">
             <div className="flex flex-wrap gap-1 bg-black/20 rounded-xl p-1">
-              <WorkspacePill
-                label="All"
-                icon={ALL_WORKSPACE_ICON}
-                active={effectiveFocus === 'all'}
-                onClick={() => setFocus('all')}
-              />
               {enabledSections.map(s => (
                 <WorkspacePill
                   key={s.id}
@@ -284,7 +277,8 @@ export default function Layout() {
             if (items.length === 0) return null;
             return (
               <div key={section.id}>
-                {!effectiveCollapsed && effectiveFocus === 'all' && (
+                {/* Always show section label above items */}
+                {!effectiveCollapsed && (
                   <div className="flex items-center gap-1.5 px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-500">
                     <section.icon size={11} />
                     {section.label}
@@ -299,22 +293,6 @@ export default function Layout() {
         </nav>
 
         <div className="p-2 border-t border-white/10 flex-shrink-0 space-y-0.5">
-          <AlertsBell collapsed={effectiveCollapsed} />
-
-          <NavLink
-            to="/settings"
-            title={effectiveCollapsed ? 'Settings' : undefined}
-            className={({ isActive }) =>
-              `flex items-center rounded-xl text-sm font-medium text-gray-500 hover:text-white hover:bg-white/8 transition-all ${
-                effectiveCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
-              } ${isActive ? 'text-white' : ''}`
-            }
-            style={({ isActive }) => isActive ? { backgroundColor: 'var(--nav-active)' } : {}}
-          >
-            <Settings size={15} className="flex-shrink-0" />
-            {!effectiveCollapsed && 'Settings'}
-          </NavLink>
-
           {/* Collapse toggle is a desktop-only concept — the mobile drawer is always expanded */}
           <button
             onClick={() => setCollapsed(c => !c)}
@@ -326,7 +304,7 @@ export default function Layout() {
             {collapsed ? <ChevronRight size={14} /> : <><ChevronLeft size={14} /> <span>Collapse</span></>}
           </button>
 
-          {/* User section */}
+          {/* User section — clicking avatar opens menu with Settings & Sign Out */}
           {!effectiveCollapsed ? (
             <div className="relative mt-1">
               <button
@@ -351,7 +329,7 @@ export default function Layout() {
                   </div>
                   <NavLink to="/settings" onClick={() => setUserMenuOpen(false)}
                     className="flex items-center gap-2.5 px-3 py-2 text-sm text-gray-700 hover:bg-gray-50 transition-colors w-full">
-                    <Settings size={14} />Account Settings
+                    <Settings size={14} />Settings
                   </NavLink>
                   <button onClick={handleLogout}
                     className="flex items-center gap-2.5 px-3 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors w-full">
@@ -405,6 +383,9 @@ export default function Layout() {
           <Outlet />
         </main>
       </div>
+
+      {/* Floating alerts bubble — fixed bottom-right corner */}
+      <AlertsBubble />
 
       {lockedModal && (
         <UpgradeModal

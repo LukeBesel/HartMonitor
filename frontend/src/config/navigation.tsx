@@ -46,9 +46,8 @@ export const SECTIONS: NavSection[] = [
     icon: Factory,
     description: 'Run the floor day to day',
     items: [
-      { to: '/apps',     icon: AppWindow, label: 'App Library' },
-      { to: '/plant',    icon: Building2, label: 'Plant View' },
-      { to: '/stations', icon: Monitor,   label: 'Stations' },
+      { to: '/apps',        icon: AppWindow,  label: 'App Library' },
+      { to: '/departments', icon: Building2,  label: 'Departments' },
     ],
   },
   {
@@ -72,20 +71,20 @@ export const SECTIONS: NavSection[] = [
     icon: BarChart3,
     description: 'Analyse results and quality',
     items: [
-      { to: '/dashboards',   icon: LayoutGrid,  label: 'Dashboards' },
-      { to: '/leaderboard',  icon: Trophy,      label: 'Leaderboard' },
-      { to: '/oee',          icon: Cpu,         label: 'OEE Tracker',  minRole: 'supervisor', proOnly: true },
-      { to: '/step-metrics', icon: Timer,       label: 'Step Metrics', minRole: 'supervisor' },
-      { to: '/analytics',    icon: BarChart3,   label: 'Analytics' },
-      { to: '/quality',      icon: ShieldCheck, label: 'NCR / Quality', proOnly: true },
-      { to: '/facilities',   icon: Network,     label: 'Facilities',    minRole: 'manager', enterpriseOnly: true },
-      { to: '/tables',       icon: Database,    label: 'Tables',        minRole: 'supervisor', proOnly: true },
-      { to: '/audit-log',    icon: History,     label: 'Audit Log',     minRole: 'supervisor' },
+      { to: '/dashboards',       icon: LayoutGrid,  label: 'Dashboards' },
+      { to: '/leaderboard',      icon: Trophy,      label: 'Leaderboard' },
+      { to: '/oee',              icon: Cpu,         label: 'OEE Tracker',      minRole: 'supervisor', proOnly: true },
+      { to: '/step-metrics',     icon: Timer,       label: 'Step Metrics',     minRole: 'supervisor' },
+      { to: '/analytics',        icon: BarChart3,   label: 'Analytics' },
+      { to: '/quality',          icon: ShieldCheck, label: 'NCR / Quality',    proOnly: true },
+      { to: '/facilities',       icon: Network,     label: 'Facilities',       minRole: 'manager', enterpriseOnly: true },
+      { to: '/tables',           icon: Database,    label: 'Tables',           minRole: 'supervisor', proOnly: true },
+      { to: '/transaction-log',  icon: History,     label: 'Transaction Log',  minRole: 'supervisor' },
     ],
   },
 ];
 
 export const ALL_SECTION_ITEMS: NavItem[] = SECTIONS.flatMap(s => s.items);
 
-// Icon used for the "All" workspace option.
+// Icon used for the "All" workspace option (kept for backwards compatibility but not used in UI).
 export const ALL_WORKSPACE_ICON = Layers;

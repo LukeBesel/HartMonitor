@@ -23,11 +23,14 @@ export default function Analytics() {
   // ── Filters ──
   const [apps, setApps] = useState<any[]>([]);
   const [productTypes, setProductTypes] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
   const [appId, setAppId] = useState('');
   const [productTypeId, setProductTypeId] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
 
-  // Load apps once for the filter dropdown
+  // Load apps and departments once for the filter dropdowns
   useEffect(() => { api.getApps().then(setApps).catch(() => setApps([])); }, []);
+  useEffect(() => { api.getDepartments().then(setDepartments).catch(() => setDepartments([])); }, []);
 
   // When the selected app changes, reload its product types and reset the part filter
   useEffect(() => {
@@ -55,11 +58,11 @@ export default function Analytics() {
   };
 
   useEffect(() => {
-    load(days, { app_id: appId || undefined, product_type_id: productTypeId || undefined });
-  }, [days, appId, productTypeId]);
+    load(days, { app_id: appId || undefined, product_type_id: productTypeId || undefined, department_id: departmentId || undefined });
+  }, [days, appId, productTypeId, departmentId]);
 
-  const hasFilters = !!appId || !!productTypeId;
-  const clearFilters = () => { setAppId(''); setProductTypeId(''); };
+  const hasFilters = !!appId || !!productTypeId || !!departmentId;
+  const clearFilters = () => { setAppId(''); setProductTypeId(''); setDepartmentId(''); };
 
   const qualityPieData = overview ? [
     { name: 'Pass', value: overview.passRate },
@@ -130,6 +133,19 @@ export default function Analytics() {
             {productTypes.map(pt => <option key={pt.id} value={pt.id}>{pt.name}</option>)}
           </select>
         </div>
+        {departments.length > 0 && (
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-500">Department</label>
+            <select
+              className="input-field text-sm py-1.5 min-w-[12rem]"
+              value={departmentId}
+              onChange={e => setDepartmentId(e.target.value)}
+            >
+              <option value="">All Departments</option>
+              {departments.map((d: any) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+        )}
         {hasFilters && (
           <button
             onClick={clearFilters}
