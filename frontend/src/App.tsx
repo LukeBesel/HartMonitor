@@ -49,6 +49,7 @@ const SSOCallback      = lazy(() => import('./pages/SSOCallback'));
 const AuditLog         = lazy(() => import('./pages/AuditLog'));
 const Facilities       = lazy(() => import('./pages/Facilities'));
 const Game             = lazy(() => import('./pages/Game'));
+const Routings         = lazy(() => import('./pages/Routings'));
 
 function Spinner() {
   return (
@@ -104,6 +105,7 @@ export default function App() {
                 <Route path="/stations" element={<Stations />} />
                 <Route path="/stations/:id" element={<StationView />} />
                 <Route path="/schedule" element={<Schedule />} />
+                <Route path="/routings" element={<Routings />} />
                 <Route path="/plant" element={<PlantView />} />
                 <Route path="/departments/:id" element={<DepartmentView />} />
                 <Route path="/manager" element={<ManagerView />} />

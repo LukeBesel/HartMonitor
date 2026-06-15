@@ -17,6 +17,8 @@ import { ATTENTION_ICONS, ATTENTION_TYPE_LABELS } from '../config/attention';
 import { useDashboardPrefs, DASHBOARD_SECTIONS, DashboardSectionId } from '../hooks/useDashboardPrefs';
 import Toggle from '../components/shared/Toggle';
 import OnboardingWizard from '../components/shared/OnboardingWizard';
+import ModuleOnboarding from '../components/shared/ModuleOnboarding';
+import { LayoutDashboard } from 'lucide-react';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -196,6 +198,19 @@ export default function Dashboard() {
   return (
     <div className="p-6 space-y-6">
       <OnboardingWizard />
+      <ModuleOnboarding
+        moduleId="dashboard"
+        title="Command Center"
+        description="Your Command Center is the live heartbeat of your factory. See real-time production status, active work orders, OEE at a glance, and alerts that need attention."
+        steps={[
+          "Check today's shift production stats",
+          "Review open work orders and their status",
+          "Respond to any active alerts",
+          "Use the quick links to jump to any module",
+        ]}
+        icon={LayoutDashboard}
+        color="#3b82f6"
+      />
 
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">

@@ -8,6 +8,7 @@ import {
   Plus, Search, Filter, List, BarChart2, Edit2, Trash2, CheckSquare,
   X, ChevronDown, AlertTriangle, Calendar, Package, Building2, Clock, History
 } from 'lucide-react';
+import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -515,6 +516,19 @@ export default function Schedule() {
 
   return (
     <div className="min-h-screen bg-[#f8fafc] p-6 space-y-5">
+      <ModuleOnboarding
+        moduleId="schedule"
+        title="Schedule"
+        description="Schedule lets you plan production runs and assign work orders across your team."
+        steps={[
+          "Create a work order for each production job",
+          "Set quantity, app, department, and due date",
+          "Drag to reschedule or adjust priorities",
+          "Track progress as operators complete runs",
+        ]}
+        icon={Calendar}
+        color="#6366f1"
+      />
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>

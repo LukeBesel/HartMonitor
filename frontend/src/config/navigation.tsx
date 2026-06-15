@@ -3,7 +3,7 @@ import {
   Calendar, ClipboardList, Trophy,
   Timer, Users, Cpu, LayoutGrid,
   Package, ShoppingCart, ShieldCheck, Building2,
-  Factory, CalendarRange, Layers, History, Tablet, Network,
+  Factory, CalendarRange, Layers, History, Tablet, Network, GitBranch,
 } from 'lucide-react';
 
 export type NavItem = {
@@ -59,6 +59,7 @@ export const SECTIONS: NavSection[] = [
     proOnly: true,
     items: [
       { to: '/schedule',   icon: Calendar,     label: 'Schedule' },
+      { to: '/routings',   icon: GitBranch,    label: 'Routings',       proOnly: true, minRole: 'supervisor' },
       { to: '/manager',    icon: ClipboardList, label: 'Manager View',  minRole: 'manager' },
       { to: '/capacity',   icon: Users,        label: 'Capacity Plan',  minRole: 'manager' },
       { to: '/inventory',  icon: Package,      label: 'Inventory',      proOnly: true },
@@ -73,7 +74,7 @@ export const SECTIONS: NavSection[] = [
     items: [
       { to: '/dashboards',   icon: LayoutGrid,  label: 'Dashboards' },
       { to: '/leaderboard',  icon: Trophy,      label: 'Leaderboard' },
-      { to: '/oee',          icon: Cpu,         label: 'OEE Tracker',  minRole: 'supervisor' },
+      { to: '/oee',          icon: Cpu,         label: 'OEE Tracker',  minRole: 'supervisor', proOnly: true },
       { to: '/step-metrics', icon: Timer,       label: 'Step Metrics', minRole: 'supervisor' },
       { to: '/analytics',    icon: BarChart3,   label: 'Analytics' },
       { to: '/quality',      icon: ShieldCheck, label: 'NCR / Quality', proOnly: true },

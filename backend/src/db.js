@@ -1509,6 +1509,59 @@ if (!freeLimitBumped) {
   db.prepare("INSERT INTO schema_meta (key, value) VALUES ('free_tier_app_limit_v2', '1')").run();
 }
 
+// ─── Product Routings ────────────────────────────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS product_routings (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id),
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS routing_steps (
+    id TEXT PRIMARY KEY,
+    routing_id TEXT NOT NULL REFERENCES product_routings(id) ON DELETE CASCADE,
+    company_id TEXT REFERENCES organizations(id),
+    step_number INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    app_id TEXT REFERENCES apps(id) ON DELETE SET NULL,
+    department_id TEXT REFERENCES departments(id) ON DELETE SET NULL,
+    estimated_cycle_seconds REAL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_routing_steps_routing ON routing_steps(routing_id, step_number);
+  CREATE INDEX IF NOT EXISTS idx_product_routings_company ON product_routings(company_id);
+`);
+
+// ─── Migrations: work_orders (routing_id, assigned_user_id) ──────────────────
+
+{
+  const woCols = db.prepare('PRAGMA table_info(work_orders)').all().map(r => r.name);
+  if (!woCols.includes('routing_id'))       db.exec('ALTER TABLE work_orders ADD COLUMN routing_id TEXT REFERENCES product_routings(id) ON DELETE SET NULL');
+  if (!woCols.includes('assigned_user_id')) db.exec('ALTER TABLE work_orders ADD COLUMN assigned_user_id TEXT REFERENCES users(id) ON DELETE SET NULL');
+}
+
+// ─── Migrations: users (department_id, job_title) ────────────────────────────
+
+{
+  const userCols = db.prepare('PRAGMA table_info(users)').all().map(r => r.name);
+  if (!userCols.includes('department_id')) db.exec('ALTER TABLE users ADD COLUMN department_id TEXT REFERENCES departments(id) ON DELETE SET NULL');
+  if (!userCols.includes('job_title'))     db.exec("ALTER TABLE users ADD COLUMN job_title TEXT DEFAULT ''");
+}
+
+// ─── Migrations: apps (department_id, site_id) ───────────────────────────────
+
+{
+  const appCols = db.prepare('PRAGMA table_info(apps)').all().map(r => r.name);
+  if (!appCols.includes('department_id')) db.exec('ALTER TABLE apps ADD COLUMN department_id TEXT REFERENCES departments(id) ON DELETE SET NULL');
+  if (!appCols.includes('site_id'))       db.exec('ALTER TABLE apps ADD COLUMN site_id TEXT REFERENCES sites(id) ON DELETE SET NULL');
+}
+
 // ─── Public game leaderboard (no tenant scope) ────────────────────────────────
 
 db.exec(`

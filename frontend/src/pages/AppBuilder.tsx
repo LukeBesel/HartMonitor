@@ -851,7 +851,38 @@ function WidgetProperties({ widget, onUpdate, onUpdateConfig }: {
       {widget.type === 'image' && (
         <>
           <Field label="Image URL">
-            <input className="input-field text-xs" value={config.imageUrl || ''} onChange={e => onUpdateConfig({ imageUrl: e.target.value })} placeholder="https://..." />
+            <input className="input-field text-xs" value={config.imageUrl || ''} onChange={e => onUpdateConfig({ imageUrl: e.target.value })} placeholder="https://example.com/image.png" />
+          </Field>
+          <Field label="Upload from Device">
+            <label className="flex items-center gap-2 cursor-pointer w-full px-3 py-2 rounded-lg border border-dashed border-gray-300 hover:border-blue-400 hover:bg-blue-50/30 text-xs text-gray-500 hover:text-blue-600 transition-colors">
+              <Image size={13} />
+              {config.imageUrl ? 'Replace image…' : 'Choose image file…'}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
+                  const reader = new FileReader();
+                  reader.onload = async (ev) => {
+                    try {
+                      const base64 = (ev.target?.result as string).split(',')[1];
+                      const result = await api.uploadImage(base64, file.type, file.name);
+                      onUpdateConfig({ imageUrl: result.url });
+                    } catch {
+                      // silently fail — user can paste URL manually
+                    }
+                  };
+                  reader.readAsDataURL(file);
+                }}
+              />
+            </label>
+            {config.imageUrl && (
+              <div className="mt-1.5">
+                <img src={config.imageUrl} alt="" className="max-h-16 rounded border border-gray-200 object-contain" />
+              </div>
+            )}
           </Field>
           <Field label="Alt Text">
             <input className="input-field" value={config.imageAlt || ''} onChange={e => onUpdateConfig({ imageAlt: e.target.value })} />

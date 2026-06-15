@@ -75,7 +75,7 @@ export default function Layout() {
   // a Free account hasn't grown into yet (kept hidden until they hit a limit).
   const enabledSections = SECTIONS.filter(s => {
     if (isSectionHidden(s.id)) return false;
-    if (s.proOnly && isFree && !showProFeatures) return false;
+    if (s.proOnly && isFree) return false;  // Planning section always hidden for Free users
     return true;
   });
   // The focused workspace falls back to "all" if its section was turned off.

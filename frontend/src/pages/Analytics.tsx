@@ -6,6 +6,7 @@ import {
   Tooltip, ResponsiveContainer, CartesianGrid, Legend, PieChart, Pie, Cell
 } from 'recharts';
 import { TrendingUp, CheckCircle, Clock, Users, Activity, BarChart2, Filter, X } from 'lucide-react';
+import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 
 const COLORS = ['#22c55e', '#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6'];
 const DAYS_OPTIONS = [7, 14, 30, 90];
@@ -67,6 +68,19 @@ export default function Analytics() {
 
   return (
     <div className="p-6 space-y-6">
+      <ModuleOnboarding
+        moduleId="analytics"
+        title="Analytics"
+        description="Analytics turns your completion data into insights about throughput, efficiency, and trends."
+        steps={[
+          "Select an app and date range to analyze",
+          "Compare actual vs. ideal cycle times",
+          "Spot bottlenecks and overtime stations",
+          "Export data for offline reporting",
+        ]}
+        icon={BarChart2}
+        color="#0ea5e9"
+      />
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Analytics</h1>

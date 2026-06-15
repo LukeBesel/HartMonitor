@@ -6,6 +6,7 @@ import {
   CheckCircle2, Activity, TrendingUp, Clock, CalendarCheck, Package,
   AlertTriangle, RefreshCw, Building2, ChevronRight
 } from 'lucide-react';
+import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, PieChart, Pie, Cell, Legend
@@ -144,6 +145,19 @@ export default function PlantView() {
 
   return (
     <div className="min-h-screen bg-[#f8fafc] p-6 space-y-6">
+      <ModuleOnboarding
+        moduleId="plant"
+        title="Plant View"
+        description="Plant View maps your facility in real time. See which stations are running, idle, or down at a glance."
+        steps={[
+          "Each card represents a physical station",
+          "Green = running, Yellow = idle, Red = down",
+          "Click a station to see its current app and output",
+          "Use the status buttons to log downtime events",
+        ]}
+        icon={Building2}
+        color="#10b981"
+      />
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>

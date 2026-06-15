@@ -4,6 +4,7 @@ import { api } from '../api/client';
 import { Dashboard } from '../types';
 import { LayoutGrid, Plus, Trash2, Edit, Clock, BarChart3, RefreshCw, Database } from 'lucide-react';
 import UpgradeModal from '../components/shared/UpgradeModal';
+import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import { usePlan } from '../context/PlanContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -73,6 +74,19 @@ export default function Dashboards() {
 
   return (
     <div className="min-h-screen bg-[#f8fafc] p-6 space-y-6">
+      <ModuleOnboarding
+        moduleId="dashboards"
+        title="Dashboards"
+        description="Dashboards are customizable views built from live data widgets."
+        steps={[
+          "Click + to create a new dashboard",
+          "Add widgets: charts, KPIs, tables, status cards",
+          "Drag to arrange the layout",
+          "Share the URL with managers or display on a TV",
+        ]}
+        icon={LayoutGrid}
+        color="#ec4899"
+      />
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div>
           <div className="flex items-center gap-2">
