@@ -22,6 +22,7 @@ router.get('/', (req, res) => {
   let sql = STATION_SELECT + ' WHERE s.company_id = ?';
   const params = [req.companyId];
   if (req.query.site_id) { sql += ' AND s.site_id = ?'; params.push(req.query.site_id); }
+  if (req.query.department_id) { sql += ' AND s.department_id = ?'; params.push(req.query.department_id); }
   sql += ' ORDER BY s.name';
   const stations = db.prepare(sql).all(...params);
   res.json(stations.map(withCount));
