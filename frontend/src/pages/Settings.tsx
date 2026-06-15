@@ -31,6 +31,7 @@ import {
   Moon,
   Sun,
   MapPin,
+  Network,
   Bell,
   Sliders,
   Webhook as WebhookIcon,
@@ -1087,28 +1088,11 @@ function ThemeTab() {
   const isDeveloper = user?.role === 'developer';
   const [confirmTheme, setConfirmTheme] = useState<Theme | null>(null);
 
-  const [compactMode, setCompactMode] = useState(() => {
-    try { return localStorage.getItem('hm_compact') === 'true'; } catch { return false; }
-  });
-  const [taktWarnings, setTaktWarnings] = useState(() => {
-    try { return localStorage.getItem('hm_takt_warn') !== 'false'; } catch { return true; }
-  });
-
   const handleThemeSelect = (preset: Theme) => {
     if (isDeveloper) {
       setConfirmTheme(preset);
     }
     // non-developers cannot change theme
-  };
-
-  const handleCompactMode = (v: boolean) => {
-    setCompactMode(v);
-    try { localStorage.setItem('hm_compact', String(v)); } catch { /* ignore */ }
-  };
-
-  const handleTaktWarnings = (v: boolean) => {
-    setTaktWarnings(v);
-    try { localStorage.setItem('hm_takt_warn', String(v)); } catch { /* ignore */ }
   };
 
   return (
@@ -1241,24 +1225,6 @@ function ThemeTab() {
               </div>
             </div>
             <Toggle checked={darkMode} onChange={setDarkMode} />
-          </div>
-          <div className="flex items-center justify-between py-3.5 gap-4">
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-gray-800">Compact Mode</div>
-              <div className="text-xs text-gray-500 mt-0.5">
-                Reduce spacing and padding throughout the interface
-              </div>
-            </div>
-            <Toggle checked={compactMode} onChange={handleCompactMode} />
-          </div>
-          <div className="flex items-center justify-between py-3.5 gap-4">
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-gray-800">Show Takt Time Warnings</div>
-              <div className="text-xs text-gray-500 mt-0.5">
-                Highlight steps that exceed takt time with visual indicators
-              </div>
-            </div>
-            <Toggle checked={taktWarnings} onChange={handleTaktWarnings} />
           </div>
         </div>
       </div>
@@ -2421,6 +2387,13 @@ function SitesTab() {
 
   return (
     <div className="max-w-3xl space-y-6">
+      <div className="rounded-xl bg-blue-50/60 border border-blue-100 p-3.5 flex items-start gap-2.5">
+        <Network size={16} className="text-blue-500 flex-shrink-0 mt-0.5" />
+        <div className="text-xs text-gray-600 leading-relaxed">
+          <span className="font-semibold text-gray-800">Set up your physical organisation here.</span> This is the one place to manage your hierarchy:
+          {' '}<span className="font-medium text-gray-700">Sites (facilities) → Departments → Workstations</span>. Apps and work orders are assigned to these.
+        </div>
+      </div>
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-600">Manage the sites / plants in your organisation.</p>
         <button onClick={() => setModalSite(null)} className="btn-primary flex items-center gap-2">
@@ -3753,7 +3726,7 @@ export default function SettingsPage() {
     { id: 'sidebar',  label: 'Navigation',     icon: <PanelLeft size={15} /> },
     { id: 'export',   label: 'Data Export',    icon: <Download size={15} /> },
     { id: 'users',         label: 'Users & Access', icon: <Users size={15} />,   minRole: 'manager' },
-    { id: 'sites',         label: 'Sites',          icon: <MapPin size={15} />,   minRole: 'manager' },
+    { id: 'sites',         label: 'Facility Setup', icon: <Network size={15} />,  minRole: 'manager' },
     { id: 'notifications', label: 'Notifications',  icon: <Bell size={15} />,     minRole: 'manager' },
     { id: 'developer',     label: 'Developer',      icon: <Code size={15} />,     minRole: 'manager' },
     { id: 'help',          label: 'Help & Guides',  icon: <HelpCircle size={15} /> },
