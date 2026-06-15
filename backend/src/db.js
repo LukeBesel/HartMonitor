@@ -696,6 +696,33 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_wo_comments_wo ON wo_comments(work_order_id, created_at);
 `);
 
+// ─── Inventory shipments ──────────────────────────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS shipments (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id),
+    po_id TEXT REFERENCES purchase_orders(id) ON DELETE SET NULL,
+    carrier TEXT DEFAULT '',
+    tracking_number TEXT DEFAULT '',
+    origin TEXT DEFAULT '',
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending','in_transit','out_for_delivery','delivered','delayed','exception')),
+    shipped_date TEXT,
+    estimated_arrival TEXT,
+    actual_arrival TEXT,
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_shipments_company ON shipments(company_id, created_at DESC);
+`);
+
+// Migration: reorder_max on items
+{
+  const itemsCols = db.prepare('PRAGMA table_info(items)').all().map(r => r.name);
+  if (!itemsCols.includes('reorder_max')) db.exec('ALTER TABLE items ADD COLUMN reorder_max REAL DEFAULT 0');
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function isoOffset(days, hours = 8) {

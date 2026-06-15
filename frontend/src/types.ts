@@ -30,6 +30,15 @@ export interface Widget {
   layout?: WidgetLayout;
 }
 
+/** A part or material required for a specific step. */
+export interface PartItem {
+  name: string;
+  sku?: string;
+  quantity: number;
+  unit?: string;
+  notes?: string;
+}
+
 export interface Step {
   id: string; name: string; order: number; widgets: Widget[];
   takt_time_seconds?: number; description?: string;
@@ -37,6 +46,8 @@ export interface Step {
   layoutMode?: 'flow' | 'canvas';
   canvasHeight?: number;
   canvasBackground?: string;
+  /** Parts and materials needed for this step — shown to operators as an info overlay. */
+  parts_list?: PartItem[];
 }
 
 export interface AppVariable {

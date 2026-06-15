@@ -4,7 +4,7 @@ import {
   Users, Cpu, LayoutGrid,
   Package, ShoppingCart, ShieldCheck, Building2,
   Factory, CalendarRange, Layers, History, Tablet, Network, GitBranch,
-  HeartPulse, Boxes,
+  HeartPulse, Boxes, PackageCheck, Truck, ListChecks,
 } from 'lucide-react';
 
 export type NavItem = {
@@ -70,8 +70,11 @@ export const SECTIONS: NavSection[] = [
     icon: Boxes,
     description: 'Track stock and purchasing',
     items: [
-      { to: '/inventory',  icon: Package,       label: 'Inventory Tracker', proOnly: true },
-      { to: '/purchasing', icon: ShoppingCart,  label: 'Purchasing',        proOnly: true, minRole: 'supervisor' },
+      { to: '/inventory',     icon: Package,       label: 'Inventory Tracker', proOnly: true },
+      { to: '/receiving',     icon: PackageCheck,  label: 'Receiving',         proOnly: false },
+      { to: '/requirements',  icon: ListChecks,    label: 'Materials Required', proOnly: true, minRole: 'supervisor' },
+      { to: '/shipments',     icon: Truck,         label: 'Shipments',          proOnly: true },
+      { to: '/purchasing',    icon: ShoppingCart,  label: 'Purchasing',         proOnly: true, minRole: 'supervisor' },
     ],
   },
   {

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
-import { App, Step, Widget, WidgetType, WidgetLayout, ProductType, Department, Station } from '../types';
+import { App, Step, Widget, WidgetType, WidgetLayout, ProductType, Department, Station, PartItem } from '../types';
 import {
   Save, Globe, ChevronLeft, Plus, Trash2, GripVertical,
   Type, AlignLeft, Image, MousePointer, TextCursor, Hash,
@@ -9,6 +9,7 @@ import {
   PenTool, Eye, Settings, X, ChevronDown, Loader2, Tag,
   LayoutGrid, Rows3, MoveUp, MoveDown, MapPin, AlertTriangle,
   AlignLeft as AlignLeftIcon, AlignCenter, AlignRight,
+  Package, PlusCircle,
 } from 'lucide-react';
 import CanvasEditor from '../components/app/CanvasEditor';
 import { defaultLayout, DEFAULT_CANVAS_H } from '../components/app/WidgetView';
@@ -1306,8 +1307,85 @@ function StepProperties({ step, onUpdate, onSetMode }: { step: Step; onUpdate: (
           placeholder="Optional notes for this step..."
           onChange={e => onUpdate(s => ({ ...s, description: e.target.value }))} />
       </Field>
+
+      {/* Parts / Hardware List */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <label className="text-xs font-medium text-gray-600 flex items-center gap-1">
+            <Package size={12} className="text-indigo-500" /> Parts &amp; Materials
+          </label>
+          <button
+            onClick={() => onUpdate(s => ({
+              ...s,
+              parts_list: [...(s.parts_list || []), { name: '', quantity: 1, unit: 'ea' }]
+            }))}
+            className="flex items-center gap-1 text-[11px] text-indigo-600 hover:text-indigo-800 font-medium"
+          >
+            <PlusCircle size={11} /> Add Part
+          </button>
+        </div>
+        {(!step.parts_list || step.parts_list.length === 0) ? (
+          <div className="text-[11px] text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
+            No parts added. Operators see a ⓘ button when parts are listed.
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {step.parts_list.map((part, idx) => (
+              <div key={idx} className="bg-gray-50 rounded-lg p-2 space-y-1.5">
+                <div className="flex items-center gap-1.5">
+                  <input
+                    className="input-field flex-1 text-xs"
+                    placeholder="Part name"
+                    value={part.name}
+                    onChange={e => onUpdate(s => ({
+                      ...s, parts_list: s.parts_list!.map((p, i) => i === idx ? { ...p, name: e.target.value } : p)
+                    }))}
+                  />
+                  <button
+                    onClick={() => onUpdate(s => ({ ...s, parts_list: s.parts_list!.filter((_, i) => i !== idx) }))}
+                    className="p-1 rounded hover:bg-red-100 text-gray-400 hover:text-red-500 flex-shrink-0"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-1.5">
+                  <input
+                    className="input-field text-xs"
+                    placeholder="SKU"
+                    value={part.sku || ''}
+                    onChange={e => onUpdate(s => ({
+                      ...s, parts_list: s.parts_list!.map((p, i) => i === idx ? { ...p, sku: e.target.value } : p)
+                    }))}
+                  />
+                  <input
+                    type="number"
+                    className="input-field text-xs"
+                    placeholder="Qty"
+                    min={0.001}
+                    step={0.001}
+                    value={part.quantity}
+                    onChange={e => onUpdate(s => ({
+                      ...s, parts_list: s.parts_list!.map((p, i) => i === idx ? { ...p, quantity: Number(e.target.value) } : p)
+                    }))}
+                  />
+                  <input
+                    className="input-field text-xs"
+                    placeholder="Unit"
+                    value={part.unit || ''}
+                    onChange={e => onUpdate(s => ({
+                      ...s, parts_list: s.parts_list!.map((p, i) => i === idx ? { ...p, unit: e.target.value } : p)
+                    }))}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="text-xs text-gray-400 bg-gray-50 rounded-lg px-3 py-2">
         {step.widgets.length} widget{step.widgets.length !== 1 ? 's' : ''}
+        {(step.parts_list?.length ?? 0) > 0 && ` · ${step.parts_list!.length} part${step.parts_list!.length !== 1 ? 's' : ''}`}
       </div>
     </div>
   );

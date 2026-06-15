@@ -230,6 +230,15 @@ export const api = {
     return request<InventoryMovement[]>(`/inventory/movements?${qs}`);
   },
 
+  // ── Inventory Shipments
+  getShipments: () => request<any[]>('/inventory/shipments'),
+  createShipment: (data: any) => request<any>('/inventory/shipments', { method: 'POST', body: JSON.stringify(data) }),
+  updateShipment: (id: string, data: any) => request<any>(`/inventory/shipments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteShipment: (id: string) => request<any>(`/inventory/shipments/${id}`, { method: 'DELETE' }),
+
+  // ── Inventory Requirements (MRP)
+  getInventoryRequirements: () => request<any>('/inventory/requirements'),
+
   // ── Purchasing
   getVendors: (params?: { search?: string }) => {
     const qs = new URLSearchParams();
