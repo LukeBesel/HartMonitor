@@ -8,7 +8,8 @@ import MarketingNav from '../marketing/MarketingNav';
 import MarketingFooter from '../marketing/MarketingFooter';
 import Reveal from '../marketing/Reveal';
 
-const GRADIENT = 'linear-gradient(135deg, #3b82f6, #6366f1)';
+// Midnight-blue → glowing-pink brand gradient (matches the new Midnight theme).
+const GRADIENT = 'linear-gradient(135deg, #6366f1, #ec4899)';
 
 const FAQ = [
   { q: 'Is there really a free plan?', a: 'Yes. The Free plan includes 5 production apps, 2 dashboards, work orders, scheduling, OEE tracking, the operator portal, and CSV export — no credit card required.' },
@@ -60,7 +61,7 @@ export default function Pricing() {
             const featured = key === 'pro';
             return (
               <Reveal key={key} delay={i * 90}>
-                <div className={`relative h-full rounded-2xl p-8 border flex flex-col ${featured ? 'border-blue-500/40 bg-gradient-to-b from-blue-500/[0.1] to-transparent' : 'border-white/10 bg-white/[0.03]'}`}>
+                <div className={`relative h-full rounded-2xl p-8 border flex flex-col ${featured ? 'border-pink-500/40 bg-gradient-to-b from-pink-500/[0.1] to-transparent' : 'border-white/10 bg-white/[0.03]'}`}>
                   {featured && (
                     <span className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-[11px] font-bold text-white" style={{ background: GRADIENT }}>
                       MOST POPULAR
@@ -78,7 +79,7 @@ export default function Pricing() {
                   <button
                     onClick={() => goBuy(key)}
                     className={`mt-6 w-full py-3 rounded-full font-semibold text-sm transition-all hover:scale-[1.02] ${
-                      featured ? 'text-white shadow-lg shadow-blue-500/25' : 'text-white border border-white/15 hover:bg-white/5'
+                      featured ? 'text-white shadow-lg shadow-pink-500/30' : 'text-white border border-white/15 hover:bg-white/5'
                     }`}
                     style={featured ? { background: GRADIENT } : undefined}
                   >
@@ -88,7 +89,7 @@ export default function Pricing() {
                   <ul className="mt-8 space-y-3.5">
                     {tier.features.map(f => (
                       <li key={f} className="flex items-start gap-2.5 text-sm text-gray-300">
-                        <Check size={15} className="text-blue-400 flex-shrink-0 mt-0.5" strokeWidth={2.5} />
+                        <Check size={15} className="text-pink-400 flex-shrink-0 mt-0.5" strokeWidth={2.5} />
                         {f}
                       </li>
                     ))}
@@ -117,7 +118,7 @@ export default function Pricing() {
                   <div>
                     <div className="flex items-baseline gap-2">
                       <h3 className="font-semibold text-white">{addon.name}</h3>
-                      <span className="text-sm text-blue-400 font-semibold">${addon.monthly_price}/mo</span>
+                      <span className="text-sm text-pink-400 font-semibold">${addon.monthly_price}/mo</span>
                     </div>
                     <p className="mt-1.5 text-sm text-gray-400">{addon.description}</p>
                   </div>
@@ -127,7 +128,7 @@ export default function Pricing() {
           </div>
           <Reveal className="text-center mt-8">
             <p className="text-sm text-gray-500">
-              Add-ons are purchased from your <Link to={user ? '/settings' : '/login?mode=signup'} className="text-blue-400 hover:text-blue-300">workspace settings</Link>.
+              Add-ons are purchased from your <Link to={user ? '/settings' : '/login?mode=signup'} className="text-pink-400 hover:text-pink-300">workspace settings</Link>.
             </p>
           </Reveal>
         </section>
