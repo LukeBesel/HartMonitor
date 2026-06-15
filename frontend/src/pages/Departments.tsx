@@ -4,7 +4,7 @@ import { api } from '../api/client';
 import { useSite } from '../context/SiteContext';
 import {
   Building2, RefreshCw, Activity, CheckCircle2, Clock, Calendar,
-  ChevronRight
+  ChevronRight, Tv
 } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 
@@ -151,6 +151,16 @@ export default function Departments() {
               <option key={d.id} value={d.id}>{d.name}</option>
             ))}
           </select>
+          {selectedDeptId && (
+            <Link
+              to={`/departments/${selectedDeptId}/tv`}
+              className="flex items-center gap-2 px-3 py-2 bg-slate-900 text-white rounded-lg text-sm font-medium hover:bg-slate-800 shadow-sm"
+              title="Open full-screen TV mode for this department"
+            >
+              <Tv size={14} />
+              <span>TV Mode</span>
+            </Link>
+          )}
           <button
             onClick={() => loadWorkOrders(true)}
             className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 shadow-sm"

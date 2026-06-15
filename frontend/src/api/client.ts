@@ -265,6 +265,21 @@ export const api = {
     request<any>(`/quality/ncrs/${id}/comments`, { method: 'POST', body: JSON.stringify(data) }),
   getQualitySummary: () => request<any>('/quality/summary'),
 
+  // ── SQDC (Safety · Quality · Delivery · Cost board)
+  getSQDC: (params?: { date?: string; department_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.date)          qs.set('date', params.date);
+    if (params?.department_id) qs.set('department_id', params.department_id);
+    const s = qs.toString();
+    return request<any>(`/sqdc${s ? `?${s}` : ''}`);
+  },
+  getDepartmentTV: (id: string, params?: { date?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.date) qs.set('date', params.date);
+    const s = qs.toString();
+    return request<any>(`/sqdc/department/${id}${s ? `?${s}` : ''}`);
+  },
+
   // ── Activity log
   getActivityLog: (entityType: 'work_order' | 'purchase_order' | 'ncr', entityId: string) =>
     request<{ id: string; action: string; actor: string; created_at: string }[]>(`/activity/${entityType}/${entityId}`),
