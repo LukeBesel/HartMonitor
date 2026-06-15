@@ -9,6 +9,7 @@ const BASE = '/api';
 export interface AnalyticsFilters {
   app_id?: string;
   product_type_id?: string;
+  department_id?: string;
 }
 
 // Build a query string from analytics filters plus any extra params, omitting
@@ -18,6 +19,7 @@ function filterQS(f?: AnalyticsFilters, extra?: Record<string, string | number>)
   if (extra) for (const [k, v] of Object.entries(extra)) qs.set(k, String(v));
   if (f?.app_id) qs.set('app_id', f.app_id);
   if (f?.product_type_id) qs.set('product_type_id', f.product_type_id);
+  if (f?.department_id) qs.set('department_id', f.department_id);
   const s = qs.toString();
   return s ? `?${s}` : '';
 }
@@ -378,22 +380,26 @@ export const api = {
   testWebhook: (id: string) => request<any>(`/developer/webhooks/${id}/test`, { method: 'POST' }),
 
   // ── Audit log
-  getAuditLog: (params?: { entity_type?: string; actor?: string; from?: string; to?: string; limit?: number }) => {
+  getAuditLog: (params?: { entity_type?: string; actor?: string; from?: string; to?: string; department_id?: string; station_id?: string; limit?: number }) => {
     const qs = new URLSearchParams();
-    if (params?.entity_type) qs.set('entity_type', params.entity_type);
-    if (params?.actor)       qs.set('actor', params.actor);
-    if (params?.from)        qs.set('from', params.from);
-    if (params?.to)          qs.set('to', params.to);
-    if (params?.limit)       qs.set('limit', String(params.limit));
+    if (params?.entity_type)   qs.set('entity_type', params.entity_type);
+    if (params?.actor)         qs.set('actor', params.actor);
+    if (params?.from)          qs.set('from', params.from);
+    if (params?.to)            qs.set('to', params.to);
+    if (params?.department_id) qs.set('department_id', params.department_id);
+    if (params?.station_id)    qs.set('station_id', params.station_id);
+    if (params?.limit)         qs.set('limit', String(params.limit));
     const s = qs.toString();
     return request<AuditLogEntry[]>(`/activity${s ? `?${s}` : ''}`);
   },
-  downloadAuditLog: (params?: { entity_type?: string; actor?: string; from?: string; to?: string }) => {
+  downloadAuditLog: (params?: { entity_type?: string; actor?: string; from?: string; to?: string; department_id?: string; station_id?: string }) => {
     const qs = new URLSearchParams();
-    if (params?.entity_type) qs.set('entity_type', params.entity_type);
-    if (params?.actor)       qs.set('actor', params.actor);
-    if (params?.from)        qs.set('from', params.from);
-    if (params?.to)          qs.set('to', params.to);
+    if (params?.entity_type)   qs.set('entity_type', params.entity_type);
+    if (params?.actor)         qs.set('actor', params.actor);
+    if (params?.from)          qs.set('from', params.from);
+    if (params?.to)            qs.set('to', params.to);
+    if (params?.department_id) qs.set('department_id', params.department_id);
+    if (params?.station_id)    qs.set('station_id', params.station_id);
     const s = qs.toString();
     return downloadBlob(`/activity/export${s ? `?${s}` : ''}`, 'audit-log-export.csv');
   },

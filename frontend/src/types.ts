@@ -5,23 +5,38 @@ export type WidgetType =
 
 export interface WidgetConfig {
   text?: string; content?: string; fontSize?: number; fontWeight?: string;
-  color?: string; backgroundColor?: string; textAlign?: string;
+  color?: string; backgroundColor?: string; textAlign?: 'left' | 'center' | 'right';
+  verticalAlign?: 'top' | 'center' | 'bottom'; fontStyle?: 'normal' | 'italic';
   buttonText?: string; buttonType?: 'next' | 'prev' | 'complete' | 'custom';
   buttonColor?: string; buttonSize?: 'sm' | 'md' | 'lg';
   placeholder?: string; required?: boolean; variableName?: string;
   defaultValue?: string | number | boolean; options?: string[];
   min?: number; max?: number; step?: number; initialValue?: number;
   duration?: number; autoStart?: boolean;
-  imageUrl?: string; imageAlt?: string;
+  imageUrl?: string; imageAlt?: string; imageFit?: 'contain' | 'cover';
+  opacity?: number; borderRadius?: number;
+}
+
+/** Free-form placement of a widget on a canvas-mode step. All values are in
+ *  logical canvas pixels (canvas is a fixed logical width; see CANVAS_W). */
+export interface WidgetLayout {
+  x: number; y: number; width: number; height: number;
+  rotation?: number; z?: number;
 }
 
 export interface Widget {
   id: string; type: WidgetType; label: string; order: number; config: WidgetConfig;
+  /** Present only on canvas-mode steps. Absent = rendered in the stacked flow. */
+  layout?: WidgetLayout;
 }
 
 export interface Step {
   id: string; name: string; order: number; widgets: Widget[];
   takt_time_seconds?: number; description?: string;
+  /** 'flow' (default) stacks widgets vertically; 'canvas' positions them freely. */
+  layoutMode?: 'flow' | 'canvas';
+  canvasHeight?: number;
+  canvasBackground?: string;
 }
 
 export interface AppVariable {
@@ -33,6 +48,10 @@ export interface App {
   id: string; name: string; description: string;
   status: 'draft' | 'published'; steps: Step[];
   variables: AppVariable[]; created_at: string; updated_at: string;
+  department_id?: string | null;
+  site_id?: string | null;
+  station_id?: string | null;
+  show_takt_warnings?: number | boolean;
 }
 
 export interface Completion {

@@ -1,7 +1,9 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { ScrollText, Download, AlertCircle, Search } from 'lucide-react';
 import { api } from '../api/client';
 import type { AuditLogEntry } from '../types';
+
+const REFRESH_INTERVAL_MS = 10_000;
 
 // ── Entity type options ───────────────────────────────────────────────────────
 
@@ -71,38 +73,55 @@ export default function AuditLog() {
   const [actor, setActor] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  const [departmentId, setDepartmentId] = useState('');
+  const [stationId, setStationId] = useState('');
 
-  const filters = {
+  const [departments, setDepartments] = useState<{ id: string; name: string }[]>([]);
+  const [stations, setStations] = useState<{ id: string; name: string }[]>([]);
+
+  // Keep a ref to the current filters so the polling interval always reads
+  // the latest values without being recreated on every keystroke.
+  const filterValues = {
     entity_type: entityType || undefined,
     actor: actor || undefined,
     from: from || undefined,
     to: to || undefined,
-    limit: 200,
+    department_id: departmentId || undefined,
+    station_id: stationId || undefined,
   };
+  const filtersRef = useRef(filterValues);
+  filtersRef.current = filterValues;
 
+  // Load filter option lists once.
   useEffect(() => {
-    setLoading(true);
-    setError('');
-    api.getAuditLog(filters)
-      .then(setEntries)
+    api.getDepartments().then(setDepartments).catch(() => {});
+    api.getStations().then(setStations).catch(() => {});
+  }, []);
+
+  const fetchEntries = useCallback((options?: { silent?: boolean }) => {
+    if (!options?.silent) setLoading(true);
+    return api.getAuditLog({ ...filtersRef.current, limit: 200 })
+      .then(rows => { setEntries(rows); setError(''); })
       .catch(err => setError(err.message || 'Failed to load audit log'))
-      .finally(() => setLoading(false));
+      .finally(() => { if (!options?.silent) setLoading(false); });
+  }, []);
+
+  // Reload (with skeleton) whenever a filter changes, then poll silently.
+  useEffect(() => {
+    fetchEntries();
+    const id = setInterval(() => fetchEntries({ silent: true }), REFRESH_INTERVAL_MS);
+    return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [entityType, actor, from, to]);
+  }, [entityType, actor, from, to, departmentId, stationId]);
 
   const handleExport = useCallback(() => {
     setExporting(true);
-    api.downloadAuditLog({
-      entity_type: entityType || undefined,
-      actor: actor || undefined,
-      from: from || undefined,
-      to: to || undefined,
-    })
+    api.downloadAuditLog(filtersRef.current)
       .catch(err => setError(err.message || 'Failed to export audit log'))
       .finally(() => setExporting(false));
-  }, [entityType, actor, from, to]);
+  }, []);
 
-  const hasFilters = !!(entityType || actor || from || to);
+  const hasFilters = !!(entityType || actor || from || to || departmentId || stationId);
 
   return (
     <div className="p-6 space-y-6">
@@ -114,9 +133,18 @@ export default function AuditLog() {
             <ScrollText size={18} />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-gray-900 tracking-tight">Audit Log</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-xl font-bold text-gray-900 tracking-tight">Transaction Log</h1>
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-green-600 bg-green-50 rounded-full px-2 py-0.5">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75 animate-ping" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                </span>
+                Live
+              </span>
+            </div>
             <p className="text-xs text-gray-500 mt-0.5">
-              Timestamped history of changes for compliance and review.
+              Timestamped history of changes for compliance and review. Auto-refreshes every 10s.
             </p>
           </div>
         </div>
@@ -146,7 +174,35 @@ export default function AuditLog() {
         </div>
 
         <div className="flex flex-col gap-1">
-          <label className="text-xs font-medium text-gray-500">Actor</label>
+          <label className="text-xs font-medium text-gray-500">Department</label>
+          <select
+            className="input-field w-48"
+            value={departmentId}
+            onChange={e => setDepartmentId(e.target.value)}
+          >
+            <option value="">All Departments</option>
+            {departments.map(d => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-gray-500">Workstation</label>
+          <select
+            className="input-field w-48"
+            value={stationId}
+            onChange={e => setStationId(e.target.value)}
+          >
+            <option value="">All Workstations</option>
+            {stations.map(s => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <label className="text-xs font-medium text-gray-500">Operator</label>
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
