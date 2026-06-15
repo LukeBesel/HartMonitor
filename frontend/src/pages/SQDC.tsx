@@ -3,7 +3,7 @@ import { api } from '../api/client';
 import { useSite } from '../context/SiteContext';
 import {
   ShieldCheck, CheckCircle2, Truck, DollarSign, RefreshCw, Calendar,
-  AlertTriangle, ClipboardList, LayoutGrid,
+  AlertTriangle, ClipboardList, LayoutGrid, X, Plus, ChevronRight, Loader2,
 } from 'lucide-react';
 import {
   AreaChart, Area, BarChart, Bar, ResponsiveContainer, Tooltip, XAxis,
@@ -61,7 +61,7 @@ function todayISO() {
 }
 
 function Panel({
-  title, icon: Icon, status, statusLabel, headline, headlineSub, children,
+  title, icon: Icon, status, statusLabel, headline, headlineSub, children, onClick,
 }: {
   title: string;
   icon: React.ElementType;
@@ -70,10 +70,19 @@ function Panel({
   headline: React.ReactNode;
   headlineSub?: string;
   children?: React.ReactNode;
+  onClick?: () => void;
 }) {
   const s = STATUS_STYLE[status];
   return (
-    <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
+    <div
+      onClick={onClick}
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      onKeyDown={onClick ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onClick(); } } : undefined}
+      className={`group bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col transition ${
+        onClick ? 'cursor-pointer hover:shadow-md hover:border-indigo-200 focus:outline-none focus:ring-2 focus:ring-indigo-300' : ''
+      }`}
+    >
       <div className={`${s.header} px-5 py-3 flex items-center justify-between text-white`}>
         <div className="flex items-center gap-2">
           <Icon size={18} />
@@ -89,6 +98,327 @@ function Panel({
           {headlineSub && <div className="text-xs text-gray-500 mt-1">{headlineSub}</div>}
         </div>
         <div className="space-y-2 flex-1">{children}</div>
+        {onClick && (
+          <div className="flex items-center gap-1 text-xs font-medium text-indigo-500 opacity-70 group-hover:opacity-100 transition">
+            <span>Click for detail &amp; data entry</span>
+            <ChevronRight size={13} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Detail drill-in modal (per category) ─────────────────────────────────────
+
+type Category = 'safety' | 'quality' | 'delivery' | 'cost';
+
+const CATEGORY_META: Record<Category, { title: string; icon: React.ElementType; accent: string }> = {
+  safety:   { title: 'Safety',   icon: ShieldCheck,  accent: '#ef4444' },
+  quality:  { title: 'Quality',  icon: CheckCircle2, accent: '#6366f1' },
+  delivery: { title: 'Delivery', icon: Truck,        accent: '#10b981' },
+  cost:     { title: 'Cost',     icon: DollarSign,   accent: '#f59e0b' },
+};
+
+const SUBTYPE_OPTIONS: Record<Category, { value: string; label: string }[]> = {
+  safety: [
+    { value: 'near_miss', label: 'Near miss' },
+    { value: 'reportable', label: 'Reportable incident' },
+    { value: 'first_aid', label: 'First aid' },
+    { value: 'other', label: 'Other' },
+  ],
+  quality: [
+    { value: 'pass', label: 'Pass' },
+    { value: 'fail', label: 'Fail' },
+    { value: 'note', label: 'Note' },
+  ],
+  delivery: [
+    { value: 'late', label: 'Late / overdue' },
+    { value: 'note', label: 'Delivery note' },
+  ],
+  cost: [
+    { value: 'labor_hours', label: 'Labor hours' },
+    { value: 'scrap', label: 'Scrap' },
+    { value: 'note', label: 'Cost note' },
+  ],
+};
+
+function DetailRow({ label, value, tone }: { label: string; value: React.ReactNode; tone?: string }) {
+  return (
+    <div className="flex items-center justify-between text-sm py-1.5 border-b border-gray-50 last:border-0">
+      <span className="text-gray-500">{label}</span>
+      <span className={`font-semibold tabular-nums ${tone ?? 'text-gray-900'}`}>{value}</span>
+    </div>
+  );
+}
+
+function SQDCDetailModal({
+  category, date, deptId, departments, onClose,
+}: {
+  category: Category;
+  date: string;
+  deptId: string;
+  departments: Department[];
+  onClose: () => void;
+}) {
+  const meta = CATEGORY_META[category];
+  const [detail, setDetail] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const [form, setForm] = useState({
+    subtype: SUBTYPE_OPTIONS[category][0].value,
+    department_id: deptId,
+    location: '',
+    description: '',
+    value: '',
+  });
+
+  const load = useCallback(async () => {
+    try {
+      const res = await api.getSQDCDetail(category, { date, department_id: deptId || undefined });
+      setDetail(res);
+    } catch {
+      setDetail(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [category, date, deptId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErr(null);
+    setSaving(true);
+    try {
+      await api.createSQDCEntry({
+        category,
+        subtype: form.subtype,
+        department_id: form.department_id || undefined,
+        location: form.location || undefined,
+        description: form.description || undefined,
+        value: form.value === '' ? null : Number(form.value),
+        entry_date: date,
+      });
+      setForm(f => ({ ...f, location: '', description: '', value: '' }));
+      setLoading(true);
+      await load();
+    } catch (e: any) {
+      setErr(e?.message || 'Failed to save entry. Supervisor role required.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const b = detail?.breakdown ?? {};
+  const showValue = category === 'cost';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="px-6 py-4 flex items-center justify-between text-white" style={{ backgroundColor: meta.accent }}>
+          <div className="flex items-center gap-2">
+            <meta.icon size={20} />
+            <h2 className="text-lg font-semibold">{meta.title} detail</h2>
+            <span className="text-xs text-white/80">{date}</span>
+          </div>
+          <button onClick={onClose} className="text-white/80 hover:text-white"><X size={20} /></button>
+        </div>
+
+        <div className="overflow-y-auto p-6 grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Breakdown column */}
+          <div className="space-y-4">
+            <h3 className="text-sm font-semibold text-gray-900">Breakdown</h3>
+            {loading ? (
+              <div className="flex items-center justify-center py-10 text-gray-400">
+                <Loader2 size={22} className="animate-spin" />
+              </div>
+            ) : !detail ? (
+              <p className="text-sm text-gray-400">Unable to load detail.</p>
+            ) : (
+              <div className="space-y-4">
+                {category === 'safety' && (
+                  <>
+                    <div>
+                      <DetailRow label="Near misses" value={b.near_misses ?? 0} tone={b.near_misses > 0 ? 'text-amber-600' : undefined} />
+                      <DetailRow label="Reportable incidents" value={b.reportable_incidents ?? 0} tone={b.reportable_incidents > 0 ? 'text-red-600' : undefined} />
+                      <DetailRow label="First aid" value={b.first_aid ?? 0} />
+                      <DetailRow label="Safety NCRs" value={b.ncr_incidents ?? 0} tone={b.ncr_incidents > 0 ? 'text-red-600' : undefined} />
+                    </div>
+                    {b.by_area?.length > 0 && (
+                      <div>
+                        <div className="text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Where</div>
+                        {b.by_area.map((a: any) => <DetailRow key={a.area} label={a.area} value={a.count} />)}
+                      </div>
+                    )}
+                  </>
+                )}
+                {category === 'quality' && (
+                  <>
+                    <div>
+                      <DetailRow label="Pass rate" value={b.pass_rate == null ? '—' : `${b.pass_rate}%`} />
+                      <DetailRow label="Pass / Fail" value={`${b.pass_count ?? 0} / ${b.fail_count ?? 0}`} />
+                      <DetailRow label="Units inspected" value={b.units_inspected ?? 0} />
+                      <DetailRow label="NCRs opened" value={b.ncrs_opened ?? 0} tone={b.ncrs_opened > 0 ? 'text-red-600' : undefined} />
+                      <DetailRow label="NCRs closed" value={b.ncrs_closed ?? 0} tone={b.ncrs_closed > 0 ? 'text-emerald-600' : undefined} />
+                    </div>
+                    {b.by_department?.length > 0 && (
+                      <div>
+                        <div className="text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">First-pass yield by department</div>
+                        {b.by_department.map((d: any) => (
+                          <DetailRow key={d.department} label={d.department} value={d.first_pass_yield == null ? '—' : `${d.first_pass_yield}%`} />
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+                {category === 'delivery' && (
+                  <>
+                    <div>
+                      <DetailRow label="On-time" value={b.on_time_count ?? 0} tone="text-emerald-600" />
+                      <DetailRow label="Late" value={b.late_count ?? 0} tone={b.late_count > 0 ? 'text-amber-600' : undefined} />
+                      <DetailRow label="Due this date" value={b.due_count ?? 0} />
+                      <DetailRow label="On-time %" value={b.on_time_pct == null ? '—' : `${b.on_time_pct}%`} />
+                      <DetailRow label="Overdue now" value={b.overdue_count ?? 0} tone={b.overdue_count > 0 ? 'text-red-600' : undefined} />
+                    </div>
+                    {b.overdue_orders?.length > 0 && (
+                      <div>
+                        <div className="text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Late / overdue orders</div>
+                        <div className="space-y-1 max-h-40 overflow-y-auto">
+                          {b.overdue_orders.map((o: any, i: number) => (
+                            <div key={i} className="flex items-center justify-between text-sm">
+                              <span className="font-medium text-gray-700 truncate mr-2">{o.work_order_number}</span>
+                              <span className="text-xs text-red-600">{o.scheduled_end?.slice(0, 10)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+                {category === 'cost' && (
+                  <>
+                    <div>
+                      <DetailRow label="Labor hours" value={(b.labor_hours ?? 0).toFixed?.(1) ?? b.labor_hours} />
+                      <DetailRow label="Labor cost" value={`$${(b.labor_cost ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`} />
+                      <DetailRow label="Units produced" value={b.units_produced ?? 0} />
+                      <DetailRow label="Cost / unit" value={b.cost_per_unit == null ? '—' : `$${b.cost_per_unit.toFixed(2)}`} />
+                    </div>
+                    {b.by_department?.length > 0 && (
+                      <div>
+                        <div className="text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">By department</div>
+                        {b.by_department.map((d: any) => (
+                          <DetailRow key={d.department} label={d.department} value={`${d.labor_hours}h · ${d.units}u`} />
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Recent manual entries */}
+                <div>
+                  <div className="text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Recent logged entries</div>
+                  {detail.entries?.length === 0 ? (
+                    <p className="text-sm text-gray-400">None logged for this date.</p>
+                  ) : (
+                    <div className="space-y-2 max-h-44 overflow-y-auto">
+                      {detail.entries.map((e: any) => (
+                        <div key={e.id} className="text-sm bg-gray-50 rounded-lg px-3 py-2">
+                          <div className="flex items-center justify-between">
+                            <span className="font-semibold text-gray-700 capitalize">{(e.subtype || '').replace(/_/g, ' ') || 'entry'}</span>
+                            <span className="text-xs text-gray-400">{e.department_name}</span>
+                          </div>
+                          {e.location && <div className="text-xs text-gray-500">{e.location}</div>}
+                          {e.description && <div className="text-xs text-gray-600">{e.description}</div>}
+                          <div className="flex items-center justify-between mt-0.5">
+                            {e.value != null && <span className="text-xs text-gray-500">value: {e.value}</span>}
+                            <span className="text-[11px] text-gray-400 ml-auto">{e.created_by}</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Data-entry column */}
+          <form onSubmit={submit} className="space-y-3">
+            <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-1.5">
+              <Plus size={15} /> Log new {meta.title.toLowerCase()} entry
+            </h3>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Type</label>
+              <select
+                value={form.subtype}
+                onChange={e => setForm(f => ({ ...f, subtype: e.target.value }))}
+                className="input-field text-sm w-full"
+              >
+                {SUBTYPE_OPTIONS[category].map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Department</label>
+              <select
+                value={form.department_id}
+                onChange={e => setForm(f => ({ ...f, department_id: e.target.value }))}
+                className="input-field text-sm w-full"
+              >
+                <option value="">Unassigned</option>
+                {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Area / location</label>
+              <input
+                type="text"
+                value={form.location}
+                onChange={e => setForm(f => ({ ...f, location: e.target.value }))}
+                placeholder="e.g. Cell 3, Loading dock"
+                className="input-field text-sm w-full"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Description / note</label>
+              <textarea
+                value={form.description}
+                onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                rows={3}
+                placeholder="Short description"
+                className="input-field text-sm w-full"
+              />
+            </div>
+            {showValue && (
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Value (hours / units)</label>
+                <input
+                  type="number"
+                  step="any"
+                  value={form.value}
+                  onChange={e => setForm(f => ({ ...f, value: e.target.value }))}
+                  className="input-field text-sm w-full"
+                />
+              </div>
+            )}
+            {err && <p className="text-xs text-red-600">{err}</p>}
+            <button
+              type="submit"
+              disabled={saving}
+              className="w-full flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-60"
+              style={{ backgroundColor: meta.accent }}
+            >
+              {saving ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+              {saving ? 'Saving…' : 'Save entry'}
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );
@@ -111,6 +441,7 @@ export default function SQDC() {
   const [data, setData] = useState<SQDCData | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [activeCategory, setActiveCategory] = useState<Category | null>(null);
 
   useEffect(() => {
     api.getDepartments({ site_id: selectedSiteId || undefined })
@@ -227,6 +558,7 @@ export default function SQDC() {
             <Panel
               title="Safety"
               icon={ShieldCheck}
+              onClick={() => setActiveCategory('safety')}
               status={safetyStatus}
               statusLabel={safetyStatus === 'red' ? 'Incident' : safetyStatus === 'amber' ? 'Watch' : 'Clear'}
               headline={
@@ -264,6 +596,7 @@ export default function SQDC() {
             <Panel
               title="Quality"
               icon={CheckCircle2}
+              onClick={() => setActiveCategory('quality')}
               status={qualityStatus}
               statusLabel={qualityStatus === 'green' ? 'On Target' : qualityStatus === 'amber' ? 'At Risk' : qualityStatus === 'red' ? 'Below' : '—'}
               headline={data.quality.pass_rate == null ? '—' : `${data.quality.pass_rate}%`}
@@ -279,6 +612,7 @@ export default function SQDC() {
             <Panel
               title="Delivery"
               icon={Truck}
+              onClick={() => setActiveCategory('delivery')}
               status={deliveryStatus}
               statusLabel={deliveryStatus === 'green' ? 'On Time' : deliveryStatus === 'amber' ? 'At Risk' : deliveryStatus === 'red' ? 'Behind' : '—'}
               headline={data.delivery.on_time_pct == null ? '—' : `${data.delivery.on_time_pct}%`}
@@ -294,6 +628,7 @@ export default function SQDC() {
             <Panel
               title="Cost"
               icon={DollarSign}
+              onClick={() => setActiveCategory('cost')}
               status={costStatus}
               statusLabel={costStatus === 'neutral' ? 'No Data' : 'Tracked'}
               headline={`$${data.cost.labor_cost.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
@@ -373,6 +708,19 @@ export default function SQDC() {
             </div>
           </div>
         </>
+      )}
+
+      {activeCategory && (
+        <SQDCDetailModal
+          category={activeCategory}
+          date={date}
+          deptId={deptId}
+          departments={departments}
+          onClose={() => {
+            setActiveCategory(null);
+            load(true);
+          }}
+        />
       )}
     </div>
   );

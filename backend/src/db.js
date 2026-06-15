@@ -1582,5 +1582,28 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_game_scores_score ON game_scores(score DESC, created_at ASC);
 `);
 
+// ─── SQDC manual entries ──────────────────────────────────────────────────────
+// Stores manually-logged SQDC board events (safety events, quality checks,
+// delivery/late notes, cost/labor notes) that complement the derived metrics.
+// category is one of: safety | quality | delivery | cost.
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sqdc_entries (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    category TEXT NOT NULL,
+    subtype TEXT DEFAULT '',
+    department_id TEXT REFERENCES departments(id) ON DELETE SET NULL,
+    location TEXT DEFAULT '',
+    description TEXT DEFAULT '',
+    value REAL,
+    entry_date TEXT NOT NULL,
+    created_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_sqdc_entries_lookup
+    ON sqdc_entries(company_id, category, entry_date);
+`);
+
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;

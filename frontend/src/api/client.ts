@@ -280,6 +280,17 @@ export const api = {
     const s = qs.toString();
     return request<any>(`/sqdc/department/${id}${s ? `?${s}` : ''}`);
   },
+  getSQDCDetail: (category: string, params?: { date?: string; department_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.date)          qs.set('date', params.date);
+    if (params?.department_id) qs.set('department_id', params.department_id);
+    const s = qs.toString();
+    return request<any>(`/sqdc/${category}/detail${s ? `?${s}` : ''}`);
+  },
+  createSQDCEntry: (payload: {
+    category: string; subtype?: string; department_id?: string;
+    location?: string; description?: string; value?: number | null; entry_date?: string;
+  }) => request<any>('/sqdc/entries', { method: 'POST', body: JSON.stringify(payload) }),
 
   // ── Activity log
   getActivityLog: (entityType: 'work_order' | 'purchase_order' | 'ncr', entityId: string) =>
