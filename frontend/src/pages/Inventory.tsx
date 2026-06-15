@@ -326,6 +326,7 @@ function AdjustModal({ item, onClose, onSaved }: { item: any; onClose: () => voi
 
 function LocationsModal({ onClose }: { onClose: () => void }) {
   const { selectedSiteId } = useSite();
+  const { canEdit } = useAuth();
   const [locations, setLocations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [form, setForm] = useState({ name: '', code: '', type: 'warehouse' });
@@ -405,6 +406,7 @@ function LocationsModal({ onClose }: { onClose: () => void }) {
             </div>
           )}
 
+          {canEdit && (
           <div className="border-t border-gray-100 pt-4">
             <h3 className="text-sm font-semibold text-gray-700 mb-3">New Location</h3>
             <form onSubmit={handleCreate} className="grid grid-cols-4 gap-3 items-end">
@@ -432,6 +434,7 @@ function LocationsModal({ onClose }: { onClose: () => void }) {
             </form>
             {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
           </div>
+          )}
         </div>
       </div>
     </div>
@@ -440,11 +443,12 @@ function LocationsModal({ onClose }: { onClose: () => void }) {
 
 // ─── Item Detail Panel ───────────────────────────────────────────────────────
 
-function DetailPanel({ itemId, onClose, onEdit, onRefreshList }: {
+function DetailPanel({ itemId, onClose, onEdit, onRefreshList, canEdit }: {
   itemId: string;
   onClose: () => void;
   onEdit: (item: any) => void;
   onRefreshList: () => void;
+  canEdit: boolean;
 }) {
   const [item, setItem] = useState<any>(null);
   const [movements, setMovements] = useState<any[]>([]);
@@ -523,9 +527,11 @@ function DetailPanel({ itemId, onClose, onEdit, onRefreshList }: {
           </div>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
-          <button onClick={() => onEdit(item)} className="btn-ghost p-1.5 rounded-lg" title="Edit">
-            <Pencil size={14} />
-          </button>
+          {canEdit && (
+            <button onClick={() => onEdit(item)} className="btn-ghost p-1.5 rounded-lg" title="Edit">
+              <Pencil size={14} />
+            </button>
+          )}
           <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg" title="Close">
             <X size={16} />
           </button>
@@ -596,10 +602,12 @@ function DetailPanel({ itemId, onClose, onEdit, onRefreshList }: {
               </div>
             </div>
 
-            <button onClick={() => setShowAdjust(true)} className="btn-secondary w-full justify-center">
-              <Layers size={14} />
-              Adjust Stock
-            </button>
+            {canEdit && (
+              <button onClick={() => setShowAdjust(true)} className="btn-secondary w-full justify-center">
+                <Layers size={14} />
+                Adjust Stock
+              </button>
+            )}
           </div>
         )}
 
@@ -676,7 +684,7 @@ export default function Inventory() {
   const [showScanner, setShowScanner] = useState(false);
   const [loadingSample, setLoadingSample] = useState(false);
   const [sampleError, setSampleError] = useState('');
-  const { isAtLeast } = useAuth();
+  const { isAtLeast, canEdit } = useAuth();
 
   const loadSummary = useCallback(() => {
     api.getInventorySummary().then(setSummary).catch(() => {});
@@ -791,10 +799,12 @@ export default function Inventory() {
             <Download size={14} />
             Export CSV
           </button>
-          <button onClick={() => { setEditingItem(null); setShowItemModal(true); }} className="btn-primary whitespace-nowrap">
-            <Plus size={14} />
-            New Item
-          </button>
+          {canEdit && (
+            <button onClick={() => { setEditingItem(null); setShowItemModal(true); }} className="btn-primary whitespace-nowrap">
+              <Plus size={14} />
+              New Item
+            </button>
+          )}
         </div>
       </div>
 
@@ -934,7 +944,7 @@ export default function Inventory() {
                         <p className="text-xs text-gray-400">
                           {search || category || lowStockOnly ? 'Try adjusting your filters' : 'Get started by adding your first item'}
                         </p>
-                        {!search && !category && !lowStockOnly && (
+                        {!search && !category && !lowStockOnly && canEdit && (
                           <div className="flex items-center justify-center gap-2 mt-1">
                             <button
                               onClick={() => { setEditingItem(null); setShowItemModal(true); }}
@@ -1019,26 +1029,28 @@ export default function Inventory() {
                         </span>
                       </td>
                       <td className="py-3 px-4">
-                        <div className="flex items-center gap-1 justify-end" onClick={e => e.stopPropagation()}>
-                          <button
-                            onClick={() => { setEditingItem(item); setShowItemModal(true); }}
-                            className="btn-ghost p-1.5 rounded-lg"
-                            title="Edit"
-                          >
-                            <Pencil size={13} />
-                          </button>
-                          <button
-                            onClick={() => handleDelete(item)}
-                            disabled={deletingId === item.id}
-                            className="btn-ghost p-1.5 rounded-lg text-red-500 hover:bg-red-50"
-                            title="Delete"
-                          >
-                            {deletingId === item.id
-                              ? <RefreshCw size={13} className="animate-spin" />
-                              : <Trash2 size={13} />
-                            }
-                          </button>
-                        </div>
+                        {canEdit && (
+                          <div className="flex items-center gap-1 justify-end" onClick={e => e.stopPropagation()}>
+                            <button
+                              onClick={() => { setEditingItem(item); setShowItemModal(true); }}
+                              className="btn-ghost p-1.5 rounded-lg"
+                              title="Edit"
+                            >
+                              <Pencil size={13} />
+                            </button>
+                            <button
+                              onClick={() => handleDelete(item)}
+                              disabled={deletingId === item.id}
+                              className="btn-ghost p-1.5 rounded-lg text-red-500 hover:bg-red-50"
+                              title="Delete"
+                            >
+                              {deletingId === item.id
+                                ? <RefreshCw size={13} className="animate-spin" />
+                                : <Trash2 size={13} />
+                              }
+                            </button>
+                          </div>
+                        )}
                       </td>
                     </tr>
                   );
@@ -1066,6 +1078,7 @@ export default function Inventory() {
             onClose={() => navigate('/inventory')}
             onEdit={(item) => { setEditingItem(item); setShowItemModal(true); }}
             onRefreshList={refresh}
+            canEdit={canEdit}
           />
         )}
       </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend
 } from 'recharts';
@@ -68,6 +69,7 @@ const PRIORITY_COLORS: Record<string, string> = {
 };
 
 export default function CapacityPlanning() {
+  const { canEdit } = useAuth();
   const [data, setData] = useState<CapacityData | null>(null);
   const [loading, setLoading] = useState(true);
   const [sortBy, setSortBy] = useState<'days' | 'hours' | 'operators'>('days');
@@ -205,7 +207,7 @@ export default function CapacityPlanning() {
           <div>
             <h2 className="text-sm font-semibold text-gray-900 mb-3">Capacity by Department</h2>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              {depts.map(dept => <DeptCapacityCard key={dept.name} dept={dept} onSaved={load} />)}
+              {depts.map(dept => <DeptCapacityCard key={dept.name} dept={dept} onSaved={load} canEdit={canEdit} />)}
             </div>
           </div>
 
@@ -381,7 +383,7 @@ export default function CapacityPlanning() {
   );
 }
 
-function DeptCapacityCard({ dept, onSaved }: { dept: DeptSummary; onSaved: () => void }) {
+function DeptCapacityCard({ dept, onSaved, canEdit }: { dept: DeptSummary; onSaved: () => void; canEdit: boolean }) {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(String(dept.headcount));
   const [saving, setSaving] = useState(false);
@@ -414,7 +416,13 @@ function DeptCapacityCard({ dept, onSaved }: { dept: DeptSummary; onSaved: () =>
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {editing ? (
+          {!canEdit ? (
+            <div className="flex items-center gap-1.5 text-sm text-gray-700 px-2 py-1">
+              <Users size={13} className="text-gray-400" />
+              <span className="font-semibold">{dept.headcount}</span>
+              <span className="text-xs text-gray-400">operators</span>
+            </div>
+          ) : editing ? (
             <>
               <input
                 type="number" min={0} autoFocus

@@ -22,6 +22,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { v4 as uuidv4 } from '../utils/uuid';
+import { useAuth } from '../context/AuthContext';
 
 // Widget palette items
 const WIDGET_PALETTE: { type: WidgetType; icon: any; label: string; category: string }[] = [
@@ -65,6 +66,7 @@ function defaultWidget(type: WidgetType): Widget {
 export default function AppBuilder() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { canEdit } = useAuth();
   const [app, setApp] = useState<App | null>(null);
   const [activeStepIdx, setActiveStepIdx] = useState(0);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
@@ -272,6 +274,9 @@ export default function AppBuilder() {
   return (
     <>
     <div className="flex flex-col h-screen bg-gray-100">
+      {!canEdit && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-800 text-xs px-4 py-1.5 text-center">You have view-only access — changes can't be saved.</div>
+      )}
       {/* Top bar */}
       <div className="bg-white border-b border-gray-200 px-4 py-2.5 flex items-center gap-3 flex-shrink-0">
         <Link to="/apps" className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500">
@@ -308,17 +313,21 @@ export default function AppBuilder() {
           >
             <Settings size={13} /> Settings
           </button>
-          <button
-            onClick={() => save(app)}
-            disabled={saving}
-            className="btn-secondary text-xs"
-          >
-            {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
-            {saved ? 'Saved!' : 'Save'}
-          </button>
-          <button onClick={() => setShowPublishModal(true)} className="btn-success text-xs">
-            <Globe size={13} /> Publish
-          </button>
+          {canEdit && (
+            <button
+              onClick={() => save(app)}
+              disabled={saving}
+              className="btn-secondary text-xs"
+            >
+              {saving ? <Loader2 size={13} className="animate-spin" /> : <Save size={13} />}
+              {saved ? 'Saved!' : 'Save'}
+            </button>
+          )}
+          {canEdit && (
+            <button onClick={() => setShowPublishModal(true)} className="btn-success text-xs">
+              <Globe size={13} /> Publish
+            </button>
+          )}
         </div>
       </div>
 
@@ -337,7 +346,8 @@ export default function AppBuilder() {
                       <button
                         key={type}
                         onClick={() => addWidget(type)}
-                        className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors text-left"
+                        disabled={!canEdit}
+                        className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-gray-700 hover:bg-blue-50 hover:text-blue-700 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         <Icon size={14} className="flex-shrink-0" />
                         {label}
@@ -366,7 +376,7 @@ export default function AppBuilder() {
                 >
                   {idx + 1}. {step.name}
                 </button>
-                {app.steps.length > 1 && (
+                {canEdit && app.steps.length > 1 && (
                   <button
                     onClick={() => removeStep(idx)}
                     className="ml-0.5 p-0.5 hover:bg-red-50 rounded text-gray-300 hover:text-red-400 opacity-0 hover:opacity-100 group-hover:opacity-100"
@@ -376,12 +386,14 @@ export default function AppBuilder() {
                 )}
               </div>
             ))}
-            <button
-              onClick={addStep}
-              className="ml-1 flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-600 whitespace-nowrap"
-            >
-              <Plus size={12} /> Add Step
-            </button>
+            {canEdit && (
+              <button
+                onClick={addStep}
+                className="ml-1 flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs text-gray-400 hover:bg-gray-100 hover:text-gray-600 whitespace-nowrap"
+              >
+                <Plus size={12} /> Add Step
+              </button>
+            )}
           </div>
 
           {/* Canvas */}
