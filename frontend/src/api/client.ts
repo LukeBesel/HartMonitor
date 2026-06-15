@@ -414,7 +414,7 @@ export const api = {
   updateRoutingStep: (routingId: string, stepId: string, data: any) => request<any>(`/routings/${routingId}/steps/${stepId}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteRoutingStep: (routingId: string, stepId: string) => request<any>(`/routings/${routingId}/steps/${stepId}`, { method: 'DELETE' }),
   reorderRoutingSteps: (routingId: string, steps: { id: string; step_number: number }[]) =>
-    request<any>(`/routings/${routingId}/steps/reorder`, { method: 'PUT', body: JSON.stringify({ steps }) }),
+    request<any>(`/routings/${routingId}/steps/reorder`, { method: 'PUT', body: JSON.stringify(steps) }),
 
   // ── File upload
   uploadImage: (data: string, mimeType: string, filename: string) =>
