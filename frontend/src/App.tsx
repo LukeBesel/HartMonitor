@@ -58,6 +58,11 @@ const ReceivingPortal      = lazy(() => import('./pages/ReceivingPortal'));
 const ShipmentTracker      = lazy(() => import('./pages/ShipmentTracker'));
 const InventoryRequirements = lazy(() => import('./pages/InventoryRequirements'));
 const Training             = lazy(() => import('./pages/Training'));
+const Andon                = lazy(() => import('./pages/Andon'));
+const CAPA                 = lazy(() => import('./pages/CAPA'));
+const Maintenance          = lazy(() => import('./pages/Maintenance'));
+const ShiftNotes           = lazy(() => import('./pages/ShiftNotes'));
+const Kaizen               = lazy(() => import('./pages/Kaizen'));
 
 function Spinner() {
   return (
@@ -163,6 +168,12 @@ export default function App() {
                 <Route path="/audit-log" element={<AuditLog />} />
                 <Route path="/transaction-log" element={<TransactionLog />} />
                 <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/andon" element={<Andon />} />
+                <Route path="/capa" element={<CAPA />} />
+                <Route path="/maintenance" element={<Maintenance />} />
+                <Route path="/maintenance/:tab" element={<Maintenance />} />
+                <Route path="/shift-notes" element={<ShiftNotes />} />
+                <Route path="/kaizen" element={<Kaizen />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Route>
             </Routes>

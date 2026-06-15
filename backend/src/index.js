@@ -45,6 +45,11 @@ const uploadRouter       = require('./routes/upload');
 const sqdcRouter         = require('./routes/sqdc');
 const operatorsRouter    = require('./routes/operators');
 const trainingRouter     = require('./routes/training');
+const andonRouter        = require('./routes/andon');
+const capaRouter         = require('./routes/capa');
+const maintenanceRouter  = require('./routes/maintenance');
+const shiftsRouter       = require('./routes/shifts');
+const kaizenRouter       = require('./routes/kaizen');
 const { requireAuth }    = require('./middleware/auth');
 const { requirePlan }    = require('./middleware/plan');
 const { apiKeyAuth }     = require('./middleware/apiKeyAuth');
@@ -192,6 +197,11 @@ app.use('/api/upload',        uploadRouter);
 app.use('/api/sqdc',          sqdcRouter);
 app.use('/api/operators',     operatorsRouter);
 app.use('/api/training',      requirePlan('pro'), writeRole('supervisor'), trainingRouter);
+app.use('/api/andon',         writeRole('operator'),   andonRouter);
+app.use('/api/capa',          requirePlan('pro'), writeRole('operator'),   capaRouter);
+app.use('/api/maintenance',   requirePlan('pro'), writeRole('supervisor'), maintenanceRouter);
+app.use('/api/shifts',        writeRole('operator'),   shiftsRouter);
+app.use('/api/kaizen',        writeRole('operator'),   kaizenRouter);
 
 // Unknown API routes return JSON 404 (not the SPA shell).
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));

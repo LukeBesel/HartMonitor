@@ -561,4 +561,121 @@ export const api = {
     request<any>(`/training/plans/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteTrainingPlan: (id: string) =>
     request<any>(`/training/plans/${id}`, { method: 'DELETE' }),
+
+  // ── Shift Notes
+  getShiftNotes: (params?: { department_id?: string; date?: string; shift_name?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.department_id) qs.set('department_id', params.department_id);
+    if (params?.date)          qs.set('date', params.date);
+    if (params?.shift_name)    qs.set('shift_name', params.shift_name);
+    const s = qs.toString();
+    return request<any[]>(`/shifts${s ? `?${s}` : ''}`);
+  },
+  getShiftNote: (id: string) => request<any>(`/shifts/${id}`),
+  createShiftNote: (data: any) => request<any>('/shifts', { method: 'POST', body: JSON.stringify(data) }),
+  updateShiftNote: (id: string, data: any) => request<any>(`/shifts/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  submitShiftNote: (id: string) => request<any>(`/shifts/${id}/submit`, { method: 'POST' }),
+  handoffShiftNote: (id: string, data: { handoff_notes: string; handed_off_to: string }) =>
+    request<any>(`/shifts/${id}/handoff`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteShiftNote: (id: string) => request<any>(`/shifts/${id}`, { method: 'DELETE' }),
+
+  // ── Andon System
+  getAndonCalls: (params?: { status?: string; department_id?: string; type?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.status)        qs.set('status', params.status);
+    if (params?.department_id) qs.set('department_id', params.department_id);
+    if (params?.type)          qs.set('type', params.type);
+    const s = qs.toString();
+    return request<any[]>(`/andon${s ? `?${s}` : ''}`);
+  },
+  createAndonCall: (data: any) => request<any>('/andon', { method: 'POST', body: JSON.stringify(data) }),
+  acknowledgeAndonCall: (id: string) => request<any>(`/andon/${id}/acknowledge`, { method: 'PUT' }),
+  resolveAndonCall: (id: string, resolution?: string) =>
+    request<any>(`/andon/${id}/resolve`, { method: 'PUT', body: JSON.stringify({ resolution: resolution ?? '' }) }),
+  deleteAndonCall: (id: string) => request<any>(`/andon/${id}`, { method: 'DELETE' }),
+  getAndonSummary: () => request<any>('/andon/summary'),
+
+  // ── CAPA (standalone module)
+  getCAPAs: (params?: { status?: string; priority?: string; department_id?: string; search?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.status)        qs.set('status', params.status);
+    if (params?.priority)      qs.set('priority', params.priority);
+    if (params?.department_id) qs.set('department_id', params.department_id);
+    if (params?.search)        qs.set('search', params.search);
+    const s = qs.toString();
+    return request<any[]>(`/capa${s ? `?${s}` : ''}`);
+  },
+  getCAPAItem: (id: string) => request<any>(`/capa/${id}`),
+  createCAPAItem: (data: any) => request<any>('/capa', { method: 'POST', body: JSON.stringify(data) }),
+  updateCAPAItem: (id: string, data: any) => request<any>(`/capa/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCAPAItem: (id: string) => request<any>(`/capa/${id}`, { method: 'DELETE' }),
+  getCAPAItemActions: (capaId: string) => request<any[]>(`/capa/${capaId}/actions`),
+  createCAPAItemAction: (capaId: string, data: any) =>
+    request<any>(`/capa/${capaId}/actions`, { method: 'POST', body: JSON.stringify(data) }),
+  updateCAPAItemAction: (capaId: string, actionId: string, data: any) =>
+    request<any>(`/capa/${capaId}/actions/${actionId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getCAPAModuleSummary: () => request<any>('/capa/summary'),
+
+  // Aliases used by the CAPA page
+  getCAPA: (id: string) => request<any>(`/capa/${id}`),
+  createCAPA: (data: any) => request<any>('/capa', { method: 'POST', body: JSON.stringify(data) }),
+  updateCAPA: (id: string, data: any) => request<any>(`/capa/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCAPA: (id: string) => request<any>(`/capa/${id}`, { method: 'DELETE' }),
+  getCAPAActions: (capaId: string) => request<any[]>(`/capa/${capaId}/actions`),
+  createCAPAAction: (capaId: string, data: any) =>
+    request<any>(`/capa/${capaId}/actions`, { method: 'POST', body: JSON.stringify(data) }),
+  updateCAPAAction: (capaId: string, actionId: string, data: any) =>
+    request<any>(`/capa/${capaId}/actions/${actionId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getCAPASummary: () => request<any>('/capa/summary'),
+
+  // ── Maintenance / CMMS
+  getAssets: (params?: { department_id?: string; status?: string; search?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.department_id) qs.set('department_id', params.department_id);
+    if (params?.status)        qs.set('status', params.status);
+    if (params?.search)        qs.set('search', params.search);
+    const s = qs.toString();
+    return request<any[]>(`/maintenance/assets${s ? `?${s}` : ''}`);
+  },
+  createAsset: (data: any) => request<any>('/maintenance/assets', { method: 'POST', body: JSON.stringify(data) }),
+  updateAsset: (id: string, data: any) => request<any>(`/maintenance/assets/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteAsset: (id: string) => request<any>(`/maintenance/assets/${id}`, { method: 'DELETE' }),
+  getPMSchedules: (params?: { asset_id?: string; overdue?: boolean }) => {
+    const qs = new URLSearchParams();
+    if (params?.asset_id)  qs.set('asset_id', params.asset_id);
+    if (params?.overdue)   qs.set('overdue', 'true');
+    const s = qs.toString();
+    return request<any[]>(`/maintenance/pm${s ? `?${s}` : ''}`);
+  },
+  createPMSchedule: (data: any) => request<any>('/maintenance/pm', { method: 'POST', body: JSON.stringify(data) }),
+  updatePMSchedule: (id: string, data: any) => request<any>(`/maintenance/pm/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  completePMSchedule: (id: string) => request<any>(`/maintenance/pm/${id}/complete`, { method: 'POST' }),
+  getMaintenanceWOs: (params?: { status?: string; asset_id?: string; type?: string; priority?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.status)    qs.set('status', params.status);
+    if (params?.asset_id)  qs.set('asset_id', params.asset_id);
+    if (params?.type)      qs.set('type', params.type);
+    if (params?.priority)  qs.set('priority', params.priority);
+    const s = qs.toString();
+    return request<any[]>(`/maintenance/work-orders${s ? `?${s}` : ''}`);
+  },
+  createMaintenanceWO: (data: any) => request<any>('/maintenance/work-orders', { method: 'POST', body: JSON.stringify(data) }),
+  updateMaintenanceWO: (id: string, data: any) => request<any>(`/maintenance/work-orders/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteMaintenanceWO: (id: string) => request<any>(`/maintenance/work-orders/${id}`, { method: 'DELETE' }),
+  getMaintenanceSummary: () => request<any>('/maintenance/summary'),
+
+  // ── Kaizen / CI Ideas
+  getKaizenIdeas: (params?: { status?: string; category?: string; department_id?: string; search?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.status)        qs.set('status', params.status);
+    if (params?.category)      qs.set('category', params.category);
+    if (params?.department_id) qs.set('department_id', params.department_id);
+    if (params?.search)        qs.set('search', params.search);
+    const s = qs.toString();
+    return request<any[]>(`/kaizen${s ? `?${s}` : ''}`);
+  },
+  createKaizenIdea: (data: any) => request<any>('/kaizen', { method: 'POST', body: JSON.stringify(data) }),
+  updateKaizenIdea: (id: string, data: any) => request<any>(`/kaizen/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteKaizenIdea: (id: string) => request<any>(`/kaizen/${id}`, { method: 'DELETE' }),
+  getKaizenSummary: () => request<any>('/kaizen/summary'),
 };

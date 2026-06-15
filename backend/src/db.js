@@ -1739,5 +1739,174 @@ db.exec(`
   db.exec('CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(created_at DESC)');
 }
 
+// ─── Andon Calls ─────────────────────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS andon_calls (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    department_id TEXT REFERENCES departments(id) ON DELETE SET NULL,
+    station_id TEXT REFERENCES stations(id) ON DELETE SET NULL,
+    type TEXT NOT NULL CHECK(type IN ('help','quality','material','maintenance','safety')),
+    priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('normal','high','critical')),
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','acknowledged','resolved')),
+    description TEXT DEFAULT '',
+    raised_by TEXT DEFAULT '',
+    acknowledged_by TEXT DEFAULT '',
+    acknowledged_at TEXT,
+    resolved_by TEXT DEFAULT '',
+    resolved_at TEXT,
+    resolution TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_andon_calls_lookup
+    ON andon_calls(company_id, status, created_at DESC);
+`);
+
+// ─── CAPA (Corrective and Preventive Actions) ─────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS capa_items (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    number TEXT NOT NULL,
+    title TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'internal',
+    type TEXT NOT NULL DEFAULT 'corrective',
+    priority TEXT NOT NULL DEFAULT 'medium',
+    status TEXT NOT NULL DEFAULT 'open',
+    department_id TEXT REFERENCES departments(id) ON DELETE SET NULL,
+    assigned_to TEXT DEFAULT '',
+    due_date TEXT,
+    description TEXT DEFAULT '',
+    containment TEXT DEFAULT '',
+    root_cause TEXT DEFAULT '',
+    corrective_action TEXT DEFAULT '',
+    preventive_action TEXT DEFAULT '',
+    created_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    closed_at TEXT,
+    verified_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_capa_items_lookup
+    ON capa_items(company_id, status, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS capa_actions (
+    id TEXT PRIMARY KEY,
+    capa_id TEXT NOT NULL REFERENCES capa_items(id) ON DELETE CASCADE,
+    description TEXT NOT NULL,
+    assigned_to TEXT DEFAULT '',
+    due_date TEXT,
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','in_progress','done')),
+    created_at TEXT DEFAULT (datetime('now')),
+    completed_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_capa_actions_capa ON capa_actions(capa_id);
+`);
+
+// ─── Maintenance / CMMS ───────────────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS assets (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    asset_number TEXT DEFAULT '',
+    category TEXT DEFAULT '',
+    manufacturer TEXT DEFAULT '',
+    model TEXT DEFAULT '',
+    serial_number TEXT DEFAULT '',
+    department_id TEXT REFERENCES departments(id) ON DELETE SET NULL,
+    location TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','inactive','maintenance','retired')),
+    purchase_date TEXT,
+    warranty_expiry TEXT,
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_assets_lookup ON assets(company_id, status);
+
+  CREATE TABLE IF NOT EXISTS pm_schedules (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    asset_id TEXT REFERENCES assets(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    frequency_value INTEGER NOT NULL DEFAULT 1,
+    frequency_type TEXT NOT NULL DEFAULT 'months' CHECK(frequency_type IN ('days','weeks','months','hours','cycles')),
+    last_completed_at TEXT,
+    next_due_at TEXT,
+    assigned_to TEXT DEFAULT '',
+    estimated_hours REAL DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_pm_schedules_lookup ON pm_schedules(company_id, next_due_at);
+
+  CREATE TABLE IF NOT EXISTS maintenance_work_orders (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    number TEXT NOT NULL,
+    title TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'corrective' CHECK(type IN ('corrective','preventive','emergency','inspection')),
+    priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('low','medium','high','critical')),
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','in_progress','on_hold','completed','cancelled')),
+    asset_id TEXT REFERENCES assets(id) ON DELETE SET NULL,
+    department_id TEXT REFERENCES departments(id) ON DELETE SET NULL,
+    assigned_to TEXT DEFAULT '',
+    description TEXT DEFAULT '',
+    resolution TEXT DEFAULT '',
+    estimated_hours REAL,
+    actual_hours REAL,
+    requested_by TEXT DEFAULT '',
+    due_date TEXT,
+    completed_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_mwo_lookup ON maintenance_work_orders(company_id, status, created_at DESC);
+`);
+
+// ─── Shift Notes ──────────────────────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS shift_notes (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    department_id TEXT REFERENCES departments(id) ON DELETE SET NULL,
+    shift_name TEXT NOT NULL DEFAULT 'Day',
+    shift_date TEXT NOT NULL,
+    supervisor TEXT DEFAULT '',
+    good_count INTEGER DEFAULT 0,
+    scrap_count INTEGER DEFAULT 0,
+    downtime_minutes INTEGER DEFAULT 0,
+    notes TEXT DEFAULT '',
+    issues TEXT DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','submitted','handed_off')),
+    handed_off_to TEXT DEFAULT '',
+    handed_off_at TEXT,
+    created_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_shift_notes_lookup
+    ON shift_notes(company_id, shift_date DESC, department_id);
+`);
+
+// ─── Kaizen / CI Ideas ────────────────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS kaizen_ideas (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    number TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'quality' CHECK(category IN ('safety','quality','delivery','cost','morale','environment')),
+    status TEXT NOT NULL DEFAULT 'submitted' CHECK(status IN ('submitted','under_review','approved','in_progress','implemented','rejected')),
+    department_id TEXT REFERENCES departments(id) ON DELETE SET NULL,
+    submitted_by TEXT DEFAULT '',
+    assigned_to TEXT DEFAULT '',
+    estimated_savings REAL DEFAULT 0,
+    actual_savings REAL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    completed_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_kaizen_ideas_lookup
+    ON kaizen_ideas(company_id, status, created_at DESC);
+`);
+
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;
