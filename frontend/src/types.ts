@@ -454,9 +454,17 @@ export interface PricingAddon {
   description: string;
 }
 
+export interface PricingModule {
+  name: string;
+  monthly_price: number;
+  description: string;
+  features: string[];
+}
+
 export interface PricingCatalog {
   tiers: Record<string, PricingTier>;
   addons: Record<string, PricingAddon>;
+  modules?: Record<string, PricingModule>;
 }
 
 // ── Sites (multi-site / multi-plant) ──────────────────────────────────────────
