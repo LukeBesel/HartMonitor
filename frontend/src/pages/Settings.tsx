@@ -215,11 +215,17 @@ function CompanyTab() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+  const [confirmPending, setConfirmPending] = useState(false);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { refresh: refreshBranding } = useBranding();
+  const { user } = useAuth();
+  const isDeveloper = user?.role === 'developer';
 
   const isDirty = JSON.stringify(form) !== JSON.stringify(saved);
+
+  // Detect if branding fields changed (require confirmation for developers)
+  const brandingChanged = form.company_name !== saved.company_name || form.logo_url !== saved.logo_url;
 
   useEffect(() => {
     api.getCompanySettings()
@@ -238,7 +244,7 @@ function CompanyTab() {
     toastTimer.current = setTimeout(() => setToast(null), 3000);
   };
 
-  const handleSave = async () => {
+  const doSave = async () => {
     setSaving(true);
     try {
       await api.updateCompanySettings(form);
@@ -249,6 +255,15 @@ function CompanyTab() {
       showToast('Failed to save settings', 'error');
     } finally {
       setSaving(false);
+      setConfirmPending(false);
+    }
+  };
+
+  const handleSave = () => {
+    if (isDeveloper && brandingChanged) {
+      setConfirmPending(true);
+    } else {
+      doSave();
     }
   };
 
@@ -289,17 +304,66 @@ function CompanyTab() {
 
   return (
     <div className="space-y-8 max-w-2xl">
+      {/* Developer confirmation modal for branding changes */}
+      {confirmPending && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center flex-shrink-0">
+                <AlertCircle size={20} className="text-amber-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-900">Change company branding?</h3>
+                <p className="text-xs text-gray-500">This affects all users in your organisation.</p>
+              </div>
+            </div>
+            <p className="text-sm text-gray-700 mb-5">
+              You're about to update{' '}
+              {[
+                form.company_name !== saved.company_name && 'company name',
+                form.logo_url !== saved.logo_url && 'logo',
+              ].filter(Boolean).join(' and ')}
+              . This change will be visible to everyone immediately.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={() => setConfirmPending(false)}
+                className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={doSave}
+                className="flex-1 px-4 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition-colors"
+              >
+                Yes, update branding
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Identity */}
       <div>
         <SectionHeader title="Identity" subtitle="Basic information about your organisation" />
+        {!isDeveloper && (
+          <div className="mb-4 flex items-center gap-2 px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-500">
+            <Key size={13} className="text-gray-400 flex-shrink-0" />
+            Company name and logo are managed by your developer. Contact them to update branding.
+          </div>
+        )}
         <div className="space-y-4">
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Company Name</label>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Company Name
+              {!isDeveloper && <span className="ml-1.5 text-[10px] text-gray-400 font-normal">(developer only)</span>}
+            </label>
             <input
-              className="input-field w-full"
+              className={`input-field w-full ${!isDeveloper ? 'opacity-60 cursor-not-allowed bg-gray-50' : ''}`}
               placeholder="Acme Manufacturing Co."
               value={form.company_name}
               onChange={set('company_name')}
+              readOnly={!isDeveloper}
             />
           </div>
           <div>
@@ -312,39 +376,45 @@ function CompanyTab() {
             />
           </div>
           <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Logo URL</label>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Logo URL
+              {!isDeveloper && <span className="ml-1.5 text-[10px] text-gray-400 font-normal">(developer only)</span>}
+            </label>
             <input
-              className="input-field w-full"
+              className={`input-field w-full ${!isDeveloper ? 'opacity-60 cursor-not-allowed bg-gray-50' : ''}`}
               placeholder="https://example.com/logo.png (direct image URL)"
               value={form.logo_url}
               onChange={set('logo_url')}
+              readOnly={!isDeveloper}
             />
             <p className="text-xs text-gray-400 mt-1">
               Must be a direct image URL (ending in .png, .jpg, .svg, etc.). Shown in the top-left of the sidebar in place of the default mark.
             </p>
-            {/* Upload from computer */}
-            <div className="mt-2 flex items-center gap-2">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={handleLogoUpload}
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploading}
-                className="btn-secondary text-xs flex items-center gap-1.5"
-              >
-                {uploading ? (
-                  <><span className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" /> Uploading…</>
-                ) : (
-                  <>Upload from computer</>
-                )}
-              </button>
-              <span className="text-xs text-gray-400">or paste a URL above</span>
-            </div>
+            {/* Upload from computer — developer only */}
+            {isDeveloper && (
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={handleLogoUpload}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="btn-secondary text-xs flex items-center gap-1.5"
+                >
+                  {uploading ? (
+                    <><span className="w-3 h-3 border-2 border-gray-300 border-t-gray-600 rounded-full animate-spin" /> Uploading…</>
+                  ) : (
+                    <>Upload from computer</>
+                  )}
+                </button>
+                <span className="text-xs text-gray-400">or paste a URL above</span>
+              </div>
+            )}
             {form.logo_url && (
               <div className="mt-2 flex items-center gap-3">
                 <img
@@ -1013,6 +1083,9 @@ function PlanTab() {
 
 function ThemeTab() {
   const { theme, setTheme, darkMode, setDarkMode } = useTheme();
+  const { user } = useAuth();
+  const isDeveloper = user?.role === 'developer';
+  const [confirmTheme, setConfirmTheme] = useState<Theme | null>(null);
 
   const [compactMode, setCompactMode] = useState(() => {
     try { return localStorage.getItem('hm_compact') === 'true'; } catch { return false; }
@@ -1022,7 +1095,10 @@ function ThemeTab() {
   });
 
   const handleThemeSelect = (preset: Theme) => {
-    setTheme(preset);
+    if (isDeveloper) {
+      setConfirmTheme(preset);
+    }
+    // non-developers cannot change theme
   };
 
   const handleCompactMode = (v: boolean) => {
@@ -1037,17 +1113,46 @@ function ThemeTab() {
 
   return (
     <div className="space-y-8 max-w-2xl">
+      {/* Theme change confirmation (developer only) */}
+      {confirmTheme && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-10 h-10 bg-amber-100 rounded-xl flex items-center justify-center">
+                <AlertCircle size={20} className="text-amber-600" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-gray-900">Change organisation theme?</h3>
+                <p className="text-xs text-gray-500">This affects all users immediately.</p>
+              </div>
+            </div>
+            <div className="flex gap-3 mt-4">
+              <button onClick={() => setConfirmTheme(null)} className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">Cancel</button>
+              <button onClick={() => { setTheme(confirmTheme); setConfirmTheme(null); }} className="flex-1 px-4 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-semibold hover:bg-amber-600 transition-colors">Apply theme</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {!isDeveloper && (
+        <div className="flex items-center gap-2 px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-500 mb-4">
+          <Key size={13} className="text-gray-400 flex-shrink-0" />
+          Theme changes are restricted to developers. Contact your developer to update the colour scheme.
+        </div>
+      )}
+
       {/* Color Themes grid */}
       <div>
-        <SectionHeader title="Color Themes" subtitle="Choose an accent colour for your workspace" />
-        <div className="grid grid-cols-4 gap-4">
+        <SectionHeader title="Color Themes" subtitle={isDeveloper ? "Choose an accent colour for your workspace" : "Theme is set by your developer"} />
+        <div className={`grid grid-cols-4 gap-4 ${!isDeveloper ? 'opacity-50 pointer-events-none' : ''}`}>
           {THEME_PRESETS.map((preset) => {
             const isSelected = theme.name === preset.name;
             return (
               <button
                 key={preset.name}
                 onClick={() => handleThemeSelect(preset)}
-                className={`relative flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition-all hover:shadow-sm ${
+                disabled={!isDeveloper}
+                className={`relative flex flex-col items-center gap-2 p-3 rounded-xl border-2 transition-all ${isDeveloper ? 'hover:shadow-sm' : 'cursor-not-allowed'} ${
                   isSelected ? 'shadow-md' : 'border-gray-100 hover:border-gray-200'
                 }`}
                 style={isSelected ? { borderColor: preset.accent, backgroundColor: preset.accentLight } : {}}
@@ -1069,7 +1174,8 @@ function ThemeTab() {
           })}
         </div>
 
-        {/* Custom accent + secondary colors */}
+        {/* Custom accent + secondary colors — developer only */}
+        {isDeveloper && (
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
           {/* Primary / accent */}
           <label
@@ -1114,6 +1220,7 @@ function ThemeTab() {
             />
           </label>
         </div>
+        )}
         <p className="text-xs text-gray-400 mt-2">
           The secondary colour shapes branded gradients -- logos, avatars, leaderboard cards, and upgrade banners.
         </p>

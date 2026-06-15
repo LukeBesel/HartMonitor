@@ -48,7 +48,6 @@ export const SECTIONS: NavSection[] = [
     items: [
       { to: '/apps',        icon: AppWindow,  label: 'App Library' },
       { to: '/departments', icon: Building2,  label: 'Departments' },
-      { to: '/stations',    icon: Monitor,    label: 'Stations' },
     ],
   },
   {

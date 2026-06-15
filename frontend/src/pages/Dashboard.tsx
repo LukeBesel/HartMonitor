@@ -2,15 +2,18 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useSite } from '../context/SiteContext';
 import {
   TrendingUp, TrendingDown, Activity, CheckCircle, Cpu,
   RefreshCw, CalendarCheck,
-  ExternalLink, Plus, BarChart2, Monitor, Layers,
-  AlertTriangle, CheckCircle2, ChevronRight, Lock, SlidersHorizontal, RotateCcw
+  ExternalLink, Plus, BarChart2, Layers, Clock, Package,
+  AlertTriangle, CheckCircle2, ChevronRight, ChevronDown, Lock, SlidersHorizontal, RotateCcw,
+  Pin, Building2,
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  CartesianGrid, ReferenceLine
+  CartesianGrid, ReferenceLine,
+  BarChart, Bar, PieChart, Pie, Cell,
 } from 'recharts';
 import type { DailyBrief } from '../types';
 import { ATTENTION_ICONS, ATTENTION_TYPE_LABELS } from '../config/attention';
@@ -19,9 +22,76 @@ import Toggle from '../components/shared/Toggle';
 import OnboardingWizard from '../components/shared/OnboardingWizard';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import {
-  LayoutDashboard, Tablet, AppWindow, Building2, CalendarRange,
+  LayoutDashboard, Tablet, AppWindow, CalendarRange,
   GitBranch, ShieldCheck, Bell,
 } from 'lucide-react';
+
+// ─── Plant view types ────────────────────────────────────────────────────────
+
+interface PlantViewData {
+  kpis: {
+    total_completed_today: number;
+    active_now: number;
+    pass_rate: number;
+    avg_cycle_time: number;
+    schedule_adherence: number;
+    work_orders_on_track: number;
+    work_orders_total: number;
+  };
+  department_performance: Array<{
+    id: string;
+    department: string;
+    color: string;
+    completion_count: number;
+    avg_cycle_time: number;
+    takt_time: number;
+    on_track_count: number;
+    total_count: number;
+    status: 'on_track' | 'at_risk' | 'behind';
+  }>;
+  hourly_throughput: Array<{ hour: string; count: number }>;
+  work_order_summary: { on_track: number; at_risk: number; behind: number; not_started: number };
+  active_alerts: Array<{
+    id: string; work_order_number: string; part_name: string;
+    department: string; status: 'behind' | 'overdue';
+    scheduled_end: string; completion_pct: number;
+  }>;
+  recent_completions: Array<{
+    id: string; app_name: string; operator_name: string;
+    department: string; completed_at: string; duration_minutes: number; status: string;
+  }>;
+}
+
+const WO_COLORS: Record<string, string> = {
+  on_track: '#22c55e', at_risk: '#f59e0b', behind: '#ef4444', not_started: '#94a3b8',
+};
+
+function fmtDuration(m: number) {
+  return m < 60 ? `${m.toFixed(1)}m` : `${(m / 60).toFixed(1)}h`;
+}
+function fmtAgo(iso: string) {
+  const d = Date.now() - new Date(iso).getTime();
+  if (d < 60000) return 'just now';
+  if (d < 3600000) return `${Math.floor(d / 60000)}m ago`;
+  if (d < 86400000) return `${Math.floor(d / 3600000)}h ago`;
+  return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function deptBorderColor(status: string) {
+  if (status === 'on_track') return 'border-l-green-500';
+  if (status === 'at_risk') return 'border-l-amber-500';
+  return 'border-l-red-500';
+}
+
+function StatusPill({ status }: { status: string }) {
+  const map: Record<string, { label: string; cls: string }> = {
+    on_track: { label: 'On Track', cls: 'bg-green-100 text-green-700' },
+    at_risk: { label: 'At Risk', cls: 'bg-amber-100 text-amber-700' },
+    behind: { label: 'Behind', cls: 'bg-red-100 text-red-700' },
+  };
+  const s = map[status] ?? { label: status, cls: 'bg-gray-100 text-gray-600' };
+  return <span className={`text-xs font-semibold px-2 py-1 rounded-full ${s.cls}`}>{s.label}</span>;
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -160,6 +230,7 @@ function CustomizePanel({
 
 export default function Dashboard() {
   const { user, isAtLeast } = useAuth();
+  const { selectedSiteId } = useSite();
   const [brief, setBrief] = useState<DailyBrief | null>(null);
   const [companyName, setCompanyName] = useState('');
   const [loading, setLoading] = useState(true);
@@ -167,6 +238,22 @@ export default function Dashboard() {
   const { isHidden, toggleSection, resetSections } = useDashboardPrefs();
   const [showCustomize, setShowCustomize] = useState(false);
   const customizeRef = useRef<HTMLDivElement>(null);
+
+  // Plant view data integrated into the Command Center
+  const [plantData, setPlantData] = useState<PlantViewData | null>(null);
+  const [plantLoading, setPlantLoading] = useState(true);
+  const [plantExpanded, setPlantExpanded] = useState(true);
+  const [pinnedStations, setPinnedStations] = useState<string[]>(() => {
+    try { return JSON.parse(localStorage.getItem('hm_pinned_stations') ?? '[]'); } catch { return []; }
+  });
+
+  const togglePin = (id: string) => {
+    setPinnedStations(prev => {
+      const next = prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id];
+      localStorage.setItem('hm_pinned_stations', JSON.stringify(next));
+      return next;
+    });
+  };
 
   const loadData = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -180,11 +267,28 @@ export default function Dashboard() {
     setRefreshing(false);
   }, []);
 
+  const loadPlantData = useCallback(async () => {
+    try {
+      const result = await (api as any).getPlantView({ site_id: selectedSiteId || undefined });
+      setPlantData(result);
+    } catch {
+      // keep stale data
+    } finally {
+      setPlantLoading(false);
+    }
+  }, [selectedSiteId]);
+
   useEffect(() => {
     loadData();
     const interval = setInterval(() => loadData(), 60000);
     return () => clearInterval(interval);
   }, [loadData]);
+
+  useEffect(() => {
+    loadPlantData();
+    const interval = setInterval(() => loadPlantData(), 30000);
+    return () => clearInterval(interval);
+  }, [loadPlantData]);
 
   useEffect(() => {
     if (!showCustomize) return;
@@ -224,7 +328,7 @@ export default function Dashboard() {
           { icon: BarChart2,       label: 'Reporting & Analytics', desc: 'Track throughput, cycle times, OEE, and custom dashboards.' },
           { icon: ShieldCheck,     label: 'Quality & NCR', desc: 'Capture pass/fail and log non-conformance reports from the floor.' },
           { icon: Bell,            label: 'Alerts & Messages', desc: 'Combines what needs attention with team broadcasts and DMs.' },
-          { icon: Monitor,         label: 'Per-module guides', desc: 'Each section shows a quick how-to the first time you open it.' },
+          { icon: Building2,       label: 'Per-module guides', desc: 'Each section shows a quick how-to the first time you open it.' },
         ]}
       />
 
@@ -475,10 +579,197 @@ export default function Dashboard() {
           )}
           <QuickAction icon={<BarChart2 size={18} />} label="View Analytics" to="/analytics" color="text-indigo-600" />
           <QuickAction icon={<Cpu size={18} />} label="OEE Dashboard" to="/oee" color="text-amber-600" />
-          <QuickAction icon={<Monitor size={18} />} label="Plant View" to="/plant" color="text-pink-600" />
+          <QuickAction icon={<Building2 size={18} />} label="Departments" to="/departments" color="text-pink-600" />
         </div>
       </div>
       )}
+
+      {/* ─── Live Floor View (Plant View integrated) ─────────────────────── */}
+      <div className="card overflow-hidden">
+        <button
+          onClick={() => setPlantExpanded(e => !e)}
+          className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-gray-50 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <Activity size={16} className={plantData?.kpis.active_now ? 'text-green-500' : 'text-gray-400'} />
+            <span className="font-semibold text-gray-900 text-sm">Live Floor View</span>
+            {plantData && (
+              <span className="text-xs text-gray-400 font-normal">
+                {plantData.kpis.active_now} active · {plantData.kpis.total_completed_today} done today
+              </span>
+            )}
+          </div>
+          <ChevronDown size={14} className={`text-gray-400 transition-transform ${plantExpanded ? '' : '-rotate-90'}`} />
+        </button>
+
+        {plantExpanded && (
+          <div className="border-t border-gray-100 p-5 space-y-5">
+            {plantLoading ? (
+              <div className="flex items-center justify-center py-8 text-gray-400 text-sm gap-2">
+                <RefreshCw size={14} className="animate-spin" /> Loading floor data…
+              </div>
+            ) : !plantData ? (
+              <div className="text-center py-8 text-gray-400 text-sm">No plant data available</div>
+            ) : (
+              <>
+                {/* KPI row */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                  {[
+                    { label: 'Done Today', value: plantData.kpis.total_completed_today, icon: <CheckCircle size={15} className="text-green-600" />, bg: 'bg-green-50' },
+                    { label: 'Active Now', value: plantData.kpis.active_now, icon: <Activity size={15} className="text-blue-600" />, bg: 'bg-blue-50' },
+                    { label: 'Pass Rate', value: `${plantData.kpis.pass_rate}%`, icon: <TrendingUp size={15} className="text-purple-600" />, bg: 'bg-purple-50' },
+                    { label: 'Avg Cycle', value: fmtDuration(plantData.kpis.avg_cycle_time), icon: <Clock size={15} className="text-orange-600" />, bg: 'bg-orange-50' },
+                    { label: 'Schedule', value: `${plantData.kpis.schedule_adherence}%`, icon: <CalendarCheck size={15} className="text-teal-600" />, bg: 'bg-teal-50' },
+                    { label: 'WOs On Track', value: `${plantData.kpis.work_orders_on_track}/${plantData.kpis.work_orders_total}`, icon: <Package size={15} className="text-indigo-600" />, bg: 'bg-indigo-50' },
+                  ].map(k => (
+                    <div key={k.label} className="bg-gray-50 rounded-xl p-3 flex items-center gap-2.5">
+                      <div className={`w-8 h-8 ${k.bg} rounded-lg flex items-center justify-center flex-shrink-0`}>{k.icon}</div>
+                      <div>
+                        <div className="text-base font-bold text-gray-900 leading-tight">{k.value}</div>
+                        <div className="text-[11px] text-gray-500">{k.label}</div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Department cards + Hourly throughput */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  <div className="lg:col-span-2">
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Department Performance</h3>
+                      <Link to="/departments" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
+                        Dept View <ChevronRight size={11} />
+                      </Link>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {/* Pinned departments first */}
+                      {[
+                        ...plantData.department_performance.filter(d => pinnedStations.includes(d.id || d.department)),
+                        ...plantData.department_performance.filter(d => !pinnedStations.includes(d.id || d.department)),
+                      ].slice(0, 6).map(dept => {
+                        const isPinned = pinnedStations.includes(dept.id || dept.department);
+                        const onTrackPct = dept.total_count > 0 ? Math.round((dept.on_track_count / dept.total_count) * 100) : 0;
+                        const barColor = dept.status === 'on_track' ? 'bg-green-500' : dept.status === 'at_risk' ? 'bg-amber-500' : 'bg-red-500';
+                        return (
+                          <div key={dept.id || dept.department} className={`bg-white rounded-xl border border-gray-200 p-3 border-l-4 ${deptBorderColor(dept.status)} ${isPinned ? 'ring-2 ring-blue-300' : ''}`}>
+                            <div className="flex items-start justify-between mb-2">
+                              <div className="min-w-0">
+                                <div className="font-semibold text-gray-900 text-sm truncate">{dept.department}</div>
+                                <div className="text-lg font-bold text-gray-900">{dept.completion_count}</div>
+                                <div className="text-[11px] text-gray-500">done today</div>
+                              </div>
+                              <div className="flex items-center gap-1 flex-shrink-0">
+                                <StatusPill status={dept.status} />
+                                {isAtLeast('manager') && (
+                                  <button
+                                    onClick={() => togglePin(dept.id || dept.department)}
+                                    title={isPinned ? 'Unpin' : 'Pin this department'}
+                                    className={`p-1 rounded-lg transition-colors ${isPinned ? 'text-blue-500 bg-blue-50' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-50'}`}
+                                  >
+                                    <Pin size={12} />
+                                  </button>
+                                )}
+                              </div>
+                            </div>
+                            <div className="space-y-1">
+                              <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.min(100, dept.takt_time > 0 ? (dept.avg_cycle_time / dept.takt_time) * 100 : 0)}%` }} />
+                              </div>
+                              <div className="flex justify-between text-[11px] text-gray-400">
+                                <span>{onTrackPct}% on track</span>
+                                <span>{dept.avg_cycle_time.toFixed(1)}m avg</span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                      {plantData.department_performance.length === 0 && (
+                        <div className="col-span-2 text-center py-6 text-gray-400 text-sm">No department data</div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Hourly throughput */}
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">Hourly Throughput</h3>
+                    <ResponsiveContainer width="100%" height={180}>
+                      <BarChart data={plantData.hourly_throughput} barSize={10}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+                        <XAxis dataKey="hour" tick={{ fontSize: 9 }} tickFormatter={h => h.slice(11, 16)} interval={5} />
+                        <YAxis tick={{ fontSize: 10 }} allowDecimals={false} width={22} />
+                        <Tooltip labelFormatter={l => `${l}`} formatter={(v: any) => [v, 'Units']} />
+                        <Bar dataKey="count" fill="#3b82f6" radius={[2, 2, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+
+                {/* Active Alerts */}
+                {(plantData.active_alerts.length > 0 || plantData.recent_completions.length > 0) && (
+                  <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+                    {plantData.active_alerts.length > 0 && (
+                      <div className="lg:col-span-2">
+                        <div className="flex items-center gap-2 mb-2">
+                          <AlertTriangle size={14} className="text-red-500" />
+                          <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Active Alerts</h3>
+                          <span className="bg-red-100 text-red-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full">{plantData.active_alerts.length}</span>
+                        </div>
+                        <div className="space-y-2">
+                          {plantData.active_alerts.slice(0, 4).map(alert => (
+                            <div key={alert.id} className={`flex items-start gap-2 p-2.5 rounded-lg border text-xs ${alert.status === 'overdue' ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'}`}>
+                              <AlertTriangle size={12} className={`mt-0.5 flex-shrink-0 ${alert.status === 'overdue' ? 'text-red-500' : 'text-amber-500'}`} />
+                              <div className="min-w-0">
+                                <div className="font-semibold text-gray-900">{alert.work_order_number}</div>
+                                <div className="text-gray-600 truncate">{alert.part_name} · {alert.department}</div>
+                                <div className="text-gray-400">{alert.completion_pct}% complete</div>
+                              </div>
+                              <span className={`flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded ${alert.status === 'overdue' ? 'bg-red-200 text-red-800' : 'bg-amber-200 text-amber-800'}`}>
+                                {alert.status === 'overdue' ? 'Overdue' : 'Behind'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {/* Recent completions */}
+                    <div className={plantData.active_alerts.length > 0 ? 'lg:col-span-3' : 'lg:col-span-5'}>
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="text-xs font-semibold uppercase tracking-wide text-gray-500">Recent Completions</h3>
+                        <Link to="/analytics" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">All <ChevronRight size={11} /></Link>
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="border-b border-gray-100">
+                              {['App', 'Operator', 'Dept', 'Duration', 'Time'].map(h => (
+                                <th key={h} className="text-left text-[11px] font-medium text-gray-400 pb-1.5 pr-3">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-50">
+                            {plantData.recent_completions.slice(0, 6).map(c => (
+                              <tr key={c.id} className="hover:bg-gray-50 transition-colors">
+                                <td className="py-2 pr-3 font-medium text-gray-900 truncate max-w-[120px]">{c.app_name}</td>
+                                <td className="py-2 pr-3 text-gray-600">{c.operator_name}</td>
+                                <td className="py-2 pr-3 text-gray-500">{c.department}</td>
+                                <td className="py-2 pr-3 text-gray-700 tabular-nums">{fmtDuration(c.duration_minutes)}</td>
+                                <td className="py-2 text-gray-400">{fmtAgo(c.completed_at)}</td>
+                              </tr>
+                            ))}
+                            {plantData.recent_completions.length === 0 && (
+                              <tr><td colSpan={5} className="text-center py-4 text-gray-400">No recent completions</td></tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Free-tier upgrade banner */}
       {brief && !brief.is_pro && (
