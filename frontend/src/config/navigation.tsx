@@ -128,6 +128,7 @@ export const SECTIONS: NavSection[] = [
       { to: '/tables',           icon: Database,    label: 'Tables',           minRole: 'supervisor', proOnly: true },
       { to: '/transaction-log',  icon: History,     label: 'Transaction Log',  minRole: 'supervisor' },
       { to: '/audit-log',        icon: AlertTriangle, label: 'Audit Log',      minRole: 'supervisor' },
+      { to: '/admin',            icon: ShieldCheck, label: 'Admin Dashboard',   minRole: 'developer' },
     ],
   },
 ];

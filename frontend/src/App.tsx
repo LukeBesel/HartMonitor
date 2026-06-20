@@ -65,6 +65,7 @@ const CAPA                 = lazy(() => import('./pages/CAPA'));
 const Maintenance          = lazy(() => import('./pages/Maintenance'));
 const ShiftNotes           = lazy(() => import('./pages/ShiftNotes'));
 const Kaizen               = lazy(() => import('./pages/Kaizen'));
+const Admin                = lazy(() => import('./pages/Admin'));
 
 function Spinner() {
   return (
@@ -178,6 +179,7 @@ export default function App() {
                 <Route path="/maintenance/:tab" element={<Maintenance />} />
                 <Route path="/shift-notes" element={<ShiftNotes />} />
                 <Route path="/kaizen" element={<Kaizen />} />
+                <Route path="/admin" element={<Admin />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Route>
             </Routes>

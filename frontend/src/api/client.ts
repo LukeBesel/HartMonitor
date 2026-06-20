@@ -687,4 +687,36 @@ export const api = {
   updateKaizenIdea: (id: string, data: any) => request<any>(`/kaizen/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteKaizenIdea: (id: string) => request<any>(`/kaizen/${id}`, { method: 'DELETE' }),
   getKaizenSummary: () => request<any>('/kaizen/summary'),
+
+  // ─── Admin (developer-only) ────────────────────────────────────────────────
+  getAdminStats: () => request<any>('/admin/stats'),
+  getAdminCompanies: (params?: { search?: string; plan?: string; limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set('search', params.search);
+    if (params?.plan) qs.set('plan', params.plan);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.offset) qs.set('offset', String(params.offset));
+    const s = qs.toString();
+    return request<any[]>(`/admin/companies${s ? `?${s}` : ''}`);
+  },
+  getAdminCompany: (id: string) => request<any>(`/admin/companies/${id}`),
+  updateAdminCompanyPlan: (id: string, tier: string, note?: string) =>
+    request<any>(`/admin/companies/${id}/plan`, { method: 'PUT', body: JSON.stringify({ tier, note }) }),
+  getAdminUsers: (params?: { search?: string; role?: string; company_id?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set('search', params.search);
+    if (params?.role) qs.set('role', params.role);
+    if (params?.company_id) qs.set('company_id', params.company_id);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const s = qs.toString();
+    return request<any[]>(`/admin/users${s ? `?${s}` : ''}`);
+  },
+  getAdminActivity: (params?: { limit?: number; company_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.company_id) qs.set('company_id', params.company_id);
+    const s = qs.toString();
+    return request<any[]>(`/admin/activity${s ? `?${s}` : ''}`);
+  },
+  getAdminHealth: () => request<any>('/admin/health'),
 };

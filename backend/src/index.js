@@ -54,6 +54,7 @@ const capaRouter         = require('./routes/capa');
 const maintenanceRouter  = require('./routes/maintenance');
 const shiftsRouter       = require('./routes/shifts');
 const kaizenRouter       = require('./routes/kaizen');
+const adminRouter        = require('./routes/admin');
 const { requireAuth }    = require('./middleware/auth');
 const { requirePlan }    = require('./middleware/plan');
 const { apiKeyAuth }     = require('./middleware/apiKeyAuth');
@@ -205,6 +206,7 @@ app.use('/api/capa',          requirePlan('pro'), writeRole('operator'),   capaR
 app.use('/api/maintenance',   requirePlan('pro'), writeRole('supervisor'), maintenanceRouter);
 app.use('/api/shifts',        writeRole('operator'),   shiftsRouter);
 app.use('/api/kaizen',        writeRole('operator'),   kaizenRouter);
+app.use('/api/admin',         requireRole('developer'), adminRouter);
 
 // Unknown API routes return JSON 404 (not the SPA shell).
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));
