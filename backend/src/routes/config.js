@@ -340,6 +340,53 @@ router.post('/plan/portal', requireRole('manager'), async (req, res) => {
   }
 });
 
+// ─── GET /export-data — self-service full data export (any auth role) ─────────
+// Legal/trust requirement: customers must be able to extract all their data.
+// Returns a JSON file containing every table scoped to the authenticated company.
+
+router.get('/export-data', (req, res) => {
+  const cid = req.companyId;
+  const date = new Date().toISOString().slice(0, 10);
+
+  const bundle = {
+    exported_at: new Date().toISOString(),
+    company_id: cid,
+    tables: {
+      work_orders: db.prepare('SELECT * FROM work_orders WHERE company_id = ? ORDER BY created_at DESC').all(cid),
+      completions: db.prepare('SELECT * FROM completions WHERE company_id = ? ORDER BY started_at DESC').all(cid),
+      departments: db.prepare('SELECT * FROM departments WHERE company_id = ? ORDER BY name').all(cid),
+      stations: db.prepare('SELECT * FROM stations WHERE company_id = ? ORDER BY name').all(cid),
+      users: db.prepare('SELECT id, email, display_name, role, is_active, department_id, job_title, last_login, created_at, updated_at FROM users WHERE company_id = ? ORDER BY created_at').all(cid),
+      items: db.prepare('SELECT * FROM items WHERE company_id = ? ORDER BY sku').all(cid),
+      stock_movements: db.prepare('SELECT sm.* FROM stock_movements sm JOIN items i ON i.id = sm.item_id WHERE i.company_id = ? ORDER BY sm.created_at DESC').all(cid),
+      purchase_orders: db.prepare('SELECT * FROM purchase_orders WHERE company_id = ? ORDER BY order_date DESC').all(cid),
+      ncrs: db.prepare('SELECT * FROM ncrs WHERE company_id = ? ORDER BY created_at DESC').all(cid),
+      andon_calls: (() => {
+        try { return db.prepare('SELECT * FROM andon_calls WHERE company_id = ? ORDER BY created_at DESC').all(cid); } catch { return []; }
+      })(),
+      capa_items: (() => {
+        try { return db.prepare('SELECT * FROM capa_items WHERE company_id = ? ORDER BY created_at DESC').all(cid); } catch { return []; }
+      })(),
+      kaizen_ideas: (() => {
+        try { return db.prepare('SELECT * FROM kaizen_ideas WHERE company_id = ? ORDER BY created_at DESC').all(cid); } catch { return []; }
+      })(),
+      shift_notes: (() => {
+        try { return db.prepare('SELECT * FROM shift_notes WHERE company_id = ? ORDER BY created_at DESC').all(cid); } catch { return []; }
+      })(),
+      maintenance_work_orders: (() => {
+        try { return db.prepare('SELECT * FROM maintenance_work_orders WHERE company_id = ? ORDER BY created_at DESC').all(cid); } catch { return []; }
+      })(),
+      assets: (() => {
+        try { return db.prepare('SELECT * FROM assets WHERE company_id = ? ORDER BY created_at DESC').all(cid); } catch { return []; }
+      })(),
+    },
+  };
+
+  res.setHeader('Content-Disposition', `attachment; filename="hartmonitor-export-${date}.json"`);
+  res.setHeader('Content-Type', 'application/json');
+  res.json(bundle);
+});
+
 module.exports = router;
 module.exports.PRICING = PRICING;
 module.exports.effectiveLimits = effectiveLimits;

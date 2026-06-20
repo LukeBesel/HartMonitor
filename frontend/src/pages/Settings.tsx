@@ -1665,6 +1665,40 @@ function ExportTab() {
         </button>
       </div>
 
+      {/* Self-service full data export */}
+      <div className="card p-6 border border-gray-200 bg-gray-50">
+        <div className="flex items-start gap-4 mb-4">
+          <div
+            className="w-10 h-10 rounded-xl flex items-center justify-center flex-shrink-0 bg-gray-200 text-gray-600"
+          >
+            <Download size={20} />
+          </div>
+          <div>
+            <div className="text-sm font-semibold text-gray-800">Export All My Data</div>
+            <div className="text-xs text-gray-500 mt-0.5">
+              Download a complete JSON snapshot of all your company data — work orders, completions,
+              departments, stations, users, inventory, and more. Your data is always yours.
+            </div>
+          </div>
+        </div>
+        <button
+          onClick={async () => {
+            const res = await fetch('/api/config/export-data', { credentials: 'include' });
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `hartmonitor-export-${new Date().toISOString().split('T')[0]}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+          }}
+          className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-sm"
+        >
+          <Download size={16} />
+          Export all my data
+        </button>
+      </div>
+
       {toast && <Toast message={toast.message} type={toast.type} onDismiss={() => setToast(null)} />}
     </div>
   );

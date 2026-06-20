@@ -1618,5 +1618,21 @@ db.exec(`
   db.exec('CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(created_at DESC)');
 }
 
+// ─── Password reset tokens ────────────────────────────────────────────────────
+// Used by the forgot-password flow. Tokens expire after 24h and are deleted on use.
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token TEXT UNIQUE NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token);
+  CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
+`);
+
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;

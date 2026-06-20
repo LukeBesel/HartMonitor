@@ -52,6 +52,7 @@ const AuditLog         = lazy(() => import('./pages/AuditLog'));
 const TransactionLog   = lazy(() => import('./pages/AuditLog'));
 const Facilities       = lazy(() => import('./pages/Facilities'));
 const Routings         = lazy(() => import('./pages/Routings'));
+const AdminPage        = lazy(() => import('./pages/Admin'));
 
 function Spinner() {
   return (
@@ -150,6 +151,7 @@ export default function App() {
                 <Route path="/audit-log" element={<AuditLog />} />
                 <Route path="/transaction-log" element={<TransactionLog />} />
                 <Route path="/settings" element={<SettingsPage />} />
+                <Route path="/admin" element={<AdminPage />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Route>
             </Routes>

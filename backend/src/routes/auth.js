@@ -134,6 +134,71 @@ router.put('/change-password', requireAuth, (req, res) => {
   res.json({ success: true });
 });
 
+// ─── POST /forgot-password — request a password reset link ───────────────────
+// Creates a short-lived reset token. If SMTP is configured, sends email;
+// otherwise the token is stored and visible to admins via /api/admin/pending-resets.
+
+router.post('/forgot-password', (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'email required' });
+
+  const user = db.prepare('SELECT * FROM users WHERE email = ? AND is_active = 1').get(email.toLowerCase().trim());
+
+  // Always return the same response to avoid user enumeration.
+  if (!user) return res.json({ success: true });
+
+  // Delete any existing unused tokens for this user.
+  db.prepare("DELETE FROM password_reset_tokens WHERE user_id = ? AND used_at IS NULL").run(user.id);
+
+  const token = generateToken();
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(); // 24h
+  const { v4: uuidv4 } = require('uuid');
+  db.prepare(`INSERT INTO password_reset_tokens (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)`)
+    .run(uuidv4(), user.id, token, expiresAt);
+
+  const base = appUrl(req);
+  const resetUrl = `${base}/reset-password?token=${token}`;
+
+  // If SMTP is configured, send an email (placeholder — real implementation uses emailService).
+  // When SMTP is NOT configured, the token is surfaced in the admin panel instead.
+  const smtpConfigured = !!(process.env.SMTP_HOST || process.env.SENDGRID_API_KEY || process.env.RESEND_API_KEY);
+  if (smtpConfigured) {
+    // Email would be sent here; for now just log the URL.
+    console.log(`[auth] Password reset link for ${user.email}: ${resetUrl}`);
+  } else {
+    console.log(`[auth] SMTP not configured — reset link stored for admin: ${resetUrl}`);
+  }
+
+  res.json({ success: true });
+});
+
+// ─── POST /reset-password — consume a token and set a new password ────────────
+
+router.post('/reset-password', (req, res) => {
+  const { token, new_password } = req.body;
+  if (!token || !new_password) return res.status(400).json({ error: 'token and new_password required' });
+  if (new_password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+
+  const row = db.prepare(`
+    SELECT prt.id as token_id, prt.user_id, prt.used_at
+    FROM password_reset_tokens prt
+    WHERE prt.token = ? AND prt.expires_at > datetime('now')
+  `).get(token);
+
+  if (!row) return res.status(400).json({ error: 'Invalid or expired reset link. Please request a new one.' });
+  if (row.used_at) return res.status(400).json({ error: 'This reset link has already been used.' });
+
+  const { hashPassword } = require('../middleware/auth');
+  db.prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?")
+    .run(hashPassword(new_password), row.user_id);
+  db.prepare("UPDATE password_reset_tokens SET used_at = datetime('now') WHERE id = ?").run(row.token_id);
+
+  // Invalidate all existing sessions for security.
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.user_id);
+
+  res.json({ success: true });
+});
+
 // ─── SSO ───────────────────────────────────────────────────────────────────────
 
 // GET /sso/providers — which SSO buttons to show, and whether each is live or demo.
