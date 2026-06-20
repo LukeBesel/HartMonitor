@@ -7,7 +7,10 @@
     "dev": "node --watch src/index.js",
     "start": "node src/index.js",
     "test": "node --test test/*.test.js",
-    "test:watch": "node --test --watch test/*.test.js"
+    "test:watch": "node --test --watch test/*.test.js",
+    "db:migrate": "node src/db/migrate.js",
+    "db:generate": "prisma generate --schema=prisma/schema.prisma",
+    "db:studio": "prisma studio --schema=prisma/schema.prisma"
   },
   "dependencies": {
     "@prisma/client": "^7.8.0",
