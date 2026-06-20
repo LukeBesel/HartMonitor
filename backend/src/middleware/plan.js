@@ -7,8 +7,8 @@ const TIER_LEVELS = { free: 0, pro: 1, enterprise: 2 };
 
 function requirePlan(minTier) {
   return (req, res, next) => {
-    const plan = db.prepare('SELECT * FROM plan WHERE company_id = ?').get(req.companyId);
-    if (!plan) return res.status(403).json({ error: 'No plan found', code: 'NO_PLAN' });
+    const plan = db.prepare('SELECT * FROM plan WHERE company_id = ?').get(req.companyId) ||
+      { tier: 'free', status: 'active', trial_ends_at: null, grace_period_ends_at: null };
 
     // Active trial = Pro access
     const onActiveTrial = plan.trial_ends_at && new Date(plan.trial_ends_at) > new Date();

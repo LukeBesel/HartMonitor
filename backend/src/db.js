@@ -382,6 +382,12 @@ db.exec(`
   );
 `);
 
+// Indexes for common session lookups (by user and by expiry for cleanup).
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_sessions_user_id   ON sessions(user_id);
+  CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+`);
+
 // ─── Multi-tenancy: organizations, per-org settings, schema meta ──────────────
 
 db.exec(`
