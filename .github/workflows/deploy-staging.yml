@@ -1,43 +1,38 @@
-name: Deploy to Staging
+name: Staging health check
+
+# Railway auto-deploys the `staging` branch to the staging service (configured in
+# the Railway dashboard). This workflow does NOT trigger the deploy — it waits for
+# Railway to finish, then verifies the staging URL is healthy. Set the repo
+# variable STAGING_URL (Settings → Secrets and variables → Actions → Variables)
+# to your staging URL, e.g. https://staging.yourdomain.com. If unset, this is a
+# no-op so the workflow never fails before staging exists.
 
 on:
   push:
     branches: [staging]
 
 jobs:
-  deploy:
-    name: Deploy staging
+  health:
+    name: Verify staging is healthy
     runs-on: ubuntu-latest
-    environment:
-      name: staging
-      url: https://staging.hartmonitor.io
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Deploy to Render (staging)
-        if: ${{ vars.RENDER_SERVICE_ID_STAGING != '' }}
-        env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          SERVICE_ID: ${{ vars.RENDER_SERVICE_ID_STAGING }}
+      - name: Wait for Railway deploy, then health-check
+        if: ${{ vars.STAGING_URL != '' }}
         run: |
-          curl --fail -s -X POST \
-            "https://api.render.com/v1/services/$SERVICE_ID/deploys" \
-            -H "Authorization: Bearer $RENDER_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d '{"clearCache": false}'
-          echo "Deploy triggered for staging service $SERVICE_ID"
-
-      - name: Health check
-        if: ${{ vars.RENDER_SERVICE_ID_STAGING != '' }}
-        run: |
-          echo "Waiting for deploy to come up..."
-          for i in $(seq 1 24); do
-            STATUS=$(curl -sf https://staging.hartmonitor.io/api/health 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','unknown'))" 2>/dev/null || echo "unreachable")
+          echo "Waiting for Railway to deploy ${{ vars.STAGING_URL }} ..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -sf "${{ vars.STAGING_URL }}/api/health" 2>/dev/null \
+              | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null \
+              || echo "unreachable")
             echo "Attempt $i: $STATUS"
             if [ "$STATUS" = "ok" ]; then
-              echo "Staging deploy healthy!"
+              echo "✅ Staging is healthy."
               exit 0
             fi
-            sleep 15
+            sleep 20
           done
-          echo "Staging health check timed out" && exit 1
+          echo "❌ Staging health check timed out" && exit 1
+
+      - name: Skipped (no STAGING_URL set)
+        if: ${{ vars.STAGING_URL == '' }}
+        run: echo "STAGING_URL not set — skipping health check. Set it once the staging service exists."

@@ -1,43 +1,38 @@
-name: Deploy to Production
+name: Production health check
+
+# Railway auto-deploys the `main` branch to the production service (configured in
+# the Railway dashboard). This workflow does NOT trigger the deploy — it waits for
+# Railway to finish, then verifies the production URL is healthy. Set the repo
+# variable PROD_URL (Settings → Secrets and variables → Actions → Variables) to
+# your production URL, e.g. https://app.yourdomain.com. If unset, this is a no-op
+# so the workflow never fails before production exists.
 
 on:
   push:
     branches: [main]
 
 jobs:
-  deploy:
-    name: Deploy production
+  health:
+    name: Verify production is healthy
     runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: https://app.hartmonitor.io
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Deploy to Render (production)
-        if: ${{ vars.RENDER_SERVICE_ID_PROD != '' }}
-        env:
-          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
-          SERVICE_ID: ${{ vars.RENDER_SERVICE_ID_PROD }}
+      - name: Wait for Railway deploy, then health-check
+        if: ${{ vars.PROD_URL != '' }}
         run: |
-          curl --fail -s -X POST \
-            "https://api.render.com/v1/services/$SERVICE_ID/deploys" \
-            -H "Authorization: Bearer $RENDER_API_KEY" \
-            -H "Content-Type: application/json" \
-            -d '{"clearCache": false}'
-          echo "Deploy triggered for production service $SERVICE_ID"
-
-      - name: Health check
-        if: ${{ vars.RENDER_SERVICE_ID_PROD != '' }}
-        run: |
-          echo "Waiting for production deploy..."
+          echo "Waiting for Railway to deploy ${{ vars.PROD_URL }} ..."
           for i in $(seq 1 30); do
-            STATUS=$(curl -sf https://app.hartmonitor.io/api/health 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','unknown'))" 2>/dev/null || echo "unreachable")
+            STATUS=$(curl -sf "${{ vars.PROD_URL }}/api/health" 2>/dev/null \
+              | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null \
+              || echo "unreachable")
             echo "Attempt $i: $STATUS"
             if [ "$STATUS" = "ok" ]; then
-              echo "Production deploy healthy!"
+              echo "✅ Production is healthy."
               exit 0
             fi
             sleep 20
           done
-          echo "Production health check timed out" && exit 1
+          echo "❌ Production health check timed out" && exit 1
+
+      - name: Skipped (no PROD_URL set)
+        if: ${{ vars.PROD_URL == '' }}
+        run: echo "PROD_URL not set — skipping health check. Set it once the production service is live."
