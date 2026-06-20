@@ -33,11 +33,17 @@ function runMigrations(db) {
 
     const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
 
+    // Strip comment lines first to avoid semicolons inside comments breaking the split
+    const cleanedSql = sql
+      .split('\n')
+      .filter(line => !line.trim().startsWith('--'))
+      .join('\n');
+
     // Execute each statement individually so one "duplicate column" doesn't block the rest
-    const statements = sql
+    const statements = cleanedSql
       .split(';')
       .map(s => s.trim())
-      .filter(s => s.length > 0 && !s.startsWith('--'));
+      .filter(s => s.length > 0);
 
     let hadError = false;
     for (const stmt of statements) {
