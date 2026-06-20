@@ -7,6 +7,10 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const http = require('http');
+const cookieParser = require('cookie-parser');
+const logger = require('./logger');
+const pinoHttp = require('pino-http');
+const healthRouter = require('./routes/health');
 
 const { config, validate, banner } = require('./config');
 const { stripeWebhook } = require('./webhook');
@@ -67,6 +71,9 @@ if (errors.length) {
 const app  = express();
 const PORT = config.port;
 
+app.use(cookieParser());
+app.use(pinoHttp({ logger }));
+
 // Behind a single platform proxy (Railway/Render/nginx) — needed so rate
 // limiting and logging see the real client IP, not the proxy's.
 app.set('trust proxy', 1);
@@ -99,16 +106,6 @@ function corsDelegate(req, cb) {
 }
 app.use(cors(corsDelegate));
 
-// ─── Lightweight request logging ──────────────────────────────────────────────
-app.use((req, res, next) => {
-  if (!req.path.startsWith('/api')) return next();   // skip static asset noise
-  const start = Date.now();
-  res.on('finish', () => {
-    console.log(`${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - start}ms`);
-  });
-  next();
-});
-
 // ─── Rate limiting ────────────────────────────────────────────────────────────
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -125,15 +122,7 @@ const authLimiter = rateLimit({
 });
 
 // ─── Health check (for platform probes / uptime monitors) ─────────────────────
-app.get('/api/health', (_req, res) => {
-  let dbOk = true;
-  try { require('./db').prepare('SELECT 1').get(); } catch { dbOk = false; }
-  res.status(dbOk ? 200 : 503).json({
-    status: dbOk ? 'ok' : 'degraded',
-    uptime: Math.round(process.uptime()),
-    timestamp: new Date().toISOString(),
-  });
-});
+app.use('/api/health', healthRouter);
 
 // Stripe webhook needs the raw body for signature verification, so it must be
 // registered before the JSON parser and outside requireAuth.
@@ -164,7 +153,8 @@ app.use('/api/game',          gameRouter);  // public — no auth required
 app.get('/api/public/pricing', (_req, res) => res.json(PRICING));
 
 // Enterprise API v1 — authenticated with a long-lived API key, not a session.
-app.use('/api/v1', apiKeyAuth, v1Router);
+const apiKeyLimiter = rateLimit({ windowMs: 60 * 1000, max: 1000, standardHeaders: true, legacyHeaders: false });
+app.use('/api/v1', apiKeyLimiter, apiKeyAuth, v1Router);
 
 app.use('/api',               requireAuth); // protect everything below
 app.use('/api/apps',          writeRole('supervisor'), appsRouter);

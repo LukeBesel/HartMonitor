@@ -32,7 +32,7 @@ router.post('/', requireRole('developer'), (req, res) => {
   const { email, display_name, password, role = 'viewer' } = req.body;
   if (!email || !display_name || !password) return res.status(400).json({ error: 'email, display_name, and password required' });
   if (!VALID_ROLES.includes(role)) return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
-  if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
   // Emails stay globally unique — login has no org discriminator
   const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase().trim());
@@ -87,6 +87,11 @@ router.put('/:id', requireRole('developer'), (req, res) => {
     .run(updates.email, updates.display_name, updates.role, updates.is_active, updates.password_hash, updates.department_id, updates.job_title, req.params.id);
 
   if (password) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(req.params.id);
+
+  // Invalidate sessions if role changed (user gets new permissions on next login)
+  if (updates.role !== undefined && updates.role !== user.role) {
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(req.params.id);
+  }
 
   if (updates.role !== user.role) {
     logActivity(req.companyId, 'user', req.params.id, `Role changed from ${user.role} to ${updates.role} for "${updates.display_name}"`, req.user.display_name);

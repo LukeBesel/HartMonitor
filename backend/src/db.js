@@ -1908,5 +1908,17 @@ db.exec(`
     ON kaizen_ideas(company_id, status, created_at DESC);
 `);
 
+// ─── SSO OAuth State (persisted so multi-process deployments work) ─────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sso_state (
+    id TEXT PRIMARY KEY,
+    state TEXT UNIQUE NOT NULL,
+    provider TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_sso_state_expires ON sso_state(expires_at);
+`);
+
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;
