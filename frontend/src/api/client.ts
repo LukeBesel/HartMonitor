@@ -27,17 +27,18 @@ function filterQS(f?: AnalyticsFilters, extra?: Record<string, string | number>)
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const token = localStorage.getItem('hm_token');
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
   if (options?.headers) Object.assign(headers, options.headers);
 
-  const res = await fetch(`${BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${BASE}${path}`, {
+    ...options,
+    credentials: 'include', // sends httpOnly cookie automatically
+    headers,
+  });
 
   if (res.status === 401) {
     const err = await res.json().catch(() => ({ code: 'INVALID_TOKEN' }));
     if (err.code === 'INVALID_TOKEN' || err.code === 'NO_TOKEN') {
-      localStorage.removeItem('hm_token');
       localStorage.removeItem('hm_user');
       if (!window.location.pathname.startsWith('/login')) {
         window.location.href = '/login';
@@ -56,9 +57,8 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 // Authenticated file download via fetch + blob, saved with the server-provided
 // filename (Content-Disposition) or the given fallback.
 async function downloadBlob(path: string, fallbackFilename: string): Promise<void> {
-  const token = localStorage.getItem('hm_token');
   const res = await fetch(`${BASE}${path}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    credentials: 'include', // sends httpOnly cookie automatically
   });
   if (!res.ok) throw new Error(`Download failed (${res.status})`);
   const disposition = res.headers.get('Content-Disposition') || '';
@@ -354,6 +354,7 @@ export const api = {
   login: (email: string, password: string) =>
     fetch(`${BASE}/auth/login`, {
       method: 'POST',
+      credentials: 'include', // allows the server to set httpOnly cookie
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     }).then(async res => {
@@ -364,6 +365,7 @@ export const api = {
   signup: (company_name: string, display_name: string, email: string, password: string) =>
     fetch(`${BASE}/auth/signup`, {
       method: 'POST',
+      credentials: 'include', // allows the server to set httpOnly cookie
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ company_name, display_name, email, password }),
     }).then(async res => {

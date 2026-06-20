@@ -11,6 +11,8 @@ import { NavPrefsProvider } from './context/NavPrefsContext';
 import { SiteProvider } from './context/SiteContext';
 import { PermissionsProvider } from './context/PermissionsContext';
 import { MessagesProvider } from './context/MessagesContext';
+import { ToastProvider } from './context/ToastContext';
+import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import MessageToast from './components/shared/MessageToast';
 
 // Code-split the rest of the pages so the initial load only ships the shell,
@@ -108,9 +110,11 @@ export default function App() {
         <PermissionsProvider>
         <NavPrefsProvider>
         <MessagesProvider>
+        <ToastProvider>
           <BrowserRouter>
             <MessageToast />
             <Suspense fallback={<Spinner />}>
+            <ErrorBoundary>
             <Routes>
               {/* Public marketing site */}
               <Route path="/" element={<Landing />} />
@@ -177,8 +181,10 @@ export default function App() {
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Route>
             </Routes>
+            </ErrorBoundary>
             </Suspense>
           </BrowserRouter>
+        </ToastProvider>
         </MessagesProvider>
         </NavPrefsProvider>
         </PermissionsProvider>

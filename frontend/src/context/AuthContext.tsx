@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
+import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import { api } from '../api/client';
 
 interface User {
@@ -23,6 +23,8 @@ interface AuthContextValue {
   canAccessOperatorPortal: boolean;
   /** Viewers can see the report portal but cannot create, edit, or delete anything. */
   canEdit: boolean;
+  /** In-memory token for WebSocket use only — not stored in localStorage. */
+  getToken: () => string | null;
 }
 
 const ROLE_LEVELS: Record<string, number> = { developer: 5, manager: 4, supervisor: 3, operator: 2, viewer: 1 };
@@ -36,18 +38,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   });
   const [loading, setLoading] = useState(true);
 
+  // Token is kept in memory only — never written to localStorage.
+  // Used for WebSocket connections where cookies may not be sent.
+  const tokenRef = useRef<string | null>(null);
+
   useEffect(() => {
-    const token = localStorage.getItem('hm_token');
-    if (!token) { setLoading(false); return; }
+    // On mount, call getMe() which now sends the httpOnly cookie automatically.
+    // If the cookie is valid, we get the user back and stay logged in.
+    // If not (401), we clear local state.
     api.getMe()
       .then(u => { setUser(u); localStorage.setItem('hm_user', JSON.stringify(u)); })
-      .catch(() => { localStorage.removeItem('hm_token'); localStorage.removeItem('hm_user'); setUser(null); })
+      .catch(() => { localStorage.removeItem('hm_user'); setUser(null); })
       .finally(() => setLoading(false));
   }, []);
 
   const login = async (email: string, password: string) => {
     const data = await api.login(email, password);
-    localStorage.setItem('hm_token', data.token);
+    // Store token in memory for WebSocket use (not in localStorage)
+    if (data.token) tokenRef.current = data.token;
+    // Store user object in localStorage (not sensitive)
     localStorage.setItem('hm_user', JSON.stringify(data.user));
     setUser(data.user);
     // Fetch full user info (includes company_name)
@@ -58,7 +67,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signup = async (companyName: string, displayName: string, email: string, password: string) => {
     const data = await api.signup(companyName, displayName, email, password);
-    localStorage.setItem('hm_token', data.token);
+    // Store token in memory for WebSocket use (not in localStorage)
+    if (data.token) tokenRef.current = data.token;
+    // Store user object in localStorage (not sensitive)
     localStorage.setItem('hm_user', JSON.stringify(data.user));
     setUser(data.user);
     const full = await api.getMe().catch(() => data.user);
@@ -68,7 +79,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     await api.logout().catch(() => {});
-    localStorage.removeItem('hm_token');
+    tokenRef.current = null;
     localStorage.removeItem('hm_user');
     setUser(null);
   };
@@ -77,6 +88,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!user) return false;
     return (ROLE_LEVELS[user.role] ?? 0) >= (ROLE_LEVELS[role] ?? 99);
   };
+
+  const getToken = () => tokenRef.current;
 
   // Portal access is role-shaped, not a simple ladder: operators live on the
   // shop floor, viewers live in the office. Everyone above them gets both.
@@ -89,7 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   return (
     <AuthContext.Provider value={{
       user, loading, login, signup, logout, isAtLeast,
-      canAccessReportPortal, canAccessOperatorPortal, canEdit,
+      canAccessReportPortal, canAccessOperatorPortal, canEdit, getToken,
     }}>
       {children}
     </AuthContext.Provider>
