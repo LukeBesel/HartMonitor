@@ -236,65 +236,86 @@ router.get('/integrations', requireRole('manager'), (req, res) => {
   });
 });
 
-// ─── POST /plan/checkout — start a real Stripe Checkout session ──────────────
+// ─── POST /plan/checkout — start a real Stripe Checkout session (manager+) ────
 // Returns { url } to redirect the browser to Stripe's hosted, PCI-compliant
-// payment page. Uses pre-configured Stripe Price IDs from environment variables.
-// Falls back with a clear error if Stripe is off.
+// payment page. Prices are defined in code (price_data) — no need to create
+// Stripe Products manually or set STRIPE_PRICE_* env vars.
 
-router.post('/plan/checkout', requireAuth, async (req, res) => {
+router.post('/plan/checkout', requireRole('manager'), async (req, res) => {
+  const stripe = getStripe();
+  if (!stripe) {
+    return res.status(400).json({ error: 'not_configured', message: 'Live payments are not enabled on this deployment.' });
+  }
+
   try {
-    const { tier, addons = [] } = req.body;
-    const stripe = getStripe();
-    if (!stripe) return res.status(503).json({ error: 'Stripe not configured', code: 'STRIPE_UNAVAILABLE' });
+    const { tier, addon, quantity = 1 } = req.body;
+    const metadata = { company_id: req.companyId };
+    let line;
 
-    const plan = db.prepare('SELECT * FROM plan WHERE company_id = ?').get(req.companyId);
-
-    const PRICE_MAP = {
-      pro: process.env.STRIPE_PRICE_PRO,
-      manufacturing: process.env.STRIPE_PRICE_MODULE_MFG,
-      inventory: process.env.STRIPE_PRICE_MODULE_INV,
-      quality: process.env.STRIPE_PRICE_MODULE_QA,
-      training: process.env.STRIPE_PRICE_MODULE_TRN,
-    };
-
-    const lineItems = [];
-    if (tier && PRICE_MAP[tier]) {
-      lineItems.push({ price: PRICE_MAP[tier], quantity: 1 });
+    if (tier) {
+      const t = PRICING.tiers[tier];
+      if (!t || !t.monthly_price) return res.status(400).json({ error: 'A purchasable tier is required' });
+      line = {
+        price_data: {
+          currency: currency(),
+          product_data: { name: `HartMonitor ${t.name} Plan` },
+          unit_amount: Math.round(t.monthly_price * 100),
+          recurring: { interval: 'month' },
+        },
+        quantity: 1,
+      };
+      metadata.kind = 'tier';
+      metadata.tier = tier;
+    } else if (addon) {
+      const a = PRICING.addons[addon];
+      if (!a) return res.status(400).json({ error: 'Unknown add-on' });
+      const qty = Math.max(1, Math.min(50, Math.floor(Number(quantity)) || 1));
+      line = {
+        price_data: {
+          currency: currency(),
+          product_data: { name: a.name },
+          unit_amount: Math.round(a.monthly_price * 100),
+          recurring: { interval: 'month' },
+        },
+        quantity: qty,
+      };
+      metadata.kind = 'addon';
+      metadata.addon = addon;
+      metadata.quantity = String(qty);
+    } else {
+      return res.status(400).json({ error: 'tier or addon is required' });
     }
-    for (const addon of addons) {
-      if (PRICE_MAP[addon]) lineItems.push({ price: PRICE_MAP[addon], quantity: 1 });
-    }
 
-    if (lineItems.length === 0) {
-      return res.status(400).json({ error: 'No valid products selected', code: 'NO_PRODUCTS' });
+    // Reuse or create a Stripe customer for this company.
+    const plan = getPlanRow(req.companyId);
+    let customerId = plan.stripe_customer_id;
+    if (!customerId) {
+      const org = db.prepare('SELECT * FROM organizations WHERE id = ?').get(req.companyId);
+      const customer = await stripe.customers.create({
+        name: org?.name || undefined,
+        email: plan.billing_email || undefined,
+        metadata: { company_id: req.companyId },
+      });
+      customerId = customer.id;
+      db.prepare('UPDATE plan SET stripe_customer_id = ? WHERE company_id = ?').run(customerId, req.companyId);
     }
 
     const base = appUrl(req);
-
-    const sessionParams = {
+    const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
-      line_items: lineItems,
-      metadata: { company_id: req.companyId, tier },
-      success_url: `${base}/settings/billing?checkout=success`,
-      cancel_url: `${base}/settings/billing?checkout=cancel`,
-      subscription_data: {
-        metadata: { company_id: req.companyId },
-        trial_period_days: plan?.subscription_status === 'free' ? 14 : undefined,
-      },
+      customer: customerId,
+      line_items: [line],
       allow_promotion_codes: true,
-    };
+      success_url: `${base}/settings?tab=plan&checkout=success`,
+      cancel_url: `${base}/settings?tab=plan&checkout=cancel`,
+      metadata,
+      subscription_data: { metadata },
+    });
 
-    if (plan?.stripe_customer_id) {
-      sessionParams.customer = plan.stripe_customer_id;
-    } else if (plan?.billing_email) {
-      sessionParams.customer_email = plan.billing_email;
-    }
-
-    const session = await stripe.checkout.sessions.create(sessionParams);
     res.json({ url: session.url });
-  } catch (err) {
-    console.error('[checkout]', err);
-    res.status(500).json({ error: 'Failed to create checkout session', code: 'CHECKOUT_FAILED' });
+  } catch (e) {
+    console.error('[stripe] checkout error:', e.message);
+    res.status(502).json({ error: 'checkout_failed', message: e.message });
   }
 });
 

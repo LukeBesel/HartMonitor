@@ -125,15 +125,15 @@ The first deploy typically takes 3–5 minutes. Watch the **Logs** tab for the s
 
 ## Section 3: Stripe Setup
 
-### Step 1: Create products and prices
+> **No products to create.** Prices are defined in code (`backend/src/pricing.js`). You only need a Stripe account, your secret key, and a webhook — no manual product or price configuration.
 
-In the [Stripe Dashboard](https://dashboard.stripe.com/products):
+### Step 1: Get your Stripe secret key
 
-1. Click **Products** → **Add product**.
-2. Create your subscription tiers (e.g., "Starter", "Pro", "Enterprise").
-3. For each product, add a recurring price (monthly and/or annual).
-4. Copy the **Price ID** (starts with `price_`) for each plan.
-5. Update your `PRICING` configuration in `backend/src/pricing.js` with the live price IDs.
+1. Sign up or log in at [dashboard.stripe.com](https://dashboard.stripe.com).
+2. Complete **Activate payments** (add your bank account and business details — this is how Stripe deposits your earnings).
+3. Go to **Developers → API keys**.
+4. Copy your **Secret key** (`sk_live_…` for live, `sk_test_…` for testing).
+5. Set it as `STRIPE_SECRET_KEY` in your Render environment.
 
 ### Step 2: Create a webhook endpoint
 
