@@ -49,7 +49,7 @@ jobs:
         run: npm ci
 
       - name: TypeScript type check
-        run: npm run --workspace=frontend typecheck 2>/dev/null || npx --prefix frontend tsc --noEmit
+        run: npm run typecheck --workspace=frontend
 
       - name: Run unit tests
         run: npm test --workspace=frontend -- --run
