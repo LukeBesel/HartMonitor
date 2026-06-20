@@ -110,20 +110,43 @@ prices; they're defined in code.**
 
 ## Phase 4 — Legal & business (required to monetize legitimately)
 
-This is the part code can't do for you.
+This is the part code can't do for you. *Not legal advice — consult a
+professional for your situation.* See `PROJECT_PLAN.md` for the visual version
+with dropdowns.
 
-- 🟡 **Form a business entity** (LLC is typical for SaaS) and get an EIN.
-- 🟡 **Business bank account** — connect to Stripe for payouts.
-- 🟡 **Terms of Service & Privacy Policy** — the app already has `/terms` and
-  `/privacy` pages; review/replace the text with your real policy (use
-  Termly/iubenda or a lawyer). Required because you store customer data.
-- 🟡 **Sales tax / VAT** — consider Stripe Tax (toggle in Stripe) to auto-handle
-  tax on subscriptions.
-- 🟡 **Data processing / security posture** — manufacturers may ask. You already
-  have: per-tenant isolation, httpOnly cookie auth, RBAC, audit log, data export.
+> **Start this NOW, in parallel with the technical track** — the LLC has the
+> longest lead time (days to ~2 weeks). You do NOT need it to deploy or run a
+> free private beta; you DO need it before taking real recurring revenue.
 
-⏱ Days (entity formation is the long pole). You can run a private beta before
-this is fully done, but don't take real money until the entity + ToS are in place.
+### 4.1 Form an LLC + get an EIN 🟡 (start first)
+- [ ] Pick where to form (home state simplest; Delaware common for SaaS)
+- [ ] File: **DIY** via state site (~$50–500), a **service** (Northwest,
+      LegalZoom), or **Stripe Atlas** (~$500, entity + EIN + bank in one flow)
+- [ ] Get a free **EIN** from the IRS (online, ~10 min)
+- [ ] (Recommended) An operating agreement, even for a single-member LLC
+
+### 4.2 Open a business bank account 🟡
+- [ ] Use LLC docs + EIN at a bank or online (Mercury/Novo are SaaS-friendly)
+- [ ] Keep ALL business money separate from personal (preserves liability shield)
+- [ ] This is the account Stripe pays out to
+
+### 4.3 Terms of Service + Privacy Policy 🟡
+- [ ] Draft via Termly/iubenda/GetTerms, or a lawyer
+- [ ] Cover: subscription terms, data ownership (customers own their data),
+      30-day retention after cancellation (already built), liability limits,
+      refund policy
+- [ ] Replace placeholder text on the in-app `/terms` and `/privacy` pages
+
+### 4.4 Stripe business activation + tax 🟡
+- [ ] Complete Stripe activation (business details, EIN, bank)
+- [ ] Connect business bank for payouts
+- [ ] (Recommended) Enable **Stripe Tax** to auto-calculate sales tax/VAT
+- [ ] Security posture for manufacturer buyers: you already have per-tenant
+      isolation, httpOnly cookie auth, RBAC, audit log, and data export
+
+⏱ Filing is quick; **LLC approval is the long pole** (days–2 weeks). Run a free
+private beta meanwhile, but don't switch Stripe to live until entity + bank +
+ToS are in place.
 
 ---
 
