@@ -341,9 +341,11 @@ export const api = {
 
   // ── Real payments (Stripe) — fall back to demo flow when not configured
   getBillingConfig: () => request<{ configured: boolean; mode: 'demo' | 'test' | 'live' }>('/config/plan/billing-config'),
-  createCheckout: (payload: { tier?: string; addon?: 'app_slot' | 'dashboard_slot'; quantity?: number }) =>
-    request<{ url: string }>('/config/plan/checkout', { method: 'POST', body: JSON.stringify(payload) }),
+  createCheckout: (tier: string, addons?: string[]) =>
+    request<{ url: string }>('/config/plan/checkout', { method: 'POST', body: JSON.stringify({ tier, addons }) }),
   createBillingPortal: () => request<{ url: string }>('/config/plan/portal', { method: 'POST' }),
+  openBillingPortal: () => request<{ url: string }>('/config/plan/portal', { method: 'POST' }),
+  getCurrentPlan: () => request<any>('/config/plan'),
 
   // ── Export — authenticated download via fetch + blob (Bearer header required)
   downloadExport: async (type: string, params?: Record<string, string>) => {

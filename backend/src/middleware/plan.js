@@ -6,19 +6,30 @@ const db = require('../db');
 const TIER_LEVELS = { free: 0, pro: 1, enterprise: 2 };
 
 function requirePlan(minTier) {
-  const required = TIER_LEVELS[minTier] ?? 99;
   return (req, res, next) => {
-    const plan = db.prepare('SELECT tier FROM plan WHERE company_id = ?').get(req.companyId);
-    const level = TIER_LEVELS[plan?.tier] ?? 0;
-    if (level < required) {
-      return res.status(402).json({
-        error: 'plan_required',
+    const plan = db.prepare('SELECT * FROM plan WHERE company_id = ?').get(req.companyId);
+    if (!plan) return res.status(403).json({ error: 'No plan found', code: 'NO_PLAN' });
+
+    // Active trial = Pro access
+    const onActiveTrial = plan.trial_ends_at && new Date(plan.trial_ends_at) > new Date();
+    if (onActiveTrial) return next();
+
+    // Grace period after payment failure = allow through (briefly)
+    const inGracePeriod = plan.grace_period_ends_at && new Date(plan.grace_period_ends_at) > new Date();
+    if (inGracePeriod && plan.subscription_status === 'past_due') return next();
+
+    // Check tier level
+    const userTier = TIER_LEVELS[plan.tier] ?? 0;
+    const requiredTier = TIER_LEVELS[minTier] ?? 1;
+    if (userTier < requiredTier) {
+      return res.status(403).json({
+        error: `This feature requires a ${minTier} plan`,
         code: 'PLAN_REQUIRED',
-        message: `This feature requires the ${minTier.charAt(0).toUpperCase() + minTier.slice(1)} plan.`,
         required_tier: minTier,
-        current_tier: plan?.tier || 'free',
+        current_tier: plan.tier,
       });
     }
+
     next();
   };
 }

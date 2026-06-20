@@ -15,6 +15,7 @@ import SiteSwitcher from './SiteSwitcher';
 import UpgradeModal from './UpgradeModal';
 import QuickCreateModal from './QuickCreateModal';
 import PWAUpdatePrompt from './PWAUpdatePrompt';
+import { BillingBanner } from './BillingBanner';
 
 function ProBadge() {
   return (
@@ -398,6 +399,7 @@ export default function Layout() {
           </div>
         </header>
 
+        <BillingBanner />
         <main className="flex-1 overflow-auto">
           <Outlet />
         </main>

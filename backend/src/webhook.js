@@ -84,6 +84,42 @@ function handleInvoicePaid(invoice) {
   });
 }
 
+function handlePaymentFailed(invoice) {
+  const companyId = invoice.subscription_details?.metadata?.company_id
+    || invoice.metadata?.company_id;
+  if (!companyId) return;
+
+  const gracePeriodEnds = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  db.prepare(`
+    UPDATE plan SET
+      subscription_status = 'past_due',
+      grace_period_ends_at = ?
+    WHERE company_id = ?
+  `).run(gracePeriodEnds, companyId);
+
+  console.log(`[stripe] Payment failed for company ${companyId}, grace period until ${gracePeriodEnds}`);
+}
+
+function handleTrialWillEnd(subscription) {
+  const companyId = subscription.metadata?.company_id;
+  if (!companyId) return;
+  console.log(`[stripe] Trial ending soon for company ${companyId}`);
+}
+
+function handleSubscriptionDeleted(subscription) {
+  const companyId = subscription.metadata?.company_id;
+  if (!companyId) return;
+
+  db.prepare(`
+    UPDATE plan SET
+      tier = 'free',
+      subscription_status = 'free',
+      stripe_subscription_id = NULL,
+      cancelled_at = datetime('now')
+    WHERE company_id = ?
+  `).run(companyId);
+}
+
 function stripeWebhook(req, res) {
   const stripe = getStripe();
   const secret = webhookSecret();
@@ -105,11 +141,20 @@ function stripeWebhook(req, res) {
         handleCheckoutCompleted(event.data.object);
         break;
       case 'customer.subscription.updated':
+        handleSubscriptionChange(event.data.object);
+        break;
       case 'customer.subscription.deleted':
         handleSubscriptionChange(event.data.object);
+        handleSubscriptionDeleted(event.data.object);
+        break;
+      case 'customer.subscription.trial_will_end':
+        handleTrialWillEnd(event.data.object);
         break;
       case 'invoice.paid':
         handleInvoicePaid(event.data.object);
+        break;
+      case 'invoice.payment_failed':
+        handlePaymentFailed(event.data.object);
         break;
       default:
         break;

@@ -326,6 +326,24 @@ if (!planCols.includes('billing_email'))         db.exec("ALTER TABLE plan ADD C
 if (!planCols.includes('stripe_customer_id'))     db.exec('ALTER TABLE plan ADD COLUMN stripe_customer_id TEXT');
 if (!planCols.includes('stripe_subscription_id')) db.exec('ALTER TABLE plan ADD COLUMN stripe_subscription_id TEXT');
 if (!planCols.includes('subscription_status'))    db.exec("ALTER TABLE plan ADD COLUMN subscription_status TEXT DEFAULT ''");
+{
+  const planCols = db.prepare('PRAGMA table_info(plan)').all().map(r => r.name);
+  if (!planCols.includes('trial_ends_at')) {
+    db.exec("ALTER TABLE plan ADD COLUMN trial_ends_at TEXT");
+  }
+  if (!planCols.includes('grace_period_ends_at')) {
+    db.exec("ALTER TABLE plan ADD COLUMN grace_period_ends_at TEXT");
+  }
+  if (!planCols.includes('stripe_price_id')) {
+    db.exec("ALTER TABLE plan ADD COLUMN stripe_price_id TEXT");
+  }
+  if (!planCols.includes('cancelled_at')) {
+    db.exec("ALTER TABLE plan ADD COLUMN cancelled_at TEXT");
+  }
+  if (!planCols.includes('notes')) {
+    db.exec("ALTER TABLE plan ADD COLUMN notes TEXT DEFAULT ''");
+  }
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS billing_history (

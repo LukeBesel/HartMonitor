@@ -741,11 +741,8 @@ function PlanTab() {
     if (!isLive) { setCheckout(item); return; }
     setRedirecting(true);
     try {
-      const { url } = await api.createCheckout(
-        item.kind === 'tier'
-          ? { tier: item.tier }
-          : { addon: item.addonType, quantity: item.quantity }
-      );
+      const tier = item.kind === 'tier' ? (item.tier ?? 'pro') : (item.addonType ?? 'app_slot');
+      const { url } = await api.createCheckout(tier);
       window.location.href = url;
     } catch (err: any) {
       showToast(err.message || 'Could not start checkout', 'error');
