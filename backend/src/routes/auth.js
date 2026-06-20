@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { hashPassword, verifyPassword, generateToken, requireAuth } = require('../middleware/auth');
 const { PROVIDERS, isConfigured } = require('../sso');
+const { sendWelcomeEmail, sendPasswordResetEmail } = require('../email');
 
 const router = express.Router();
 
@@ -93,6 +94,15 @@ router.post('/signup', (req, res) => {
   signup();
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+
+  // Fire-and-forget welcome email — never blocks the response
+  sendWelcomeEmail({
+    to: normalizedEmail,
+    name: display_name.trim() || normalizedEmail.split('@')[0],
+    companyName: company_name.trim() || 'Your Company',
+    trialDays: 14,
+  }).catch(err => console.error('[email] welcome email failed:', err.message));
+
   res.status(201).json({
     token,
     user: { id: user.id, email: user.email, display_name: user.display_name, role: user.role },
@@ -132,6 +142,67 @@ router.put('/change-password', requireAuth, (req, res) => {
   // Invalidate all other sessions
   db.prepare('DELETE FROM sessions WHERE user_id = ? AND id != ?').run(req.user.id, req.user.session_id);
   res.json({ success: true });
+});
+
+// ─── Password reset ─────────────────────────────────────────────────────────────
+
+function sha256(s) {
+  return crypto.createHash('sha256').update(s).digest('hex');
+}
+
+// POST /forgot-password — request a reset link (public). Always responds 200 so
+// the endpoint can't be used to enumerate which emails exist. When SMTP is not
+// configured we include dev_reset_url so self-hosted installs can still complete
+// the flow.
+router.post('/forgot-password', async (req, res) => {
+  const email = (req.body?.email || '').toLowerCase().trim();
+  if (!email) return res.status(400).json({ error: 'email required' });
+
+  const user = db.prepare('SELECT * FROM users WHERE email = ? AND is_active = 1').get(email);
+  if (!user) return res.json({ ok: true }); // don't reveal non-existence
+
+  // Clear any prior tokens for this user, then mint a fresh single-use token.
+  db.prepare('DELETE FROM password_reset_tokens WHERE user_id = ?').run(user.id);
+  const raw = crypto.randomBytes(32).toString('hex');
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour
+  db.prepare('INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at) VALUES (?, ?, ?, ?)')
+    .run(uuidv4(), user.id, sha256(raw), expiresAt);
+
+  const resetUrl = `${appUrl(req)}/reset-password?token=${raw}`;
+
+  // In demo mode (no SMTP) sendPasswordResetEmail just logs — return dev link.
+  const isDemoMode = !process.env.SMTP_HOST || !process.env.SMTP_USER;
+  await sendPasswordResetEmail({ to: user.email, resetUrl });
+
+  if (isDemoMode) {
+    console.log('[auth] password reset link for', email, '->', resetUrl);
+    return res.json({ ok: true, dev_reset_url: resetUrl });
+  }
+  res.json({ ok: true });
+});
+
+// POST /reset-password — consume a token and set a new password (public).
+router.post('/reset-password', (req, res) => {
+  const { token, new_password } = req.body || {};
+  if (!token || !new_password) return res.status(400).json({ error: 'token and new_password required' });
+  if (new_password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+
+  const row = db.prepare(
+    "SELECT * FROM password_reset_tokens WHERE token_hash = ? AND used_at IS NULL AND expires_at > datetime('now')"
+  ).get(sha256(token));
+  if (!row) return res.status(400).json({ error: 'Invalid or expired reset link' });
+
+  const reset = db.transaction(() => {
+    db.prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?")
+      .run(hashPassword(new_password), row.user_id);
+    db.prepare("UPDATE password_reset_tokens SET used_at = datetime('now') WHERE id = ?").run(row.id);
+    db.prepare('DELETE FROM password_reset_tokens WHERE user_id = ? AND id != ?').run(row.user_id, row.id);
+    // Force a fresh login everywhere after a reset.
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.user_id);
+  });
+  reset();
+
+  res.json({ ok: true });
 });
 
 // ─── SSO ───────────────────────────────────────────────────────────────────────
