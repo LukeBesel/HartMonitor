@@ -16,6 +16,7 @@ import UpgradeModal from './UpgradeModal';
 import QuickCreateModal from './QuickCreateModal';
 import PWAUpdatePrompt from './PWAUpdatePrompt';
 import { BillingBanner } from './BillingBanner';
+import { SetupChecklist } from './SetupChecklist';
 
 function ProBadge() {
   return (
@@ -286,6 +287,9 @@ export default function Layout() {
             );
           })}
         </nav>
+
+        {/* Setup checklist — only visible when sidebar is expanded */}
+        {!effectiveCollapsed && <SetupChecklist />}
 
         <div className="p-2 border-t border-white/10 flex-shrink-0 space-y-0.5">
           {/* Site switcher — the active plant, anchored at the bottom of the bar */}
