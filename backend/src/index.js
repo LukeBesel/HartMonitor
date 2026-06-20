@@ -121,11 +121,26 @@ const authLimiter = rateLimit({
 app.get('/api/health', (_req, res) => {
   let dbOk = true;
   try { require('./db').prepare('SELECT 1').get(); } catch { dbOk = false; }
-  res.status(dbOk ? 200 : 503).json({
+
+  const response = {
     status: dbOk ? 'ok' : 'degraded',
     uptime: Math.round(process.uptime()),
     timestamp: new Date().toISOString(),
-  });
+    version: require('../../package.json').version,
+    nodeVersion: process.version,
+    memoryMB: Math.round(process.memoryUsage().rss / 1024 / 1024),
+  };
+
+  // Report database file size when running with a persistent database path.
+  if (process.env.DATABASE_PATH) {
+    try {
+      const { statSync } = require('fs');
+      const bytes = statSync(process.env.DATABASE_PATH).size;
+      response.dbSizeMB = Math.round((bytes / 1024 / 1024) * 10) / 10;
+    } catch { /* db not yet created or inaccessible — omit the field */ }
+  }
+
+  res.status(dbOk ? 200 : 503).json(response);
 });
 
 // Stripe webhook needs the raw body for signature verification, so it must be
