@@ -7,6 +7,14 @@
 const db = require('./db');
 const { getStripe, webhookSecret } = require('./stripe');
 const { PRICING, setTier, addAddonSlots, recordBilling } = require('./routes/config');
+const { sendPaymentFailedEmail, sendTrialEndingEmail, sendSubscriptionCancelledEmail } = require('./email');
+
+// Look up the primary admin for a company to send billing emails to.
+function getCompanyAdmin(companyId) {
+  return db.prepare(
+    "SELECT email, display_name AS name FROM users WHERE company_id = ? AND role IN ('developer','manager') AND is_active = 1 ORDER BY created_at LIMIT 1"
+  ).get(companyId);
+}
 
 function findCompanyId(obj) {
   // Prefer explicit metadata; fall back to the customer linkage we stored.
@@ -67,6 +75,37 @@ function handleSubscriptionChange(sub) {
     setTier(companyId, 'free');
     db.prepare("UPDATE plan SET extra_app_slots = 0, extra_dashboard_slots = 0, stripe_subscription_id = '' WHERE company_id = ?").run(companyId);
     recordBilling(companyId, { type: 'refund', description: 'Subscription canceled — reverted to Free', amount: 0 });
+
+    // Notify the admin
+    const admin = getCompanyAdmin(companyId);
+    if (admin) {
+      sendSubscriptionCancelledEmail({ to: admin.email, name: admin.name || admin.email }).catch(console.error);
+    }
+  }
+}
+
+function handleInvoicePaymentFailed(invoice) {
+  const companyId = findCompanyId(invoice);
+  if (!companyId) return;
+  const admin = getCompanyAdmin(companyId);
+  if (admin) {
+    sendPaymentFailedEmail({ to: admin.email, name: admin.name || admin.email }).catch(console.error);
+  }
+}
+
+function handleTrialWillEnd(sub) {
+  const companyId = findCompanyId(sub);
+  if (!companyId) return;
+  // Stripe fires this 7 days and 3 days before trial end. Use the provided
+  // trial_end timestamp to compute how many days are left.
+  let daysLeft = 7;
+  if (sub.trial_end) {
+    const ms = sub.trial_end * 1000 - Date.now();
+    daysLeft = Math.max(1, Math.ceil(ms / (1000 * 60 * 60 * 24)));
+  }
+  const admin = getCompanyAdmin(companyId);
+  if (admin) {
+    sendTrialEndingEmail({ to: admin.email, name: admin.name || admin.email, daysLeft }).catch(console.error);
   }
 }
 
@@ -146,6 +185,9 @@ function stripeWebhook(req, res) {
       case 'customer.subscription.deleted':
         handleSubscriptionChange(event.data.object);
         handleSubscriptionDeleted(event.data.object);
+        break;
+      case 'customer.subscription.trial_will_end':
+        handleTrialWillEnd(event.data.object);
         break;
       case 'customer.subscription.trial_will_end':
         handleTrialWillEnd(event.data.object);

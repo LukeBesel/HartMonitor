@@ -5,6 +5,7 @@ const db = require('../db');
 const { config } = require('../config');
 const { hashPassword, verifyPassword, generateToken, requireAuth } = require('../middleware/auth');
 const { PROVIDERS, isConfigured } = require('../sso');
+const { sendWelcomeEmail, sendPasswordResetEmail } = require('../email');
 
 const router = express.Router();
 
@@ -110,6 +111,14 @@ router.post('/signup', (req, res) => {
     path: '/',
   });
 
+  // Fire-and-forget welcome email — never blocks the response
+  sendWelcomeEmail({
+    to: normalizedEmail,
+    name: display_name.trim() || normalizedEmail.split('@')[0],
+    companyName: company_name.trim() || 'Your Company',
+    trialDays: 14,
+  }).catch(err => console.error('[email] welcome email failed:', err.message));
+
   res.status(201).json({
     token: raw,
     user: { id: user.id, email: user.email, display_name: user.display_name, role: user.role },
@@ -177,17 +186,12 @@ router.post('/forgot-password', async (req, res) => {
     .run(uuidv4(), user.id, sha256(raw), expiresAt);
 
   const resetUrl = `${appUrl(req)}/reset-password?token=${raw}`;
-  const body =
-    `Hi ${user.display_name},\n\n` +
-    `We received a request to reset your HartMonitor password. Click the link below ` +
-    `to choose a new one. This link expires in 1 hour and can be used once.\n\n` +
-    `${resetUrl}\n\n` +
-    `If you didn't request this, you can safely ignore this email — your password ` +
-    `won't change.\n`;
 
-  const { sendRawEmail } = require('../notifications');
-  const { sent } = await sendRawEmail(user.email, 'Reset your HartMonitor password', body);
-  if (!sent) {
+  // In demo mode (no SMTP) sendPasswordResetEmail just logs — return dev link.
+  const isDemoMode = !process.env.SMTP_HOST || !process.env.SMTP_USER;
+  await sendPasswordResetEmail({ to: user.email, resetUrl });
+
+  if (isDemoMode) {
     console.log('[auth] password reset link for', email, '->', resetUrl);
     return res.json({ ok: true, dev_reset_url: resetUrl });
   }
