@@ -1,13 +1,27 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { renderHook, act } from '@testing-library/react';
+import { renderHook } from '@testing-library/react';
 
-// Mock the API module
+// Mock Capacitor so tests run in jsdom without native APIs
+vi.mock('@capacitor/core', () => ({
+  Capacitor: { isNativePlatform: () => false },
+}));
+vi.mock('@capacitor/preferences', () => ({
+  Preferences: {
+    get: vi.fn().mockResolvedValue({ value: null }),
+    set: vi.fn().mockResolvedValue(undefined),
+    remove: vi.fn().mockResolvedValue(undefined),
+  },
+}));
+
+// Mock the API module — include all named exports AuthContext uses
 vi.mock('../../api/client', () => ({
   api: {
     getMe: vi.fn(),
     login: vi.fn(),
     logout: vi.fn(),
+    signup: vi.fn(),
   },
+  setNativeToken: vi.fn(),
 }));
 
 import { AuthProvider, useAuth } from '../AuthContext';
@@ -23,16 +37,15 @@ describe('AuthContext', () => {
     localStorage.clear();
   });
 
-  it('starts with no user when localStorage is empty', async () => {
+  it('starts with no user when getMe rejects', async () => {
     vi.mocked(api.getMe).mockRejectedValue({ status: 401 });
     const { result } = renderHook(() => useAuth(), { wrapper });
-    // loading might be true initially
     expect(result.current.user).toBeNull();
   });
 
-  it('isAtLeast returns false for lower roles', () => {
-    // This tests the role comparison logic without needing a full login
-    // TODO: expand when role helper is extracted to a utility function
-    expect(true).toBe(true); // placeholder
+  it('isAtLeast returns false when not logged in', () => {
+    vi.mocked(api.getMe).mockRejectedValue({ status: 401 });
+    const { result } = renderHook(() => useAuth(), { wrapper });
+    expect(result.current.isAtLeast('viewer')).toBe(false);
   });
 });

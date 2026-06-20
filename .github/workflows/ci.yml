@@ -52,7 +52,7 @@ jobs:
         run: npm run typecheck --workspace=frontend
 
       - name: Run unit tests
-        run: npm test --workspace=frontend -- --run
+        run: npm test --workspace=frontend
         env:
           NODE_ENV: test
 
