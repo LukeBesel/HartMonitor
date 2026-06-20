@@ -7,8 +7,14 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const path = require('path');
 const http = require('http');
+const cookieParser = require('cookie-parser');
+const logger = require('./logger');
+const pinoHttp = require('pino-http');
+const healthRouter = require('./routes/health');
 
 const { config, validate, banner } = require('./config');
+const db = require('./db');
+const { runMigrations } = require('./db/runMigrations');
 const { stripeWebhook } = require('./webhook');
 const { initWebSocketServer } = require('./ws');
 const { startBackups } = require('./backup');
@@ -44,6 +50,14 @@ const gameRouter         = require('./routes/game');
 const routingsRouter     = require('./routes/routings');
 const uploadRouter       = require('./routes/upload');
 const sqdcRouter         = require('./routes/sqdc');
+const operatorsRouter    = require('./routes/operators');
+const trainingRouter     = require('./routes/training');
+const andonRouter        = require('./routes/andon');
+const capaRouter         = require('./routes/capa');
+const maintenanceRouter  = require('./routes/maintenance');
+const shiftsRouter       = require('./routes/shifts');
+const kaizenRouter       = require('./routes/kaizen');
+const adminRouter        = require('./routes/admin');
 const { requireAuth }    = require('./middleware/auth');
 const { requirePlan }    = require('./middleware/plan');
 const { apiKeyAuth }     = require('./middleware/apiKeyAuth');
@@ -58,8 +72,15 @@ if (errors.length) {
   process.exit(1);
 }
 
+// Run DB migrations before any routes are registered.
+// This ensures the schema is up to date on every deployment.
+runMigrations(db);
+
 const app  = express();
 const PORT = config.port;
+
+app.use(cookieParser());
+app.use(pinoHttp({ logger }));
 
 // Behind a single platform proxy (Railway/Render/nginx) — needed so rate
 // limiting and logging see the real client IP, not the proxy's.
@@ -75,11 +96,21 @@ app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false 
 // but genuine same-origin requests (the bundled SPA calling its own API) are
 // ALWAYS allowed — even if APP_URL wasn't configured — so the app works out of
 // the box on any single-service host.
+// Capacitor native apps use these origins in their WebViews.
+// iOS wraps requests as capacitor://localhost, Android as https://app (custom scheme).
+const NATIVE_ORIGINS = new Set([
+  'capacitor://localhost',
+  'https://localhost',
+  'http://localhost',
+  'ionic://localhost',
+  'https://app',          // Android custom scheme from capacitor.config.ts
+]);
+
 function corsDelegate(req, cb) {
   if (!config.isProd) return cb(null, { origin: true, credentials: true });
 
   const reqOrigin = req.headers.origin;
-  // No Origin header (server-to-server, curl, health probes) → allow.
+  // No Origin header (server-to-server, curl, health probes, native app) → allow.
   if (!reqOrigin) return cb(null, { origin: true, credentials: true });
 
   const allow = new Set(config.allowedOrigins);
@@ -89,19 +120,12 @@ function corsDelegate(req, cb) {
   let sameOrigin = false;
   try { sameOrigin = new URL(reqOrigin).host === req.headers.host; } catch { /* malformed origin */ }
 
-  cb(null, { origin: sameOrigin || allow.has(reqOrigin), credentials: true });
+  // Allow Capacitor native app origins (iOS and Android WebViews)
+  const isNativeApp = NATIVE_ORIGINS.has(reqOrigin);
+
+  cb(null, { origin: sameOrigin || allow.has(reqOrigin) || isNativeApp, credentials: true });
 }
 app.use(cors(corsDelegate));
-
-// ─── Lightweight request logging ──────────────────────────────────────────────
-app.use((req, res, next) => {
-  if (!req.path.startsWith('/api')) return next();   // skip static asset noise
-  const start = Date.now();
-  res.on('finish', () => {
-    console.log(`${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - start}ms`);
-  });
-  next();
-});
 
 // ─── Rate limiting ────────────────────────────────────────────────────────────
 const generalLimiter = rateLimit({
@@ -119,15 +143,7 @@ const authLimiter = rateLimit({
 });
 
 // ─── Health check (for platform probes / uptime monitors) ─────────────────────
-app.get('/api/health', (_req, res) => {
-  let dbOk = true;
-  try { require('./db').prepare('SELECT 1').get(); } catch { dbOk = false; }
-  res.status(dbOk ? 200 : 503).json({
-    status: dbOk ? 'ok' : 'degraded',
-    uptime: Math.round(process.uptime()),
-    timestamp: new Date().toISOString(),
-  });
-});
+app.use('/api/health', healthRouter);
 
 // Stripe webhook needs the raw body for signature verification, so it must be
 // registered before the JSON parser and outside requireAuth.
@@ -158,7 +174,8 @@ app.use('/api/game',          gameRouter);  // public — no auth required
 app.get('/api/public/pricing', (_req, res) => res.json(PRICING));
 
 // Enterprise API v1 — authenticated with a long-lived API key, not a session.
-app.use('/api/v1', apiKeyAuth, v1Router);
+const apiKeyLimiter = rateLimit({ windowMs: 60 * 1000, max: 1000, standardHeaders: true, legacyHeaders: false });
+app.use('/api/v1', apiKeyLimiter, apiKeyAuth, v1Router);
 
 app.use('/api',               requireAuth); // protect everything below
 app.use('/api/apps',          writeRole('supervisor'), appsRouter);
@@ -190,6 +207,14 @@ app.use('/api/notifications', notificationsRouter);
 app.use('/api/routings',      requirePlan('pro'), routingsRouter);
 app.use('/api/upload',        uploadRouter);
 app.use('/api/sqdc',          sqdcRouter);
+app.use('/api/operators',     operatorsRouter);
+app.use('/api/training',      requirePlan('pro'), writeRole('supervisor'), trainingRouter);
+app.use('/api/andon',         writeRole('operator'),   andonRouter);
+app.use('/api/capa',          requirePlan('pro'), writeRole('operator'),   capaRouter);
+app.use('/api/maintenance',   requirePlan('pro'), writeRole('supervisor'), maintenanceRouter);
+app.use('/api/shifts',        writeRole('operator'),   shiftsRouter);
+app.use('/api/kaizen',        writeRole('operator'),   kaizenRouter);
+app.use('/api/admin',         requireRole('developer'), adminRouter);
 
 // Unknown API routes return JSON 404 (not the SPA shell).
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));

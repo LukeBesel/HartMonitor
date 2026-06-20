@@ -128,7 +128,7 @@ export default function AppHistory() {
       setLoading(true);
       setError(null);
       try {
-        const result = await (api as any).getAppHistory(appId, p);
+        const result = await api.getAppHistory(appId, p);
         setData(result);
         setTotal(result.total ?? result.completions?.length ?? 0);
         setPage(p);

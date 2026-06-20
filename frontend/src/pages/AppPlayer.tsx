@@ -4,7 +4,7 @@ import { api } from '../api/client';
 import { App, Widget, Step, WorkOrder, ProductType, Station } from '../types';
 import {
   ChevronLeft, ChevronRight, CheckCircle, X, Clock, Factory,
-  AlertCircle, Loader2, AlertTriangle, Zap, Tag
+  AlertCircle, Loader2, AlertTriangle, Zap, Tag, Info, Package,
 } from 'lucide-react';
 import { CanvasStage } from '../components/app/WidgetView';
 
@@ -31,6 +31,7 @@ export default function AppPlayer() {
   const [taktExceededSteps, setTaktExceededSteps] = useState<number[]>([]);
   const [flashPhase, setFlashPhase] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
+  const [showPartsOverlay, setShowPartsOverlay] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -136,6 +137,7 @@ export default function AppPlayer() {
       return;
     }
     setValidationError(null);
+    setShowPartsOverlay(false);
     recordStepTime(currentStepIdx);
     setCurrentStepIdx(i => i + 1);
     setStepStartTime(Date.now());
@@ -144,6 +146,7 @@ export default function AppPlayer() {
 
   const goPrev = () => {
     setValidationError(null);
+    setShowPartsOverlay(false);
     recordStepTime(currentStepIdx);
     setCurrentStepIdx(i => Math.max(0, i - 1));
     setStepStartTime(Date.now());
@@ -199,8 +202,8 @@ export default function AppPlayer() {
   // Setup screen
   if (status === 'setup') {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
-        <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4 sm:p-6">
+        <div className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 w-full max-w-md">
           <div className="text-center mb-6">
             <div className="w-14 h-14 bg-blue-100 rounded-2xl flex items-center justify-center mx-auto mb-3">
               <Factory size={26} className="text-blue-600" />
@@ -271,8 +274,8 @@ export default function AppPlayer() {
     const totalSeconds = Object.values(stepTimes).reduce((a: any, b: any) => a + b, 0) +
       Math.round((Date.now() - stepStartTime) / 1000);
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
-        <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4 sm:p-6">
+        <div className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 w-full max-w-md">
           <div className="text-center mb-6">
             <div className="w-16 h-16 bg-emerald-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <CheckCircle size={32} className="text-emerald-600" />
@@ -329,8 +332,8 @@ export default function AppPlayer() {
 
   if (status === 'abandoned') {
     return (
-      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-6">
-        <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md text-center">
+      <div className="min-h-screen bg-gray-950 flex items-center justify-center p-4 sm:p-6">
+        <div className="bg-white rounded-2xl shadow-2xl p-6 sm:p-8 w-full max-w-md text-center">
           <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
             <X size={32} className="text-gray-500" />
           </div>
@@ -431,17 +434,64 @@ export default function AppPlayer() {
       {/* Content */}
       <div className="flex-1 overflow-y-auto flex justify-center py-8 px-4">
         <div className={`w-full space-y-4 ${currentStep?.layoutMode === 'canvas' ? 'max-w-3xl' : 'max-w-2xl'}`}>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-2xl font-bold text-white">{currentStep?.name}</h2>
-            {stepTaktSeconds > 0 && (
-              <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium ${
-                isOverTakt ? 'bg-red-800/60 text-red-300' : 'bg-white/10 text-gray-300'
-              }`}>
-                <Clock size={13} />
-                Takt: {formatDur(stepTaktSeconds)} · Now: {formatDur(stepElapsed)}
-              </div>
-            )}
+          <div className="flex items-center justify-between mb-4 gap-3">
+            <h2 className="text-2xl font-bold text-white flex-1">{currentStep?.name}</h2>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              {(currentStep?.parts_list?.length ?? 0) > 0 && (
+                <button
+                  onClick={() => setShowPartsOverlay(o => !o)}
+                  title="View parts & materials for this step"
+                  className="relative flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/80 hover:bg-indigo-500/90 text-white text-xs font-medium transition-colors"
+                >
+                  <Package size={13} />
+                  Parts
+                  <span className="absolute -top-1.5 -right-1.5 w-4 h-4 bg-pink-500 rounded-full text-[9px] flex items-center justify-center font-bold">
+                    {currentStep!.parts_list!.length}
+                  </span>
+                </button>
+              )}
+              {stepTaktSeconds > 0 && (
+                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium ${
+                  isOverTakt ? 'bg-red-800/60 text-red-300' : 'bg-white/10 text-gray-300'
+                }`}>
+                  <Clock size={13} />
+                  Takt: {formatDur(stepTaktSeconds)} · Now: {formatDur(stepElapsed)}
+                </div>
+              )}
+            </div>
           </div>
+
+          {/* Parts overlay — slides in below the step header */}
+          {showPartsOverlay && currentStep?.parts_list && currentStep.parts_list.length > 0 && (
+            <div className="mb-4 bg-indigo-950/80 border border-indigo-500/30 rounded-xl p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2 text-white font-semibold text-sm">
+                  <Package size={15} className="text-indigo-400" />
+                  Parts &amp; Materials — {currentStep.name}
+                </div>
+                <button onClick={() => setShowPartsOverlay(false)} className="p-1 rounded-lg hover:bg-white/10 text-gray-400">
+                  <X size={14} />
+                </button>
+              </div>
+              <div className="space-y-1">
+                {currentStep.parts_list.map((part, i) => (
+                  <div key={i} className="flex items-center gap-3 py-1.5 border-b border-white/5 last:border-0">
+                    <div className="w-6 h-6 rounded-md bg-indigo-800/60 flex items-center justify-center flex-shrink-0">
+                      <Package size={11} className="text-indigo-300" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <span className="text-white text-sm font-medium">{part.name}</span>
+                      {part.sku && <span className="text-gray-400 text-xs ml-2">#{part.sku}</span>}
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <span className="text-indigo-300 font-bold text-sm">{part.quantity}</span>
+                      {part.unit && <span className="text-gray-400 text-xs ml-1">{part.unit}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {validationError && (
             <div className="flex items-center gap-2 px-4 py-3 bg-red-900/40 border border-red-700 rounded-xl text-red-300 text-sm font-medium">
               <AlertCircle size={16} className="flex-shrink-0" />
@@ -477,22 +527,23 @@ export default function AppPlayer() {
         </div>
       </div>
 
-      {/* Footer nav */}
-      <div className="bg-gray-900 border-t border-white/10 px-6 py-3 flex items-center justify-between flex-shrink-0">
+      {/* Footer nav — large touch targets for shop-floor tablets */}
+      <div className="bg-gray-900 border-t border-white/10 px-4 sm:px-6 py-3 flex items-center justify-between gap-3 flex-shrink-0"
+        style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
         <button onClick={goPrev} disabled={currentStepIdx === 0}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
-          <ChevronLeft size={16} /> Previous
+          className="flex items-center gap-2 px-4 py-3 rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+          <ChevronLeft size={18} /> <span className="hidden sm:inline">Previous</span>
         </button>
         <div className="text-gray-500 text-xs font-mono">{formatDur(stepElapsed)}</div>
         {currentStepIdx < app.steps.length - 1 ? (
           <button onClick={goNext}
-            className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors">
-            Next <ChevronRight size={16} />
+            className="flex items-center gap-2 px-6 sm:px-8 py-3 bg-blue-600 hover:bg-blue-700 active:bg-blue-800 text-white rounded-xl text-base font-semibold transition-colors shadow-lg shadow-blue-600/20">
+            Next <ChevronRight size={18} />
           </button>
         ) : (
           <button onClick={complete}
-            className="flex items-center gap-2 px-5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-medium transition-colors">
-            <CheckCircle size={16} /> Complete
+            className="flex items-center gap-2 px-6 sm:px-8 py-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-base font-semibold transition-colors shadow-lg shadow-emerald-600/20">
+            <CheckCircle size={18} /> Complete
           </button>
         )}
       </div>

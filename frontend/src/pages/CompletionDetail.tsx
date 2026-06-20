@@ -151,7 +151,7 @@ export default function CompletionDetail() {
   useEffect(() => {
     if (!id) return;
     setLoading(true);
-    (api as any).getCompletionDetail(id)
+    api.getCompletionDetail(id)
       .then((data: CompletionDetail) => {
         setCompletion(data);
         setLoading(false);

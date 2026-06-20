@@ -4,14 +4,23 @@ import { api } from '../api/client';
 import {
   Factory, ChevronRight, Package, Clock, AlertTriangle, CheckCircle, User, Tablet,
   Briefcase, History as HistoryIcon, LogOut, RefreshCw, Send, ArrowLeft, ScanLine, WifiOff,
-  MessageSquare,
+  MessageSquare, Lock, Delete, Users as UsersIcon, KeyRound,
 } from 'lucide-react';
 import { timeAgo } from '../utils/time';
 import BarcodeScannerModal from '../components/shared/BarcodeScannerModal';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { getQueuedNCRs, queueNCR, syncQueuedNCRs } from '../utils/offlineQueue';
 import { useMessages } from '../context/MessagesContext';
+import { useAuth } from '../context/AuthContext';
 import type { MessageSeverity } from '../types';
+
+interface RosterEntry {
+  id: string;
+  display_name: string;
+  job_title?: string;
+  has_pin: number;
+  has_badge: number;
+}
 
 interface WorkOrder {
   id: string;
@@ -73,12 +82,18 @@ type Tab = 'jobs' | 'history' | 'report' | 'profile';
 
 export default function OperatorPortal() {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [step, setStep] = useState<'name' | 'main'>('name');
   const [activeTab, setActiveTab] = useState<Tab>('jobs');
   const [operatorName, setOperatorName] = useState('');
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedWO, setSelectedWO] = useState<WorkOrder | null>(null);
+
+  // Floor identity (clock-in) state.
+  const [roster, setRoster] = useState<RosterEntry[]>([]);
+  const [rosterLoaded, setRosterLoaded] = useState(false);
+  const [manualMode, setManualMode] = useState(false);
 
   const [completions, setCompletions] = useState<Completion[] | null>(null);
   const [completionsLoading, setCompletionsLoading] = useState(false);
@@ -90,6 +105,28 @@ export default function OperatorPortal() {
     const saved = localStorage.getItem('hm_operator_name');
     if (saved) setOperatorName(saved);
   }, []);
+
+  // Load the operator roster so staff can tap their name and verify with a PIN.
+  useEffect(() => {
+    api.getOperatorRoster()
+      .then(rows => setRoster(rows))
+      .catch(() => setRoster([]))
+      .finally(() => setRosterLoaded(true));
+  }, []);
+
+  // Finalize a verified identity and enter the portal.
+  const identify = async (name: string) => {
+    setOperatorName(name);
+    localStorage.setItem('hm_operator_name', name);
+    setLoading(true);
+    try {
+      await loadWorkOrders();
+      setStep('main');
+      setActiveTab('jobs');
+    } finally {
+      setLoading(false);
+    }
+  };
 
   // When connectivity returns, flush any quality reports that were queued while offline.
   useEffect(() => {
@@ -120,15 +157,7 @@ export default function OperatorPortal() {
 
   const handleNameSubmit = async () => {
     if (!operatorName.trim()) return;
-    localStorage.setItem('hm_operator_name', operatorName.trim());
-    setLoading(true);
-    try {
-      await loadWorkOrders();
-      setStep('main');
-      setActiveTab('jobs');
-    } finally {
-      setLoading(false);
-    }
+    await identify(operatorName.trim());
   };
 
   const handleStartJob = () => {
@@ -141,6 +170,7 @@ export default function OperatorPortal() {
     setSelectedWO(null);
     setCompletions(null);
     setActiveTab('jobs');
+    setManualMode(false);
   };
 
   // Lazy-load completion history the first time that tab is opened.
@@ -153,64 +183,19 @@ export default function OperatorPortal() {
 
   if (step === 'name') {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-[#0a1628] via-[#0d1f3c] to-[#0a1628] flex flex-col">
-        {/* Brand bar */}
-        <div className="px-6 pt-6 pb-2 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-blue-500 to-blue-700 shadow-lg">
-            <Tablet size={20} className="text-white" />
-          </div>
-          <div>
-            <div className="text-white font-bold text-lg leading-tight">HartMonitor</div>
-            <div className="text-blue-300/70 text-xs">Operator Portal</div>
-          </div>
-        </div>
-
-        <div className="flex-1 flex items-center justify-center p-6">
-          <div className="w-full max-w-md">
-            <div className="text-center mb-8">
-              <div className="w-20 h-20 bg-blue-600/20 rounded-full flex items-center justify-center mx-auto mb-4 border-2 border-blue-500/30">
-                <User size={36} className="text-blue-400" />
-              </div>
-              <h1 className="text-3xl font-bold text-white">Welcome</h1>
-              <p className="text-blue-200/70 text-sm mt-2">Enter your name to see your assigned jobs</p>
-            </div>
-            <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-blue-200 mb-2">Your Name</label>
-                <input
-                  className="w-full h-14 rounded-xl bg-white/10 border border-white/20 text-white text-lg px-4 placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white/15"
-                  placeholder="Enter your name..."
-                  value={operatorName}
-                  onChange={e => setOperatorName(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleNameSubmit()}
-                  autoFocus
-                  autoComplete="name"
-                />
-              </div>
-              <button
-                onClick={handleNameSubmit}
-                disabled={!operatorName.trim() || loading}
-                className="w-full h-14 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl font-bold text-lg transition-colors flex items-center justify-center gap-3 shadow-lg shadow-blue-900/50"
-              >
-                {loading ? (
-                  <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                ) : (
-                  <>See My Jobs <ChevronRight size={20} /></>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-
-        <div className="px-6 pb-6 text-center">
-          <button
-            onClick={() => navigate('/dashboard')}
-            className="text-xs text-blue-400/40 hover:text-blue-300/60 transition-colors"
-          >
-            Management Dashboard →
-          </button>
-        </div>
-      </div>
+      <IdentifyScreen
+        roster={roster}
+        rosterLoaded={rosterLoaded}
+        loading={loading}
+        currentUser={user}
+        manualMode={manualMode}
+        setManualMode={setManualMode}
+        operatorName={operatorName}
+        setOperatorName={setOperatorName}
+        onManualSubmit={handleNameSubmit}
+        onIdentify={identify}
+        onExit={() => navigate('/dashboard')}
+      />
     );
   }
 
@@ -278,6 +263,291 @@ export default function OperatorPortal() {
       </main>
 
       <BottomNav active={activeTab} onChange={setActiveTab} />
+    </div>
+  );
+}
+
+// ── Identify (clock-in) screen ────────────────────────────────────────────────
+// Operators verify their floor identity with a PIN or badge so their work is
+// attributed to a real account — not free-typed text. Falls back gracefully to
+// a name entry when no PINs are set up yet.
+
+function IdentifyScreen({
+  roster, rosterLoaded, loading, currentUser, manualMode, setManualMode,
+  operatorName, setOperatorName, onManualSubmit, onIdentify, onExit,
+}: {
+  roster: RosterEntry[];
+  rosterLoaded: boolean;
+  loading: boolean;
+  currentUser: { display_name?: string; role?: string } | null;
+  manualMode: boolean;
+  setManualMode: (v: boolean) => void;
+  operatorName: string;
+  setOperatorName: (v: string) => void;
+  onManualSubmit: () => void;
+  onIdentify: (name: string) => void;
+  onExit: () => void;
+}) {
+  const [selectedOp, setSelectedOp] = useState<RosterEntry | null>(null);
+  const [pin, setPin] = useState('');
+  const [pinError, setPinError] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+  const [scanError, setScanError] = useState('');
+
+  const anyBadges = roster.some(r => r.has_badge);
+  const isSelfOperator = currentUser?.role === 'operator' && !!currentUser.display_name;
+
+  const tapTile = (op: RosterEntry) => {
+    setScanError('');
+    if (op.has_pin) {
+      setSelectedOp(op); setPin(''); setPinError(false);
+    } else {
+      onIdentify(op.display_name); // no PIN configured — identify directly
+    }
+  };
+
+  const submitPin = async () => {
+    if (!selectedOp || pin.length < 4 || verifying) return;
+    setVerifying(true); setPinError(false);
+    try {
+      const res = await api.verifyOperatorPin({ user_id: selectedOp.id, pin });
+      await onIdentify(res.display_name);
+    } catch {
+      setPinError(true); setPin('');
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const handleBadge = async (code: string) => {
+    setShowScanner(false);
+    setScanError('');
+    setVerifying(true);
+    try {
+      const res = await api.verifyOperatorPin({ badge_code: code });
+      await onIdentify(res.display_name);
+    } catch {
+      setScanError(`Badge "${code}" not recognized`);
+    } finally {
+      setVerifying(false);
+    }
+  };
+
+  const brandBar = (
+    <div className="px-6 pt-6 pb-2 flex items-center gap-3">
+      <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-gradient-to-br from-blue-500 to-blue-700 shadow-lg">
+        <Tablet size={20} className="text-white" />
+      </div>
+      <div>
+        <div className="text-white font-bold text-lg leading-tight">HartMonitor</div>
+        <div className="text-blue-300/70 text-xs">Operator Portal</div>
+      </div>
+    </div>
+  );
+
+  const footer = (
+    <div className="px-6 pb-6 text-center">
+      <button onClick={onExit} className="text-xs text-blue-400/40 hover:text-blue-300/60 transition-colors">
+        Management Dashboard →
+      </button>
+    </div>
+  );
+
+  // ── PIN keypad for a selected operator ──
+  if (selectedOp) {
+    const Key = ({ children, onClick, disabled }: { children: React.ReactNode; onClick: () => void; disabled?: boolean }) => (
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className="h-16 rounded-2xl bg-white/10 hover:bg-white/20 active:bg-white/30 disabled:opacity-30 text-white text-2xl font-semibold transition-colors flex items-center justify-center"
+      >
+        {children}
+      </button>
+    );
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#0a1628] via-[#0d1f3c] to-[#0a1628] flex flex-col">
+        {brandBar}
+        {showScanner && (
+          <BarcodeScannerModal title="Scan Badge" hint="Scan your operator badge" onClose={() => setShowScanner(false)} onScan={handleBadge} />
+        )}
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="w-full max-w-xs">
+            <button onClick={() => setSelectedOp(null)} className="flex items-center gap-1.5 text-blue-300/70 hover:text-blue-200 text-sm mb-5 transition-colors">
+              <ArrowLeft size={16} /> Choose someone else
+            </button>
+            <div className="text-center mb-6">
+              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center mx-auto mb-3 text-white text-2xl font-bold">
+                {selectedOp.display_name.trim()[0]?.toUpperCase() ?? '?'}
+              </div>
+              <h1 className="text-xl font-bold text-white">{selectedOp.display_name}</h1>
+              <p className="text-blue-200/70 text-sm mt-1 flex items-center justify-center gap-1.5">
+                <Lock size={13} /> Enter your PIN
+              </p>
+            </div>
+            {/* PIN dots */}
+            <div className={`flex items-center justify-center gap-3 mb-6 ${pinError ? 'animate-pulse' : ''}`}>
+              {Array.from({ length: Math.max(4, pin.length) }).map((_, i) => (
+                <span key={i} className={`w-3.5 h-3.5 rounded-full border-2 ${i < pin.length ? 'bg-blue-400 border-blue-400' : 'border-white/30'}`} />
+              ))}
+            </div>
+            {pinError && <p className="text-center text-sm text-red-300 mb-4">Incorrect PIN — try again</p>}
+            <div className="grid grid-cols-3 gap-3">
+              {['1','2','3','4','5','6','7','8','9'].map(d => (
+                <Key key={d} onClick={() => { setPinError(false); setPin(p => (p.length < 8 ? p + d : p)); }}>{d}</Key>
+              ))}
+              <Key onClick={() => setPin('')}>
+                <span className="text-sm font-medium text-blue-200/70">Clear</span>
+              </Key>
+              <Key onClick={() => { setPinError(false); setPin(p => (p.length < 8 ? p + '0' : p)); }}>0</Key>
+              <Key onClick={() => setPin(p => p.slice(0, -1))}><Delete size={22} /></Key>
+            </div>
+            <button
+              onClick={submitPin}
+              disabled={pin.length < 4 || verifying}
+              className="mt-5 w-full h-14 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-xl font-bold text-lg transition-colors flex items-center justify-center gap-2"
+            >
+              {verifying ? <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <>Clock In <ChevronRight size={20} /></>}
+            </button>
+            {selectedOp.has_badge && (
+              <button onClick={() => setShowScanner(true)} className="mt-3 w-full text-sm text-blue-300/70 hover:text-blue-200 flex items-center justify-center gap-1.5 transition-colors">
+                <ScanLine size={14} /> Scan badge instead
+              </button>
+            )}
+          </div>
+        </div>
+        {footer}
+      </div>
+    );
+  }
+
+  // ── Manual fallback: free-text name entry ──
+  if (manualMode) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#0a1628] via-[#0d1f3c] to-[#0a1628] flex flex-col">
+        {brandBar}
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="w-full max-w-md">
+            {roster.length > 0 && (
+              <button onClick={() => setManualMode(false)} className="flex items-center gap-1.5 text-blue-300/70 hover:text-blue-200 text-sm mb-5 transition-colors">
+                <ArrowLeft size={16} /> Back to operator list
+              </button>
+            )}
+            <div className="text-center mb-8">
+              <div className="w-20 h-20 bg-blue-600/20 rounded-full flex items-center justify-center mx-auto mb-4 border-2 border-blue-500/30">
+                <User size={36} className="text-blue-400" />
+              </div>
+              <h1 className="text-3xl font-bold text-white">Welcome</h1>
+              <p className="text-blue-200/70 text-sm mt-2">Enter your name to see your assigned jobs</p>
+            </div>
+            <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-6 space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-blue-200 mb-2">Your Name</label>
+                <input
+                  className="w-full h-14 rounded-xl bg-white/10 border border-white/20 text-white text-lg px-4 placeholder-white/30 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white/15"
+                  placeholder="Enter your name..."
+                  value={operatorName}
+                  onChange={e => setOperatorName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && onManualSubmit()}
+                  autoFocus
+                  autoComplete="name"
+                />
+              </div>
+              <button
+                onClick={onManualSubmit}
+                disabled={!operatorName.trim() || loading}
+                className="w-full h-14 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl font-bold text-lg transition-colors flex items-center justify-center gap-3 shadow-lg shadow-blue-900/50"
+              >
+                {loading ? <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <>See My Jobs <ChevronRight size={20} /></>}
+              </button>
+            </div>
+          </div>
+        </div>
+        {footer}
+      </div>
+    );
+  }
+
+  // ── Primary: operator roster picker ──
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-[#0a1628] via-[#0d1f3c] to-[#0a1628] flex flex-col">
+      {brandBar}
+      {showScanner && (
+        <BarcodeScannerModal title="Scan Badge" hint="Scan your operator badge to clock in" onClose={() => setShowScanner(false)} onScan={handleBadge} />
+      )}
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="w-full max-w-2xl mx-auto">
+          <div className="text-center mb-6">
+            <div className="w-16 h-16 bg-blue-600/20 rounded-full flex items-center justify-center mx-auto mb-3 border-2 border-blue-500/30">
+              <UsersIcon size={30} className="text-blue-400" />
+            </div>
+            <h1 className="text-2xl font-bold text-white">Who's working?</h1>
+            <p className="text-blue-200/70 text-sm mt-1">Tap your name to clock in</p>
+          </div>
+
+          {isSelfOperator && (
+            <button
+              onClick={() => onIdentify(currentUser!.display_name!)}
+              disabled={loading}
+              className="w-full mb-4 h-14 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-2xl font-bold text-base transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-900/40"
+            >
+              Continue as {currentUser!.display_name} <ChevronRight size={18} />
+            </button>
+          )}
+
+          {scanError && (
+            <div className="mb-4 bg-amber-500/15 border border-amber-500/30 text-amber-300 rounded-xl px-3 py-2 text-sm text-center">{scanError}</div>
+          )}
+
+          {!rosterLoaded ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {[1,2,3,4,5,6].map(i => <div key={i} className="h-20 bg-white/5 rounded-2xl animate-pulse" />)}
+            </div>
+          ) : roster.length === 0 ? (
+            <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-8 text-center">
+              <KeyRound size={32} className="mx-auto mb-3 text-blue-300/50" />
+              <div className="text-white font-semibold">No operators set up yet</div>
+              <div className="text-blue-200/70 text-sm mt-1">Ask your manager to add operators (with PINs) in Settings → Users.</div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              {roster.map(op => (
+                <button
+                  key={op.id}
+                  onClick={() => tapTile(op)}
+                  disabled={verifying}
+                  className="h-20 rounded-2xl border-2 border-white/10 bg-white/10 hover:bg-white/15 hover:border-white/25 active:bg-white/20 transition-all p-3 flex flex-col items-center justify-center gap-1.5 disabled:opacity-50"
+                >
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <span className="w-7 h-7 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">
+                      {op.display_name.trim()[0]?.toUpperCase() ?? '?'}
+                    </span>
+                    <span className="text-white text-sm font-semibold truncate">{op.display_name}</span>
+                  </div>
+                  {op.has_pin
+                    ? <span className="flex items-center gap-1 text-[10px] text-blue-300/60"><Lock size={9} /> PIN</span>
+                    : <span className="text-[10px] text-blue-300/40">Tap to start</span>}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="mt-6 flex flex-col items-center gap-3">
+            {anyBadges && (
+              <button
+                onClick={() => { setScanError(''); setShowScanner(true); }}
+                className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-blue-200 text-sm font-medium transition-colors"
+              >
+                <ScanLine size={16} /> Scan badge
+              </button>
+            )}
+            <button onClick={() => { setOperatorName(''); setManualMode(true); }} className="text-xs text-blue-400/50 hover:text-blue-300/70 transition-colors">
+              Continue without a PIN
+            </button>
+          </div>
+        </div>
+      </div>
+      {footer}
     </div>
   );
 }

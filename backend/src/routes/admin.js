@@ -8,14 +8,7 @@ const router = express.Router();
 
 // Helper: detect whether SMTP / transactional email is configured.
 function smtpConfigured() {
-  return !!(process.env.SMTP_HOST || process.env.SENDGRID_API_KEY || process.env.RESEND_API_KEY);
-}
-
-// Base URL for building reset URLs.
-function appUrl(req) {
-  if (process.env.APP_URL) return process.env.APP_URL.replace(/\/$/, '');
-  const proto = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-  return `${proto}://${req.get('host')}`;
+  return !!(process.env.SMTP_HOST && process.env.SMTP_USER);
 }
 
 // ─── GET /pending-resets ──────────────────────────────────────────────────────
@@ -29,13 +22,14 @@ router.get('/pending-resets', (req, res) => {
     return res.json([]);
   }
 
-  const base = appUrl(req);
   const rows = db.prepare(`
-    SELECT prt.id, u.email as user_email, prt.token, prt.expires_at, prt.created_at
+    SELECT prt.id, u.email as user_email, prt.reset_url, prt.expires_at, prt.created_at
     FROM password_reset_tokens prt
     JOIN users u ON u.id = prt.user_id
     WHERE prt.used_at IS NULL
       AND prt.expires_at > datetime('now')
+      AND prt.reset_url IS NOT NULL
+      AND prt.reset_url != ''
       AND u.company_id = ?
     ORDER BY prt.created_at DESC
   `).all(req.companyId);
@@ -43,7 +37,7 @@ router.get('/pending-resets', (req, res) => {
   const result = rows.map(r => ({
     id: r.id,
     user_email: r.user_email,
-    reset_url: `${base}/reset-password?token=${r.token}`,
+    reset_url: r.reset_url,
     expires_at: r.expires_at,
     created_at: r.created_at,
   }));

@@ -136,6 +136,22 @@ router.put('/ncrs/:id', requireRole('supervisor'), (req, res) => {
   const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!ncr) return res.status(404).json({ error: 'Not found' });
 
+  // Strip fields that must never be overwritten from client input
+  const FORBIDDEN_FIELDS = ['id', 'company_id', 'created_at', 'created_by'];
+  for (const f of FORBIDDEN_FIELDS) {
+    if (f in req.body) delete req.body[f];
+  }
+
+  const { severity, status } = req.body;
+  const VALID_SEVERITIES = ['minor', 'major', 'critical'];
+  const VALID_STATUSES = ['open', 'investigating', 'resolved', 'closed'];
+  if (severity && !VALID_SEVERITIES.includes(severity)) {
+    return res.status(400).json({ error: 'severity must be one of: minor, major, critical' });
+  }
+  if (status && !VALID_STATUSES.includes(status)) {
+    return res.status(400).json({ error: 'status must be one of: open, investigating, resolved, closed' });
+  }
+
   const fields = ['title','description','severity','status','source','app_id','work_order_id','item_id','assigned_to','root_cause','corrective_action','due_date','resolved_at'];
   const updates = {};
   for (const f of fields) if (req.body[f] !== undefined) updates[f] = req.body[f];

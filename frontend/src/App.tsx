@@ -11,6 +11,8 @@ import { NavPrefsProvider } from './context/NavPrefsContext';
 import { SiteProvider } from './context/SiteContext';
 import { PermissionsProvider } from './context/PermissionsContext';
 import { MessagesProvider } from './context/MessagesContext';
+import { ToastProvider } from './context/ToastContext';
+import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import MessageToast from './components/shared/MessageToast';
 
 // Code-split the rest of the pages so the initial load only ships the shell,
@@ -48,11 +50,22 @@ const Pricing          = lazy(() => import('./pages/Pricing'));
 const Terms            = lazy(() => import('./pages/Terms'));
 const Privacy          = lazy(() => import('./pages/Privacy'));
 const SSOCallback      = lazy(() => import('./pages/SSOCallback'));
+const ForgotPassword   = lazy(() => import('./pages/ForgotPassword'));
+const ResetPassword    = lazy(() => import('./pages/ResetPassword'));
 const AuditLog         = lazy(() => import('./pages/AuditLog'));
 const TransactionLog   = lazy(() => import('./pages/AuditLog'));
 const Facilities       = lazy(() => import('./pages/Facilities'));
-const Routings         = lazy(() => import('./pages/Routings'));
-const AdminPage        = lazy(() => import('./pages/Admin'));
+const Routings             = lazy(() => import('./pages/Routings'));
+const ReceivingPortal      = lazy(() => import('./pages/ReceivingPortal'));
+const ShipmentTracker      = lazy(() => import('./pages/ShipmentTracker'));
+const InventoryRequirements = lazy(() => import('./pages/InventoryRequirements'));
+const Training             = lazy(() => import('./pages/Training'));
+const Andon                = lazy(() => import('./pages/Andon'));
+const CAPA                 = lazy(() => import('./pages/CAPA'));
+const Maintenance          = lazy(() => import('./pages/Maintenance'));
+const ShiftNotes           = lazy(() => import('./pages/ShiftNotes'));
+const Kaizen               = lazy(() => import('./pages/Kaizen'));
+const Admin                = lazy(() => import('./pages/Admin'));
 
 function Spinner() {
   return (
@@ -98,9 +111,11 @@ export default function App() {
         <PermissionsProvider>
         <NavPrefsProvider>
         <MessagesProvider>
+        <ToastProvider>
           <BrowserRouter>
             <MessageToast />
             <Suspense fallback={<Spinner />}>
+            <ErrorBoundary>
             <Routes>
               {/* Public marketing site */}
               <Route path="/" element={<Landing />} />
@@ -109,6 +124,8 @@ export default function App() {
               <Route path="/privacy" element={<Privacy />} />
 
               <Route path="/login" element={<Login />} />
+              <Route path="/forgot-password" element={<ForgotPassword />} />
+              <Route path="/reset-password" element={<ResetPassword />} />
               <Route path="/sso/callback" element={<SSOCallback />} />
               <Route path="/play/:id" element={<OperatorRoute><AppPlayer /></OperatorRoute>} />
               <Route path="/operator" element={<OperatorRoute><OperatorPortal /></OperatorRoute>} />
@@ -142,21 +159,34 @@ export default function App() {
                 <Route path="/dashboards/:id/:mode" element={<DashboardView />} />
                 <Route path="/inventory" element={<Inventory />} />
                 <Route path="/inventory/:id" element={<Inventory />} />
+                <Route path="/receiving" element={<ReceivingPortal />} />
+                <Route path="/requirements" element={<InventoryRequirements />} />
+                <Route path="/shipments" element={<ShipmentTracker />} />
                 <Route path="/purchasing" element={<Purchasing />} />
                 <Route path="/purchasing/:tab" element={<Purchasing />} />
                 <Route path="/quality" element={<Quality />} />
                 <Route path="/quality/:id" element={<Quality />} />
+                <Route path="/training" element={<Training />} />
+                <Route path="/training/:tab" element={<Training />} />
                 <Route path="/leaderboard" element={<Leaderboard />} />
                 <Route path="/facilities" element={<Facilities />} />
                 <Route path="/audit-log" element={<AuditLog />} />
                 <Route path="/transaction-log" element={<TransactionLog />} />
                 <Route path="/settings" element={<SettingsPage />} />
-                <Route path="/admin" element={<AdminPage />} />
+                <Route path="/andon" element={<Andon />} />
+                <Route path="/capa" element={<CAPA />} />
+                <Route path="/maintenance" element={<Maintenance />} />
+                <Route path="/maintenance/:tab" element={<Maintenance />} />
+                <Route path="/shift-notes" element={<ShiftNotes />} />
+                <Route path="/kaizen" element={<Kaizen />} />
+                <Route path="/admin" element={<Admin />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Route>
             </Routes>
+            </ErrorBoundary>
             </Suspense>
           </BrowserRouter>
+        </ToastProvider>
         </MessagesProvider>
         </NavPrefsProvider>
         </PermissionsProvider>

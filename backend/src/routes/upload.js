@@ -9,24 +9,42 @@ const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const ALLOWED_MIME_TYPES = new Set([
-  'image/jpeg',
-  'image/png',
-  'image/gif',
-  'image/webp',
-  'image/svg+xml',
+  // Images
+  'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+  // 3D Models / CAD
+  'model/gltf-binary', 'model/gltf+json', 'application/octet-stream',
+  'model/obj', 'model/stl', 'model/x.stl-ascii', 'model/x.stl-binary',
+  'application/sla', 'application/x-3mf', 'application/vnd.ms-3mfdocument',
+  // Videos
+  'video/mp4', 'video/webm', 'video/quicktime', 'video/x-msvideo',
 ]);
 
-const MIME_TO_EXT = {
-  'image/jpeg':    'jpg',
-  'image/png':     'png',
-  'image/gif':     'gif',
-  'image/webp':    'webp',
-  'image/svg+xml': 'svg',
+const EXTENSION_OVERRIDES = {
+  '.glb': 'glb', '.gltf': 'gltf', '.obj': 'obj', '.stl': 'stl', '.3mf': '3mf',
+  '.mp4': 'mp4', '.webm': 'webm', '.mov': 'mov', '.avi': 'avi',
 };
 
-const MAX_BYTES = 5 * 1024 * 1024; // 5 MB
+const MIME_TO_EXT = {
+  'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif',
+  'image/webp': 'webp', 'image/svg+xml': 'svg',
+  'model/gltf-binary': 'glb', 'model/gltf+json': 'gltf',
+  'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov',
+};
 
-// ─── POST /image — accept base64-encoded image and write to disk ──────────────
+const MAX_BYTES = {
+  image: 5 * 1024 * 1024,   // 5 MB
+  model: 50 * 1024 * 1024,  // 50 MB for CAD files
+  video: 200 * 1024 * 1024, // 200 MB for video
+};
+
+function getFileCategory(mimeType, ext) {
+  if (mimeType.startsWith('image/')) return 'image';
+  if (mimeType.startsWith('video/')) return 'video';
+  if (['.glb', '.gltf', '.obj', '.stl', '.3mf'].includes(ext)) return 'model';
+  return 'image';
+}
+
+// ─── POST /image — accept base64-encoded file and write to disk ──────────────
 
 router.post('/image', (req, res) => {
   const { data, mimeType, filename } = req.body;
@@ -34,21 +52,31 @@ router.post('/image', (req, res) => {
   if (!data)     return res.status(400).json({ error: 'data is required' });
   if (!mimeType) return res.status(400).json({ error: 'mimeType is required' });
 
-  if (!ALLOWED_MIME_TYPES.has(mimeType)) {
+  const origExt = filename ? path.extname(filename).toLowerCase() : '';
+  const category = getFileCategory(mimeType, origExt);
+
+  // For known extensions that may come with octet-stream MIME, allow them
+  const isKnownModelExt = ['.glb', '.gltf', '.obj', '.stl', '.3mf'].includes(origExt);
+  const isKnownVideoExt = ['.mp4', '.webm', '.mov', '.avi'].includes(origExt);
+
+  if (!ALLOWED_MIME_TYPES.has(mimeType) && !isKnownModelExt && !isKnownVideoExt) {
     return res.status(400).json({
-      error: 'Unsupported file type. Allowed: jpg, png, gif, webp, svg',
+      error: 'Unsupported file type. Allowed: jpg, png, gif, webp, svg, glb, gltf, obj, stl, 3mf, mp4, webm, mov',
     });
   }
 
-  // Strip optional data-URI prefix (data:image/png;base64,...)
   const base64Data = data.replace(/^data:[^;]+;base64,/, '');
   const buffer = Buffer.from(base64Data, 'base64');
 
-  if (buffer.length > MAX_BYTES) {
-    return res.status(400).json({ error: 'File exceeds 5 MB limit' });
+  const maxBytes = MAX_BYTES[category];
+  if (buffer.length > maxBytes) {
+    return res.status(400).json({ error: `File exceeds ${maxBytes / 1024 / 1024} MB limit` });
   }
 
-  const ext      = MIME_TO_EXT[mimeType];
+  // Determine extension: prefer filename ext for models/videos, else MIME map
+  let ext = EXTENSION_OVERRIDES[origExt];
+  if (!ext) ext = MIME_TO_EXT[mimeType] || origExt.slice(1) || 'bin';
+
   const basename = filename
     ? path.basename(filename, path.extname(filename)).replace(/[^a-zA-Z0-9_-]/g, '_')
     : 'upload';
@@ -63,7 +91,7 @@ router.post('/image', (req, res) => {
     return res.status(500).json({ error: 'Failed to save file' });
   }
 
-  res.status(201).json({ url: `/uploads/${saveName}` });
+  res.status(201).json({ url: `/uploads/${saveName}`, category, filename: saveName });
 });
 
 module.exports = router;

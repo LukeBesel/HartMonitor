@@ -12,10 +12,13 @@ import Reveal from '../marketing/Reveal';
 const GRADIENT = 'linear-gradient(135deg, #6366f1, #ec4899)';
 
 const FAQ = [
-  { q: 'Is there really a free plan?', a: 'Yes. The Free plan includes 5 production apps, 2 dashboards, work orders, scheduling, OEE tracking, the operator portal, and CSV export — no credit card required.' },
+  { q: 'Is there really a free trial?', a: 'Yes. Every paid plan starts with a 14-day free trial — no credit card required. You get full access to every feature in your chosen plan during the trial.' },
+  { q: 'Can I upgrade or downgrade anytime?', a: 'Yes. Upgrade, downgrade, or buy add-ons from your workspace settings at any time. Changes take effect immediately and billing is prorated.' },
+  { q: 'What happens when my trial ends?', a: 'Your account pauses and you will be prompted to add a payment method. Your data is retained for 30 days — nothing is deleted. You can reactivate anytime during that window.' },
+  { q: 'Do you offer refunds?', a: 'Yes. We offer a pro-rated refund within 30 days of any charge. Contact support@hartmonitor.io and we will process it promptly.' },
+  { q: 'Can I export my data?', a: 'Absolutely. CSV export is available for all data — work orders, quality records, analytics, inventory — on every plan, including Free. Your data is always yours.' },
   { q: 'How do add-on slots work?', a: 'On the Free plan you can buy individual extra app or dashboard slots if you only need a little more room, without jumping to Pro. Pro and Enterprise already include unlimited apps and dashboards.' },
-  { q: 'Can I change plans later?', a: 'Anytime. Upgrade, downgrade, or buy add-ons from your workspace settings — changes take effect immediately and billing is prorated.' },
-  { q: 'What happens to my data?', a: 'Your data stays yours. Export everything to CSV or JSON whenever you like, and downgrading never deletes your historical records.' },
+  { q: 'Is there a discount for annual billing?', a: 'Annual billing is coming soon and will save you 20%. Join the waitlist at sales@hartmonitor.io to be notified when it launches.' },
 ];
 
 export default function Pricing() {
@@ -37,7 +40,7 @@ export default function Pricing() {
   };
 
   const fmt = (p: number | null) => (p === null ? 'Custom' : p === 0 ? '$0' : `$${p}`);
-  const cta = (key: string) => (key === 'free' ? 'Start free' : key === 'enterprise' ? 'Contact sales' : 'Choose Pro');
+  const cta = (key: string) => (key === 'free' ? 'Start free' : key === 'enterprise' ? 'Contact sales' : 'Start 14-day free trial');
 
   return (
     <div className="bg-[#060911] text-white antialiased min-h-screen overflow-x-hidden">
@@ -50,7 +53,11 @@ export default function Pricing() {
         </div>
         <Reveal className="relative">
           <h1 className="text-5xl md:text-6xl font-semibold tracking-tight">Pricing that scales with you.</h1>
-          <p className="mt-6 text-lg text-gray-400 max-w-2xl mx-auto">Start free and only pay when you grow. Every plan includes the full operator experience.</p>
+          <p className="mt-6 text-lg text-gray-400 max-w-2xl mx-auto">Start with a 14-day free trial on any paid plan — no credit card required. Every plan includes the full operator experience.</p>
+          <div className="mt-6 inline-flex items-center gap-2 px-4 py-2 rounded-full border border-white/10 bg-white/5 text-sm font-medium text-gray-300">
+            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
+            Annual billing coming soon — save 20%
+          </div>
         </Reveal>
       </section>
 
@@ -72,8 +79,8 @@ export default function Pricing() {
                     <span className="text-5xl font-semibold text-white">{fmt(tier.monthly_price)}</span>
                     {tier.monthly_price !== null && tier.monthly_price > 0 && <span className="text-gray-500">/mo</span>}
                   </div>
-                  <p className="mt-2 text-sm text-gray-500 h-5">
-                    {key === 'free' ? 'Forever free' : key === 'pro' ? 'Billed monthly' : "Let's talk"}
+                  <p className="mt-2 text-sm text-gray-500">
+                    {key === 'free' ? 'Forever free, no credit card' : key === 'pro' ? '14-day free trial · then billed monthly' : "Let's talk about your needs"}
                   </p>
 
                   <button
@@ -157,11 +164,12 @@ export default function Pricing() {
           <div className="relative max-w-4xl mx-auto rounded-3xl overflow-hidden border border-white/10 px-8 py-16 text-center">
             <div className="absolute inset-0 opacity-25 blur-2xl" style={{ background: GRADIENT }} />
             <div className="relative">
-              <h2 className="text-3xl md:text-4xl font-semibold tracking-tight">Ready to get started?</h2>
-              <p className="mt-4 text-gray-300">Spin up your workspace free in under five minutes.</p>
+              <h2 className="text-3xl md:text-4xl font-semibold tracking-tight">Start your free 14-day trial today.</h2>
+              <p className="mt-4 text-gray-300">No credit card required. Set up your workspace in minutes and see results on your first shift.</p>
               <Link to="/login?mode=signup" className="mt-8 inline-flex items-center gap-2 px-8 py-4 rounded-full bg-white text-gray-900 font-semibold transition-all hover:scale-[1.03] shadow-xl">
-                Create your workspace <ArrowRight size={18} />
+                Start free trial — no credit card required <ArrowRight size={18} />
               </Link>
+              <p className="mt-4 text-sm text-gray-500">Questions? Email us at <a href="mailto:sales@hartmonitor.io" className="text-pink-400 hover:text-pink-300">sales@hartmonitor.io</a></p>
             </div>
           </div>
         </Reveal>

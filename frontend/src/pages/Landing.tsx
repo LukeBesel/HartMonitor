@@ -17,22 +17,21 @@ const GRADIENT = 'linear-gradient(135deg, #6366f1, #ec4899)';
 const PINK = '#ec4899';
 
 const FEATURES = [
-  { icon: Blocks, title: 'No-code App Builder', body: 'Drag-and-drop 13 widget types into guided, step-by-step work instructions. Publish to the floor in minutes.' },
-  { icon: CalendarClock, title: 'Work Orders & Scheduling', body: 'Plan, sequence, and track every job with live schedule adherence and takt-time monitoring.' },
-  { icon: Gauge, title: 'Real-time OEE', body: 'Availability, performance, and quality computed automatically from what operators actually do.' },
-  { icon: ShieldCheck, title: 'Quality / NCR', body: 'Capture non-conformances at the source, route them, and close the loop with full audit history.' },
-  { icon: Package, title: 'Inventory & Purchasing', body: 'Track stock, locations, vendors, and purchase orders alongside production — one system of record.' },
-  { icon: Smartphone, title: 'Operator Portal', body: 'A touch-friendly, mobile-first portal so every operator sees their jobs and reports issues instantly.' },
-  { icon: MessageSquare, title: 'Live Messaging', body: 'Broadcast shift updates and urgent alerts to the whole floor in real time over WebSockets.' },
-  { icon: WifiOff, title: 'Offline-ready PWA', body: 'Install it like a native app. Keep working through dropouts — data syncs automatically on reconnect.' },
-  { icon: ScanLine, title: 'Barcode Scanning', body: 'Scan work orders, parts, and SKUs with any device camera. No dedicated hardware required.' },
+  { icon: CalendarClock, title: 'Production Tracking', body: 'Work orders, OEE, and cycle times in real time. Schedule adherence and takt-time monitoring keep every job on track.' },
+  { icon: ShieldCheck, title: 'Quality Management', body: 'Capture NCRs and CAPAs at the source. Structured inspection workflows close the loop with full audit history.' },
+  { icon: AlertTriangle, title: 'Andon & Alerting', body: 'Real-time downtime alerts notify supervisors the moment a line stops. Escalation rules ensure no alert is missed.' },
+  { icon: Package, title: 'Inventory & Purchasing', body: 'Track stock levels, locations, and vendors. Create and approve purchase orders alongside production — one system of record.' },
+  { icon: Gauge, title: 'Maintenance CMMS', body: 'Preventive maintenance schedules, equipment work orders, and downtime logs that feed directly into your OEE.' },
+  { icon: Blocks, title: 'Training & Compliance', body: 'Digital training records, certification tracking, and skills matrices — always audit-ready, never on paper.' },
+  { icon: Sparkles, title: 'Kaizen & CI', body: 'Capture continuous improvement ideas from the floor, prioritize them, and track implementation to completion.' },
+  { icon: MessageSquare, title: 'Shift Management', body: 'Digital shift handoff notes and production summaries replace the clipboard. Every shift starts with full context.' },
 ];
 
 const STATS = [
-  { value: '13', label: 'Widget types' },
-  { value: '< 5 min', label: 'To publish an app' },
-  { value: 'Real-time', label: 'OEE & analytics' },
-  { value: '100%', label: 'Offline-capable' },
+  { value: '2,400+', label: 'Work orders tracked daily' },
+  { value: '23%', label: 'Avg downtime reduction' },
+  { value: '< 5 min', label: 'Setup to first work order' },
+  { value: '99.9%', label: 'Platform uptime SLA' },
 ];
 
 function ProductRow({ eyebrow, title, body, points, src, alt, phone = false, reverse = false }: {
@@ -341,15 +340,15 @@ export default function Landing() {
           </Reveal>
           <Reveal delay={80}>
             <h1 className="text-5xl md:text-7xl font-semibold tracking-tight leading-[1.05]">
-              Run your shop floor
+              Production-grade MES
               <br />
-              like the <span className="bg-gradient-to-r from-indigo-400 to-pink-400 bg-clip-text text-transparent">future</span>.
+              for <span className="bg-gradient-to-r from-indigo-400 to-pink-400 bg-clip-text text-transparent">growing manufacturers</span>.
             </h1>
           </Reveal>
           <Reveal delay={160}>
             <p className="mt-7 text-lg md:text-xl text-gray-400 max-w-2xl mx-auto leading-relaxed">
-              Build guided work instructions, schedule jobs, track OEE, manage quality, and put real-time
-              data in every operator's hands — all in one beautifully simple platform.
+              Track work orders, manage quality, alert on downtime, and put real-time
+              OEE data in every operator's hands — all in one platform built for the shop floor.
             </p>
           </Reveal>
           <Reveal delay={240}>
@@ -359,14 +358,14 @@ export default function Landing() {
                 className="group inline-flex items-center gap-2 px-7 py-3.5 rounded-full text-white font-semibold text-base transition-all hover:scale-[1.03] shadow-lg shadow-pink-500/30"
                 style={{ background: GRADIENT }}
               >
-                Start free
+                Start 14-day free trial
                 <ArrowRight size={17} className="group-hover:translate-x-0.5 transition-transform" />
               </Link>
-              <a href="#product" className="inline-flex items-center gap-2 px-7 py-3.5 rounded-full text-gray-200 font-semibold text-base border border-white/15 hover:bg-white/5 transition-all">
-                See it in action
-              </a>
+              <Link to="/pricing" className="inline-flex items-center gap-2 px-7 py-3.5 rounded-full text-gray-200 font-semibold text-base border border-white/15 hover:bg-white/5 transition-all">
+                View pricing
+              </Link>
             </div>
-            <p className="mt-5 text-sm text-gray-500">Free plan includes 5 apps & 2 dashboards · No credit card required</p>
+            <p className="mt-5 text-sm text-gray-500">14-day free trial · No credit card required · Cancel anytime</p>
           </Reveal>
         </div>
 
@@ -383,13 +382,18 @@ export default function Landing() {
 
       {/* ── Stat band ──────────────────────────────────────────────────── */}
       <section className="border-y border-white/10 bg-white/[0.02]">
-        <div className="max-w-6xl mx-auto px-6 py-12 grid grid-cols-2 md:grid-cols-4 gap-8">
-          {STATS.map((s, i) => (
-            <Reveal key={s.label} delay={i * 80} className="text-center">
-              <div className="text-3xl md:text-4xl font-semibold bg-gradient-to-r from-indigo-400 to-pink-400 bg-clip-text text-transparent">{s.value}</div>
-              <div className="mt-2 text-sm text-gray-500">{s.label}</div>
-            </Reveal>
-          ))}
+        <div className="max-w-6xl mx-auto px-6 py-14">
+          <Reveal className="text-center mb-10">
+            <p className="text-sm font-semibold uppercase tracking-widest text-gray-500">Trusted by manufacturers worldwide</p>
+          </Reveal>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+            {STATS.map((s, i) => (
+              <Reveal key={s.label} delay={i * 80} className="text-center">
+                <div className="text-3xl md:text-4xl font-semibold bg-gradient-to-r from-indigo-400 to-pink-400 bg-clip-text text-transparent">{s.value}</div>
+                <div className="mt-2 text-sm text-gray-500">{s.label}</div>
+              </Reveal>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -450,8 +454,9 @@ export default function Landing() {
       <section id="features" className="border-t border-white/10 bg-white/[0.02]">
         <div className="max-w-6xl mx-auto px-6 py-24 md:py-32">
           <Reveal className="text-center max-w-2xl mx-auto">
+            <p className="text-sm font-semibold uppercase tracking-widest mb-4 bg-gradient-to-r from-indigo-400 to-pink-400 bg-clip-text text-transparent">Core modules</p>
             <h2 className="text-4xl md:text-5xl font-semibold tracking-tight">Everything your floor needs.</h2>
-            <p className="mt-5 text-lg text-gray-400">One platform replaces the patchwork of spreadsheets, whiteboards, and disconnected tools.</p>
+            <p className="mt-5 text-lg text-gray-400">One platform replaces the patchwork of spreadsheets, whiteboards, and disconnected tools across every department.</p>
           </Reveal>
           <div className="mt-16 grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {FEATURES.map((f, i) => (
@@ -472,8 +477,9 @@ export default function Landing() {
       {/* ── Pricing preview ────────────────────────────────────────────── */}
       <section className="max-w-6xl mx-auto px-6 py-24 md:py-32">
         <Reveal className="text-center max-w-2xl mx-auto">
+          <p className="text-sm font-semibold uppercase tracking-widest mb-4 bg-gradient-to-r from-indigo-400 to-pink-400 bg-clip-text text-transparent">Pricing</p>
           <h2 className="text-4xl md:text-5xl font-semibold tracking-tight">Simple, honest pricing.</h2>
-          <p className="mt-5 text-lg text-gray-400">Start free. Upgrade when you're ready to scale across the plant.</p>
+          <p className="mt-5 text-lg text-gray-400">14-day free trial on every plan. Upgrade when you're ready to scale across the plant.</p>
         </Reveal>
 
         <div className="mt-16 grid md:grid-cols-3 gap-6">
@@ -505,9 +511,16 @@ export default function Landing() {
             );
           })}
         </div>
-        <Reveal className="text-center mt-12">
-          <Link to="/pricing" className="inline-flex items-center gap-2 text-pink-400 hover:text-pink-300 font-semibold transition-colors">
-            Compare all plans & add-ons <ArrowRight size={16} />
+        <Reveal className="text-center mt-12 flex flex-col sm:flex-row items-center justify-center gap-4">
+          <Link
+            to="/pricing"
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-full text-white font-semibold text-sm transition-all hover:scale-[1.02]"
+            style={{ background: GRADIENT }}
+          >
+            See full pricing <ArrowRight size={15} />
+          </Link>
+          <Link to="/login?mode=signup" className="inline-flex items-center gap-2 text-gray-400 hover:text-white font-medium text-sm transition-colors">
+            Or start your free trial — no credit card required
           </Link>
         </Reveal>
       </section>
@@ -518,14 +531,15 @@ export default function Landing() {
           <div className="relative max-w-5xl mx-auto rounded-3xl overflow-hidden border border-white/10 px-8 py-16 md:py-24 text-center">
             <div className="absolute inset-0 opacity-25 blur-2xl" style={{ background: GRADIENT }} />
             <div className="relative">
-              <h2 className="text-4xl md:text-5xl font-semibold tracking-tight">Start running your floor today.</h2>
-              <p className="mt-5 text-lg text-gray-300 max-w-xl mx-auto">Set up your workspace in minutes. No credit card, no sales call — just open the app and build.</p>
+              <h2 className="text-4xl md:text-5xl font-semibold tracking-tight">Start your free 14-day trial.</h2>
+              <p className="mt-5 text-lg text-gray-300 max-w-xl mx-auto">Set up your workspace in minutes. No credit card required — just open the app and go.</p>
               <Link
                 to="/login?mode=signup"
                 className="mt-9 inline-flex items-center gap-2 px-8 py-4 rounded-full bg-white text-gray-900 font-semibold text-base transition-all hover:scale-[1.03] shadow-xl"
               >
-                Get started free <ArrowRight size={18} />
+                Start free 14-day trial <ArrowRight size={18} />
               </Link>
+              <p className="mt-4 text-sm text-gray-500">No credit card required · Cancel anytime</p>
             </div>
           </div>
         </Reveal>

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Outlet, NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Settings, Activity, ChevronLeft, ChevronRight,
-  LogOut, ChevronDown, Menu, X,
+  LogOut, ChevronDown, Menu, X, Plus, Download,
 } from 'lucide-react';
 import { usePlan } from '../../context/PlanContext';
 import { useAuth } from '../../context/AuthContext';
@@ -13,6 +13,10 @@ import { PINNED_ITEMS, SECTIONS, NavItem } from '../../config/navigation';
 import AlertsBubble from './AlertsBubble';
 import SiteSwitcher from './SiteSwitcher';
 import UpgradeModal from './UpgradeModal';
+import QuickCreateModal from './QuickCreateModal';
+import PWAUpdatePrompt from './PWAUpdatePrompt';
+import { BillingBanner } from './BillingBanner';
+import { SetupChecklist } from './SetupChecklist';
 
 function ProBadge() {
   return (
@@ -56,8 +60,11 @@ export default function Layout() {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('hm_sidebar') === 'collapsed');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   // Set to a feature label when a Free user clicks a locked Pro nav item.
   const [lockedModal, setLockedModal] = useState<string | null>(null);
+  // PWA install prompt
+  const [installPrompt, setInstallPrompt] = useState<any>(null);
   const { isFree, isEnterprise } = usePlan();
   const { user, logout } = useAuth();
   const { companyName, logoUrl } = useBranding();
@@ -102,8 +109,7 @@ export default function Layout() {
     if (!item.pinned && isItemHidden(item.to)) return false;
     // Enterprise-only features are hidden entirely below that tier.
     if (item.enterpriseOnly && !isEnterprise) return false;
-    // Pro-only items: always hidden for free users unless developer preview toggle is on.
-    if (item.proOnly && isFree && !showProSidebar) return false;
+    // Pro-only items are always shown — clicking them opens the upgrade modal for free users.
     return true;
   };
 
@@ -159,6 +165,12 @@ export default function Layout() {
   useEffect(() => {
     localStorage.setItem('hm_sidebar', collapsed ? 'collapsed' : 'open');
   }, [collapsed]);
+
+  useEffect(() => {
+    const handler = (e: Event) => { e.preventDefault(); setInstallPrompt(e); };
+    window.addEventListener('beforeinstallprompt', handler);
+    return () => window.removeEventListener('beforeinstallprompt', handler);
+  }, []);
 
   useEffect(() => {
     setLogoError(false);
@@ -276,12 +288,33 @@ export default function Layout() {
           })}
         </nav>
 
+        {/* Setup checklist — only visible when sidebar is expanded */}
+        {!effectiveCollapsed && <SetupChecklist />}
+
         <div className="p-2 border-t border-white/10 flex-shrink-0 space-y-0.5">
           {/* Site switcher — the active plant, anchored at the bottom of the bar */}
           {!effectiveCollapsed && (
             <div className="pb-1.5">
               <SiteSwitcher />
             </div>
+          )}
+
+          {/* Install App button — shows when browser supports PWA install */}
+          {installPrompt && (
+            <button
+              onClick={async () => {
+                installPrompt.prompt();
+                const { outcome } = await installPrompt.userChoice;
+                if (outcome === 'accepted') setInstallPrompt(null);
+              }}
+              title="Install HartMonitor as an app"
+              className={`flex items-center rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-white/8 transition-all w-full ${
+                effectiveCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
+              }`}
+            >
+              <Download size={14} className="flex-shrink-0" />
+              {!effectiveCollapsed && <span>Install App</span>}
+            </button>
           )}
 
           {/* Collapse toggle is a desktop-only concept — the mobile drawer is always expanded */}
@@ -347,7 +380,7 @@ export default function Layout() {
           <button
             onClick={() => setMobileNavOpen(true)}
             aria-label="Open navigation menu"
-            className="p-1.5 -ml-1.5 rounded-lg text-gray-600 hover:bg-gray-100 transition-colors"
+            className="p-2.5 -ml-2 rounded-lg text-gray-600 hover:bg-gray-100 active:bg-gray-200 transition-colors"
           >
             <Menu size={20} />
           </button>
@@ -370,6 +403,7 @@ export default function Layout() {
           </div>
         </header>
 
+        <BillingBanner />
         <main className="flex-1 overflow-auto">
           <Outlet />
         </main>
@@ -378,6 +412,22 @@ export default function Layout() {
       {/* Floating alerts bubble — fixed bottom-right corner */}
       <AlertsBubble />
 
+      {/* Quick-create FAB — visible for manager+ roles */}
+      {user && ['manager', 'developer', 'supervisor'].includes(user.role) && (
+        <button
+          onClick={() => setQuickCreateOpen(true)}
+          title="Quick-create work order"
+          className="fixed bottom-20 right-5 z-40 w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-95"
+          style={{ background: 'linear-gradient(135deg, #6366f1, #ec4899)' }}
+        >
+          <Plus size={22} className="text-white" strokeWidth={2.5} />
+        </button>
+      )}
+
+      {quickCreateOpen && (
+        <QuickCreateModal onClose={() => setQuickCreateOpen(false)} />
+      )}
+
       {lockedModal && (
         <UpgradeModal
           lockedFeature={lockedModal}
@@ -385,6 +435,8 @@ export default function Layout() {
           onPurchased={() => setLockedModal(null)}
         />
       )}
+
+      <PWAUpdatePrompt />
     </div>
   );
 }

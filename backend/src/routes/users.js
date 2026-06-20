@@ -16,7 +16,9 @@ router.use(requireAuth, requireRole('manager'));
 router.get('/', (req, res) => {
   const users = db.prepare(`
     SELECT id, email, display_name, role, is_active, last_login, created_at, updated_at,
-           department_id, job_title
+           department_id, job_title,
+           CASE WHEN pin_hash != '' THEN 1 ELSE 0 END AS has_pin,
+           CASE WHEN badge_code != '' THEN 1 ELSE 0 END AS has_badge
     FROM users WHERE company_id = ? ORDER BY CASE role
       WHEN 'developer' THEN 1 WHEN 'manager' THEN 2 WHEN 'supervisor' THEN 3
       WHEN 'operator' THEN 4 ELSE 5 END, display_name
@@ -30,7 +32,7 @@ router.post('/', requireRole('developer'), (req, res) => {
   const { email, display_name, password, role = 'viewer' } = req.body;
   if (!email || !display_name || !password) return res.status(400).json({ error: 'email, display_name, and password required' });
   if (!VALID_ROLES.includes(role)) return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
-  if (password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  if (password.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
 
   // Emails stay globally unique — login has no org discriminator
   const existing = db.prepare('SELECT id FROM users WHERE email = ?').get(email.toLowerCase().trim());
@@ -86,6 +88,11 @@ router.put('/:id', requireRole('developer'), (req, res) => {
 
   if (password) db.prepare('DELETE FROM sessions WHERE user_id = ?').run(req.params.id);
 
+  // Invalidate sessions if role changed (user gets new permissions on next login)
+  if (updates.role !== undefined && updates.role !== user.role) {
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(req.params.id);
+  }
+
   if (updates.role !== user.role) {
     logActivity(req.companyId, 'user', req.params.id, `Role changed from ${user.role} to ${updates.role} for "${updates.display_name}"`, req.user.display_name);
   }
@@ -94,6 +101,47 @@ router.put('/:id', requireRole('developer'), (req, res) => {
   }
 
   res.json(db.prepare('SELECT id, email, display_name, role, is_active, last_login, created_at, updated_at, department_id, job_title FROM users WHERE id = ?').get(req.params.id));
+});
+
+// ─── PUT /:id/pin — set or clear an operator's floor PIN / badge (manager+) ───
+// Body: { pin?, badge_code? }. A null/empty value clears that field. PINs are
+// stored hashed (never plain); badge codes are unique within the company.
+
+router.put('/:id/pin', (req, res) => {
+  const user = db.prepare('SELECT * FROM users WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
+  if (!user) return res.status(404).json({ error: 'Not found' });
+
+  const { pin, badge_code } = req.body || {};
+  const sets = [];
+  const params = [];
+
+  if (pin !== undefined) {
+    if (pin === null || pin === '') {
+      sets.push('pin_hash = ?'); params.push('');
+    } else if (/^\d{4,8}$/.test(String(pin))) {
+      sets.push('pin_hash = ?'); params.push(hashPassword(String(pin)));
+    } else {
+      return res.status(400).json({ error: 'PIN must be 4–8 digits' });
+    }
+  }
+
+  if (badge_code !== undefined) {
+    const code = (badge_code === null ? '' : String(badge_code).trim());
+    if (code) {
+      const clash = db.prepare("SELECT id FROM users WHERE company_id = ? AND badge_code = ? AND id != ?").get(req.companyId, code, req.params.id);
+      if (clash) return res.status(400).json({ error: 'That badge code is already assigned to another user' });
+    }
+    sets.push('badge_code = ?'); params.push(code);
+  }
+
+  if (sets.length === 0) return res.status(400).json({ error: 'Provide pin and/or badge_code' });
+
+  params.push(req.params.id);
+  db.prepare(`UPDATE users SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = ?`).run(...params);
+
+  const fresh = db.prepare("SELECT CASE WHEN pin_hash != '' THEN 1 ELSE 0 END AS has_pin, CASE WHEN badge_code != '' THEN 1 ELSE 0 END AS has_badge FROM users WHERE id = ?").get(req.params.id);
+  logActivity(req.companyId, 'user', req.params.id, `Floor credentials updated for "${user.display_name}"`, req.user.display_name);
+  res.json({ ok: true, has_pin: !!fresh.has_pin, has_badge: !!fresh.has_badge });
 });
 
 // ─── DELETE /:id — delete user ────────────────────────────────────────────────

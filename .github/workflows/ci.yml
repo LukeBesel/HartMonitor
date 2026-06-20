@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main, staging, 'claude/**']
+  pull_request:
+    branches: [main, staging]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend-checks:
+    name: Backend checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies (workspace root)
+        run: npm ci
+
+      - name: Run backend tests
+        run: npm test --workspace=backend
+        env:
+          NODE_ENV: test
+          SEED_DEMO_DATA: 'false'
+          DATABASE_PATH: ':memory:'
+
+  frontend-checks:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies (workspace root)
+        run: npm ci
+
+      - name: TypeScript type check
+        run: npm run typecheck --workspace=frontend
+
+      - name: Run unit tests
+        run: npm test --workspace=frontend
+        env:
+          NODE_ENV: test
+
+      - name: Build frontend
+        run: npm run build --workspace=frontend
+        env:
+          NODE_ENV: production

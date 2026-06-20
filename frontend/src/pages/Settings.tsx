@@ -741,11 +741,8 @@ function PlanTab() {
     if (!isLive) { setCheckout(item); return; }
     setRedirecting(true);
     try {
-      const { url } = await api.createCheckout(
-        item.kind === 'tier'
-          ? { tier: item.tier }
-          : { addon: item.addonType, quantity: item.quantity }
-      );
+      const tier = item.kind === 'tier' ? (item.tier ?? 'pro') : (item.addonType ?? 'app_slot');
+      const { url } = await api.createCheckout(tier);
       window.location.href = url;
     } catch (err: any) {
       showToast(err.message || 'Could not start checkout', 'error');
@@ -1818,6 +1815,7 @@ function UsersTab() {
   const [users, setUsers] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [modalUser, setModalUser] = useState<any | null | false>(false); // false=closed, null=new, obj=edit
+  const [pinUser, setPinUser] = useState<any | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1853,6 +1851,9 @@ function UsersTab() {
   };
 
   const canManage = isAtLeast('developer');
+  // Managers can set operator floor PINs even though edit/delete stay developer-only.
+  const canManagePins = isAtLeast('manager');
+  const showActions = canManage || canManagePins;
 
   return (
     <div className="max-w-3xl space-y-6">
@@ -1879,7 +1880,7 @@ function UsersTab() {
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Role</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Status</th>
                 <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Last Login</th>
-                {canManage && <th className="px-4 py-3" />}
+                {showActions && <th className="px-4 py-3" />}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -1911,14 +1912,23 @@ function UsersTab() {
                   <td className="px-4 py-3 text-gray-500 text-xs">
                     {u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}
                   </td>
-                  {canManage && (
+                  {showActions && (
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-1 justify-end">
-                        <button onClick={() => setModalUser(u)}
-                          className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
-                          <Edit2 size={13} />
-                        </button>
-                        {u.id !== currentUser?.id && (
+                        {canManagePins && u.role === 'operator' && (
+                          <button onClick={() => setPinUser(u)}
+                            title={u.has_pin ? 'PIN set — manage floor credentials' : 'Set floor PIN / badge'}
+                            className={`p-1.5 rounded-lg transition-colors ${u.has_pin ? 'text-emerald-600 hover:bg-emerald-50' : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'}`}>
+                            <Key size={13} />
+                          </button>
+                        )}
+                        {canManage && (
+                          <button onClick={() => setModalUser(u)}
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+                            <Edit2 size={13} />
+                          </button>
+                        )}
+                        {canManage && u.id !== currentUser?.id && (
                           <button
                             onClick={() => handleDelete(u.id, u.display_name)}
                             disabled={deletingId === u.id}
@@ -1981,7 +1991,117 @@ function UsersTab() {
       {modalUser !== false && (
         <UserModal user={modalUser} onClose={() => setModalUser(false)} onSaved={load} />
       )}
+      {pinUser && (
+        <PinModal
+          user={pinUser}
+          onClose={() => setPinUser(null)}
+          onSaved={(msg) => { showToast(msg); load(); }}
+          onError={(msg) => showToast(msg, 'error')}
+        />
+      )}
       {toast && <Toast message={toast.message} type={toast.type} onDismiss={() => setToast(null)} />}
+    </div>
+  );
+}
+
+// ─── Operator floor PIN / badge modal ─────────────────────────────────────────
+
+function PinModal({ user, onClose, onSaved, onError }: {
+  user: any;
+  onClose: () => void;
+  onSaved: (message: string) => void;
+  onError: (message: string) => void;
+}) {
+  const [pin, setPin] = useState('');
+  const [badge, setBadge] = useState('');
+  const [showPin, setShowPin] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const save = async (payload: { pin?: string | null; badge_code?: string | null }, successMsg: string) => {
+    setError('');
+    setSaving(true);
+    try {
+      await api.setUserPin(user.id, payload);
+      onSaved(successMsg);
+      onClose();
+    } catch (err: any) {
+      const msg = err.message || 'Failed to update credentials';
+      setError(msg);
+      onError(msg);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSave = () => {
+    if (pin && !/^\d{4,8}$/.test(pin)) { setError('PIN must be 4–8 digits'); return; }
+    const payload: { pin?: string; badge_code?: string } = {};
+    if (pin) payload.pin = pin;
+    if (badge.trim()) payload.badge_code = badge.trim();
+    if (!payload.pin && !payload.badge_code) { setError('Enter a PIN or a badge code'); return; }
+    save(payload, `Floor credentials updated for ${user.display_name}`);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h3 className="font-semibold text-gray-800 flex items-center gap-2"><Key size={16} /> Floor PIN &amp; Badge</h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="rounded-xl bg-blue-50/60 border border-blue-100 px-3.5 py-2.5 text-xs text-gray-600">
+            Set a PIN so <span className="font-semibold text-gray-800">{user.display_name}</span> can clock into the Operator
+            Portal on a shared tablet. Work is then attributed to their account.
+            {user.has_pin && <span className="block mt-1 text-emerald-700 font-medium">A PIN is currently set.</span>}
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">New PIN (4–8 digits)</label>
+            <div className="relative">
+              <input
+                className="input-field w-full pr-10 tracking-[0.3em] font-mono"
+                type={showPin ? 'text' : 'password'}
+                inputMode="numeric"
+                value={pin}
+                onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                placeholder="••••"
+                autoFocus
+              />
+              <button type="button" onClick={() => setShowPin(s => !s)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs">
+                {showPin ? 'Hide' : 'Show'}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Badge code (optional)</label>
+            <input
+              className="input-field w-full"
+              value={badge}
+              onChange={e => setBadge(e.target.value)}
+              placeholder="Scannable badge / card value"
+            />
+          </div>
+          {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+          <div className="flex gap-2 pt-1">
+            {(user.has_pin || user.has_badge) && (
+              <button
+                type="button"
+                onClick={() => save({ pin: null, badge_code: null }, `Floor credentials cleared for ${user.display_name}`)}
+                disabled={saving}
+                className="btn-secondary text-sm flex-shrink-0"
+              >
+                Clear
+              </button>
+            )}
+            <button type="button" onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+            <button type="button" onClick={handleSave} disabled={saving} className="btn-primary flex-1">
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

@@ -326,6 +326,24 @@ if (!planCols.includes('billing_email'))         db.exec("ALTER TABLE plan ADD C
 if (!planCols.includes('stripe_customer_id'))     db.exec('ALTER TABLE plan ADD COLUMN stripe_customer_id TEXT');
 if (!planCols.includes('stripe_subscription_id')) db.exec('ALTER TABLE plan ADD COLUMN stripe_subscription_id TEXT');
 if (!planCols.includes('subscription_status'))    db.exec("ALTER TABLE plan ADD COLUMN subscription_status TEXT DEFAULT ''");
+{
+  const planCols = db.prepare('PRAGMA table_info(plan)').all().map(r => r.name);
+  if (!planCols.includes('trial_ends_at')) {
+    db.exec("ALTER TABLE plan ADD COLUMN trial_ends_at TEXT");
+  }
+  if (!planCols.includes('grace_period_ends_at')) {
+    db.exec("ALTER TABLE plan ADD COLUMN grace_period_ends_at TEXT");
+  }
+  if (!planCols.includes('stripe_price_id')) {
+    db.exec("ALTER TABLE plan ADD COLUMN stripe_price_id TEXT");
+  }
+  if (!planCols.includes('cancelled_at')) {
+    db.exec("ALTER TABLE plan ADD COLUMN cancelled_at TEXT");
+  }
+  if (!planCols.includes('notes')) {
+    db.exec("ALTER TABLE plan ADD COLUMN notes TEXT DEFAULT ''");
+  }
+}
 
 db.exec(`
   CREATE TABLE IF NOT EXISTS billing_history (
@@ -362,6 +380,12 @@ db.exec(`
     expires_at TEXT NOT NULL,
     created_at TEXT DEFAULT (datetime('now'))
   );
+`);
+
+// Indexes for common session lookups (by user and by expiry for cleanup).
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_sessions_user_id   ON sessions(user_id);
+  CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 `);
 
 // ─── Multi-tenancy: organizations, per-org settings, schema meta ──────────────
@@ -495,7 +519,24 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id, created_at);
+
+  CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
 `);
+
+// ─── Migration: add reset_url to password_reset_tokens for admin panel display ─
+{
+  const prtCols = db.prepare('PRAGMA table_info(password_reset_tokens)').all().map(r => r.name);
+  if (!prtCols.includes('reset_url')) db.exec("ALTER TABLE password_reset_tokens ADD COLUMN reset_url TEXT DEFAULT ''");
+}
 
 // ─── Migrations: SSO provider tag on users ────────────────────────────────────
 
@@ -680,6 +721,104 @@ for (const t of ['stations', 'departments', 'work_orders', 'locations']) {
   const cols = db.prepare(`PRAGMA table_info(${t})`).all().map(r => r.name);
   if (!cols.includes('site_id')) db.exec(`ALTER TABLE ${t} ADD COLUMN site_id TEXT REFERENCES sites(id) ON DELETE SET NULL`);
   db.exec(`CREATE INDEX IF NOT EXISTS idx_${t}_site ON ${t}(site_id)`);
+}
+
+// ─── Work order comments ──────────────────────────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS wo_comments (
+    id TEXT PRIMARY KEY,
+    work_order_id TEXT NOT NULL REFERENCES work_orders(id) ON DELETE CASCADE,
+    author_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    author_name TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_wo_comments_wo ON wo_comments(work_order_id, created_at);
+`);
+
+// ─── Inventory shipments ──────────────────────────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS shipments (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id),
+    po_id TEXT REFERENCES purchase_orders(id) ON DELETE SET NULL,
+    carrier TEXT DEFAULT '',
+    tracking_number TEXT DEFAULT '',
+    origin TEXT DEFAULT '',
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending','in_transit','out_for_delivery','delivered','delayed','exception')),
+    shipped_date TEXT,
+    estimated_arrival TEXT,
+    actual_arrival TEXT,
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_shipments_company ON shipments(company_id, created_at DESC);
+`);
+
+// ─── Training & Skills Matrix ─────────────────────────────────────────────────
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS training_records (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    app_id TEXT NOT NULL REFERENCES apps(id) ON DELETE CASCADE,
+    status TEXT DEFAULT 'not_started' CHECK(status IN ('not_started','in_training','certified','expired','needs_refresh')),
+    certified_date TEXT,
+    expiry_date TEXT,
+    certified_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    score REAL,
+    attempts INTEGER DEFAULT 0,
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(company_id, user_id, app_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_training_records_company ON training_records(company_id);
+  CREATE INDEX IF NOT EXISTS idx_training_records_user ON training_records(user_id);
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS certifications (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    issuer TEXT DEFAULT '',
+    cert_number TEXT DEFAULT '',
+    issued_date TEXT,
+    expiry_date TEXT,
+    document_url TEXT DEFAULT '',
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_certifications_company ON certifications(company_id, user_id);
+`);
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS training_plans (
+    id TEXT PRIMARY KEY,
+    company_id TEXT REFERENCES organizations(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    app_id TEXT REFERENCES apps(id) ON DELETE CASCADE,
+    assigned_by TEXT REFERENCES users(id) ON DELETE SET NULL,
+    target_date TEXT,
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending','in_progress','completed','overdue')),
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_training_plans_company ON training_plans(company_id, user_id);
+`);
+
+// Migration: reorder_max on items
+{
+  const itemsCols = db.prepare('PRAGMA table_info(items)').all().map(r => r.name);
+  if (!itemsCols.includes('reorder_max')) db.exec('ALTER TABLE items ADD COLUMN reorder_max REAL DEFAULT 0');
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1551,13 +1690,36 @@ db.exec(`
   if (!woCols.includes('assigned_user_id')) db.exec('ALTER TABLE work_orders ADD COLUMN assigned_user_id TEXT REFERENCES users(id) ON DELETE SET NULL');
 }
 
-// ─── Migrations: users (department_id, job_title) ────────────────────────────
+// ─── Migrations: users (department_id, job_title, pin_hash, badge_code) ───────
 
 {
   const userCols = db.prepare('PRAGMA table_info(users)').all().map(r => r.name);
   if (!userCols.includes('department_id')) db.exec('ALTER TABLE users ADD COLUMN department_id TEXT REFERENCES departments(id) ON DELETE SET NULL');
   if (!userCols.includes('job_title'))     db.exec("ALTER TABLE users ADD COLUMN job_title TEXT DEFAULT ''");
+  // Operator floor-identity: a short numeric PIN and/or scannable badge code so
+  // shop-floor staff can clock into the Operator Portal on a shared tablet and
+  // have their work attributed to a verified identity (not free-typed text).
+  if (!userCols.includes('pin_hash'))      db.exec("ALTER TABLE users ADD COLUMN pin_hash TEXT DEFAULT ''");
+  if (!userCols.includes('badge_code'))    db.exec("ALTER TABLE users ADD COLUMN badge_code TEXT DEFAULT ''");
 }
+
+// ─── Password reset tokens ────────────────────────────────────────────────────
+// Single-use, time-limited tokens for the "forgot password" flow. We store only
+// a SHA-256 hash of the token (never the raw value), mirroring how sessions are
+// kept opaque. Expired/used rows are pruned lazily when the flow runs.
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS password_reset_tokens (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT UNIQUE NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_pw_reset_token ON password_reset_tokens(token_hash);
+  CREATE INDEX IF NOT EXISTS idx_pw_reset_user ON password_reset_tokens(user_id);
+`);
 
 // ─── Migrations: apps (department_id, site_id, station_id, show_takt_warnings) ─
 
@@ -1618,20 +1780,185 @@ db.exec(`
   db.exec('CREATE INDEX IF NOT EXISTS idx_stock_movements_created ON stock_movements(created_at DESC)');
 }
 
-// ─── Password reset tokens ────────────────────────────────────────────────────
-// Used by the forgot-password flow. Tokens expire after 24h and are deleted on use.
-
+// ─── Andon Calls ─────────────────────────────────────────────────────────────
 db.exec(`
-  CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  CREATE TABLE IF NOT EXISTS andon_calls (
     id TEXT PRIMARY KEY,
-    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token TEXT UNIQUE NOT NULL,
-    expires_at TEXT NOT NULL,
-    used_at TEXT,
+    company_id TEXT NOT NULL,
+    department_id TEXT REFERENCES departments(id) ON DELETE SET NULL,
+    station_id TEXT REFERENCES stations(id) ON DELETE SET NULL,
+    type TEXT NOT NULL CHECK(type IN ('help','quality','material','maintenance','safety')),
+    priority TEXT NOT NULL DEFAULT 'normal' CHECK(priority IN ('normal','high','critical')),
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','acknowledged','resolved')),
+    description TEXT DEFAULT '',
+    raised_by TEXT DEFAULT '',
+    acknowledged_by TEXT DEFAULT '',
+    acknowledged_at TEXT,
+    resolved_by TEXT DEFAULT '',
+    resolved_at TEXT,
+    resolution TEXT DEFAULT '',
     created_at TEXT DEFAULT (datetime('now'))
   );
-  CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_token ON password_reset_tokens(token);
-  CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
+  CREATE INDEX IF NOT EXISTS idx_andon_calls_lookup
+    ON andon_calls(company_id, status, created_at DESC);
+`);
+
+// ─── CAPA (Corrective and Preventive Actions) ─────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS capa_items (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    number TEXT NOT NULL,
+    title TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'internal',
+    type TEXT NOT NULL DEFAULT 'corrective',
+    priority TEXT NOT NULL DEFAULT 'medium',
+    status TEXT NOT NULL DEFAULT 'open',
+    department_id TEXT REFERENCES departments(id) ON DELETE SET NULL,
+    assigned_to TEXT DEFAULT '',
+    due_date TEXT,
+    description TEXT DEFAULT '',
+    containment TEXT DEFAULT '',
+    root_cause TEXT DEFAULT '',
+    corrective_action TEXT DEFAULT '',
+    preventive_action TEXT DEFAULT '',
+    created_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    closed_at TEXT,
+    verified_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_capa_items_lookup
+    ON capa_items(company_id, status, created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS capa_actions (
+    id TEXT PRIMARY KEY,
+    capa_id TEXT NOT NULL REFERENCES capa_items(id) ON DELETE CASCADE,
+    description TEXT NOT NULL,
+    assigned_to TEXT DEFAULT '',
+    due_date TEXT,
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','in_progress','done')),
+    created_at TEXT DEFAULT (datetime('now')),
+    completed_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_capa_actions_capa ON capa_actions(capa_id);
+`);
+
+// ─── Maintenance / CMMS ───────────────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS assets (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    asset_number TEXT DEFAULT '',
+    category TEXT DEFAULT '',
+    manufacturer TEXT DEFAULT '',
+    model TEXT DEFAULT '',
+    serial_number TEXT DEFAULT '',
+    department_id TEXT REFERENCES departments(id) ON DELETE SET NULL,
+    location TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','inactive','maintenance','retired')),
+    purchase_date TEXT,
+    warranty_expiry TEXT,
+    notes TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_assets_lookup ON assets(company_id, status);
+
+  CREATE TABLE IF NOT EXISTS pm_schedules (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    asset_id TEXT REFERENCES assets(id) ON DELETE CASCADE,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    frequency_value INTEGER NOT NULL DEFAULT 1,
+    frequency_type TEXT NOT NULL DEFAULT 'months' CHECK(frequency_type IN ('days','weeks','months','hours','cycles')),
+    last_completed_at TEXT,
+    next_due_at TEXT,
+    assigned_to TEXT DEFAULT '',
+    estimated_hours REAL DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_pm_schedules_lookup ON pm_schedules(company_id, next_due_at);
+
+  CREATE TABLE IF NOT EXISTS maintenance_work_orders (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    number TEXT NOT NULL,
+    title TEXT NOT NULL,
+    type TEXT NOT NULL DEFAULT 'corrective' CHECK(type IN ('corrective','preventive','emergency','inspection')),
+    priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('low','medium','high','critical')),
+    status TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open','in_progress','on_hold','completed','cancelled')),
+    asset_id TEXT REFERENCES assets(id) ON DELETE SET NULL,
+    department_id TEXT REFERENCES departments(id) ON DELETE SET NULL,
+    assigned_to TEXT DEFAULT '',
+    description TEXT DEFAULT '',
+    resolution TEXT DEFAULT '',
+    estimated_hours REAL,
+    actual_hours REAL,
+    requested_by TEXT DEFAULT '',
+    due_date TEXT,
+    completed_at TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_mwo_lookup ON maintenance_work_orders(company_id, status, created_at DESC);
+`);
+
+// ─── Shift Notes ──────────────────────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS shift_notes (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    department_id TEXT REFERENCES departments(id) ON DELETE SET NULL,
+    shift_name TEXT NOT NULL DEFAULT 'Day',
+    shift_date TEXT NOT NULL,
+    supervisor TEXT DEFAULT '',
+    good_count INTEGER DEFAULT 0,
+    scrap_count INTEGER DEFAULT 0,
+    downtime_minutes INTEGER DEFAULT 0,
+    notes TEXT DEFAULT '',
+    issues TEXT DEFAULT '[]',
+    status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','submitted','handed_off')),
+    handed_off_to TEXT DEFAULT '',
+    handed_off_at TEXT,
+    created_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_shift_notes_lookup
+    ON shift_notes(company_id, shift_date DESC, department_id);
+`);
+
+// ─── Kaizen / CI Ideas ────────────────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS kaizen_ideas (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL,
+    number TEXT NOT NULL,
+    title TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'quality' CHECK(category IN ('safety','quality','delivery','cost','morale','environment')),
+    status TEXT NOT NULL DEFAULT 'submitted' CHECK(status IN ('submitted','under_review','approved','in_progress','implemented','rejected')),
+    department_id TEXT REFERENCES departments(id) ON DELETE SET NULL,
+    submitted_by TEXT DEFAULT '',
+    assigned_to TEXT DEFAULT '',
+    estimated_savings REAL DEFAULT 0,
+    actual_savings REAL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    completed_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_kaizen_ideas_lookup
+    ON kaizen_ideas(company_id, status, created_at DESC);
+`);
+
+// ─── SSO OAuth State (persisted so multi-process deployments work) ─────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS sso_state (
+    id TEXT PRIMARY KEY,
+    state TEXT UNIQUE NOT NULL,
+    provider TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_sso_state_expires ON sso_state(expires_at);
 `);
 
 module.exports = db;

@@ -1,20 +1,25 @@
 # ─── Render.com blueprint ─────────────────────────────────────────────────────
-# One-click-ish deploy on Render using the Dockerfile, with a persistent disk
-# mounted at /data for the SQLite database + backups. Import this repo as a
-# "Blueprint" in the Render dashboard.
+# One-click-ish deploy on Render using the native Node runtime, with a
+# persistent disk mounted at /data for the SQLite database + backups.
+# Import this repo as a "Blueprint" in the Render dashboard.
+#
+# npm ci must run from the repo root (where package-lock.json lives) because
+# this is an npm workspace — running it from a subdirectory won't work.
 
 services:
+  # ── Production ─────────────────────────────────────────────────────────────
   - type: web
     name: hartmonitor
-    runtime: docker
-    dockerfilePath: ./Dockerfile
+    runtime: node
+    buildCommand: npm ci && npm run build --workspace=frontend
+    startCommand: node backend/src/index.js
     plan: starter            # smallest paid plan; needed for a persistent disk
     healthCheckPath: /api/health
     autoDeploy: true
     disk:
       name: hartmonitor-data
       mountPath: /data
-      sizeGB: 1
+      sizeGB: 5
     envVars:
       - key: NODE_ENV
         value: production
@@ -22,12 +27,72 @@ services:
         value: /data/mes.db
       - key: BACKUP_DIR
         value: /data/backups
+      - key: SEED_DEMO_DATA
+        value: 'false'
       # Set APP_URL to your real URL after the first deploy (e.g.
       # https://hartmonitor.onrender.com), then redeploy.
       - key: APP_URL
+        sync: false
+      # Generate with: node -e "console.log(require('crypto').randomBytes(64).toString('hex'))"
+      - key: JWT_SECRET
+        sync: false
+      - key: SESSION_SECRET
         sync: false
       # Optional integrations — add in the dashboard when you go live.
       - key: STRIPE_SECRET_KEY
         sync: false
       - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+
+  # ── Staging ────────────────────────────────────────────────────────────────
+  - type: web
+    name: hartmonitor-staging
+    runtime: node
+    buildCommand: npm ci && npm run build --workspace=frontend
+    startCommand: node backend/src/index.js
+    plan: starter
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: hartmonitor-staging-data
+      mountPath: /data
+      sizeGB: 5
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_PATH
+        value: /data/mes.db
+      - key: BACKUP_DIR
+        value: /data/backups
+      - key: SEED_DEMO_DATA
+        value: 'true'
+      - key: APP_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_WEBHOOK_SECRET
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        sync: false
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
         sync: false

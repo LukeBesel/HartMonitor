@@ -26,13 +26,13 @@ function generateToken() {
 }
 
 // ─── Auth middleware ──────────────────────────────────────────────────────────
+// Accepts token from httpOnly cookie (browser) or Authorization header (API)
 
 function requireAuth(req, res, next) {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) {
+  const token = req.cookies?.hm_token || (req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : null);
+  if (!token) {
     return res.status(401).json({ error: 'Not authenticated', code: 'NO_TOKEN' });
   }
-  const token = authHeader.slice(7);
   const row = db.prepare(`
     SELECT s.id as session_id, s.user_id, s.expires_at,
            u.email, u.display_name, u.role, u.is_active, u.company_id

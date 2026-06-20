@@ -52,7 +52,7 @@ router.get('/overview', (req, res) => {
 // ─── GET /throughput ──────────────────────────────────────────────────────────
 
 router.get('/throughput', (req, res) => {
-  const { days = 30 } = req.query;
+  const days = Math.min(365, parseInt(req.query.days) || 30);
   const f = completionFilter(req);
   const rows = db.prepare(`
     SELECT date(completed_at) as date, COUNT(*) as count
@@ -60,14 +60,15 @@ router.get('/throughput', (req, res) => {
     WHERE company_id = ? AND status='completed' AND completed_at >= date('now', '-' || ? || ' days')${f.clause}
     GROUP BY date(completed_at)
     ORDER BY date ASC
-  `).all(req.companyId, parseInt(days), ...f.params);
+    LIMIT 10000
+  `).all(req.companyId, days, ...f.params);
   res.json(rows);
 });
 
 // ─── GET /cycle-times ─────────────────────────────────────────────────────────
 
 router.get('/cycle-times', (req, res) => {
-  const { days = 30 } = req.query;
+  const days = Math.min(365, parseInt(req.query.days) || 30);
   const f = completionFilter(req);
   const rows = db.prepare(`
     SELECT
@@ -80,7 +81,8 @@ router.get('/cycle-times', (req, res) => {
       AND completed_at >= date('now', '-' || ? || ' days')${f.clause}
     GROUP BY date(completed_at)
     ORDER BY date ASC
-  `).all(req.companyId, parseInt(days), ...f.params);
+    LIMIT 10000
+  `).all(req.companyId, days, ...f.params);
   res.json(rows);
 });
 

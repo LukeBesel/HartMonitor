@@ -4,7 +4,8 @@ import {
   Package, DollarSign, AlertTriangle, TrendingUp, Search, Plus,
   Download, MapPin, X, Pencil, Trash2, ArrowUpCircle, ArrowDownCircle,
   RefreshCw, ChevronDown, Layers, RotateCcw, ArrowLeftRight, Truck,
-  ClipboardList, ScanLine, Database, LayoutGrid, PackageX,
+  ClipboardList, ScanLine, Database, LayoutGrid, PackageX, PackageCheck,
+  ChevronUp, CheckCircle, AlertCircle,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
@@ -95,7 +96,7 @@ function SummaryCard({ icon, iconBg, label, value, sub }: any) {
 
 const EMPTY_ITEM = {
   sku: '', name: '', description: '', category: '',
-  unit_of_measure: 'ea', unit_cost: '', reorder_point: '', reorder_qty: '', lead_time_days: '',
+  unit_of_measure: 'ea', unit_cost: '', reorder_point: '', reorder_max: '', reorder_qty: '', lead_time_days: '',
 };
 
 function ItemModal({ item, onClose, onSaved }: { item: any | null; onClose: () => void; onSaved: () => void }) {
@@ -107,6 +108,7 @@ function ItemModal({ item, onClose, onSaved }: { item: any | null; onClose: () =
     unit_of_measure: item.unit_of_measure ?? 'ea',
     unit_cost: item.unit_cost ?? '',
     reorder_point: item.reorder_point ?? '',
+    reorder_max: item.reorder_max ?? '',
     reorder_qty: item.reorder_qty ?? '',
     lead_time_days: item.lead_time_days ?? '',
   } : { ...EMPTY_ITEM });
@@ -131,6 +133,8 @@ function ItemModal({ item, onClose, onSaved }: { item: any | null; onClose: () =
       else delete payload.unit_cost;
       if (payload.reorder_point !== '') payload.reorder_point = parseFloat(payload.reorder_point);
       else delete payload.reorder_point;
+      if (payload.reorder_max !== '') payload.reorder_max = parseFloat(payload.reorder_max);
+      else delete payload.reorder_max;
       if (payload.reorder_qty !== '') payload.reorder_qty = parseFloat(payload.reorder_qty);
       else delete payload.reorder_qty;
       if (payload.lead_time_days !== '') payload.lead_time_days = parseInt(payload.lead_time_days);
@@ -184,14 +188,18 @@ function ItemModal({ item, onClose, onSaved }: { item: any | null; onClose: () =
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Unit Cost ($)</label>
               <input className="input-field" type="number" min="0" step="0.01" value={form.unit_cost} onChange={e => set('unit_cost', e.target.value)} placeholder="0.00" />
             </div>
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">Reorder Point</label>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Min Stock (Reorder)</label>
               <input className="input-field" type="number" min="0" value={form.reorder_point} onChange={e => set('reorder_point', e.target.value)} placeholder="0" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Max Stock (Target)</label>
+              <input className="input-field" type="number" min="0" value={form.reorder_max} onChange={e => set('reorder_max', e.target.value)} placeholder="0" />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -697,7 +705,7 @@ interface InventoryViewFilters {
   lowStockOnly: boolean;
 }
 
-type TabKey = 'overview' | 'items' | 'movements' | 'locations';
+type TabKey = 'overview' | 'items' | 'minmax' | 'receiving' | 'movements' | 'locations';
 
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
 
@@ -759,6 +767,66 @@ function OverviewTab({
           </>
         )}
       </div>
+
+      {/* Min/Max stock level gauges */}
+      {!loading && summary && summary.low_stock_list.filter(r => r.reorder_point > 0).length > 0 && (
+        <div className="card p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Layers size={15} className="text-blue-500" />
+            <h3 className="text-sm font-semibold text-gray-700">Stock Level Gauges</h3>
+            <span className="ml-auto text-xs text-gray-400 flex items-center gap-3">
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-red-400" />Below Min</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-emerald-400" />Healthy</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-amber-400" />Above Max</span>
+            </span>
+          </div>
+          <div className="space-y-3">
+            {summary.low_stock_list.filter(r => r.reorder_point > 0).slice(0, 12).map(row => {
+              const max = row.reorder_max && row.reorder_max > 0 ? row.reorder_max : row.reorder_point * 3;
+              const pct = Math.min(100, (row.total_quantity / max) * 100);
+              const minPct = (row.reorder_point / max) * 100;
+              const isBelow = row.total_quantity < row.reorder_point;
+              const isAbove = row.reorder_max && row.reorder_max > 0 && row.total_quantity > row.reorder_max;
+              const barColor = isBelow ? 'bg-red-400' : isAbove ? 'bg-amber-400' : 'bg-emerald-400';
+              return (
+                <div key={row.id} className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium text-gray-800 truncate max-w-[160px]">{row.name}</span>
+                    <span className={`font-mono font-semibold ${isBelow ? 'text-red-600' : isAbove ? 'text-amber-600' : 'text-emerald-700'}`}>
+                      {fmtNum(row.total_quantity)} <span className="text-gray-400 font-normal">{row.unit_of_measure}</span>
+                    </span>
+                  </div>
+                  <div className="relative h-2 bg-gray-100 rounded-full overflow-visible">
+                    <div className={`h-2 rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+                    {/* Min marker */}
+                    <div
+                      className="absolute top-0 bottom-0 w-0.5 bg-blue-400 rounded"
+                      style={{ left: `${minPct}%` }}
+                      title={`Min: ${fmtNum(row.reorder_point)}`}
+                    />
+                    {/* Max marker */}
+                    {row.reorder_max && row.reorder_max > 0 && (
+                      <div
+                        className="absolute top-0 bottom-0 w-0.5 bg-gray-400 rounded"
+                        style={{ left: '100%' }}
+                        title={`Max: ${fmtNum(row.reorder_max)}`}
+                      />
+                    )}
+                  </div>
+                  <div className="flex justify-between text-[10px] text-gray-400">
+                    <span>0</span>
+                    <span className="text-blue-500">min {fmtNum(row.reorder_point)}</span>
+                    {row.reorder_max && row.reorder_max > 0
+                      ? <span>max {fmtNum(row.reorder_max)}</span>
+                      : <span>{fmtNum(max)}</span>
+                    }
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Stock value by category chart */}
@@ -827,6 +895,512 @@ function OverviewTab({
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+// ─── Min/Max Tab ─────────────────────────────────────────────────────────────
+
+type MinMaxFilter = 'all' | 'below' | 'above' | 'none';
+
+function MinMaxTab({
+  items, canEdit, onEditItem, onRecord,
+}: {
+  items: any[];
+  canEdit: boolean;
+  onEditItem: (item: any) => void;
+  onRecord: (item: any) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<MinMaxFilter>('all');
+
+  const filtered = useMemo(() => {
+    let list = items;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(it => it.name?.toLowerCase().includes(q) || it.sku?.toLowerCase().includes(q));
+    }
+    if (filter === 'below') list = list.filter(it => it.reorder_point > 0 && (it.total_quantity ?? 0) < it.reorder_point);
+    if (filter === 'above') list = list.filter(it => it.reorder_max > 0 && (it.total_quantity ?? 0) > it.reorder_max);
+    if (filter === 'none')  list = list.filter(it => !(it.reorder_point > 0) && !(it.reorder_max > 0));
+    return list;
+  }, [items, search, filter]);
+
+  const belowMin  = useMemo(() => items.filter(it => it.reorder_point > 0 && (it.total_quantity ?? 0) < it.reorder_point).length, [items]);
+  const aboveMax  = useMemo(() => items.filter(it => it.reorder_max  > 0 && (it.total_quantity ?? 0) > it.reorder_max).length,  [items]);
+
+  const CHIPS: { key: MinMaxFilter; label: string }[] = [
+    { key: 'all',   label: 'All' },
+    { key: 'below', label: 'Below Min' },
+    { key: 'above', label: 'Above Max' },
+    { key: 'none',  label: 'No Thresholds' },
+  ];
+
+  return (
+    <div className="space-y-4">
+      {/* Filter bar */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 min-w-48">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          <input
+            className="input-field pl-8"
+            placeholder="Search by name or SKU…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {CHIPS.map(chip => (
+            <button
+              key={chip.key}
+              onClick={() => setFilter(chip.key)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                filter === chip.key
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+              }`}
+            >
+              {chip.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Summary strip */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="card p-3 flex items-center gap-2">
+          <Package size={15} className="text-blue-500 flex-shrink-0" />
+          <div>
+            <div className="text-lg font-bold text-gray-900">{items.length}</div>
+            <div className="text-xs text-gray-500">Total Items</div>
+          </div>
+        </div>
+        <div className="card p-3 flex items-center gap-2">
+          <AlertTriangle size={15} className="text-red-500 flex-shrink-0" />
+          <div>
+            <div className="text-lg font-bold text-red-600">{belowMin}</div>
+            <div className="text-xs text-gray-500">Below Min</div>
+          </div>
+        </div>
+        <div className="card p-3 flex items-center gap-2">
+          <TrendingUp size={15} className="text-amber-500 flex-shrink-0" />
+          <div>
+            <div className="text-lg font-bold text-amber-600">{aboveMax}</div>
+            <div className="text-xs text-gray-500">Above Max</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Item list */}
+      {filtered.length === 0 ? (
+        <div className="card p-12 flex flex-col items-center gap-3">
+          <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center">
+            <Layers size={22} className="text-gray-400" />
+          </div>
+          <p className="text-gray-500 font-medium">No items match this filter</p>
+          <p className="text-xs text-gray-400">Try adjusting your search or filter</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map(item => {
+            const totalQty = item.total_quantity ?? item.total_stock ?? item.quantity ?? 0;
+            const noThresholds = !(item.reorder_point > 0) && !(item.reorder_max > 0);
+            const max = item.reorder_max > 0
+              ? item.reorder_max
+              : item.reorder_point > 0
+                ? item.reorder_point * 3
+                : totalQty * 2 || 100;
+            const pct    = Math.min(100, (totalQty / max) * 100);
+            const minPct = item.reorder_point > 0 ? Math.min(100, (item.reorder_point / max) * 100) : 0;
+            const isBelow  = item.reorder_point > 0 && totalQty < item.reorder_point;
+            const isAbove  = item.reorder_max  > 0 && totalQty > item.reorder_max;
+            const barColor = isBelow ? 'bg-red-400' : isAbove ? 'bg-amber-400' : 'bg-emerald-400';
+            const qtyColor = isBelow ? 'text-red-600' : isAbove ? 'text-amber-600' : 'text-emerald-700';
+
+            return (
+              <div key={item.id} className="card p-4">
+                <div className="flex items-start gap-4">
+                  {/* Left: name + SKU */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className="font-medium text-gray-900 truncate">{item.name}</span>
+                      <span className="font-mono text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">{item.sku}</span>
+                      {noThresholds && (
+                        <span className="text-xs text-gray-400 italic">No thresholds set</span>
+                      )}
+                    </div>
+
+                    {/* Stock bar */}
+                    {!noThresholds && (
+                      <div className="mt-2 space-y-1">
+                        <div className="relative h-2.5 bg-gray-100 rounded-full overflow-visible">
+                          <div
+                            className={`h-2.5 rounded-full transition-all ${barColor}`}
+                            style={{ width: `${pct}%` }}
+                          />
+                          {item.reorder_point > 0 && (
+                            <div
+                              className="absolute top-0 bottom-0 w-0.5 bg-blue-500 rounded"
+                              style={{ left: `${minPct}%` }}
+                              title={`Min: ${fmtNum(item.reorder_point)}`}
+                            />
+                          )}
+                          {item.reorder_max > 0 && (
+                            <div
+                              className="absolute top-0 bottom-0 w-0.5 bg-gray-400 rounded"
+                              style={{ left: '100%' }}
+                              title={`Max: ${fmtNum(item.reorder_max)}`}
+                            />
+                          )}
+                        </div>
+                        <div className="flex justify-between text-[10px] text-gray-400">
+                          <span>0</span>
+                          {item.reorder_point > 0 && (
+                            <span className="text-blue-500">min {fmtNum(item.reorder_point)}</span>
+                          )}
+                          {item.reorder_max > 0
+                            ? <span className="text-gray-500">max {fmtNum(item.reorder_max)}</span>
+                            : <span>{fmtNum(max)}</span>
+                          }
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right: qty + actions */}
+                  <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                    <div className={`text-xl font-bold ${noThresholds ? 'text-gray-700' : qtyColor}`}>
+                      {fmtNum(totalQty)}
+                      <span className="text-sm font-normal text-gray-400 ml-1">{item.unit_of_measure ?? 'ea'}</span>
+                    </div>
+                    {canEdit && (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => onRecord(item)}
+                          className="btn-secondary text-xs px-2.5 py-1.5"
+                          title="Adjust Stock"
+                        >
+                          <Layers size={12} />
+                          Adjust Stock
+                        </button>
+                        <button
+                          onClick={() => onEditItem(item)}
+                          className="btn-ghost p-1.5 rounded-lg"
+                          title="Set Thresholds"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Receiving Tab ───────────────────────────────────────────────────────────
+
+interface POLine {
+  id: string;
+  item_id: string;
+  item_sku: string;
+  item_name: string;
+  quantity_ordered: number;
+  quantity_received: number;
+  unit_cost?: number;
+  notes?: string;
+}
+
+interface PurchaseOrder {
+  id: string;
+  po_number: string;
+  vendor_name: string;
+  status: string;
+  order_date?: string;
+  expected_date?: string;
+  lines?: POLine[];
+  line_count?: number;
+}
+
+function fmtPoDate(iso?: string): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function POReceiveCard({ po, onReceived }: { po: PurchaseOrder; onReceived: () => void }) {
+  const lines = po.lines ?? [];
+  const [expanded, setExpanded] = useState(false);
+  const [quantities, setQuantities] = useState<Record<string, number>>(() =>
+    Object.fromEntries(lines.map(l => [l.id, Math.max(0, l.quantity_ordered - l.quantity_received)]))
+  );
+  const [receiving, setReceiving] = useState(false);
+  const [success, setSuccess]     = useState(false);
+  const [error, setError]         = useState('');
+
+  const isOverdue = po.expected_date ? new Date(po.expected_date) < new Date() : false;
+  const fullyReceived = lines.length > 0 && lines.every(l => l.quantity_received >= l.quantity_ordered);
+
+  async function handleReceive() {
+    const toReceive = lines
+      .map(l => ({ line_id: l.id, quantity_received: quantities[l.id] ?? 0 }))
+      .filter(r => r.quantity_received > 0);
+
+    if (toReceive.length === 0) { setError('Enter at least one quantity to receive.'); return; }
+
+    setReceiving(true);
+    setError('');
+    try {
+      await api.receivePurchaseOrder(po.id, { receipts: toReceive });
+      setSuccess(true);
+      setTimeout(() => { setSuccess(false); onReceived(); }, 1800);
+    } catch (e: any) {
+      setError(e.message || 'Failed to receive items');
+    } finally {
+      setReceiving(false);
+    }
+  }
+
+  return (
+    <div className="card overflow-hidden">
+      {/* Card header */}
+      <button
+        className="w-full text-left px-5 py-4 flex items-center gap-4 hover:bg-gray-50 transition-colors"
+        onClick={() => setExpanded(e => !e)}
+      >
+        <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center flex-shrink-0">
+          <Truck size={18} className="text-blue-600" />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="font-bold text-gray-900 font-mono">{po.po_number}</span>
+            {isOverdue && !fullyReceived && (
+              <span className="badge badge-red text-[10px] py-0">Overdue</span>
+            )}
+            {po.status === 'partial' && !fullyReceived && (
+              <span className="badge badge-amber text-[10px] py-0">Partial</span>
+            )}
+            {po.status === 'sent' && !fullyReceived && (
+              <span className="badge badge-blue text-[10px] py-0">Sent</span>
+            )}
+            {fullyReceived && (
+              <span className="badge badge-green text-[10px] py-0">Fully Received</span>
+            )}
+          </div>
+          <div className="text-xs text-gray-500 mt-0.5 flex items-center gap-2 flex-wrap">
+            <span>{po.vendor_name}</span>
+            {po.expected_date && (
+              <>
+                <span>·</span>
+                <span>Expected {fmtPoDate(po.expected_date)}</span>
+              </>
+            )}
+            <span>·</span>
+            <span>{lines.length} line{lines.length !== 1 ? 's' : ''}</span>
+          </div>
+        </div>
+        <div className="flex-shrink-0 text-gray-400">
+          {expanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+        </div>
+      </button>
+
+      {/* Expanded lines */}
+      {expanded && (
+        <div className="border-t border-gray-100 px-5 py-4 space-y-4">
+          {success ? (
+            <div className="flex items-center gap-3 bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-4">
+              <CheckCircle size={20} className="text-emerald-600 flex-shrink-0" />
+              <div>
+                <div className="font-semibold text-emerald-800">Items received!</div>
+                <div className="text-sm text-emerald-600">Stock levels have been updated.</div>
+              </div>
+            </div>
+          ) : (
+            <>
+              {error && (
+                <div className="flex items-center gap-2 bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm">
+                  <AlertCircle size={15} className="flex-shrink-0" />
+                  {error}
+                </div>
+              )}
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[500px]">
+                  <thead>
+                    <tr className="border-b border-gray-100">
+                      <th className="text-left py-2 px-2 text-xs font-semibold text-gray-500">Item</th>
+                      <th className="text-left py-2 px-2 text-xs font-semibold text-gray-500">SKU</th>
+                      <th className="text-right py-2 px-2 text-xs font-semibold text-gray-500">Ordered</th>
+                      <th className="text-right py-2 px-2 text-xs font-semibold text-gray-500">Received</th>
+                      <th className="text-right py-2 px-2 text-xs font-semibold text-gray-500">Receive Now</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lines.map(line => {
+                      const remaining = Math.max(0, line.quantity_ordered - line.quantity_received);
+                      const isDone = line.quantity_received >= line.quantity_ordered;
+                      return (
+                        <tr key={line.id} className={`border-b border-gray-50 ${isDone ? 'opacity-60' : ''}`}>
+                          <td className="py-2.5 px-2 font-medium text-gray-900">{line.item_name}</td>
+                          <td className="py-2.5 px-2">
+                            <span className="font-mono text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">{line.item_sku}</span>
+                          </td>
+                          <td className="py-2.5 px-2 text-right text-gray-700">{fmtNum(line.quantity_ordered)}</td>
+                          <td className={`py-2.5 px-2 text-right font-medium ${isDone ? 'text-emerald-600' : 'text-gray-700'}`}>
+                            {fmtNum(line.quantity_received)}
+                          </td>
+                          <td className="py-2.5 px-2 text-right">
+                            {isDone ? (
+                              <span className="flex items-center justify-end gap-1 text-emerald-600 text-xs font-semibold">
+                                <CheckCircle size={13} /> Done
+                              </span>
+                            ) : (
+                              <input
+                                type="number"
+                                min={0}
+                                max={remaining}
+                                value={quantities[line.id] ?? 0}
+                                onChange={e => {
+                                  const val = Math.max(0, Math.min(remaining, Number(e.target.value)));
+                                  setQuantities(prev => ({ ...prev, [line.id]: val }));
+                                }}
+                                className="input-field w-24 text-right"
+                              />
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {!fullyReceived && (
+                <div className="flex justify-end">
+                  <button
+                    onClick={handleReceive}
+                    disabled={receiving}
+                    className="btn-primary"
+                  >
+                    {receiving ? <RefreshCw size={14} className="animate-spin" /> : <PackageCheck size={14} />}
+                    Receive Selected
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReceivingTab({ canEdit }: { canEdit: boolean }) {
+  const [pos, setPOs]           = useState<PurchaseOrder[]>([]);
+  const [loading, setLoading]   = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError]       = useState('');
+
+  const loadPOs = useCallback(async () => {
+    try {
+      const [sent, partial] = await Promise.all([
+        api.getPurchaseOrders({ status: 'sent' }).catch(() => [] as PurchaseOrder[]),
+        api.getPurchaseOrders({ status: 'partial' }).catch(() => [] as PurchaseOrder[]),
+      ]);
+      const combined: PurchaseOrder[] = [...(sent ?? []), ...(partial ?? [])];
+      const seen = new Set<string>();
+      const unique = combined.filter(po => {
+        if (seen.has(po.id)) return false;
+        seen.add(po.id);
+        return true;
+      });
+      unique.sort((a, b) => {
+        const da = a.expected_date ? new Date(a.expected_date).getTime() : Infinity;
+        const db = b.expected_date ? new Date(b.expected_date).getTime() : Infinity;
+        return da - db;
+      });
+
+      // Fetch lines for each PO
+      const withLines = await Promise.all(
+        unique.map(async po => {
+          try {
+            const detail = await api.getPurchaseOrder(po.id);
+            return { ...po, lines: detail.lines ?? [] };
+          } catch {
+            return { ...po, lines: [] };
+          }
+        })
+      );
+
+      setPOs(withLines);
+      setError('');
+    } catch (e: any) {
+      setError(e.message || 'Failed to load purchase orders');
+    }
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    loadPOs().finally(() => setLoading(false));
+  }, [loadPOs]);
+
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    await loadPOs().finally(() => setRefreshing(false));
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-base font-semibold text-gray-900">Receive Against Purchase Orders</h2>
+          <p className="text-xs text-gray-500 mt-0.5">Record stock receipt for sent or partially received orders</p>
+        </div>
+        <button
+          onClick={handleRefresh}
+          disabled={refreshing || loading}
+          className="btn-secondary"
+        >
+          <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
+          Refresh
+        </button>
+      </div>
+
+      {loading ? (
+        <div className="space-y-3">
+          {[1, 2, 3].map(i => <Skeleton key={i} className="h-20 rounded-2xl" />)}
+        </div>
+      ) : error ? (
+        <div className="card p-6 flex items-center gap-3 text-red-600">
+          <AlertCircle size={18} className="flex-shrink-0" />
+          <span className="text-sm">{error}</span>
+        </div>
+      ) : pos.length === 0 ? (
+        <div className="card p-12 flex flex-col items-center gap-3">
+          <div className="w-14 h-14 bg-emerald-50 rounded-xl flex items-center justify-center">
+            <PackageCheck size={26} className="text-emerald-500" />
+          </div>
+          <p className="text-gray-700 font-semibold">No open purchase orders</p>
+          <p className="text-sm text-gray-400">All purchase orders have been received or none exist yet.</p>
+          <a
+            href="/purchasing"
+            className="btn-secondary mt-2"
+          >
+            Go to Purchasing →
+          </a>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {pos.map(po => (
+            <POReceiveCard key={po.id} po={po} onReceived={handleRefresh} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -985,6 +1559,7 @@ export default function Inventory() {
   const [showItemModal, setShowItemModal] = useState(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [showRecordMovement, setShowRecordMovement] = useState(false);
+  const [recordMovementItem, setRecordMovementItem] = useState<any>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [showScanner, setShowScanner] = useState(false);
   const [loadingSample, setLoadingSample] = useState(false);
@@ -1067,6 +1642,8 @@ export default function Inventory() {
   const TABS: { key: TabKey; label: string; icon: any }[] = [
     { key: 'overview',  label: 'Overview',  icon: LayoutGrid },
     { key: 'items',     label: 'Items',     icon: Package },
+    { key: 'minmax',    label: 'Min / Max', icon: Layers },
+    { key: 'receiving', label: 'Receiving', icon: PackageCheck },
     { key: 'movements', label: 'Movements', icon: ClipboardList },
     { key: 'locations', label: 'Locations', icon: MapPin },
   ];
@@ -1096,8 +1673,9 @@ export default function Inventory() {
       )}
       {showRecordMovement && (
         <RecordMovementModal
+          item={recordMovementItem ?? undefined}
           items={items}
-          onClose={() => setShowRecordMovement(false)}
+          onClose={() => { setShowRecordMovement(false); setRecordMovementItem(null); }}
           onSaved={refresh}
         />
       )}
@@ -1398,6 +1976,21 @@ export default function Inventory() {
             )}
           </div>
         </>
+      )}
+
+      {/* ─── MIN/MAX ─── */}
+      {tab === 'minmax' && (
+        <MinMaxTab
+          items={items}
+          canEdit={canEdit}
+          onEditItem={(item: any) => { setEditingItem(item); setShowItemModal(true); }}
+          onRecord={(item: any) => { setRecordMovementItem(item); setShowRecordMovement(true); }}
+        />
+      )}
+
+      {/* ─── RECEIVING ─── */}
+      {tab === 'receiving' && (
+        <ReceivingTab canEdit={canEdit} />
       )}
 
       {/* ─── MOVEMENTS ─── */}

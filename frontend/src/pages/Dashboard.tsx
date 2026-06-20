@@ -23,7 +23,7 @@ import OnboardingWizard from '../components/shared/OnboardingWizard';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import {
   LayoutDashboard, Tablet, AppWindow, CalendarRange,
-  GitBranch, ShieldCheck, Bell,
+  GitBranch, ShieldCheck, Bell, Database, Sparkles,
 } from 'lucide-react';
 
 // ─── Plant view types ────────────────────────────────────────────────────────
@@ -213,6 +213,8 @@ export default function Dashboard() {
   const { isHidden, toggleSection, resetSections } = useDashboardPrefs();
   const [showCustomize, setShowCustomize] = useState(false);
   const customizeRef = useRef<HTMLDivElement>(null);
+  const [loadingSample, setLoadingSample] = useState(false);
+  const [sampleError, setSampleError] = useState('');
 
   // Plant view data integrated into the Command Center
   const [plantData, setPlantData] = useState<PlantViewData | null>(null);
@@ -244,7 +246,7 @@ export default function Dashboard() {
 
   const loadPlantData = useCallback(async () => {
     try {
-      const result = await (api as any).getPlantView({ site_id: selectedSiteId || undefined });
+      const result = await api.getPlantView({ site_id: selectedSiteId || undefined });
       setPlantData(result);
     } catch {
       // keep stale data
@@ -277,8 +279,29 @@ export default function Dashboard() {
   const kpis = brief?.kpis;
   const attention = brief?.attention ?? [];
 
+  // A brand-new workspace: nothing has ever been scheduled, run, or flagged.
+  // The CTA disappears the moment sample data (which creates work orders) loads.
+  const isEmptyWorkspace = !loading && !!brief
+    && brief.kpis.work_orders_total === 0
+    && brief.kpis.completed_today === 0
+    && brief.kpis.active_now === 0
+    && attention.length === 0;
+
+  const handleLoadSampleData = async () => {
+    setLoadingSample(true);
+    setSampleError('');
+    try {
+      await api.loadSampleData();
+      await Promise.all([loadData(), loadPlantData()]);
+    } catch (err: any) {
+      setSampleError(err?.message || 'Failed to load sample data');
+    } finally {
+      setLoadingSample(false);
+    }
+  };
+
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 sm:p-6 space-y-6">
       <OnboardingWizard />
       <ModuleOnboarding
         moduleId="dashboard"
@@ -347,6 +370,40 @@ export default function Dashboard() {
           </div>
         </div>
       </div>
+
+      {/* First-run empty state — offer to populate a realistic starter dataset */}
+      {isEmptyWorkspace && (
+        <div className="rounded-2xl border border-pink-200 bg-gradient-to-br from-pink-50 via-white to-indigo-50 p-6 sm:p-8 shadow-sm">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-5">
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 text-white shadow-lg"
+              style={{ background: 'linear-gradient(135deg, var(--accent), var(--secondary))' }}>
+              <Sparkles size={26} />
+            </div>
+            <div className="flex-1 min-w-0">
+              <h2 className="text-lg font-bold text-gray-900">Your workspace is ready — let's fill it in</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                There's no production data yet. {isAtLeast('manager')
+                  ? 'Load a realistic sample dataset (apps, work orders, stations, inventory) to explore everything right away — you can clear it anytime. Or start adding your own from the App Library.'
+                  : 'Ask a manager to load sample data, or start by building an app in the App Library.'}
+              </p>
+              {sampleError && (
+                <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mt-3">{sampleError}</p>
+              )}
+              <div className="flex items-center gap-2 mt-4 flex-wrap">
+                {isAtLeast('manager') && (
+                  <button onClick={handleLoadSampleData} disabled={loadingSample} className="btn-primary">
+                    {loadingSample ? <RefreshCw size={16} className="animate-spin" /> : <Database size={16} />}
+                    {loadingSample ? 'Loading…' : 'Load Sample Data'}
+                  </button>
+                )}
+                <Link to="/apps" className="btn-secondary">
+                  <AppWindow size={16} /> Go to App Library
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Needs attention */}
       {!isHidden('attention') && (

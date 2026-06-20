@@ -5,13 +5,6 @@ import { api } from '../api/client';
 import type { SSOProviderInfo } from '../types';
 import { Activity, Eye, EyeOff, ArrowRight, Building2, ChevronLeft, Globe, Square } from 'lucide-react';
 
-const DEMO_ACCOUNTS = [
-  { label: 'Developer (full access)', email: 'admin@hartmonitor.demo', password: 'Admin123!', color: 'bg-purple-100 text-purple-700' },
-  { label: 'Manager', email: 'manager@hartmonitor.demo', password: 'Manager123', color: 'bg-blue-100 text-blue-700' },
-  { label: 'Operator (limited)', email: 'operator@hartmonitor.demo', password: 'Operator123', color: 'bg-green-100 text-green-700' },
-  { label: 'Viewer (read only)', email: 'demo@hartmonitor.demo', password: 'demo', color: 'bg-gray-100 text-gray-700' },
-];
-
 export default function Login() {
   const { login, signup } = useAuth();
   const navigate = useNavigate();
@@ -92,12 +85,6 @@ export default function Login() {
     }
   };
 
-  const quickLogin = (acct: typeof DEMO_ACCOUNTS[0]) => {
-    setEmail(acct.email);
-    setPassword(acct.password);
-    doLogin(undefined, acct);
-  };
-
   const inputClass = 'w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm';
 
   return (
@@ -151,7 +138,12 @@ export default function Login() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Password</label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-sm font-medium text-gray-700">Password</label>
+                    <Link to="/forgot-password" className="text-xs font-medium text-blue-600 hover:text-blue-700 hover:underline">
+                      Forgot password?
+                    </Link>
+                  </div>
                   <div className="relative">
                     <input
                       type={showPw ? 'text' : 'password'}
@@ -280,11 +272,6 @@ export default function Login() {
                       >
                         <Icon size={16} className="text-gray-500" />
                         <span>Continue with {provider.name}</span>
-                        {provider.mode === 'demo' && (
-                          <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-600 border border-amber-200">
-                            Demo
-                          </span>
-                        )}
                       </a>
                     );
                   })}
@@ -293,27 +280,10 @@ export default function Login() {
             )}
           </div>
 
-          {/* Demo accounts */}
-          {mode === 'signin' && (
-            <div className="px-8 pb-8 border-t border-gray-100 pt-6">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Try a demo account</p>
-              <div className="space-y-2">
-                {DEMO_ACCOUNTS.map(acct => (
-                  <button key={acct.email} onClick={() => quickLogin(acct)}
-                    className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl border border-gray-100 hover:border-blue-200 hover:bg-blue-50 transition-all text-left group">
-                    <div>
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${acct.color} mr-2`}>{acct.label}</span>
-                    </div>
-                    <ArrowRight size={12} className="text-gray-300 group-hover:text-blue-400 transition-colors" />
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
         </div>
 
-        <p className="text-center text-blue-400 text-xs mt-6">
-          HartMonitor Demo · All data resets on container restart
+        <p className="text-center text-blue-400/60 text-xs mt-6">
+          © {new Date().getFullYear()} HartMonitor · <a href="/privacy" className="hover:text-blue-300 transition-colors">Privacy</a> · <a href="/terms" className="hover:text-blue-300 transition-colors">Terms</a>
         </p>
       </div>
     </div>
