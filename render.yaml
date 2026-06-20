@@ -1,33 +1,49 @@
-# ─── Render.com blueprint ─────────────────────────────────────────────────────
-# One-click-ish deploy on Render using the Dockerfile, with a persistent disk
-# mounted at /data for the SQLite database + backups. Import this repo as a
-# "Blueprint" in the Render dashboard.
-
 services:
   - type: web
-    name: hartmonitor
-    runtime: docker
-    dockerfilePath: ./Dockerfile
-    plan: starter            # smallest paid plan; needed for a persistent disk
+    name: hartmonitor-production
+    env: node
+    region: oregon
+    plan: starter
+    buildCommand: cd frontend && npm ci && npm run build && cd ../backend && npm ci
+    startCommand: cd backend && node src/index.js
     healthCheckPath: /api/health
-    autoDeploy: true
-    disk:
-      name: hartmonitor-data
-      mountPath: /data
-      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PORT
+        value: 3001
       - key: DATABASE_PATH
         value: /data/mes.db
       - key: BACKUP_DIR
         value: /data/backups
-      # Set APP_URL to your real URL after the first deploy (e.g.
-      # https://hartmonitor.onrender.com), then redeploy.
-      - key: APP_URL
-        sync: false
-      # Optional integrations — add in the dashboard when you go live.
-      - key: STRIPE_SECRET_KEY
-        sync: false
-      - key: STRIPE_WEBHOOK_SECRET
-        sync: false
+      - key: SEED_DEMO_DATA
+        value: 'false'
+      # All other vars set manually in Render dashboard (secrets)
+    disk:
+      name: mes-data
+      mountPath: /data
+      sizeGB: 5
+
+  - type: web
+    name: hartmonitor-staging
+    env: node
+    region: oregon
+    plan: starter
+    buildCommand: cd frontend && npm ci && npm run build && cd ../backend && npm ci
+    startCommand: cd backend && node src/index.js
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: DATABASE_PATH
+        value: /data/mes.db
+      - key: BACKUP_DIR
+        value: /data/backups
+      - key: SEED_DEMO_DATA
+        value: 'true'
+    disk:
+      name: mes-staging-data
+      mountPath: /data
+      sizeGB: 1

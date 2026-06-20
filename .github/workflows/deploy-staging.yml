@@ -1,0 +1,43 @@
+name: Deploy to Staging
+
+on:
+  push:
+    branches: [staging]
+
+jobs:
+  deploy:
+    name: Deploy staging
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: https://staging.hartmonitor.io
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy to Render (staging)
+        if: ${{ vars.RENDER_SERVICE_ID_STAGING != '' }}
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          SERVICE_ID: ${{ vars.RENDER_SERVICE_ID_STAGING }}
+        run: |
+          curl --fail -s -X POST \
+            "https://api.render.com/v1/services/$SERVICE_ID/deploys" \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"clearCache": false}'
+          echo "Deploy triggered for staging service $SERVICE_ID"
+
+      - name: Health check
+        if: ${{ vars.RENDER_SERVICE_ID_STAGING != '' }}
+        run: |
+          echo "Waiting for deploy to come up..."
+          for i in $(seq 1 24); do
+            STATUS=$(curl -sf https://staging.hartmonitor.io/api/health 2>/dev/null | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('status','unknown'))" 2>/dev/null || echo "unreachable")
+            echo "Attempt $i: $STATUS"
+            if [ "$STATUS" = "ok" ]; then
+              echo "Staging deploy healthy!"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "Staging health check timed out" && exit 1
