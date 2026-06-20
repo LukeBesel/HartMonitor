@@ -14,9 +14,6 @@ jobs:
   backend-checks:
     name: Backend checks
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
     steps:
       - uses: actions/checkout@v4
 
@@ -24,13 +21,13 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: backend/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install dependencies
+      - name: Install dependencies (workspace root)
         run: npm ci
 
-      - name: Run tests
-        run: npm test
+      - name: Run backend tests
+        run: npm test --workspace=backend
         env:
           NODE_ENV: test
           SEED_DEMO_DATA: 'false'
@@ -39,9 +36,6 @@ jobs:
   frontend-checks:
     name: Frontend checks
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
     steps:
       - uses: actions/checkout@v4
 
@@ -49,20 +43,20 @@ jobs:
         with:
           node-version: '20'
           cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          cache-dependency-path: package-lock.json
 
-      - name: Install dependencies
+      - name: Install dependencies (workspace root)
         run: npm ci
 
       - name: TypeScript type check
-        run: npx tsc --noEmit
+        run: npm run --workspace=frontend typecheck 2>/dev/null || npx --prefix frontend tsc --noEmit
 
       - name: Run unit tests
-        run: npm test -- --run
+        run: npm test --workspace=frontend -- --run
         env:
           NODE_ENV: test
 
-      - name: Build
-        run: npm run build
+      - name: Build frontend
+        run: npm run build --workspace=frontend
         env:
           NODE_ENV: production
