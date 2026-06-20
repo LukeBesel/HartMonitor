@@ -13,6 +13,7 @@ import { PINNED_ITEMS, SECTIONS, NavItem } from '../../config/navigation';
 import AlertsBubble from './AlertsBubble';
 import SiteSwitcher from './SiteSwitcher';
 import UpgradeModal from './UpgradeModal';
+import { SetupChecklist } from './SetupChecklist';
 
 function ProBadge() {
   return (
@@ -275,6 +276,9 @@ export default function Layout() {
             );
           })}
         </nav>
+
+        {/* Setup checklist — only visible when sidebar is expanded */}
+        {!effectiveCollapsed && <SetupChecklist />}
 
         <div className="p-2 border-t border-white/10 flex-shrink-0 space-y-0.5">
           {/* Site switcher — the active plant, anchored at the bottom of the bar */}
