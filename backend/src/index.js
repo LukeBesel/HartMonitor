@@ -57,7 +57,6 @@ const capaRouter         = require('./routes/capa');
 const maintenanceRouter  = require('./routes/maintenance');
 const shiftsRouter       = require('./routes/shifts');
 const kaizenRouter       = require('./routes/kaizen');
-const adminRouter        = require('./routes/admin');
 const { requireAuth }    = require('./middleware/auth');
 const { requirePlan }    = require('./middleware/plan');
 const { apiKeyAuth }     = require('./middleware/apiKeyAuth');
