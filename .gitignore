@@ -9,3 +9,8 @@ backend/mes.db
 .env.local
 !.env.example
 .claude/
+
+# Capacitor native projects — generated from `npm run cap:add:ios/android`
+# Commit these if you want CI to build them; exclude to keep the repo lean.
+frontend/ios/
+frontend/android/

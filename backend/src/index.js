@@ -88,11 +88,21 @@ app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false 
 // but genuine same-origin requests (the bundled SPA calling its own API) are
 // ALWAYS allowed — even if APP_URL wasn't configured — so the app works out of
 // the box on any single-service host.
+// Capacitor native apps use these origins in their WebViews.
+// iOS wraps requests as capacitor://localhost, Android as https://app (custom scheme).
+const NATIVE_ORIGINS = new Set([
+  'capacitor://localhost',
+  'https://localhost',
+  'http://localhost',
+  'ionic://localhost',
+  'https://app',          // Android custom scheme from capacitor.config.ts
+]);
+
 function corsDelegate(req, cb) {
   if (!config.isProd) return cb(null, { origin: true, credentials: true });
 
   const reqOrigin = req.headers.origin;
-  // No Origin header (server-to-server, curl, health probes) → allow.
+  // No Origin header (server-to-server, curl, health probes, native app) → allow.
   if (!reqOrigin) return cb(null, { origin: true, credentials: true });
 
   const allow = new Set(config.allowedOrigins);
@@ -102,7 +112,10 @@ function corsDelegate(req, cb) {
   let sameOrigin = false;
   try { sameOrigin = new URL(reqOrigin).host === req.headers.host; } catch { /* malformed origin */ }
 
-  cb(null, { origin: sameOrigin || allow.has(reqOrigin), credentials: true });
+  // Allow Capacitor native app origins (iOS and Android WebViews)
+  const isNativeApp = NATIVE_ORIGINS.has(reqOrigin);
+
+  cb(null, { origin: sameOrigin || allow.has(reqOrigin) || isNativeApp, credentials: true });
 }
 app.use(cors(corsDelegate));
 

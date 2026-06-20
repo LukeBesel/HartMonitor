@@ -8,6 +8,11 @@ import type {
 
 const BASE = '/api';
 
+// On native (iOS/Android), cookies don't work across origins so we inject
+// the token as an Authorization header instead. Set by AuthContext after login.
+let _nativeToken: string | null = null;
+export function setNativeToken(token: string | null) { _nativeToken = token; }
+
 export interface AnalyticsFilters {
   app_id?: string;
   product_type_id?: string;
@@ -28,11 +33,13 @@ function filterQS(f?: AnalyticsFilters, extra?: Record<string, string | number>)
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  // On native apps, send token as Authorization header (cookies don't cross origins in WebView)
+  if (_nativeToken) headers['Authorization'] = `Bearer ${_nativeToken}`;
   if (options?.headers) Object.assign(headers, options.headers);
 
   const res = await fetch(`${BASE}${path}`, {
     ...options,
-    credentials: 'include', // sends httpOnly cookie automatically
+    credentials: 'include', // sends httpOnly cookie on web; no-op on native (header used instead)
     headers,
   });
 
