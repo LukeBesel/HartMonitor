@@ -13,6 +13,8 @@ const pinoHttp = require('pino-http');
 const healthRouter = require('./routes/health');
 
 const { config, validate, banner } = require('./config');
+const db = require('./db');
+const { runMigrations } = require('./db/runMigrations');
 const { stripeWebhook } = require('./webhook');
 const { initWebSocketServer } = require('./ws');
 const { startBackups } = require('./backup');
@@ -68,6 +70,10 @@ if (errors.length) {
   console.error('\nRefusing to start with the above configuration errors.\n');
   process.exit(1);
 }
+
+// Run DB migrations before any routes are registered.
+// This ensures the schema is up to date on every deployment.
+runMigrations(db);
 
 const app  = express();
 const PORT = config.port;
