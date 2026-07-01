@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { MESTable, TableRecord, TableField, FieldType } from '../types';
-import { Plus, Trash2, ChevronLeft, X, Edit3, Check, Database, Settings } from 'lucide-react';
+import { Plus, Trash2, ChevronLeft, X, Edit3, Check, Database, Settings, AlertTriangle } from 'lucide-react';
 import { v4 as uuidv4 } from '../utils/uuid';
 import { useAuth } from '../context/AuthContext';
 
@@ -24,24 +24,36 @@ export default function TableDetail() {
   const [newRecord, setNewRecord] = useState<Record<string, any>>({});
   const [showFieldEditor, setShowFieldEditor] = useState(false);
   const [editingFields, setEditingFields] = useState<TableField[]>([]);
+  const [loadError, setLoadError] = useState('');
+  const [saving, setSaving] = useState(false);
   const { canEdit } = useAuth();
 
   const loadTable = () => {
     if (!id) return;
-    Promise.all([api.getTable(id), api.getRecords(id)]).then(([t, r]) => {
-      setTable(t);
-      setRecords(r);
-    });
+    Promise.all([api.getTable(id), api.getRecords(id)])
+      .then(([t, r]) => {
+        setTable(t);
+        setRecords(Array.isArray(r) ? r : []);
+        setLoadError('');
+      })
+      .catch((err: any) => setLoadError(err?.message || 'Failed to load table'));
   };
 
   useEffect(() => { loadTable(); }, [id]);
 
   const handleAddRecord = async () => {
-    if (!id) return;
-    await api.createRecord(id, newRecord);
-    setNewRecord({});
-    setShowAddRecord(false);
-    loadTable();
+    if (!id || saving) return;
+    setSaving(true);
+    try {
+      await api.createRecord(id, newRecord);
+      setNewRecord({});
+      setShowAddRecord(false);
+      loadTable();
+    } catch (err: any) {
+      alert(err.message || 'Failed to add record');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleEditRecord = (record: TableRecord) => {
@@ -51,23 +63,41 @@ export default function TableDetail() {
   };
 
   const handleSaveRecord = async (record: TableRecord) => {
-    if (!id) return;
-    await api.updateRecord(id, record.id, editData);
-    setEditingRecord(null);
-    loadTable();
+    if (!id || saving) return;
+    setSaving(true);
+    try {
+      await api.updateRecord(id, record.id, editData);
+      setEditingRecord(null);
+      loadTable();
+    } catch (err: any) {
+      alert(err.message || 'Failed to save record');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleDeleteRecord = async (recordId: string) => {
     if (!id || !confirm('Delete this record?')) return;
-    await api.deleteRecord(id, recordId);
-    loadTable();
+    try {
+      await api.deleteRecord(id, recordId);
+      loadTable();
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete record');
+    }
   };
 
   const handleSaveFields = async () => {
-    if (!id || !table) return;
-    await api.updateTable(id, { ...table, fields: editingFields });
-    setShowFieldEditor(false);
-    loadTable();
+    if (!id || !table || saving) return;
+    setSaving(true);
+    try {
+      await api.updateTable(id, { ...table, fields: editingFields });
+      setShowFieldEditor(false);
+      loadTable();
+    } catch (err: any) {
+      alert(err.message || 'Failed to save fields');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const renderCell = (field: TableField, record: TableRecord) => {
@@ -80,7 +110,8 @@ export default function TableDetail() {
       );
     }
     if (field.type === 'date' && val) {
-      return <span className="text-gray-600 text-sm">{new Date(String(val)).toLocaleDateString()}</span>;
+      const d = new Date(String(val));
+      return <span className="text-gray-600 text-sm">{isNaN(d.getTime()) ? '—' : d.toLocaleDateString()}</span>;
     }
     return <span className="text-gray-800 text-sm">{String(val ?? '—')}</span>;
   };
@@ -124,6 +155,18 @@ export default function TableDetail() {
     }
   };
 
+  if (!table && loadError) return (
+    <div className="p-6 flex flex-col items-center justify-center py-24 gap-3 text-center">
+      <AlertTriangle size={40} className="text-red-400" />
+      <div>
+        <p className="font-medium text-gray-500">Couldn't load this table</p>
+        <p className="text-sm text-gray-400 mt-1">{loadError}</p>
+      </div>
+      <button className="btn-secondary" onClick={loadTable}>Retry</button>
+      <Link to="/tables" className="text-blue-600 text-sm hover:underline">← Back to Tables</Link>
+    </div>
+  );
+
   if (!table) return (
     <div className="flex items-center justify-center h-full">
       <div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full" />
@@ -132,7 +175,7 @@ export default function TableDetail() {
 
   return (
     <div className="p-6 space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <Link to="/tables" className="p-1.5 hover:bg-gray-100 rounded-lg text-gray-500">
             <ChevronLeft size={18} />
@@ -180,8 +223,10 @@ export default function TableDetail() {
                   ))}
                   <td className="px-3 py-2">
                     <div className="flex gap-1">
-                      <button onClick={handleAddRecord} className="p-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700"><Check size={12} /></button>
-                      <button onClick={() => { setShowAddRecord(false); setNewRecord({}); }} className="p-1.5 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300"><X size={12} /></button>
+                      <button onClick={handleAddRecord} disabled={saving} className="p-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50">
+                        {saving ? <div className="animate-spin w-3 h-3 border border-white border-t-transparent rounded-full" /> : <Check size={12} />}
+                      </button>
+                      <button onClick={() => { setShowAddRecord(false); setNewRecord({}); }} disabled={saving} className="p-1.5 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300"><X size={12} /></button>
                     </div>
                   </td>
                 </tr>
@@ -190,8 +235,15 @@ export default function TableDetail() {
             <tbody className="divide-y divide-gray-100">
               {records.length === 0 && !showAddRecord && (
                 <tr>
-                  <td colSpan={table.fields.length + 1} className="text-center py-10 text-gray-400 text-sm">
-                    No records yet. Add a record to get started.
+                  <td colSpan={table.fields.length + 1} className="text-center py-10">
+                    <Database size={28} className="mx-auto mb-2 text-gray-200" />
+                    <p className="text-gray-500 text-sm font-medium">No records yet</p>
+                    <p className="text-gray-400 text-xs mt-0.5">Rows you add will show up here.</p>
+                    {canEdit && (
+                      <button onClick={() => setShowAddRecord(true)} className="btn-primary text-xs mt-3 mx-auto">
+                        <Plus size={13} /> Add Record
+                      </button>
+                    )}
                   </td>
                 </tr>
               )}
@@ -207,8 +259,10 @@ export default function TableDetail() {
                       <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         {editingRecord === record.id ? (
                           <>
-                            <button onClick={() => handleSaveRecord(record)} className="p-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700"><Check size={12} /></button>
-                            <button onClick={() => setEditingRecord(null)} className="p-1.5 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300"><X size={12} /></button>
+                            <button onClick={() => handleSaveRecord(record)} disabled={saving} className="p-1.5 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:opacity-50">
+                              {saving ? <div className="animate-spin w-3 h-3 border border-white border-t-transparent rounded-full" /> : <Check size={12} />}
+                            </button>
+                            <button onClick={() => setEditingRecord(null)} disabled={saving} className="p-1.5 bg-gray-200 text-gray-600 rounded-lg hover:bg-gray-300"><X size={12} /></button>
                           </>
                         ) : (
                           <>
@@ -266,7 +320,9 @@ export default function TableDetail() {
             </div>
             <div className="flex gap-2 p-5 border-t border-gray-200">
               <button onClick={() => setShowFieldEditor(false)} className="btn-secondary flex-1">Cancel</button>
-              <button onClick={handleSaveFields} className="btn-primary flex-1">Save Fields</button>
+              <button onClick={handleSaveFields} disabled={saving} className="btn-primary flex-1">
+                {saving ? 'Saving…' : 'Save Fields'}
+              </button>
             </div>
           </div>
         </div>

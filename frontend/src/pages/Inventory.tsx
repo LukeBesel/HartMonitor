@@ -38,6 +38,7 @@ function fmtNum(v: number | null | undefined): string {
 function fmtDate(iso: string): string {
   if (!iso) return '—';
   const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
   const now = new Date();
   const diff = now.getTime() - d.getTime();
   if (diff < 60000) return 'just now';
@@ -382,15 +383,17 @@ function LocationsTab({ canEdit }: { canEdit: boolean }) {
   const { selectedSiteId } = useSite();
   const [locations, setLocations] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [form, setForm] = useState({ name: '', code: '', type: 'warehouse' });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   const loadLocations = useCallback(() => {
     setLoading(true);
+    setLoadError('');
     api.getLocations({ site_id: selectedSiteId || undefined })
-      .then(data => { setLocations(data); setLoading(false); })
-      .catch(() => setLoading(false));
+      .then(data => { setLocations(Array.isArray(data) ? data : []); setLoading(false); })
+      .catch((err: any) => { setLoadError(err.message || 'Failed to load locations'); setLoading(false); });
   }, [selectedSiteId]);
 
   useEffect(() => { loadLocations(); }, [loadLocations]);
@@ -420,6 +423,15 @@ function LocationsTab({ canEdit }: { canEdit: boolean }) {
       {loading ? (
         <div className="space-y-2">
           {[1,2,3].map(i => <Skeleton key={i} className="h-10" />)}
+        </div>
+      ) : loadError ? (
+        <div className="flex flex-col items-center gap-3 py-10 text-center">
+          <AlertTriangle size={22} className="text-red-400" />
+          <p className="text-gray-500 font-medium">Couldn't load locations</p>
+          <p className="text-xs text-gray-400">{loadError}</p>
+          <button onClick={loadLocations} className="btn-secondary">
+            <RefreshCw size={14} /> Retry
+          </button>
         </div>
       ) : (
         <div className="overflow-auto">
@@ -710,13 +722,28 @@ type TabKey = 'overview' | 'items' | 'minmax' | 'receiving' | 'movements' | 'loc
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
 
 function OverviewTab({
-  summary, loading, onSelectItem,
+  summary, loading, error, onRetry, onSelectItem,
 }: {
   summary: InventoryTrackerSummary | null;
   loading: boolean;
+  error?: string;
+  onRetry: () => void;
   onSelectItem: (id: string) => void;
 }) {
   const chartData = useMemo(() => (summary?.value_by_category ?? []).slice(0, 8), [summary]);
+
+  if (!loading && !summary && error) {
+    return (
+      <div className="card p-10 flex flex-col items-center gap-3 text-center">
+        <AlertTriangle size={28} className="text-red-400" />
+        <p className="text-gray-600 font-medium">Couldn't load inventory overview</p>
+        <p className="text-sm text-gray-400">{error}</p>
+        <button onClick={onRetry} className="btn-secondary">
+          <RefreshCw size={14} /> Retry
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -1419,17 +1446,19 @@ function MovementsTab({
 }) {
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [days, setDays] = useState(30);
 
   const load = useCallback(() => {
     setLoading(true);
+    setError('');
     api.getMovements({
       movement_type: typeFilter || undefined,
       days,
       limit: 200,
-    }).then(data => { setMovements(data); setLoading(false); })
-      .catch(() => setLoading(false));
+    }).then(data => { setMovements(Array.isArray(data) ? data : []); setLoading(false); })
+      .catch((err: any) => { setError(err.message || 'Failed to load movements'); setLoading(false); });
   }, [typeFilter, days]);
 
   useEffect(() => { load(); }, [load, reloadKey]);
@@ -1480,7 +1509,21 @@ function MovementsTab({
                   {[1,2,3,4,5,6,7].map(j => <td key={j} className="py-3 px-4"><Skeleton className="h-4 w-full" /></td>)}
                 </tr>
               ))}
-              {!loading && movements.length === 0 && (
+              {!loading && error && movements.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-16 text-center">
+                    <div className="flex flex-col items-center gap-3">
+                      <AlertTriangle size={22} className="text-red-400" />
+                      <p className="text-gray-500 font-medium">Couldn't load movements</p>
+                      <p className="text-xs text-gray-400">{error}</p>
+                      <button onClick={load} className="btn-secondary">
+                        <RefreshCw size={14} /> Retry
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )}
+              {!loading && !error && movements.length === 0 && (
                 <tr>
                   <td colSpan={7} className="py-16 text-center">
                     <div className="flex flex-col items-center gap-3">
@@ -1543,8 +1586,10 @@ export default function Inventory() {
 
   const [trackerSummary, setTrackerSummary] = useState<InventoryTrackerSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState('');
   const [items, setItems] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [itemsError, setItemsError] = useState('');
 
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState('');
@@ -1569,20 +1614,22 @@ export default function Inventory() {
 
   const loadSummary = useCallback(() => {
     setSummaryLoading(true);
+    setSummaryError('');
     api.getInventoryTrackerSummary()
       .then(s => { setTrackerSummary(s); setSummaryLoading(false); })
-      .catch(() => setSummaryLoading(false));
+      .catch((err: any) => { setSummaryError(err.message || 'Failed to load inventory summary'); setSummaryLoading(false); });
   }, []);
 
   const loadItems = useCallback(() => {
     setLoading(true);
+    setItemsError('');
     const params: any = {};
     if (search) params.search = search;
     if (category) params.category = category;
     if (lowStockOnly) params.low_stock = true;
     api.getInventoryItems(params)
-      .then(data => { setItems(data); setLoading(false); })
-      .catch(() => setLoading(false));
+      .then(data => { setItems(Array.isArray(data) ? data : []); setLoading(false); })
+      .catch((err: any) => { setItemsError(err.message || 'Failed to load items'); setLoading(false); });
   }, [search, category, lowStockOnly]);
 
   useEffect(() => { loadSummary(); }, [loadSummary]);
@@ -1695,7 +1742,7 @@ export default function Inventory() {
           <p className="text-gray-500 text-sm mt-0.5">Track stock levels, movements and locations</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          <button onClick={() => api.downloadExport('inventory')} className="btn-secondary whitespace-nowrap">
+          <button onClick={() => api.downloadExport('inventory').catch((err: any) => alert(err.message || 'Export failed'))} className="btn-secondary whitespace-nowrap">
             <Download size={14} />
             Export CSV
           </button>
@@ -1742,6 +1789,8 @@ export default function Inventory() {
         <OverviewTab
           summary={trackerSummary}
           loading={summaryLoading}
+          error={summaryError}
+          onRetry={loadSummary}
           onSelectItem={(itemId) => { setTab('items'); navigate(`/inventory/${itemId}`); }}
         />
       )}
@@ -1826,7 +1875,21 @@ export default function Inventory() {
                         </tr>
                       ))
                     )}
-                    {!loading && items.length === 0 && (
+                    {!loading && itemsError && items.length === 0 && (
+                      <tr>
+                        <td colSpan={9} className="py-16 text-center">
+                          <div className="flex flex-col items-center gap-3">
+                            <AlertTriangle size={22} className="text-red-400" />
+                            <p className="text-gray-500 font-medium">Couldn't load items</p>
+                            <p className="text-xs text-gray-400">{itemsError}</p>
+                            <button onClick={loadItems} className="btn-secondary">
+                              <RefreshCw size={14} /> Retry
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    {!loading && !itemsError && items.length === 0 && (
                       <tr>
                         <td colSpan={9} className="py-16 text-center">
                           <div className="flex flex-col items-center gap-3">

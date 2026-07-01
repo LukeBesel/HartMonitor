@@ -17,22 +17,21 @@ const GRADIENT = 'linear-gradient(135deg, #6366f1, #ec4899)';
 const PINK = '#ec4899';
 
 const FEATURES = [
-  { icon: Blocks, title: 'No-code App Builder', body: 'Drag-and-drop widget types — including 3D CAD viewers and video — into guided, step-by-step work instructions. Publish in minutes.' },
-  { icon: CalendarClock, title: 'Work Orders & Scheduling', body: 'Plan, sequence, and track every job with live schedule adherence and takt-time monitoring.' },
-  { icon: Gauge, title: 'Real-time OEE', body: 'Availability, performance, and quality computed automatically from what operators actually do.' },
-  { icon: ShieldCheck, title: 'Quality / NCR', body: 'Capture non-conformances at the source, route them, and close the loop with full audit history.' },
-  { icon: Package, title: 'Inventory & Purchasing', body: 'Track stock levels with min/max gauges, receive against POs, and manage vendors — alongside production.' },
-  { icon: Sparkles, title: 'Training & Skills Matrix', body: 'Track operator certifications, app training status, and department coverage with a live skills matrix.' },
-  { icon: Smartphone, title: 'Operator Portal', body: 'A touch-friendly, mobile-first portal so every operator sees their jobs and reports issues instantly.' },
-  { icon: WifiOff, title: 'Offline-ready PWA', body: 'Install it like a native app on iOS or Android. Keep working through dropouts — data syncs on reconnect.' },
-  { icon: ScanLine, title: 'Barcode Scanning', body: 'Scan work orders, parts, and SKUs with any device camera. No dedicated hardware required.' },
+  { icon: CalendarClock, title: 'Production Tracking', body: 'Work orders, OEE, and cycle times in real time. Schedule adherence and takt-time monitoring keep every job on track.' },
+  { icon: ShieldCheck, title: 'Quality Management', body: 'Capture NCRs and CAPAs at the source. Structured inspection workflows close the loop with full audit history.' },
+  { icon: AlertTriangle, title: 'Andon & Alerting', body: 'Real-time downtime alerts notify supervisors the moment a line stops. Escalation rules ensure no alert is missed.' },
+  { icon: Package, title: 'Inventory & Purchasing', body: 'Track stock levels, locations, and vendors. Create and approve purchase orders alongside production — one system of record.' },
+  { icon: Gauge, title: 'Maintenance CMMS', body: 'Preventive maintenance schedules, equipment work orders, and downtime logs that feed directly into your OEE.' },
+  { icon: Blocks, title: 'Training & Compliance', body: 'Digital training records, certification tracking, and skills matrices — always audit-ready, never on paper.' },
+  { icon: Sparkles, title: 'Kaizen & CI', body: 'Capture continuous improvement ideas from the floor, prioritize them, and track implementation to completion.' },
+  { icon: MessageSquare, title: 'Shift Management', body: 'Digital shift handoff notes and production summaries replace the clipboard. Every shift starts with full context.' },
 ];
 
 const STATS = [
-  { value: '15+', label: 'Widget types' },
-  { value: '< 5 min', label: 'To publish an app' },
-  { value: 'Real-time', label: 'OEE & analytics' },
-  { value: 'iOS + Android', label: 'Installable PWA' },
+  { value: '2,400+', label: 'Work orders tracked daily' },
+  { value: '23%', label: 'Avg downtime reduction' },
+  { value: '< 5 min', label: 'Setup to first work order' },
+  { value: '99.9%', label: 'Platform uptime SLA' },
 ];
 
 function ProductRow({ eyebrow, title, body, points, src, alt, phone = false, reverse = false }: {
@@ -58,19 +57,16 @@ function ProductRow({ eyebrow, title, body, points, src, alt, phone = false, rev
       <Reveal delay={120}>
         {phone ? (
           <div className="flex justify-center">
-            <div className="relative">
-              <div className="absolute -inset-8 rounded-full opacity-40 blur-3xl" style={{ background: 'radial-gradient(circle, #ec4899, transparent 70%)' }} />
-              <div className="relative w-[260px] rounded-[2.5rem] border-[10px] border-[#1a1f2b] bg-[#1a1f2b] glow-pink">
-                <div className="rounded-[1.8rem] overflow-hidden bg-[#0a1628]">
-                  <img src={src} alt={alt} loading="lazy" className="w-full block" />
-                </div>
+            <div className="relative w-[260px] rounded-[2.5rem] border-[10px] border-[#1a1f2b] bg-[#1a1f2b] shadow-2xl shadow-black/60">
+              <div className="rounded-[1.8rem] overflow-hidden bg-[#0a1628]">
+                <img src={src} alt={alt} loading="lazy" className="w-full block" />
               </div>
             </div>
           </div>
         ) : (
           <div className="relative">
-            <div className="absolute -inset-6 rounded-3xl opacity-45 blur-3xl" style={{ background: 'radial-gradient(ellipse at center, #ec4899, #6366f1 65%, transparent 80%)' }} />
-            <BrowserFrame src={src} alt={alt} className="relative rounded-xl glow-pink" />
+            <div className="absolute -inset-6 rounded-3xl opacity-30 blur-3xl" style={{ background: GRADIENT }} />
+            <BrowserFrame src={src} alt={alt} className="relative" />
           </div>
         )}
       </Reveal>
@@ -101,7 +97,7 @@ function MockupCard({ icon: Icon, label, caption, children }: {
 }) {
   return (
     <Reveal className="h-full">
-      <div className="group h-full flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] overflow-hidden transition-all hover:border-pink-500/50 hover:bg-white/[0.05] hover:-translate-y-1 hover:glow-pink">
+      <div className="group h-full flex flex-col rounded-2xl border border-white/10 bg-white/[0.03] overflow-hidden transition-all hover:border-pink-500/30 hover:bg-white/[0.05]">
         {/* chrome bar */}
         <div className="flex items-center gap-2 px-4 py-2.5 border-b border-white/10 bg-[#0a0e27]/60">
           <span className="w-2.5 h-2.5 rounded-full bg-rose-400/70" />
@@ -313,26 +309,11 @@ const MES_PREVIEWS = [
 
 export default function Landing() {
   const [pricing, setPricing] = useState<PricingCatalog | null>(null);
-  const [installPrompt, setInstallPrompt] = useState<any>(null);
-  const [installed, setInstalled] = useState(false);
 
   useEffect(() => {
     api.getPublicPricing().then(setPricing).catch(() => {});
     document.title = 'HartMonitor — Manufacturing Execution System';
-
-    const handler = (e: Event) => { e.preventDefault(); setInstallPrompt(e); };
-    window.addEventListener('beforeinstallprompt', handler);
-    window.addEventListener('appinstalled', () => setInstalled(true));
-    return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
-
-  const handleInstall = async () => {
-    if (!installPrompt) return;
-    installPrompt.prompt();
-    const { outcome } = await installPrompt.userChoice;
-    if (outcome === 'accepted') setInstalled(true);
-    setInstallPrompt(null);
-  };
 
   const fmt = (p: number | null) => (p === null ? 'Custom' : p === 0 ? '$0' : `$${p}`);
 
@@ -342,70 +323,49 @@ export default function Landing() {
 
       {/* ── Hero ───────────────────────────────────────────────────────── */}
       <section className="relative pt-32 pb-20 md:pt-44 md:pb-28">
-        {/* background glows — midnight navy base with a vivid pink + indigo aurora */}
+        {/* background glows — midnight navy base with a pink + indigo aurora */}
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="aurora-orb animate-aurora absolute -top-48 left-1/2 -translate-x-1/2 w-[820px] h-[820px]" style={{ background: 'radial-gradient(circle, #ec4899, transparent 70%)', opacity: 0.45 }} />
-          <div className="aurora-orb animate-aurora absolute -top-24 right-[6%] w-[560px] h-[560px]" style={{ background: 'radial-gradient(circle, #f472b6, transparent 70%)', opacity: 0.4 }} />
-          <div className="aurora-orb animate-aurora absolute top-40 left-[2%] w-[500px] h-[500px]" style={{ background: 'radial-gradient(circle, #6366f1, transparent 70%)', opacity: 0.4 }} />
-          <div className="absolute inset-0 opacity-[0.05]" style={{ backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)', backgroundSize: '64px 64px' }} />
+          <div className="absolute -top-48 left-1/2 -translate-x-1/2 w-[900px] h-[900px] rounded-full opacity-25 blur-[120px]" style={{ background: GRADIENT }} />
+          <div className="absolute -top-24 right-[10%] w-[520px] h-[520px] rounded-full opacity-30 blur-[130px]" style={{ background: 'radial-gradient(circle, #ec4899, transparent 70%)' }} />
+          <div className="absolute top-40 left-[5%] w-[460px] h-[460px] rounded-full opacity-25 blur-[130px]" style={{ background: 'radial-gradient(circle, #6366f1, transparent 70%)' }} />
+          <div className="absolute inset-0 opacity-[0.04]" style={{ backgroundImage: 'linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)', backgroundSize: '64px 64px' }} />
         </div>
 
         <div className="relative max-w-5xl mx-auto px-6 text-center">
           <Reveal>
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-pink-400/30 bg-pink-500/10 ring-glow-pink text-xs font-medium text-pink-100 mb-8">
+            <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-white/10 bg-white/5 text-xs font-medium text-gray-300 mb-8">
               <Sparkles size={13} className="text-pink-400" />
               The modern manufacturing execution system
             </div>
           </Reveal>
           <Reveal delay={80}>
             <h1 className="text-5xl md:text-7xl font-semibold tracking-tight leading-[1.05]">
-              Run your shop floor
+              Production-grade MES
               <br />
-              like the <span className="text-gradient-pink text-glow-pink">future</span>.
+              for <span className="bg-gradient-to-r from-indigo-400 to-pink-400 bg-clip-text text-transparent">growing manufacturers</span>.
             </h1>
           </Reveal>
           <Reveal delay={160}>
             <p className="mt-7 text-lg md:text-xl text-gray-400 max-w-2xl mx-auto leading-relaxed">
-              Build guided work instructions, schedule jobs, track OEE, manage quality, and put real-time
-              data in every operator's hands — all in one beautifully simple platform.
+              Track work orders, manage quality, alert on downtime, and put real-time
+              OEE data in every operator's hands — all in one platform built for the shop floor.
             </p>
           </Reveal>
           <Reveal delay={240}>
             <div className="mt-10 flex flex-col sm:flex-row items-center justify-center gap-4">
               <Link
                 to="/login?mode=signup"
-                className="group inline-flex items-center gap-2 px-7 py-3.5 rounded-full text-white font-semibold text-base transition-all hover:scale-[1.03] animate-pulse-glow"
+                className="group inline-flex items-center gap-2 px-7 py-3.5 rounded-full text-white font-semibold text-base transition-all hover:scale-[1.03] shadow-lg shadow-pink-500/30"
                 style={{ background: GRADIENT }}
               >
-                Start free
+                Start 14-day free trial
                 <ArrowRight size={17} className="group-hover:translate-x-0.5 transition-transform" />
               </Link>
-              <a href="#product" className="inline-flex items-center gap-2 px-7 py-3.5 rounded-full text-gray-200 font-semibold text-base border border-white/15 hover:bg-white/5 transition-all">
-                See it in action
-              </a>
+              <Link to="/pricing" className="inline-flex items-center gap-2 px-7 py-3.5 rounded-full text-gray-200 font-semibold text-base border border-white/15 hover:bg-white/5 transition-all">
+                View pricing
+              </Link>
             </div>
-            {/* PWA install row */}
-            <div className="mt-5 flex flex-col items-center gap-2">
-              {installPrompt && !installed && (
-                <button
-                  onClick={handleInstall}
-                  className="inline-flex items-center gap-2 text-sm text-gray-300 hover:text-white transition-colors border border-white/10 rounded-full px-5 py-2 hover:bg-white/5"
-                >
-                  <Smartphone size={14} className="text-pink-400" />
-                  Install app on this device
-                </button>
-              )}
-              {installed && (
-                <p className="text-sm text-emerald-400 flex items-center gap-1.5">
-                  <Check size={14} strokeWidth={3} /> App installed!
-                </p>
-              )}
-              {!installPrompt && !installed && (
-                <p className="text-sm text-gray-500">
-                  Free plan · 5 apps & 2 dashboards · No credit card required
-                </p>
-              )}
-            </div>
+            <p className="mt-5 text-sm text-gray-500">14-day free trial · No credit card required · Cancel anytime</p>
           </Reveal>
         </div>
 
@@ -413,8 +373,8 @@ export default function Landing() {
         <div className="relative max-w-6xl mx-auto px-6 mt-16 md:mt-20">
           <Reveal delay={120}>
             <div className="relative">
-              <div className="absolute -inset-4 md:-inset-10 rounded-3xl opacity-50 blur-3xl" style={{ background: 'radial-gradient(ellipse at center, #ec4899, #6366f1 60%, transparent 80%)' }} />
-              <BrowserFrame src="/shot-dashboard.png" alt="HartMonitor command center dashboard" className="relative rounded-xl glow-pink-lg" />
+              <div className="absolute -inset-4 md:-inset-8 rounded-3xl opacity-30 blur-3xl" style={{ background: GRADIENT }} />
+              <BrowserFrame src="/shot-dashboard.png" alt="HartMonitor command center dashboard" className="relative" />
             </div>
           </Reveal>
         </div>
@@ -422,13 +382,18 @@ export default function Landing() {
 
       {/* ── Stat band ──────────────────────────────────────────────────── */}
       <section className="border-y border-white/10 bg-white/[0.02]">
-        <div className="max-w-6xl mx-auto px-6 py-12 grid grid-cols-2 md:grid-cols-4 gap-8">
-          {STATS.map((s, i) => (
-            <Reveal key={s.label} delay={i * 80} className="text-center">
-              <div className="text-3xl md:text-4xl font-bold text-gradient-pink">{s.value}</div>
-              <div className="mt-2 text-sm text-gray-500">{s.label}</div>
-            </Reveal>
-          ))}
+        <div className="max-w-6xl mx-auto px-6 py-14">
+          <Reveal className="text-center mb-10">
+            <p className="text-sm font-semibold uppercase tracking-widest text-gray-500">Trusted by manufacturers worldwide</p>
+          </Reveal>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
+            {STATS.map((s, i) => (
+              <Reveal key={s.label} delay={i * 80} className="text-center">
+                <div className="text-3xl md:text-4xl font-semibold bg-gradient-to-r from-indigo-400 to-pink-400 bg-clip-text text-transparent">{s.value}</div>
+                <div className="mt-2 text-sm text-gray-500">{s.label}</div>
+              </Reveal>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -465,8 +430,7 @@ export default function Landing() {
       {/* ── MES preview gallery (self-contained mockups) ───────────────── */}
       <section id="previews" className="relative border-t border-white/10 bg-white/[0.02]">
         <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          <div className="absolute top-0 left-1/4 w-[600px] h-[600px] rounded-full opacity-25 blur-[140px]" style={{ background: PINK }} />
-          <div className="absolute bottom-0 right-1/4 w-[480px] h-[480px] rounded-full opacity-20 blur-[140px]" style={{ background: '#6366f1' }} />
+          <div className="absolute top-0 left-1/4 w-[600px] h-[600px] rounded-full opacity-10 blur-[140px]" style={{ background: PINK }} />
         </div>
         <div className="relative max-w-6xl mx-auto px-6 py-24 md:py-32">
           <Reveal className="text-center max-w-2xl mx-auto">
@@ -490,14 +454,15 @@ export default function Landing() {
       <section id="features" className="border-t border-white/10 bg-white/[0.02]">
         <div className="max-w-6xl mx-auto px-6 py-24 md:py-32">
           <Reveal className="text-center max-w-2xl mx-auto">
+            <p className="text-sm font-semibold uppercase tracking-widest mb-4 bg-gradient-to-r from-indigo-400 to-pink-400 bg-clip-text text-transparent">Core modules</p>
             <h2 className="text-4xl md:text-5xl font-semibold tracking-tight">Everything your floor needs.</h2>
-            <p className="mt-5 text-lg text-gray-400">One platform replaces the patchwork of spreadsheets, whiteboards, and disconnected tools.</p>
+            <p className="mt-5 text-lg text-gray-400">One platform replaces the patchwork of spreadsheets, whiteboards, and disconnected tools across every department.</p>
           </Reveal>
           <div className="mt-16 grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
             {FEATURES.map((f, i) => (
               <Reveal key={f.title} delay={(i % 3) * 80}>
-                <div className="group h-full rounded-2xl border border-white/10 bg-white/[0.03] p-7 hover:bg-white/[0.05] hover:border-pink-500/30 transition-all">
-                  <div className="w-11 h-11 rounded-xl flex items-center justify-center mb-5 transition-transform group-hover:scale-110 group-hover:glow-pink" style={{ background: GRADIENT }}>
+                <div className="h-full rounded-2xl border border-white/10 bg-white/[0.03] p-7 hover:bg-white/[0.05] hover:border-white/20 transition-all">
+                  <div className="w-11 h-11 rounded-xl flex items-center justify-center mb-5" style={{ background: GRADIENT }}>
                     <f.icon size={20} className="text-white" />
                   </div>
                   <h3 className="text-lg font-semibold text-white">{f.title}</h3>
@@ -512,18 +477,22 @@ export default function Landing() {
       {/* ── Pricing preview ────────────────────────────────────────────── */}
       <section className="max-w-6xl mx-auto px-6 py-24 md:py-32">
         <Reveal className="text-center max-w-2xl mx-auto">
+          <p className="text-sm font-semibold uppercase tracking-widest mb-4 bg-gradient-to-r from-indigo-400 to-pink-400 bg-clip-text text-transparent">Pricing</p>
           <h2 className="text-4xl md:text-5xl font-semibold tracking-tight">Simple, honest pricing.</h2>
-          <p className="mt-5 text-lg text-gray-400">Start free. Upgrade when you're ready to scale across the plant.</p>
+          <p className="mt-5 text-lg text-gray-400">14-day free trial on every plan. Upgrade when you're ready to scale across the plant.</p>
         </Reveal>
 
         <div className="mt-16 grid md:grid-cols-3 gap-6">
+          {!pricing && [1, 2, 3].map(i => (
+            <div key={i} className="rounded-2xl p-8 border border-white/10 bg-white/[0.03] h-80 animate-pulse" />
+          ))}
           {pricing && Object.entries(pricing.tiers).map(([key, tier], i) => {
             const featured = key === 'pro';
             return (
               <Reveal key={key} delay={i * 90}>
-                <div className={`relative h-full rounded-2xl p-8 border ${featured ? 'border-pink-500/50 bg-gradient-to-b from-pink-500/[0.12] to-transparent glow-pink' : 'border-white/10 bg-white/[0.03]'}`}>
+                <div className={`relative h-full rounded-2xl p-8 border ${featured ? 'border-pink-500/40 bg-gradient-to-b from-pink-500/[0.08] to-transparent' : 'border-white/10 bg-white/[0.03]'}`}>
                   {featured && (
-                    <span className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-[11px] font-bold text-white animate-pulse-glow" style={{ background: GRADIENT }}>
+                    <span className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full text-[11px] font-bold text-white" style={{ background: GRADIENT }}>
                       MOST POPULAR
                     </span>
                   )}
@@ -545,78 +514,35 @@ export default function Landing() {
             );
           })}
         </div>
-        <Reveal className="text-center mt-12">
-          <Link to="/pricing" className="inline-flex items-center gap-2 text-pink-400 hover:text-pink-300 font-semibold transition-colors">
-            Compare all plans & add-ons <ArrowRight size={16} />
+        <Reveal className="text-center mt-12 flex flex-col sm:flex-row items-center justify-center gap-4">
+          <Link
+            to="/pricing"
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-full text-white font-semibold text-sm transition-all hover:scale-[1.02]"
+            style={{ background: GRADIENT }}
+          >
+            See full pricing <ArrowRight size={15} />
+          </Link>
+          <Link to="/login?mode=signup" className="inline-flex items-center gap-2 text-gray-400 hover:text-white font-medium text-sm transition-colors">
+            Or start your free trial — no credit card required
           </Link>
         </Reveal>
-      </section>
-
-      {/* ── Install strip ──────────────────────────────────────────────── */}
-      <section className="border-t border-white/10">
-        <div className="max-w-6xl mx-auto px-6 py-16 text-center">
-          <Reveal>
-            <h2 className="text-3xl md:text-4xl font-semibold tracking-tight mb-4">Install on any device.</h2>
-            <p className="text-gray-400 max-w-xl mx-auto mb-8">
-              HartMonitor is a Progressive Web App — add it to your home screen on iOS or Android for a native-app feel with automatic updates every time we ship.
-            </p>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-              <div className="flex items-center gap-3 px-6 py-3.5 rounded-2xl border border-white/15 bg-white/[0.04]">
-                <svg viewBox="0 0 24 24" className="w-7 h-7 flex-shrink-0" fill="currentColor"><path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.8-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M13 3.5c.73-.83 1.94-1.46 2.94-1.5.13 1.17-.34 2.35-1.04 3.19-.69.85-1.83 1.51-2.95 1.42-.15-1.15.41-2.35 1.05-3.11z"/></svg>
-                <div className="text-left">
-                  <p className="text-[10px] text-gray-400 leading-none">Add to Home Screen on</p>
-                  <p className="text-sm font-semibold text-white">iPhone / iPad (iOS)</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-3 px-6 py-3.5 rounded-2xl border border-white/15 bg-white/[0.04]">
-                <svg viewBox="0 0 24 24" className="w-7 h-7 flex-shrink-0" fill="currentColor"><path d="M17.523 15.341 4.63 22.573l9.913-9.913 3.04 2.681zM2.8 1.8C2.305 2.319 2 3.088 2 4.101v15.798c0 1.013.305 1.782.8 2.301l.116.116L11.7 13.44v-.221L2.916 4.584 2.8 1.8zm14.4 8.136-2.68-1.489-3.04 3.014 3.04 3.014 2.68-1.489c.766-.435.766-1.116 0-1.55l.048-.5zM4.63 1.427l12.893 7.232-3.04 2.641L4.63 1.427z"/></svg>
-                <div className="text-left">
-                  <p className="text-[10px] text-gray-400 leading-none">Install from browser on</p>
-                  <p className="text-sm font-semibold text-white">Android / Chrome</p>
-                </div>
-              </div>
-              {installPrompt && !installed && (
-                <button
-                  onClick={handleInstall}
-                  className="flex items-center gap-3 px-6 py-3.5 rounded-2xl transition-all hover:scale-[1.03] animate-pulse-glow"
-                  style={{ background: GRADIENT }}
-                >
-                  <Smartphone size={20} className="flex-shrink-0" />
-                  <div className="text-left">
-                    <p className="text-[10px] text-white/70 leading-none">This device is ready —</p>
-                    <p className="text-sm font-semibold text-white">Install now</p>
-                  </div>
-                </button>
-              )}
-            </div>
-            <p className="mt-6 text-xs text-gray-600">On iOS: tap Share → "Add to Home Screen". On Android: tap the browser menu → "Install app".</p>
-          </Reveal>
-        </div>
       </section>
 
       {/* ── Final CTA ──────────────────────────────────────────────────── */}
       <section className="px-6 pb-28">
         <Reveal>
-          <div className="relative max-w-5xl mx-auto rounded-3xl overflow-hidden border border-pink-500/20 px-8 py-16 md:py-24 text-center glow-pink">
-            <div className="absolute inset-0 opacity-40 blur-2xl" style={{ background: 'radial-gradient(ellipse at center, #ec4899, #6366f1 60%, transparent 80%)' }} />
+          <div className="relative max-w-5xl mx-auto rounded-3xl overflow-hidden border border-white/10 px-8 py-16 md:py-24 text-center">
+            <div className="absolute inset-0 opacity-25 blur-2xl" style={{ background: GRADIENT }} />
             <div className="relative">
-              <h2 className="text-4xl md:text-5xl font-semibold tracking-tight">Start running your floor <span className="text-gradient-pink text-glow-pink">today</span>.</h2>
-              <p className="mt-5 text-lg text-gray-300 max-w-xl mx-auto">Set up your workspace in minutes. No credit card, no sales call — just open the app and build.</p>
-              <div className="mt-9 flex flex-col sm:flex-row items-center justify-center gap-4">
-                <Link
-                  to="/login?mode=signup"
-                  className="inline-flex items-center gap-2 px-8 py-4 rounded-full text-white font-semibold text-base transition-all hover:scale-[1.03] animate-pulse-glow"
-                  style={{ background: GRADIENT }}
-                >
-                  Get started free <ArrowRight size={18} />
-                </Link>
-                <Link
-                  to="/login"
-                  className="inline-flex items-center gap-2 px-8 py-4 rounded-full text-white font-semibold text-base border border-white/20 hover:bg-white/10 transition-all"
-                >
-                  Sign in
-                </Link>
-              </div>
+              <h2 className="text-4xl md:text-5xl font-semibold tracking-tight">Start your free 14-day trial.</h2>
+              <p className="mt-5 text-lg text-gray-300 max-w-xl mx-auto">Set up your workspace in minutes. No credit card required — just open the app and go.</p>
+              <Link
+                to="/login?mode=signup"
+                className="mt-9 inline-flex items-center gap-2 px-8 py-4 rounded-full bg-white text-gray-900 font-semibold text-base transition-all hover:scale-[1.03] shadow-xl"
+              >
+                Start free 14-day trial <ArrowRight size={18} />
+              </Link>
+              <p className="mt-4 text-sm text-gray-500">No credit card required · Cancel anytime</p>
             </div>
           </div>
         </Reveal>

@@ -73,6 +73,7 @@ export default function AppBuilder() {
   const navigate = useNavigate();
   const { canEdit } = useAuth();
   const [app, setApp] = useState<App | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [activeStepIdx, setActiveStepIdx] = useState(0);
   const [selectedWidgetId, setSelectedWidgetId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -90,12 +91,14 @@ export default function AppBuilder() {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
 
-  useEffect(() => {
-    if (id) {
-      api.getApp(id).then(setApp);
-      api.getProductTypes(id).then(setProductTypes);
-    }
+  const loadApp = useCallback(() => {
+    if (!id) return;
+    setLoadError(null);
+    api.getApp(id).then(setApp).catch((err: any) => setLoadError(err.message || 'Failed to load app'));
+    api.getProductTypes(id).then(setProductTypes).catch(() => {});
   }, [id]);
+
+  useEffect(() => { loadApp(); }, [loadApp]);
 
   // Load departments/stations once for the "Publish to" selectors.
   useEffect(() => {
@@ -103,8 +106,8 @@ export default function AppBuilder() {
     api.getStations().then(setStations).catch(() => {});
   }, []);
 
-  const save = useCallback(async (appData: App) => {
-    if (!id) return;
+  const save = useCallback(async (appData: App): Promise<boolean> => {
+    if (!id) return false;
     setSaving(true);
     try {
       await api.updateApp(id, {
@@ -117,6 +120,10 @@ export default function AppBuilder() {
       });
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
+      return true;
+    } catch (err: any) {
+      alert(err.message || 'Failed to save app');
+      return false;
     } finally {
       setSaving(false);
     }
@@ -262,13 +269,28 @@ export default function AppBuilder() {
     if (!id || !app) return;
     const next = { ...app, department_id: target.department_id, station_id: target.station_id };
     setApp(next);
-    await save(next);
-    await api.publishApp(id);
-    setApp(prev => prev ? { ...prev, status: 'published', department_id: target.department_id, station_id: target.station_id } : prev);
-    setShowPublishModal(false);
+    const ok = await save(next);
+    if (!ok) return;
+    try {
+      await api.publishApp(id);
+      setApp(prev => prev ? { ...prev, status: 'published', department_id: target.department_id, station_id: target.station_id } : prev);
+      setShowPublishModal(false);
+    } catch (err: any) {
+      alert(err.message || 'Failed to publish app');
+    }
   };
 
   if (!app) {
+    if (loadError) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-center p-6">
+          <AlertTriangle size={32} className="text-red-400 mb-3" />
+          <p className="text-gray-600 font-medium">Couldn't load app</p>
+          <p className="text-gray-400 text-sm mt-1">{loadError}</p>
+          <button onClick={loadApp} className="btn-secondary mt-4">Retry</button>
+        </div>
+      );
+    }
     return (
       <div className="flex items-center justify-center h-full">
         <Loader2 size={24} className="animate-spin text-blue-500" />
@@ -730,6 +752,8 @@ function ProductTypesModal({ app, productTypes, onClose, onUpdate }: {
         onUpdate([...productTypes, created]);
       }
       resetForm();
+    } catch (err: any) {
+      alert(err.message || 'Failed to save product type');
     } finally {
       setSaving(false);
     }
@@ -737,8 +761,12 @@ function ProductTypesModal({ app, productTypes, onClose, onUpdate }: {
 
   const handleDelete = async (pt: ProductType) => {
     if (!confirm(`Delete product type "${pt.name}"?`)) return;
-    await api.deleteProductType(pt.id);
-    onUpdate(productTypes.filter(p => p.id !== pt.id));
+    try {
+      await api.deleteProductType(pt.id);
+      onUpdate(productTypes.filter(p => p.id !== pt.id));
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete product type');
+    }
   };
 
   return (

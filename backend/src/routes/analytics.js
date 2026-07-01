@@ -17,6 +17,12 @@ function completionFilter(req) {
   return { clause: clauses.length ? ' AND ' + clauses.join(' AND ') : '', params };
 }
 
+// Clamp a user-supplied ?days= value to a sane integer — parseInt('abc') is NaN
+// and better-sqlite3 throws a TypeError when binding NaN (500 for the client).
+function safeDays(value, fallback) {
+  return Math.min(Math.max(parseInt(value, 10) || fallback, 1), 3650);
+}
+
 // ─── GET /overview ────────────────────────────────────────────────────────────
 
 router.get('/overview', (req, res) => {
@@ -52,7 +58,7 @@ router.get('/overview', (req, res) => {
 // ─── GET /throughput ──────────────────────────────────────────────────────────
 
 router.get('/throughput', (req, res) => {
-  const { days = 30 } = req.query;
+  const days = Math.min(365, parseInt(req.query.days) || 30);
   const f = completionFilter(req);
   const rows = db.prepare(`
     SELECT date(completed_at) as date, COUNT(*) as count
@@ -60,14 +66,15 @@ router.get('/throughput', (req, res) => {
     WHERE company_id = ? AND status='completed' AND completed_at >= date('now', '-' || ? || ' days')${f.clause}
     GROUP BY date(completed_at)
     ORDER BY date ASC
-  `).all(req.companyId, parseInt(days), ...f.params);
+    LIMIT 10000
+  `).all(req.companyId, days, ...f.params);
   res.json(rows);
 });
 
 // ─── GET /cycle-times ─────────────────────────────────────────────────────────
 
 router.get('/cycle-times', (req, res) => {
-  const { days = 30 } = req.query;
+  const days = Math.min(365, parseInt(req.query.days) || 30);
   const f = completionFilter(req);
   const rows = db.prepare(`
     SELECT
@@ -80,7 +87,8 @@ router.get('/cycle-times', (req, res) => {
       AND completed_at >= date('now', '-' || ? || ' days')${f.clause}
     GROUP BY date(completed_at)
     ORDER BY date ASC
-  `).all(req.companyId, parseInt(days), ...f.params);
+    LIMIT 10000
+  `).all(req.companyId, days, ...f.params);
   res.json(rows);
 });
 
@@ -131,7 +139,7 @@ router.get('/quality', (req, res) => {
     FROM completions
     WHERE company_id = ? AND status='completed' AND completed_at >= date('now', '-' || ? || ' days')${f.clause}
     ORDER BY completed_at ASC
-  `).all(req.companyId, parseInt(days), ...f.params);
+  `).all(req.companyId, safeDays(days, 30), ...f.params);
 
   const byDate = {};
   for (const row of rows) {
@@ -395,7 +403,7 @@ router.get('/plant-view', (req, res) => {
 
 router.get('/step-metrics/:appId', (req, res) => {
   const { appId } = req.params;
-  const days = parseInt(req.query.days || '90');
+  const days = safeDays(req.query.days, 90);
 
   const app = db.prepare('SELECT id, name, steps FROM apps WHERE id = ? AND company_id = ?').get(appId, req.companyId);
   if (!app) return res.status(404).json({ error: 'App not found' });

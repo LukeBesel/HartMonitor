@@ -28,29 +28,39 @@ export default function AppPlayer() {
   const [selectedProductTypeId, setSelectedProductTypeId] = useState('');
   const [selectedStationId, setSelectedStationId] = useState(() => localStorage.getItem('hm_station') || '');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [starting, setStarting] = useState(false);
+  const [completing, setCompleting] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [taktExceededSteps, setTaktExceededSteps] = useState<number[]>([]);
   const [flashPhase, setFlashPhase] = useState(false);
   const [validationError, setValidationError] = useState<string | null>(null);
   const [showPartsOverlay, setShowPartsOverlay] = useState(false);
 
-  useEffect(() => {
-    if (id) {
-      Promise.all([api.getApp(id), api.getWorkOrders(), api.getProductTypes(id), api.getStations()]).then(([a, wos, pts, sts]) => {
-        setApp(a);
-        setWorkOrders(wos.filter((w: WorkOrder) => w.app_id === id && w.status !== 'completed' && w.status !== 'cancelled'));
-        setProductTypes(pts);
-        setStations(sts.filter((s: Station) => s.status === 'active'));
-        // Pre-fill from URL params (coming from Operator Portal or a station kiosk link)
-        const woParam = searchParams.get('wo');
-        const nameParam = searchParams.get('name');
-        const stationParam = searchParams.get('station');
-        if (woParam) setSelectedWorkOrderId(woParam);
-        if (nameParam) setOperatorName(nameParam);
-        if (stationParam) setSelectedStationId(stationParam);
-        setLoading(false);
-      });
-    }
+  const loadAll = useCallback(() => {
+    if (!id) return;
+    setLoading(true);
+    setLoadError(null);
+    Promise.all([api.getApp(id), api.getWorkOrders(), api.getProductTypes(id), api.getStations()]).then(([a, wos, pts, sts]) => {
+      setApp(a);
+      setWorkOrders(wos.filter((w: WorkOrder) => w.app_id === id && w.status !== 'completed' && w.status !== 'cancelled'));
+      setProductTypes(pts);
+      setStations(sts.filter((s: Station) => s.status === 'active'));
+      // Pre-fill from URL params (coming from Operator Portal or a station kiosk link)
+      const woParam = searchParams.get('wo');
+      const nameParam = searchParams.get('name');
+      const stationParam = searchParams.get('station');
+      if (woParam) setSelectedWorkOrderId(woParam);
+      if (nameParam) setOperatorName(nameParam);
+      if (stationParam) setSelectedStationId(stationParam);
+      setLoading(false);
+    }).catch((err: any) => {
+      setLoadError(err.message || 'Failed to load app');
+      setLoading(false);
+    });
   }, [id]);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
 
   // Step elapsed timer
   useEffect(() => {
@@ -93,20 +103,28 @@ export default function AppPlayer() {
   }, [isOverTakt, currentStepIdx]);
 
   const startRun = async () => {
-    if (!app || !id) return;
+    if (!app || !id || starting) return;
     if (selectedStationId) localStorage.setItem('hm_station', selectedStationId);
     else localStorage.removeItem('hm_station');
-    const c = await api.createCompletion({
-      app_id: id,
-      operator_name: operatorName || 'Operator',
-      work_order_id: selectedWorkOrderId || undefined,
-      product_type_id: selectedProductTypeId || undefined,
-      station_id: selectedStationId || undefined,
-    });
-    setCompletionId(c.id);
-    setStepStartTime(Date.now());
-    setStepElapsed(0);
-    setStatus('running');
+    setStarting(true);
+    setActionError(null);
+    try {
+      const c = await api.createCompletion({
+        app_id: id,
+        operator_name: operatorName || 'Operator',
+        work_order_id: selectedWorkOrderId || undefined,
+        product_type_id: selectedProductTypeId || undefined,
+        station_id: selectedStationId || undefined,
+      });
+      setCompletionId(c.id);
+      setStepStartTime(Date.now());
+      setStepElapsed(0);
+      setStatus('running');
+    } catch (err: any) {
+      setActionError(err.message || 'Failed to start process');
+    } finally {
+      setStarting(false);
+    }
   };
 
   const recordStepTime = useCallback((stepIdx: number) => {
@@ -154,7 +172,7 @@ export default function AppPlayer() {
   };
 
   const complete = async () => {
-    if (!completionId || !app) return;
+    if (!completionId || !app || completing) return;
     const missing = getMissingRequiredFields(currentStepIdx);
     if (missing.length > 0) {
       setValidationError(`Please fill in required field${missing.length > 1 ? 's' : ''}: ${missing.join(', ')}`);
@@ -163,17 +181,28 @@ export default function AppPlayer() {
     setValidationError(null);
     recordStepTime(currentStepIdx);
     const finalStepTimes = { ...stepTimes, [currentStepIdx]: Math.round((Date.now() - stepStartTime) / 1000) };
-    await api.updateCompletion(completionId, {
-      status: 'completed', data: formData,
-      step_times: finalStepTimes,
-      takt_exceeded_steps: taktExceededSteps,
-    });
-    setStatus('completed');
+    setCompleting(true);
+    try {
+      await api.updateCompletion(completionId, {
+        status: 'completed', data: formData,
+        step_times: finalStepTimes,
+        takt_exceeded_steps: taktExceededSteps,
+      });
+      setStatus('completed');
+    } catch (err: any) {
+      setValidationError(err.message || 'Failed to save completion — please try again');
+    } finally {
+      setCompleting(false);
+    }
   };
 
   const abandon = async () => {
     if (completionId) {
-      await api.updateCompletion(completionId, { status: 'abandoned', data: formData });
+      try {
+        await api.updateCompletion(completionId, { status: 'abandoned', data: formData });
+      } catch {
+        // Still exit the run locally — the operator asked to stop.
+      }
     }
     setStatus('abandoned');
   };
@@ -186,6 +215,20 @@ export default function AppPlayer() {
   if (loading) return (
     <div className="flex items-center justify-center h-screen bg-gray-950">
       <Loader2 size={32} className="animate-spin text-blue-400" />
+    </div>
+  );
+
+  if (loadError) return (
+    <div className="flex items-center justify-center h-screen bg-gray-950 text-white">
+      <div className="text-center">
+        <AlertTriangle size={40} className="mx-auto mb-3 text-red-400" />
+        <p className="text-xl font-semibold">Couldn't load app</p>
+        <p className="text-gray-400 text-sm mt-1">{loadError}</p>
+        <div className="flex items-center justify-center gap-2 mt-4">
+          <button onClick={loadAll} className="btn-secondary">Retry</button>
+          <button onClick={() => navigate('/apps')} className="btn-secondary">Back to Library</button>
+        </div>
+      </div>
     </div>
   );
 
@@ -257,8 +300,14 @@ export default function AppPlayer() {
                 </select>
               </div>
             )}
-            <button onClick={startRun} className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold text-base transition-colors shadow-lg shadow-blue-600/20">
-              Start Process
+            {actionError && (
+              <div className="flex items-center gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-xl text-red-600 text-sm">
+                <AlertCircle size={15} className="flex-shrink-0" />
+                {actionError}
+              </div>
+            )}
+            <button onClick={startRun} disabled={starting} className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold text-base transition-colors shadow-lg shadow-blue-600/20 disabled:opacity-60 disabled:cursor-not-allowed">
+              {starting ? 'Starting…' : 'Start Process'}
             </button>
             <button onClick={() => navigate('/apps')} className="w-full py-2 text-sm text-gray-400 hover:text-gray-600">
               ← Back to Library
@@ -349,7 +398,7 @@ export default function AppPlayer() {
   }
 
   // Running
-  const progress = ((currentStepIdx + 1) / app.steps.length) * 100;
+  const progress = app.steps.length > 0 ? ((currentStepIdx + 1) / app.steps.length) * 100 : 0;
   const taktPct = stepTaktSeconds > 0 ? Math.min(100, (stepElapsed / stepTaktSeconds) * 100) : 0;
 
   const bgClass = isOverTakt
@@ -541,9 +590,10 @@ export default function AppPlayer() {
             Next <ChevronRight size={18} />
           </button>
         ) : (
-          <button onClick={complete}
-            className="flex items-center gap-2 px-6 sm:px-8 py-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-base font-semibold transition-colors shadow-lg shadow-emerald-600/20">
-            <CheckCircle size={18} /> Complete
+          <button onClick={complete} disabled={completing}
+            className="flex items-center gap-2 px-6 sm:px-8 py-3 bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white rounded-xl text-base font-semibold transition-colors shadow-lg shadow-emerald-600/20 disabled:opacity-60 disabled:cursor-not-allowed">
+            {completing ? <Loader2 size={18} className="animate-spin" /> : <CheckCircle size={18} />}
+            {completing ? 'Saving…' : 'Complete'}
           </button>
         )}
       </div>

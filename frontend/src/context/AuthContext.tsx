@@ -1,5 +1,7 @@
-import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import { api } from '../api/client';
+import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
+import { Capacitor } from '@capacitor/core';
+import { Preferences } from '@capacitor/preferences';
+import { api, setNativeToken } from '../api/client';
 
 interface User {
   id: string;
@@ -16,18 +18,37 @@ interface AuthContextValue {
   signup: (companyName: string, displayName: string, email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   isAtLeast: (role: 'developer' | 'manager' | 'supervisor' | 'operator' | 'viewer') => boolean;
-  /** The management/report portal (dashboards, analytics, settings). Operators are
-   *  shop-floor only and cannot reach it; everyone else can (viewers read-only). */
   canAccessReportPortal: boolean;
-  /** The shop-floor Operator Portal. Open to all roles except view-only viewers. */
   canAccessOperatorPortal: boolean;
-  /** Viewers can see the report portal but cannot create, edit, or delete anything. */
   canEdit: boolean;
+  getToken: () => string | null;
 }
 
 const ROLE_LEVELS: Record<string, number> = { developer: 5, manager: 4, supervisor: 3, operator: 2, viewer: 1 };
+const IS_NATIVE = Capacitor.isNativePlatform();
+const PREFS_TOKEN_KEY = 'hm_token';
 
 const AuthContext = createContext<AuthContextValue>(null!);
+
+async function saveToken(token: string) {
+  if (IS_NATIVE) {
+    await Preferences.set({ key: PREFS_TOKEN_KEY, value: token });
+  }
+  setNativeToken(IS_NATIVE ? token : null);
+}
+
+async function clearToken() {
+  if (IS_NATIVE) {
+    await Preferences.remove({ key: PREFS_TOKEN_KEY });
+  }
+  setNativeToken(null);
+}
+
+async function loadToken(): Promise<string | null> {
+  if (!IS_NATIVE) return null;
+  const { value } = await Preferences.get({ key: PREFS_TOKEN_KEY });
+  return value;
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(() => {
@@ -35,22 +56,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return stored ? JSON.parse(stored) : null;
   });
   const [loading, setLoading] = useState(true);
+  const tokenRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const token = localStorage.getItem('hm_token');
-    if (!token) { setLoading(false); return; }
-    api.getMe()
-      .then(u => { setUser(u); localStorage.setItem('hm_user', JSON.stringify(u)); })
-      .catch(() => { localStorage.removeItem('hm_token'); localStorage.removeItem('hm_user'); setUser(null); })
-      .finally(() => setLoading(false));
+    (async () => {
+      // On native: restore token from secure storage and inject into API client
+      if (IS_NATIVE) {
+        const saved = await loadToken();
+        if (saved) {
+          tokenRef.current = saved;
+          setNativeToken(saved);
+        }
+      }
+
+      api.getMe()
+        .then(u => { setUser(u); localStorage.setItem('hm_user', JSON.stringify(u)); })
+        .catch(() => { localStorage.removeItem('hm_user'); clearToken(); setUser(null); })
+        .finally(() => setLoading(false));
+    })();
   }, []);
 
   const login = async (email: string, password: string) => {
     const data = await api.login(email, password);
-    localStorage.setItem('hm_token', data.token);
+    if (data.token) {
+      tokenRef.current = data.token;
+      await saveToken(data.token);
+    }
     localStorage.setItem('hm_user', JSON.stringify(data.user));
     setUser(data.user);
-    // Fetch full user info (includes company_name)
     const full = await api.getMe().catch(() => data.user);
     setUser(full);
     localStorage.setItem('hm_user', JSON.stringify(full));
@@ -58,7 +91,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signup = async (companyName: string, displayName: string, email: string, password: string) => {
     const data = await api.signup(companyName, displayName, email, password);
-    localStorage.setItem('hm_token', data.token);
+    if (data.token) {
+      tokenRef.current = data.token;
+      await saveToken(data.token);
+    }
     localStorage.setItem('hm_user', JSON.stringify(data.user));
     setUser(data.user);
     const full = await api.getMe().catch(() => data.user);
@@ -68,7 +104,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     await api.logout().catch(() => {});
-    localStorage.removeItem('hm_token');
+    tokenRef.current = null;
+    await clearToken();
     localStorage.removeItem('hm_user');
     setUser(null);
   };
@@ -78,18 +115,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return (ROLE_LEVELS[user.role] ?? 0) >= (ROLE_LEVELS[role] ?? 99);
   };
 
-  // Portal access is role-shaped, not a simple ladder: operators live on the
-  // shop floor, viewers live in the office. Everyone above them gets both.
+  const getToken = () => tokenRef.current;
+
   const canAccessReportPortal = !!user && user.role !== 'operator';
   const canAccessOperatorPortal = !!user && user.role !== 'viewer';
-  const canEdit = !!user && user.role !== 'viewer' && user.role !== 'operator'
-    ? (ROLE_LEVELS[user.role] ?? 0) >= ROLE_LEVELS.supervisor
-    : false;
+  const canEdit = !!user && (ROLE_LEVELS[user.role] ?? 0) >= ROLE_LEVELS.supervisor;
 
   return (
     <AuthContext.Provider value={{
       user, loading, login, signup, logout, isAtLeast,
-      canAccessReportPortal, canAccessOperatorPortal, canEdit,
+      canAccessReportPortal, canAccessOperatorPortal, canEdit, getToken,
     }}>
       {children}
     </AuthContext.Provider>
