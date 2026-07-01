@@ -12,7 +12,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const PORT = 3198;
+const PORT = 3196; // unique per test file — 3197/3198/3199 are taken by the other suites
 const BASE = `http://localhost:${PORT}`;
 const DB_PATH = path.join(os.tmpdir(), `mes-modules-test-${Date.now()}.db`);
 
