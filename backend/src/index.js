@@ -43,6 +43,7 @@ const gameRouter         = require('./routes/game');
 const routingsRouter     = require('./routes/routings');
 const uploadRouter       = require('./routes/upload');
 const sqdcRouter         = require('./routes/sqdc');
+const modulesRouter      = require('./routes/modules');
 const { requireAuth }    = require('./middleware/auth');
 const { requirePlan }    = require('./middleware/plan');
 const { apiKeyAuth }     = require('./middleware/apiKeyAuth');
@@ -188,6 +189,7 @@ app.use('/api/notifications', notificationsRouter);
 app.use('/api/routings',      requirePlan('pro'), routingsRouter);
 app.use('/api/upload',        uploadRouter);
 app.use('/api/sqdc',          sqdcRouter);
+app.use('/api/modules',       modulesRouter);
 
 // Unknown API routes return JSON 404 (not the SPA shell).
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));

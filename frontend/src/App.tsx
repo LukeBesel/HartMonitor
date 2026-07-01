@@ -5,6 +5,7 @@ import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import { ThemeProvider } from './context/ThemeContext';
 import { PlanProvider } from './context/PlanContext';
+import { ModulesProvider, useModules } from './context/ModulesContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { BrandingProvider } from './context/BrandingContext';
 import { NavPrefsProvider } from './context/NavPrefsContext';
@@ -78,6 +79,15 @@ function ReportPortalRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+// Composable MES: hides routes belonging to a module the company has switched
+// off. Visiting a disabled module's URL bounces to the Command Center.
+function ModuleGate({ module, children }: { module: string; children: React.ReactNode }) {
+  const { isEnabled, loading } = useModules();
+  if (loading) return <Spinner />;
+  if (!isEnabled(module)) return <Navigate to="/dashboard" replace />;
+  return <>{children}</>;
+}
+
 // The Operator Portal. Open to every role except view-only viewers.
 function OperatorRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, canAccessOperatorPortal } = useAuth();
@@ -93,6 +103,7 @@ export default function App() {
       <ThemeProvider>
         <BrandingProvider>
         <PlanProvider>
+        <ModulesProvider>
         <SiteProvider>
         <PermissionsProvider>
         <NavPrefsProvider>
@@ -117,13 +128,13 @@ export default function App() {
               {/* Management / report portal — operators are redirected to the floor */}
               <Route element={<ReportPortalRoute><Layout /></ReportPortalRoute>}>
                 <Route path="/dashboard" element={<Dashboard />} />
-                <Route path="/apps" element={<AppsLibrary />} />
-                <Route path="/apps/:id/build" element={<AppBuilder />} />
-                <Route path="/apps/:id/history" element={<AppHistory />} />
-                <Route path="/tables" element={<Tables />} />
-                <Route path="/tables/:id" element={<TableDetail />} />
+                <Route path="/apps" element={<ModuleGate module="apps"><AppsLibrary /></ModuleGate>} />
+                <Route path="/apps/:id/build" element={<ModuleGate module="apps"><AppBuilder /></ModuleGate>} />
+                <Route path="/apps/:id/history" element={<ModuleGate module="apps"><AppHistory /></ModuleGate>} />
+                <Route path="/tables" element={<ModuleGate module="apps"><Tables /></ModuleGate>} />
+                <Route path="/tables/:id" element={<ModuleGate module="apps"><TableDetail /></ModuleGate>} />
                 <Route path="/analytics" element={<Analytics />} />
-                <Route path="/sqdc" element={<SQDC />} />
+                <Route path="/sqdc" element={<ModuleGate module="quality"><SQDC /></ModuleGate>} />
                 <Route path="/stations" element={<Stations />} />
                 <Route path="/stations/:id" element={<StationView />} />
                 <Route path="/schedule" element={<Schedule />} />
@@ -136,15 +147,15 @@ export default function App() {
                 <Route path="/capacity" element={<CapacityPlanning />} />
                 <Route path="/completions/:id" element={<CompletionDetail />} />
                 <Route path="/oee" element={<OEETracker />} />
-                <Route path="/dashboards" element={<Dashboards />} />
-                <Route path="/dashboards/:id" element={<DashboardView />} />
-                <Route path="/dashboards/:id/:mode" element={<DashboardView />} />
-                <Route path="/inventory" element={<Inventory />} />
-                <Route path="/inventory/:id" element={<Inventory />} />
-                <Route path="/purchasing" element={<Purchasing />} />
-                <Route path="/purchasing/:tab" element={<Purchasing />} />
-                <Route path="/quality" element={<Quality />} />
-                <Route path="/quality/:id" element={<Quality />} />
+                <Route path="/dashboards" element={<ModuleGate module="apps"><Dashboards /></ModuleGate>} />
+                <Route path="/dashboards/:id" element={<ModuleGate module="apps"><DashboardView /></ModuleGate>} />
+                <Route path="/dashboards/:id/:mode" element={<ModuleGate module="apps"><DashboardView /></ModuleGate>} />
+                <Route path="/inventory" element={<ModuleGate module="inventory"><Inventory /></ModuleGate>} />
+                <Route path="/inventory/:id" element={<ModuleGate module="inventory"><Inventory /></ModuleGate>} />
+                <Route path="/purchasing" element={<ModuleGate module="inventory"><Purchasing /></ModuleGate>} />
+                <Route path="/purchasing/:tab" element={<ModuleGate module="inventory"><Purchasing /></ModuleGate>} />
+                <Route path="/quality" element={<ModuleGate module="quality"><Quality /></ModuleGate>} />
+                <Route path="/quality/:id" element={<ModuleGate module="quality"><Quality /></ModuleGate>} />
                 <Route path="/leaderboard" element={<Leaderboard />} />
                 <Route path="/facilities" element={<Facilities />} />
                 <Route path="/audit-log" element={<AuditLog />} />
@@ -159,6 +170,7 @@ export default function App() {
         </NavPrefsProvider>
         </PermissionsProvider>
         </SiteProvider>
+        </ModulesProvider>
         </PlanProvider>
         </BrandingProvider>
       </ThemeProvider>
