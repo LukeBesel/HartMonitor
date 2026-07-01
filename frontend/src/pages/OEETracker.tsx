@@ -55,7 +55,9 @@ function oeeBgColor(pct: number): string {
 
 function elapsedSince(iso: string | null): string {
   if (!iso) return '';
-  const diff = Date.now() - new Date(iso).getTime();
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return '';
+  const diff = Date.now() - t;
   const mins = Math.floor(diff / 60000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins}m ago`;
@@ -65,16 +67,17 @@ function elapsedSince(iso: string | null): string {
 }
 
 function MiniBar({ label, value, color }: { label: string; value: number; color: string }) {
+  const safe = Number.isFinite(value) ? value : 0;
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-[10px]">
         <span className="text-gray-400 font-medium">{label}</span>
-        <span className="text-gray-300 font-semibold">{value.toFixed(1)}%</span>
+        <span className="text-gray-300 font-semibold">{safe.toFixed(1)}%</span>
       </div>
       <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all ${color}`}
-          style={{ width: `${Math.min(value, 100)}%` }}
+          style={{ width: `${Math.min(safe, 100)}%` }}
         />
       </div>
     </div>
@@ -96,12 +99,18 @@ function MachineCard({
   const [saving, setSaving] = useState(false);
 
   const statusCfg = STATUS_CONFIG[machine.current_status] ?? STATUS_CONFIG.idle;
+  const oee: OEEData = machine.oee ?? {
+    availability: 0, performance: 0, quality: 0, oee: 0,
+    uptime_minutes: 0, downtime_minutes: 0, planned_minutes: 0, completions_today: 0,
+  };
 
   const handleSave = async () => {
     setSaving(true);
     try {
       await onLogEvent(machine.id, { event_type: form.event_type, reason: form.reason });
       onToggleExpand();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to log event');
     } finally {
       setSaving(false);
     }
@@ -130,8 +139,8 @@ function MachineCard({
 
         {/* OEE big number */}
         <div className="flex items-end gap-2">
-          <div className={`text-3xl font-bold tabular-nums leading-none ${oeeColor(machine.oee.oee)}`}>
-            {machine.oee.oee.toFixed(1)}
+          <div className={`text-3xl font-bold tabular-nums leading-none ${oeeColor(oee.oee)}`}>
+            {oee.oee.toFixed(1)}
             <span className="text-base font-medium">%</span>
           </div>
           <div className="text-xs text-gray-500 mb-1">OEE</div>
@@ -139,16 +148,16 @@ function MachineCard({
 
         {/* Progress bars */}
         <div className="space-y-1.5">
-          <MiniBar label="Availability" value={machine.oee.availability} color="bg-green-500" />
-          <MiniBar label="Performance"  value={machine.oee.performance}  color="bg-blue-500" />
-          <MiniBar label="Quality"      value={machine.oee.quality}      color="bg-purple-500" />
+          <MiniBar label="Availability" value={oee.availability} color="bg-green-500" />
+          <MiniBar label="Performance"  value={oee.performance}  color="bg-blue-500" />
+          <MiniBar label="Quality"      value={oee.quality}      color="bg-purple-500" />
         </div>
 
         {/* Footer row */}
         <div className="flex items-center justify-between pt-1">
           <div className="flex items-center gap-1 text-[10px] text-gray-500">
             <Cpu size={11} />
-            <span>{machine.oee.completions_today} completions today</span>
+            <span>{oee.completions_today} completions today</span>
           </div>
           <button
             onClick={onToggleExpand}
@@ -223,6 +232,7 @@ function MachineCard({
 export default function OEETracker() {
   const [machines, setMachines] = useState<OEEMachine[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
@@ -231,10 +241,12 @@ export default function OEETracker() {
     if (showRefreshing) setRefreshing(true);
     try {
       const data = await (api as any).getOEE();
-      setMachines(data);
+      setMachines(Array.isArray(data) ? data : []);
       setLastUpdated(new Date());
-    } catch (err) {
+      setLoadError(null);
+    } catch (err: any) {
       console.error('Failed to load OEE data', err);
+      setLoadError(err?.message || 'Failed to load OEE data');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -249,7 +261,7 @@ export default function OEETracker() {
 
   const handleLogEvent = async (id: string, data: { event_type: string; reason: string }) => {
     const updated = await (api as any).logOEEEvent(id, data);
-    setMachines(prev => prev.map(m => (m.id === id ? updated : m)));
+    setMachines(prev => prev.map(m => (m.id === id && updated ? updated : m)));
     setLastUpdated(new Date());
   };
 
@@ -258,7 +270,7 @@ export default function OEETracker() {
   const runningNow = machines.filter(m => m.current_status === 'running').length;
   const downNow = machines.filter(m => m.current_status === 'down').length;
   const plantOEE = totalMachines > 0
-    ? machines.reduce((sum, m) => sum + m.oee.oee, 0) / totalMachines
+    ? machines.reduce((sum, m) => sum + (m.oee?.oee ?? 0), 0) / totalMachines
     : 0;
 
   const formattedLastUpdated = lastUpdated
@@ -268,7 +280,7 @@ export default function OEETracker() {
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <div className="flex items-center gap-2.5">
             <h1 className="text-2xl font-bold text-gray-900 tracking-tight">OEE Dashboard</h1>
@@ -298,7 +310,7 @@ export default function OEETracker() {
       </div>
 
       {/* KPI Bar */}
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard
           icon={<Monitor size={18} className="text-blue-600" />}
           iconBg="bg-blue-50"
@@ -335,10 +347,19 @@ export default function OEETracker() {
             <div key={i} className="h-48 rounded-2xl bg-gray-100 animate-pulse" />
           ))}
         </div>
+      ) : loadError && machines.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
+          <AlertTriangle size={28} className="text-red-400" />
+          <p className="text-gray-500 font-medium">Couldn't load machines</p>
+          <p className="text-sm text-gray-400">{loadError}</p>
+          <button onClick={() => load(true)} className="btn-secondary">
+            <RefreshCw size={14} /> Retry
+          </button>
+        </div>
       ) : machines.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-gray-400">
           <Activity size={40} className="mb-3 opacity-30" />
-          <div className="font-medium">No machines configured</div>
+          <div className="font-medium text-gray-500">No machines configured</div>
           <div className="text-sm mt-1">Add machines to the OEE system to see data here</div>
         </div>
       ) : (

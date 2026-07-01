@@ -60,6 +60,12 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function fmtTrendDate(l: string) {
+  const d = new Date(l + 'T00:00:00');
+  if (isNaN(d.getTime())) return String(l ?? '—');
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
 function Panel({
   title, icon: Icon, status, statusLabel, headline, headlineSub, children, onClick,
 }: {
@@ -164,6 +170,7 @@ function SQDCDetailModal({
   const meta = CATEGORY_META[category];
   const [detail, setDetail] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -179,8 +186,10 @@ function SQDCDetailModal({
     try {
       const res = await api.getSQDCDetail(category, { date, department_id: deptId || undefined });
       setDetail(res);
-    } catch {
+      setLoadErr(null);
+    } catch (e: any) {
       setDetail(null);
+      setLoadErr(e?.message || 'Failed to load detail');
     } finally {
       setLoading(false);
     }
@@ -240,7 +249,18 @@ function SQDCDetailModal({
                 <Loader2 size={22} className="animate-spin" />
               </div>
             ) : !detail ? (
-              <p className="text-sm text-gray-400">Unable to load detail.</p>
+              <div className="flex flex-col items-center gap-2 py-8 text-center">
+                <AlertTriangle size={24} className="text-red-400" />
+                <p className="text-sm text-gray-500 font-medium">Couldn't load detail</p>
+                {loadErr && <p className="text-xs text-gray-400">{loadErr}</p>}
+                <button
+                  type="button"
+                  className="btn-secondary mt-1"
+                  onClick={() => { setLoading(true); load(); }}
+                >
+                  Retry
+                </button>
+              </div>
             ) : (
               <div className="space-y-4">
                 {category === 'safety' && (
@@ -324,7 +344,7 @@ function SQDCDetailModal({
                 {/* Recent manual entries */}
                 <div>
                   <div className="text-xs font-semibold text-gray-500 mb-1 uppercase tracking-wide">Recent logged entries</div>
-                  {detail.entries?.length === 0 ? (
+                  {!Array.isArray(detail.entries) || detail.entries.length === 0 ? (
                     <p className="text-sm text-gray-400">None logged for this date.</p>
                   ) : (
                     <div className="space-y-2 max-h-44 overflow-y-auto">
@@ -440,6 +460,7 @@ export default function SQDC() {
   const [date, setDate] = useState(todayISO());
   const [data, setData] = useState<SQDCData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [activeCategory, setActiveCategory] = useState<Category | null>(null);
 
@@ -454,8 +475,10 @@ export default function SQDC() {
     try {
       const res = await api.getSQDC({ date, department_id: deptId || undefined });
       setData(res);
-    } catch {
-      /* keep stale */
+      setLoadError(null);
+    } catch (e: any) {
+      /* keep stale data if we have any, but surface the error */
+      setLoadError(e?.message || 'Failed to load SQDC data');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -517,7 +540,7 @@ export default function SQDC() {
             <p className="text-xs text-gray-500 mt-0.5">Safety · Quality · Delivery · Cost</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg shadow-sm">
             <Calendar size={14} className="text-gray-400" />
             <input
@@ -538,7 +561,8 @@ export default function SQDC() {
           </select>
           <button
             onClick={() => load(true)}
-            className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 shadow-sm"
+            disabled={refreshing}
+            className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 shadow-sm disabled:opacity-50"
           >
             <RefreshCw size={14} className={refreshing ? 'animate-spin text-indigo-500' : ''} />
           </button>
@@ -550,9 +574,25 @@ export default function SQDC() {
           <RefreshCw size={28} className="animate-spin text-indigo-500" />
         </div>
       ) : !data ? (
-        <div className="text-center py-24 text-gray-400">Unable to load SQDC data.</div>
+        <div className="flex flex-col items-center justify-center py-24 text-center gap-2">
+          <AlertTriangle size={32} className="text-red-400" />
+          <p className="text-gray-500 font-medium">Couldn't load SQDC data</p>
+          {loadError && <p className="text-sm text-gray-400">{loadError}</p>}
+          <button
+            className="btn-secondary mt-2"
+            onClick={() => { setLoading(true); load(false); }}
+          >
+            <RefreshCw size={14} /> Retry
+          </button>
+        </div>
       ) : (
         <>
+          {loadError && (
+            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+              <AlertTriangle size={14} className="flex-shrink-0 text-red-400" />
+              <span>Couldn't refresh — showing last loaded data. {loadError}</span>
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-5">
             {/* SAFETY */}
             <Panel
@@ -574,13 +614,13 @@ export default function SQDC() {
                     : `days incident-free`
               }
             >
-              {data.safety.incidents.length === 0 ? (
+              {(data.safety.incidents ?? []).length === 0 ? (
                 <div className="flex items-center gap-2 text-sm text-emerald-600 bg-emerald-50 rounded-lg px-3 py-2">
                   <ShieldCheck size={15} />
                   <span>No safety incidents reported.</span>
                 </div>
               ) : (
-                data.safety.incidents.map(i => (
+                (data.safety.incidents ?? []).map(i => (
                   <div key={i.id} className="flex items-start gap-2 text-sm bg-red-50 rounded-lg px-3 py-2">
                     <AlertTriangle size={15} className="text-red-500 mt-0.5 flex-shrink-0" />
                     <div className="min-w-0">
@@ -631,10 +671,10 @@ export default function SQDC() {
               onClick={() => setActiveCategory('cost')}
               status={costStatus}
               statusLabel={costStatus === 'neutral' ? 'No Data' : 'Tracked'}
-              headline={`$${data.cost.labor_cost.toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
-              headlineSub={`labor cost @ $${data.cost.labor_rate}/hr`}
+              headline={`$${(data.cost.labor_cost ?? 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}`}
+              headlineSub={`labor cost @ $${data.cost.labor_rate ?? 0}/hr`}
             >
-              <Row label="Labor hours" value={data.cost.labor_hours.toFixed(1)} />
+              <Row label="Labor hours" value={(data.cost.labor_hours ?? 0).toFixed(1)} />
               <Row label="Units produced" value={data.cost.units_produced} />
               <Row label="Cost / unit" value={data.cost.cost_per_unit == null ? '—' : `$${data.cost.cost_per_unit.toFixed(2)}`} />
             </Panel>
@@ -648,7 +688,7 @@ export default function SQDC() {
                 <h3 className="text-sm font-semibold text-gray-900">Quality — 7-day pass rate</h3>
               </div>
               <ResponsiveContainer width="100%" height={120}>
-                <AreaChart data={data.trend} margin={{ top: 5, right: 5, bottom: 0, left: 0 }}>
+                <AreaChart data={Array.isArray(data.trend) ? data.trend : []} margin={{ top: 5, right: 5, bottom: 0, left: 0 }}>
                   <defs>
                     <linearGradient id="qGrad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="0%" stopColor="#6366f1" stopOpacity={0.4} />
@@ -658,7 +698,7 @@ export default function SQDC() {
                   <XAxis dataKey="date" hide />
                   <Tooltip
                     formatter={(v: number) => [`${v}%`, 'Pass rate']}
-                    labelFormatter={(l) => new Date(l + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                    labelFormatter={(l) => fmtTrendDate(l)}
                   />
                   <Area type="monotone" dataKey="pass_rate" stroke="#6366f1" strokeWidth={2} fill="url(#qGrad)" />
                 </AreaChart>
@@ -671,11 +711,11 @@ export default function SQDC() {
                 <h3 className="text-sm font-semibold text-gray-900">Output — 7-day units</h3>
               </div>
               <ResponsiveContainer width="100%" height={120}>
-                <BarChart data={data.trend} margin={{ top: 5, right: 5, bottom: 0, left: 0 }}>
+                <BarChart data={Array.isArray(data.trend) ? data.trend : []} margin={{ top: 5, right: 5, bottom: 0, left: 0 }}>
                   <XAxis dataKey="date" hide />
                   <Tooltip
                     formatter={(v: number) => [v, 'Units']}
-                    labelFormatter={(l) => new Date(l + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                    labelFormatter={(l) => fmtTrendDate(l)}
                   />
                   <Bar dataKey="units" fill="#10b981" radius={[4, 4, 0, 0]} />
                 </BarChart>
@@ -687,11 +727,11 @@ export default function SQDC() {
                 <ClipboardList size={15} className="text-indigo-500" />
                 <h3 className="text-sm font-semibold text-gray-900">Orders due {isToday ? 'today' : 'this date'}</h3>
               </div>
-              {data.delivery.due_orders.length === 0 ? (
+              {(data.delivery.due_orders ?? []).length === 0 ? (
                 <p className="text-sm text-gray-400 py-6 text-center">No work orders due.</p>
               ) : (
                 <div className="space-y-2 max-h-[120px] overflow-y-auto">
-                  {data.delivery.due_orders.map(o => (
+                  {(data.delivery.due_orders ?? []).map(o => (
                     <div key={o.id} className="flex items-center justify-between text-sm">
                       <span className="font-medium text-gray-700 truncate mr-2">{o.work_order_number}</span>
                       <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${

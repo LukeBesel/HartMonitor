@@ -103,7 +103,13 @@ const GANTT_BAR_CLASSES: Record<string, string> = {
 
 function formatDateLocal(iso: string) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric', year: '2-digit' });
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: '2-digit' });
+}
+
+function Skeleton({ className }: { className?: string }) {
+  return <div className={`animate-pulse bg-gray-200 rounded ${className ?? ''}`} />;
 }
 
 function toDatetimeLocal(iso: string) {
@@ -371,6 +377,7 @@ export default function Schedule() {
   const [apps, setApps] = useState<App[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [statusFilter, setStatusFilter] = useState('All');
@@ -394,6 +401,7 @@ export default function Schedule() {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const siteParams = { site_id: selectedSiteId || undefined };
       const [wos, appList, deptList] = await Promise.all([
@@ -401,11 +409,12 @@ export default function Schedule() {
         api.getApps(),
         (api as any).getDepartments(siteParams).catch(() => []),
       ]);
-      setWorkOrders(wos ?? []);
-      setApps(appList ?? []);
-      setDepartments(deptList ?? []);
-    } catch {
+      setWorkOrders(Array.isArray(wos) ? wos : []);
+      setApps(Array.isArray(appList) ? appList : []);
+      setDepartments(Array.isArray(deptList) ? deptList : []);
+    } catch (e: any) {
       setWorkOrders([]);
+      setLoadError(e?.message || 'Failed to load work orders');
     } finally {
       setLoading(false);
     }
@@ -485,7 +494,9 @@ export default function Schedule() {
     try {
       await (api as any).updateWorkOrder(wo.id, { ...wo, status: 'completed' });
       await load();
-    } catch { /* ignore */ }
+    } catch (e: any) {
+      alert(e.message ?? 'Failed to mark work order complete');
+    }
   };
 
   // Filtering
@@ -497,16 +508,19 @@ export default function Schedule() {
     if (search) {
       const q = search.toLowerCase();
       if (
-        !wo.work_order_number.toLowerCase().includes(q) &&
-        !wo.part_name.toLowerCase().includes(q) &&
-        !wo.part_number.toLowerCase().includes(q)
+        !(wo.work_order_number ?? '').toLowerCase().includes(q) &&
+        !(wo.part_name ?? '').toLowerCase().includes(q) &&
+        !(wo.part_number ?? '').toLowerCase().includes(q)
       ) return false;
     }
     return true;
   });
+  const hasActiveFilters = statusFilter !== 'All' || priorityFilter !== 'All' || deptFilter !== 'All' || search.trim() !== '';
 
   // Gantt date range
-  const ganttDates = filtered.flatMap(wo => [new Date(wo.scheduled_start), new Date(wo.scheduled_end)]);
+  const ganttDates = filtered
+    .flatMap(wo => [new Date(wo.scheduled_start), new Date(wo.scheduled_end)])
+    .filter(d => !isNaN(d.getTime()));
   const minDate = ganttDates.length > 0 ? new Date(Math.min(...ganttDates.map(d => d.getTime()))) : new Date();
   const maxDate = ganttDates.length > 0 ? new Date(Math.max(...ganttDates.map(d => d.getTime()))) : new Date(Date.now() + 7 * 86400000);
   const ganttByDept = filtered.reduce<Record<string, WorkOrder[]>>((acc, wo) => {
@@ -608,7 +622,16 @@ export default function Schedule() {
 
       {/* Content */}
       {loading ? (
-        <div className="flex items-center justify-center h-48 text-gray-400 text-sm">Loading…</div>
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3">
+          {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-10" />)}
+        </div>
+      ) : loadError ? (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm py-16 flex flex-col items-center gap-3 text-center">
+          <AlertTriangle size={28} className="text-red-400" />
+          <p className="text-gray-500 font-medium">Couldn't load work orders</p>
+          <p className="text-xs text-gray-400">{loadError}</p>
+          <button onClick={load} className="btn-secondary">Retry</button>
+        </div>
       ) : viewMode === 'list' ? (
         <ListView
           workOrders={filtered}
@@ -618,6 +641,8 @@ export default function Schedule() {
           isHighlighted={isHighlighted}
           highlightRef={highlightRef}
           canEdit={canEdit}
+          hasActiveFilters={hasActiveFilters}
+          onCreate={openCreate}
         />
       ) : (
         <GanttView
@@ -692,6 +717,8 @@ function ListView({
   isHighlighted,
   highlightRef,
   canEdit,
+  hasActiveFilters,
+  onCreate,
 }: {
   workOrders: WorkOrder[];
   onEdit: (wo: WorkOrder) => void;
@@ -700,12 +727,27 @@ function ListView({
   isHighlighted: (id: string) => boolean;
   highlightRef: (id: string) => (el: HTMLElement | null) => void;
   canEdit: boolean;
+  hasActiveFilters: boolean;
+  onCreate: () => void;
 }) {
   if (workOrders.length === 0) {
     return (
-      <div className="bg-white rounded-xl border border-gray-200 shadow-sm py-16 text-center text-gray-400 text-sm">
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm py-16 text-center">
         <Package size={32} className="mx-auto mb-3 text-gray-300" />
-        No work orders match your filters
+        <p className="text-gray-500 font-medium text-sm">
+          {hasActiveFilters ? 'No work orders match your filters' : 'No work orders yet'}
+        </p>
+        <p className="text-gray-400 text-xs mt-1">
+          {hasActiveFilters
+            ? 'Try adjusting or clearing your search and filters.'
+            : 'Create your first work order to start scheduling production.'}
+        </p>
+        {!hasActiveFilters && canEdit && (
+          <button onClick={onCreate} className="btn-primary mt-4">
+            <Plus size={16} />
+            New Work Order
+          </button>
+        )}
       </div>
     );
   }

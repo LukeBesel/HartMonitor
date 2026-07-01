@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Station, App, Department } from '../types';
-import { Plus, Trash2, Monitor, Edit3, X, Check, Play, MapPin, Activity } from 'lucide-react';
+import { Plus, Trash2, Monitor, Edit3, X, Check, Play, MapPin, Activity, AlertTriangle, RefreshCw } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import { useSite } from '../context/SiteContext';
 import { useAuth } from '../context/AuthContext';
@@ -12,6 +12,10 @@ const STATUS_COLORS: Record<Station['status'], string> = {
   inactive: 'bg-gray-100 text-gray-500',
   maintenance: 'bg-yellow-100 text-yellow-700',
 };
+
+function Skeleton({ className }: { className?: string }) {
+  return <div className={`animate-pulse bg-gray-200 rounded ${className ?? ''}`} />;
+}
 
 export default function Stations() {
   const { selectedSiteId } = useSite();
@@ -23,24 +27,39 @@ export default function Stations() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({ name: '', description: '', location: '', department_id: '' });
   const [editForm, setEditForm] = useState<Partial<Station>>({});
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   const load = () => {
     const siteParams = { site_id: selectedSiteId || undefined };
+    setLoadError(null);
     return Promise.all([api.getStations(siteParams), api.getApps(), api.getDepartments(siteParams)]).then(([s, a, d]) => {
-      setStations(s);
-      setApps(a.filter((a: App) => a.status === 'published'));
-      setDepartments(d);
+      setStations(Array.isArray(s) ? s : []);
+      setApps((Array.isArray(a) ? a : []).filter((a: App) => a.status === 'published'));
+      setDepartments(Array.isArray(d) ? d : []);
+    }).catch((err: any) => {
+      setLoadError(err?.message || 'Failed to load stations');
+    }).finally(() => {
+      setLoading(false);
     });
   };
 
-  useEffect(() => { load(); }, [selectedSiteId]);
+  useEffect(() => { setLoading(true); load(); }, [selectedSiteId]);
 
   const handleCreate = async () => {
-    if (!form.name.trim()) return;
-    await api.createStation({ ...form, department_id: form.department_id || null });
-    setShowCreate(false);
-    setForm({ name: '', description: '', location: '', department_id: '' });
-    load();
+    if (!form.name.trim() || saving) return;
+    setSaving(true);
+    try {
+      await api.createStation({ ...form, department_id: form.department_id || null });
+      setShowCreate(false);
+      setForm({ name: '', description: '', location: '', department_id: '' });
+      load();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to create station');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleEdit = (station: Station) => {
@@ -49,15 +68,23 @@ export default function Stations() {
   };
 
   const handleSaveEdit = async (id: string) => {
-    await api.updateStation(id, editForm);
-    setEditingId(null);
-    load();
+    try {
+      await api.updateStation(id, editForm);
+      setEditingId(null);
+      load();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to update station');
+    }
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm('Delete this station?')) return;
-    await api.deleteStation(id);
-    load();
+    try {
+      await api.deleteStation(id);
+      load();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to delete station');
+    }
   };
 
   return (
@@ -75,7 +102,7 @@ export default function Stations() {
         icon={Monitor}
         color="#f59e0b"
       />
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Stations</h1>
           <p className="text-gray-500 text-sm mt-0.5">Physical workstations and kiosks running apps</p>
@@ -88,13 +115,26 @@ export default function Stations() {
       </div>
 
       {/* Summary */}
-      <div className="flex gap-4 text-sm">
+      <div className="flex flex-wrap gap-4 text-sm">
         <span className="flex items-center gap-1.5 text-green-600"><Activity size={13} />{stations.filter(s => s.status === 'active').length} active</span>
         <span className="text-gray-400">{stations.filter(s => s.status === 'inactive').length} inactive</span>
         <span className="text-yellow-600">{stations.filter(s => s.status === 'maintenance').length} maintenance</span>
       </div>
 
-      {stations.length === 0 ? (
+      {loading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {[1, 2, 3, 4].map(i => <Skeleton key={i} className="h-44" />)}
+        </div>
+      ) : loadError ? (
+        <div className="card p-10 flex flex-col items-center gap-3 text-center">
+          <AlertTriangle size={28} className="text-red-400" />
+          <p className="text-gray-600 font-medium">Couldn't load stations</p>
+          <p className="text-sm text-gray-400">{loadError}</p>
+          <button onClick={() => { setLoading(true); load(); }} className="btn-secondary">
+            <RefreshCw size={14} /> Retry
+          </button>
+        </div>
+      ) : stations.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
           <Monitor size={40} className="mx-auto mb-3 opacity-30" />
           <p className="font-medium">No stations yet</p>
@@ -247,7 +287,7 @@ export default function Stations() {
             </div>
             <div className="flex gap-2 p-5 border-t border-gray-200">
               <button onClick={() => setShowCreate(false)} className="btn-secondary flex-1">Cancel</button>
-              <button onClick={handleCreate} disabled={!form.name.trim()} className="btn-primary flex-1">Create Station</button>
+              <button onClick={handleCreate} disabled={!form.name.trim() || saving} className="btn-primary flex-1">{saving ? 'Creating…' : 'Create Station'}</button>
             </div>
           </div>
         </div>

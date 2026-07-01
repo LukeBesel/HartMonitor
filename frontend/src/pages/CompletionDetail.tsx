@@ -62,14 +62,19 @@ function fmtDuration(seconds: number) {
 
 function fmtDateTime(iso: string | null) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleString([], {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleString([], {
     month: 'short', day: 'numeric', year: 'numeric',
     hour: '2-digit', minute: '2-digit',
   });
 }
 
 function fmtTimeAgo(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime();
+  if (!iso) return '—';
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return '—';
+  const diff = Date.now() - t;
   if (diff < 60000) return 'just now';
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;

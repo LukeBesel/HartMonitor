@@ -299,8 +299,8 @@ export default function Login() {
               <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Try a demo account</p>
               <div className="space-y-2">
                 {DEMO_ACCOUNTS.map(acct => (
-                  <button key={acct.email} onClick={() => quickLogin(acct)}
-                    className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl border border-gray-100 hover:border-blue-200 hover:bg-blue-50 transition-all text-left group">
+                  <button key={acct.email} onClick={() => quickLogin(acct)} disabled={loading}
+                    className="w-full flex items-center justify-between px-4 py-2.5 rounded-xl border border-gray-100 hover:border-blue-200 hover:bg-blue-50 transition-all text-left group disabled:opacity-60">
                     <div>
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${acct.color} mr-2`}>{acct.label}</span>
                     </div>

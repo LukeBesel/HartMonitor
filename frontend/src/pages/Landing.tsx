@@ -477,6 +477,9 @@ export default function Landing() {
         </Reveal>
 
         <div className="mt-16 grid md:grid-cols-3 gap-6">
+          {!pricing && [1, 2, 3].map(i => (
+            <div key={i} className="rounded-2xl p-8 border border-white/10 bg-white/[0.03] h-80 animate-pulse" />
+          ))}
           {pricing && Object.entries(pricing.tiers).map(([key, tier], i) => {
             const featured = key === 'pro';
             return (

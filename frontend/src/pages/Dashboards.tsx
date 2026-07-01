@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Dashboard } from '../types';
-import { LayoutGrid, Plus, Trash2, Edit, Clock, BarChart3, RefreshCw, Database } from 'lucide-react';
+import { LayoutGrid, Plus, Trash2, Edit, Clock, BarChart3, RefreshCw, Database, AlertTriangle } from 'lucide-react';
 import UpgradeModal from '../components/shared/UpgradeModal';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import { usePlan } from '../context/PlanContext';
@@ -19,12 +19,16 @@ export default function Dashboards() {
   const [limitReason, setLimitReason] = useState<string | null>(null);
   const [loadingSample, setLoadingSample] = useState(false);
   const [sampleError, setSampleError] = useState('');
+  const [loadError, setLoadError] = useState('');
   const { refresh: refreshPlan } = usePlan();
   const { isAtLeast, canEdit } = useAuth();
 
   const load = () => {
     setLoading(true);
-    api.getDashboards().then(setDashboards).finally(() => setLoading(false));
+    api.getDashboards()
+      .then(d => { setDashboards(d); setLoadError(''); })
+      .catch((err: any) => setLoadError(err?.message || 'Failed to load dashboards'))
+      .finally(() => setLoading(false));
   };
 
   useEffect(() => { load(); }, []);
@@ -50,8 +54,12 @@ export default function Dashboards() {
 
   const handleDelete = async (id: string, name: string) => {
     if (!confirm(`Delete dashboard "${name}"?`)) return;
-    await api.deleteDashboard(id);
-    setDashboards(prev => prev.filter(d => d.id !== id));
+    try {
+      await api.deleteDashboard(id);
+      setDashboards(prev => prev.filter(d => d.id !== id));
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete dashboard');
+    }
   };
 
   const handleLoadSampleData = async () => {
@@ -135,8 +143,19 @@ export default function Dashboards() {
       )}
 
       {loading ? (
-        <div className="flex items-center justify-center h-48">
-          <RefreshCw size={24} className="animate-spin text-blue-500" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1, 2, 3].map(i => (
+            <div key={i} className="bg-white rounded-2xl border border-gray-200 shadow-sm h-40 animate-pulse" />
+          ))}
+        </div>
+      ) : loadError && dashboards.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-gray-200 shadow-sm py-16 flex flex-col items-center gap-3 text-center">
+          <AlertTriangle size={40} className="text-red-400" />
+          <div>
+            <p className="font-medium text-gray-500">Couldn't load dashboards</p>
+            <p className="text-sm text-gray-400 mt-1">{loadError}</p>
+          </div>
+          <button className="btn-secondary" onClick={load}>Retry</button>
         </div>
       ) : dashboards.length === 0 ? (
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm py-16 text-center">
@@ -162,7 +181,10 @@ export default function Dashboards() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {dashboards.map(d => (
+          {dashboards.map(d => {
+            const cards = d.cards ?? [];
+            const updated = new Date(d.updated_at);
+            return (
             <div key={d.id} className="bg-white rounded-2xl border border-gray-200 shadow-sm hover:shadow-md transition-all group">
               <Link to={`/dashboards/${d.id}`} className="block p-5">
                 <div className="flex items-start justify-between mb-3">
@@ -170,13 +192,13 @@ export default function Dashboards() {
                     style={{ backgroundColor: 'var(--accent-light)', color: 'var(--accent)' }}>
                     <LayoutGrid size={18} />
                   </div>
-                  <span className="text-xs text-gray-400 font-mono">{d.cards.length} card{d.cards.length !== 1 ? 's' : ''}</span>
+                  <span className="text-xs text-gray-400 font-mono">{cards.length} card{cards.length !== 1 ? 's' : ''}</span>
                 </div>
                 <div className="font-bold text-gray-900 text-base leading-tight">{d.name}</div>
                 {d.description && <div className="text-gray-500 text-xs mt-1 line-clamp-2">{d.description}</div>}
-                {d.cards.length > 0 && (
+                {cards.length > 0 && (
                   <div className="flex flex-wrap gap-1 mt-3">
-                    {[...new Set(d.cards.map(c => c.type))].slice(0, 4).map(t => (
+                    {[...new Set(cards.map(c => c.type))].slice(0, 4).map(t => (
                       <span key={t} className="text-xs bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full">
                         {CARD_ICONS[t]} {t.replace('_', ' ')}
                       </span>
@@ -185,7 +207,7 @@ export default function Dashboards() {
                 )}
                 <div className="flex items-center gap-1 text-xs text-gray-400 mt-3">
                   <Clock size={11} />
-                  Updated {new Date(d.updated_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                  Updated {isNaN(updated.getTime()) ? '—' : updated.toLocaleDateString([], { month: 'short', day: 'numeric' })}
                 </div>
               </Link>
               {canEdit && (
@@ -205,7 +227,8 @@ export default function Dashboards() {
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

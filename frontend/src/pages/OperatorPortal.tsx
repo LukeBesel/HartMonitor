@@ -59,7 +59,9 @@ const SEVERITY_OPTIONS: { value: 'minor' | 'major' | 'critical'; label: string; 
 
 function fmtDate(iso?: string) {
   if (!iso) return '';
-  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 function isToday(iso?: string | null) {
@@ -78,10 +80,12 @@ export default function OperatorPortal() {
   const [operatorName, setOperatorName] = useState('');
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(false);
+  const [nameError, setNameError] = useState('');
   const [selectedWO, setSelectedWO] = useState<WorkOrder | null>(null);
 
   const [completions, setCompletions] = useState<Completion[] | null>(null);
   const [completionsLoading, setCompletionsLoading] = useState(false);
+  const [completionsError, setCompletionsError] = useState('');
 
   const online = useOnlineStatus();
   const [pendingReports, setPendingReports] = useState(() => getQueuedNCRs().length);
@@ -98,7 +102,8 @@ export default function OperatorPortal() {
   }, [online, pendingReports]);
 
   const loadWorkOrders = async () => {
-    const wos: WorkOrder[] = await api.getWorkOrders();
+    const res = await api.getWorkOrders();
+    const wos: WorkOrder[] = Array.isArray(res) ? res : [];
     const active = wos.filter(wo =>
       wo.app_id &&
       wo.status !== 'completed' &&
@@ -110,9 +115,12 @@ export default function OperatorPortal() {
 
   const loadCompletions = async () => {
     setCompletionsLoading(true);
+    setCompletionsError('');
     try {
       const rows = await api.getCompletions({ operator_name: operatorName.trim(), limit: 50 });
-      setCompletions(rows);
+      setCompletions(Array.isArray(rows) ? rows : []);
+    } catch (err: any) {
+      setCompletionsError(err.message || 'Failed to load history');
     } finally {
       setCompletionsLoading(false);
     }
@@ -122,10 +130,13 @@ export default function OperatorPortal() {
     if (!operatorName.trim()) return;
     localStorage.setItem('hm_operator_name', operatorName.trim());
     setLoading(true);
+    setNameError('');
     try {
       await loadWorkOrders();
       setStep('main');
       setActiveTab('jobs');
+    } catch (err: any) {
+      setNameError(err.message || "Couldn't load your jobs — please try again.");
     } finally {
       setLoading(false);
     }
@@ -187,6 +198,12 @@ export default function OperatorPortal() {
                   autoComplete="name"
                 />
               </div>
+              {nameError && (
+                <div className="flex items-center gap-2 bg-red-500/15 border border-red-500/30 text-red-300 rounded-xl px-3 py-2 text-sm">
+                  <AlertTriangle size={14} className="flex-shrink-0 text-red-400" />
+                  {nameError}
+                </div>
+              )}
               <button
                 onClick={handleNameSubmit}
                 disabled={!operatorName.trim() || loading}
@@ -256,6 +273,7 @@ export default function OperatorPortal() {
           <HistoryTab
             completions={completions}
             loading={completionsLoading}
+            error={completionsError}
             onRefresh={loadCompletions}
           />
         )}
@@ -325,7 +343,7 @@ function JobsTab({
   selectedWO: WorkOrder | null;
   setSelectedWO: (wo: WorkOrder | null) => void;
   onStartJob: () => void;
-  onRefresh: () => void;
+  onRefresh: () => Promise<void>;
 }) {
   const [refreshing, setRefreshing] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
@@ -333,7 +351,13 @@ function JobsTab({
 
   const handleRefresh = async () => {
     setRefreshing(true);
-    try { await onRefresh(); } finally { setRefreshing(false); }
+    try {
+      await onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'Failed to refresh jobs');
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleScan = (code: string) => {
@@ -505,10 +529,11 @@ function JobsTab({
 // ── History tab ──────────────────────────────────────────────────────────────
 
 function HistoryTab({
-  completions, loading, onRefresh,
+  completions, loading, error, onRefresh,
 }: {
   completions: Completion[] | null;
   loading: boolean;
+  error: string;
   onRefresh: () => void;
 }) {
   const list = completions ?? [];
@@ -542,11 +567,31 @@ function HistoryTab({
         </button>
       </div>
 
+      {error && completions !== null && (
+        <div className="mb-3 flex items-center gap-2 bg-red-500/15 border border-red-500/30 text-red-300 rounded-xl px-3 py-2 text-xs">
+          <AlertTriangle size={13} className="flex-shrink-0 text-red-400" />
+          Couldn't refresh — showing last known activity. {error}
+        </div>
+      )}
+
       {loading && completions === null ? (
         <div className="space-y-2">
           {[1, 2, 3].map(i => (
             <div key={i} className="h-16 bg-white/5 rounded-xl animate-pulse" />
           ))}
+        </div>
+      ) : error && completions === null ? (
+        <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-10 text-center">
+          <AlertTriangle size={36} className="mx-auto mb-3 text-red-400" />
+          <div className="text-white font-semibold">Couldn't load your history</div>
+          <div className="text-blue-200/60 text-sm mt-1">{error}</div>
+          <button
+            onClick={onRefresh}
+            className="mt-4 inline-flex items-center gap-2 h-10 px-5 bg-white/10 hover:bg-white/15 border border-white/10 text-white rounded-xl font-semibold text-sm transition-colors"
+          >
+            <RefreshCw size={14} />
+            Retry
+          </button>
         </div>
       ) : list.length === 0 ? (
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-10 text-center">
