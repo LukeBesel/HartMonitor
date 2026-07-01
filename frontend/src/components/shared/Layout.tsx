@@ -18,6 +18,16 @@ import PWAUpdatePrompt from './PWAUpdatePrompt';
 import { BillingBanner } from './BillingBanner';
 import { SetupChecklist } from './SetupChecklist';
 
+// "Jane Doe" -> "JD", "admin" -> "A". Keeps the avatar chip looking finished.
+function initialsOf(name?: string | null): string {
+  if (!name) return '?';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  const first = parts[0][0] ?? '';
+  const last = parts.length > 1 ? (parts[parts.length - 1][0] ?? '') : '';
+  return (first + last).toUpperCase() || '?';
+}
+
 function ProBadge() {
   return (
     <span className="ml-auto text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-500/20 text-amber-400 leading-none">
@@ -144,19 +154,30 @@ export default function Layout() {
         end={exact}
         title={effectiveCollapsed ? label : undefined}
         className={({ isActive }) =>
-          `flex items-center rounded-xl text-sm font-medium transition-all ${
+          `relative flex items-center rounded-xl text-sm font-medium transition-all ${
             effectiveCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
           } ${
             isActive
-              ? 'text-white shadow-sm'
+              ? 'text-white bg-white/10'
               : 'text-gray-400 hover:text-white hover:bg-white/8'
           }`
         }
-        style={({ isActive }) => isActive ? { backgroundColor: 'var(--nav-active)' } : {}}
       >
-        <Icon size={15} className="flex-shrink-0" />
-        {!effectiveCollapsed && (
-          <span className="flex-1">{label}</span>
+        {({ isActive }) => (
+          <>
+            {/* Left accent bar marks the active item */}
+            {isActive && (
+              <span
+                aria-hidden
+                className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r-full"
+                style={{ backgroundColor: 'var(--accent)', boxShadow: '0 0 8px -1px var(--accent)' }}
+              />
+            )}
+            <Icon size={15} className="flex-shrink-0" />
+            {!effectiveCollapsed && (
+              <span className="flex-1">{label}</span>
+            )}
+          </>
         )}
       </NavLink>
     );
@@ -193,13 +214,13 @@ export default function Layout() {
       {/* Mobile backdrop — closes the drawer when tapped */}
       {mobileNavOpen && (
         <div
-          className="fixed inset-0 bg-black/40 z-30 lg:hidden"
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-30 lg:hidden animate-fade-in"
           onClick={() => setMobileNavOpen(false)}
         />
       )}
 
       <aside
-        className={`${sidebarW} fixed inset-y-0 left-0 z-40 flex-shrink-0 flex flex-col transition-all duration-200 lg:static lg:z-auto lg:translate-x-0 ${
+        className={`${sidebarW} fixed inset-y-0 left-0 z-40 flex-shrink-0 flex flex-col transition-all duration-300 ease-in-out lg:static lg:z-auto lg:translate-x-0 ${
           mobileNavOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
         style={{ backgroundColor: 'var(--sidebar-bg)' }}
@@ -275,8 +296,8 @@ export default function Layout() {
               <div key={section.id}>
                 {/* Always show section label above items */}
                 {!effectiveCollapsed && (
-                  <div className="flex items-center gap-1.5 px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-500">
-                    <section.icon size={11} />
+                  <div className="flex items-center gap-1.5 px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-500 select-none">
+                    <section.icon size={11} className="opacity-70" />
                     {section.label}
                   </div>
                 )}
@@ -335,18 +356,18 @@ export default function Layout() {
                 onClick={() => setUserMenuOpen(o => !o)}
                 className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl hover:bg-white/8 transition-all"
               >
-                <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 ring-2 ring-white/10"
                   style={{ background: 'linear-gradient(135deg, var(--accent), var(--secondary))' }}>
-                  {user?.display_name?.[0]?.toUpperCase() ?? '?'}
+                  {initialsOf(user?.display_name)}
                 </div>
                 <div className="flex-1 min-w-0 text-left">
-                  <div className="text-xs font-medium text-white/90 truncate">{user?.display_name}</div>
-                  <div className="text-[10px] text-gray-500 capitalize">{user?.role}</div>
+                  <div className="text-xs font-semibold text-white/90 truncate">{user?.display_name}</div>
+                  <div className="text-[10px] text-gray-500 capitalize truncate">{user?.role}</div>
                 </div>
-                <ChevronDown size={12} className="text-gray-500 flex-shrink-0" />
+                <ChevronDown size={12} className={`text-gray-500 flex-shrink-0 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} />
               </button>
               {userMenuOpen && (
-                <div className="absolute bottom-full left-0 right-0 mb-1 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-50">
+                <div className="absolute bottom-full left-0 right-0 mb-1.5 popover z-50 animate-slide-up">
                   <div className="px-3 py-2.5 border-b border-gray-100">
                     <div className="text-xs font-semibold text-gray-800 truncate">{user?.display_name}</div>
                     <div className="text-[11px] text-gray-500 truncate">{user?.email}</div>
@@ -376,7 +397,7 @@ export default function Layout() {
 
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Mobile header — hamburger to open the drawer, desktop hides this entirely */}
-        <header className="lg:hidden flex items-center gap-3 px-4 py-3 border-b border-gray-200 bg-white flex-shrink-0">
+        <header className="lg:hidden flex items-center gap-3 h-14 px-4 border-b border-gray-200 bg-white/95 backdrop-blur flex-shrink-0">
           <button
             onClick={() => setMobileNavOpen(true)}
             aria-label="Open navigation menu"
