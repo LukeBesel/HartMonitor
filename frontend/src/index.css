@@ -11,6 +11,17 @@
   --secondary:    #6366f1;
   --sidebar-bg:   #0a0e27;
   --nav-active:   #db2777;
+
+  /* ── Design tokens: surfaces, borders, elevation ── */
+  --surface-1:     #ffffff; /* cards, panels */
+  --surface-2:     #f8fafc; /* page bg / inset wells */
+  --border-subtle: #f1f5f9; /* hairline card borders */
+}
+
+.dark {
+  --surface-1:     #1e293b;
+  --surface-2:     #0f172a;
+  --border-subtle: #334155;
 }
 [data-accent="midnight"] { --accent:#ec4899; --accent-dark:#db2777; --accent-light:#fdf2f8; --sidebar-bg:#0a0e27; --nav-active:#db2777; }
 [data-accent="blue"]   { --accent:#3b82f6; --accent-dark:#2563eb; --accent-light:#eff6ff; --sidebar-bg:#0a1628; --nav-active:#2563eb; }
@@ -24,7 +35,19 @@
 
 @layer base {
   * { box-sizing: border-box; }
+  html { scrollbar-color: #cbd5e1 transparent; }
+  html.dark { scrollbar-color: #334155 transparent; }
   body { @apply bg-slate-50 text-gray-900 font-sans antialiased; }
+
+  /* Typography rhythm — headings stay tight, secondary text stays consistent */
+  h1, h2, h3, h4 { @apply tracking-tight; }
+
+  /* Accessible, on-brand focus rings for keyboard users only.
+     :where() keeps specificity at zero so component-level rings still win. */
+  :where(a, button, [role='button'], summary):focus-visible {
+    outline: 2px solid rgba(59, 130, 246, 0.4);
+    outline-offset: 2px;
+  }
 }
 
 @layer components {
@@ -89,6 +112,10 @@
   .section-label {
     @apply text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3;
   }
+  /* Consistent floating surface for dropdowns / menus / popovers */
+  .popover {
+    @apply bg-white rounded-xl border border-gray-100 shadow-elevation overflow-hidden;
+  }
 }
 
 /* HartMonitor takt time flash animation */
@@ -130,9 +157,20 @@
   animation: nav-highlight-flash 2.2s ease-out;
 }
 
-::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { @apply bg-transparent; }
-::-webkit-scrollbar-thumb { @apply bg-gray-200 rounded-full hover:bg-gray-300; }
+::-webkit-scrollbar-thumb {
+  @apply bg-gray-200 rounded-full hover:bg-gray-300;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* Respect users who prefer less motion */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-in,
+  .animate-slide-up { animation: none; }
+}
 
 /* ════════════════════════════════════════════════════════════════════════
    Dark mode — global overrides
@@ -187,6 +225,7 @@
 .dark .card,
 .dark .card-hover,
 .dark .stat-card,
+.dark .popover,
 .dark .input-field,
 .dark .btn-secondary {
   background-color: #1e293b;
