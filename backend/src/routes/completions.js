@@ -27,7 +27,8 @@ router.get('/', (req, res) => {
   if (status) { query += ' AND status = ?'; params.push(status); }
   if (operator_name) { query += ' AND operator_name = ?'; params.push(operator_name); }
   query += ' ORDER BY started_at DESC LIMIT ?';
-  params.push(parseInt(limit));
+  // Guard against NaN (better-sqlite3 throws on NaN bindings) and cap the page size.
+  params.push(Math.min(Math.max(parseInt(limit, 10) || 50, 1), 500));
   const completions = db.prepare(query).all(...params);
   res.json(completions.map(c => ({ ...c, data: JSON.parse(c.data), step_times: JSON.parse(c.step_times) })));
 });
@@ -37,16 +38,27 @@ router.post('/', (req, res) => {
   if (!app_id) return res.status(400).json({ error: 'app_id required' });
   const app = db.prepare('SELECT name FROM apps WHERE id = ? AND company_id = ?').get(app_id, req.companyId);
   if (!app) return res.status(404).json({ error: 'App not found' });
+  // Linked records must belong to this company — otherwise downstream JOINs
+  // (v1 API, exports, dashboards) would leak another tenant's station / work
+  // order details, and department attribution would cross tenants.
+  const ownedOrNull = (table, value) => {
+    if (!value) return null;
+    const row = db.prepare(`SELECT id FROM ${table} WHERE id = ? AND company_id = ?`).get(value, req.companyId);
+    return row ? value : null;
+  };
+  const safeStationId = ownedOrNull('stations', station_id);
+  const safeWorkOrderId = ownedOrNull('work_orders', work_order_id);
+  const safeProductTypeId = ownedOrNull('product_types', product_type_id);
   const id = uuidv4();
   db.prepare('INSERT INTO completions (id, app_id, app_name, station_id, operator_name, work_order_id, product_type_id, company_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, app_id, app.name, station_id || null, operator_name, work_order_id || null, product_type_id || null, req.companyId);
+    .run(id, app_id, app.name, safeStationId, operator_name, safeWorkOrderId, safeProductTypeId, req.companyId);
   const completion = db.prepare('SELECT * FROM completions WHERE id = ?').get(id);
 
   // Production advance: an operator started a job. Logged so the Transaction Log
   // shows shop-floor activity in real time.
   logActivity(req.companyId, 'completion', id, `Started ${app.name}`, operator_name, {
     department_id: resolveDepartmentId(completion),
-    station_id: station_id || null,
+    station_id: safeStationId,
   });
 
   res.status(201).json({ ...completion, data: JSON.parse(completion.data), step_times: JSON.parse(completion.step_times) });

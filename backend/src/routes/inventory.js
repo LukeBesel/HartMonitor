@@ -326,11 +326,13 @@ router.get('/movements', (req, res) => {
     LEFT JOIN locations l ON l.id = sm.location_id
     WHERE i.company_id = ? AND sm.created_at >= datetime('now', ?)
   `;
-  const params = [req.companyId, `-${days} days`];
+  const safeDays = Math.min(Math.max(parseInt(days, 10) || 30, 1), 3650);
+  const params = [req.companyId, `-${safeDays} days`];
   if (item_id)       { sql += ' AND sm.item_id = ?';        params.push(item_id); }
   if (movement_type) { sql += ' AND sm.movement_type = ?';  params.push(movement_type); }
   sql += ` ORDER BY sm.created_at DESC LIMIT ?`;
-  params.push(parseInt(limit));
+  // Guard against NaN (better-sqlite3 throws on NaN bindings) and cap the page size.
+  params.push(Math.min(Math.max(parseInt(limit, 10) || 100, 1), 1000));
   res.json(db.prepare(sql).all(...params));
 });
 
