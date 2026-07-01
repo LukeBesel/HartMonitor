@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import {
   LayoutDashboard, AppWindow, Database, BarChart3,
   Calendar, ClipboardList, Trophy,
@@ -8,6 +9,7 @@ import {
   GraduationCap, Award,
   Bell, AlertTriangle, Wrench, ClipboardCheck, Lightbulb, BookOpen,
 } from 'lucide-react';
+import { useModules } from '../context/ModulesContext';
 
 export type NavItem = {
   to: string; icon: React.ElementType; label: string;
@@ -19,6 +21,9 @@ export type NavItem = {
   standalone?: boolean;
   /** Only shown to Enterprise-tier accounts. */
   enterpriseOnly?: boolean;
+  /** Composable-MES module this item belongs to (key from the module registry
+   *  in ModulesContext). Items without a module are always shown. */
+  module?: string;
 };
 
 export type SectionId = 'production' | 'planning' | 'reporting' | 'inventory' | 'people' | 'quality_ops' | 'maintenance_ops';
@@ -46,13 +51,13 @@ export const SECTIONS: NavSection[] = [
     icon: Factory,
     description: 'Run the floor day to day',
     items: [
-      { to: '/dashboard',   icon: LayoutDashboard, label: 'Command Center', exact: true },
-      { to: '/apps',        icon: AppWindow,  label: 'App Library' },
-      { to: '/departments', icon: Building2,  label: 'Departments' },
-      { to: '/sqdc',        icon: HeartPulse, label: 'SQDC' },
-      { to: '/andon',       icon: Bell,       label: 'Andon Board' },
-      { to: '/shift-notes', icon: BookOpen,   label: 'Shift Notes' },
-      { to: '/operator',    icon: Tablet,     label: 'Operator Portal', standalone: true },
+      { to: '/dashboard',   icon: LayoutDashboard, label: 'Command Center', exact: true, module: 'production' },
+      { to: '/apps',        icon: AppWindow,  label: 'App Library',     module: 'apps' },
+      { to: '/departments', icon: Building2,  label: 'Departments',     module: 'production' },
+      { to: '/sqdc',        icon: HeartPulse, label: 'SQDC',            module: 'quality' },
+      { to: '/andon',       icon: Bell,       label: 'Andon Board',     module: 'andon' },
+      { to: '/shift-notes', icon: BookOpen,   label: 'Shift Notes',     module: 'shifts' },
+      { to: '/operator',    icon: Tablet,     label: 'Operator Portal', standalone: true, module: 'production' },
     ],
   },
   {
@@ -62,10 +67,10 @@ export const SECTIONS: NavSection[] = [
     description: 'Schedule work and resources',
     proOnly: true,
     items: [
-      { to: '/schedule',   icon: Calendar,     label: 'Schedule' },
-      { to: '/routings',   icon: GitBranch,    label: 'Routings',       proOnly: true, minRole: 'supervisor' },
-      { to: '/manager',    icon: ClipboardList, label: 'Manager View',  minRole: 'manager' },
-      { to: '/capacity',   icon: Users,        label: 'Capacity Plan',  minRole: 'manager' },
+      { to: '/schedule',   icon: Calendar,     label: 'Schedule',       module: 'production' },
+      { to: '/routings',   icon: GitBranch,    label: 'Routings',       proOnly: true, minRole: 'supervisor', module: 'production' },
+      { to: '/manager',    icon: ClipboardList, label: 'Manager View',  minRole: 'manager', module: 'production' },
+      { to: '/capacity',   icon: Users,        label: 'Capacity Plan',  minRole: 'manager', module: 'analytics' },
     ],
   },
   {
@@ -74,11 +79,11 @@ export const SECTIONS: NavSection[] = [
     icon: Boxes,
     description: 'Track stock and purchasing',
     items: [
-      { to: '/inventory',     icon: Package,       label: 'Inventory Tracker', proOnly: true },
-      { to: '/receiving',     icon: PackageCheck,  label: 'Receiving',         proOnly: false },
-      { to: '/requirements',  icon: ListChecks,    label: 'Materials Required', proOnly: true, minRole: 'supervisor' },
-      { to: '/shipments',     icon: Truck,         label: 'Shipments',          proOnly: true },
-      { to: '/purchasing',    icon: ShoppingCart,  label: 'Purchasing',         proOnly: true, minRole: 'supervisor' },
+      { to: '/inventory',     icon: Package,       label: 'Inventory Tracker', proOnly: true, module: 'inventory' },
+      { to: '/receiving',     icon: PackageCheck,  label: 'Receiving',         proOnly: false, module: 'inventory' },
+      { to: '/requirements',  icon: ListChecks,    label: 'Materials Required', proOnly: true, minRole: 'supervisor', module: 'inventory' },
+      { to: '/shipments',     icon: Truck,         label: 'Shipments',          proOnly: true, module: 'inventory' },
+      { to: '/purchasing',    icon: ShoppingCart,  label: 'Purchasing',         proOnly: true, minRole: 'supervisor', module: 'inventory' },
     ],
   },
   {
@@ -87,9 +92,9 @@ export const SECTIONS: NavSection[] = [
     icon: ShieldCheck,
     description: 'CAPA, NCR, and continuous improvement',
     items: [
-      { to: '/quality',  icon: ShieldCheck,   label: 'NCR / Quality',    proOnly: true },
-      { to: '/capa',     icon: ClipboardCheck,label: 'CAPA Tracker',     proOnly: true },
-      { to: '/kaizen',   icon: Lightbulb,     label: 'Kaizen / CI Ideas' },
+      { to: '/quality',  icon: ShieldCheck,   label: 'NCR / Quality',    proOnly: true, module: 'quality' },
+      { to: '/capa',     icon: ClipboardCheck,label: 'CAPA Tracker',     proOnly: true, module: 'quality' },
+      { to: '/kaizen',   icon: Lightbulb,     label: 'Kaizen / CI Ideas', module: 'kaizen' },
     ],
   },
   {
@@ -99,7 +104,7 @@ export const SECTIONS: NavSection[] = [
     description: 'Assets, PM schedules, maintenance work orders',
     proOnly: true,
     items: [
-      { to: '/maintenance',  icon: Wrench,        label: 'CMMS',           proOnly: true },
+      { to: '/maintenance',  icon: Wrench,        label: 'CMMS',           proOnly: true, module: 'maintenance' },
     ],
   },
   {
@@ -109,9 +114,9 @@ export const SECTIONS: NavSection[] = [
     description: 'Training, skills, and certifications',
     proOnly: true,
     items: [
-      { to: '/training',      icon: GraduationCap, label: 'Skills Matrix',      proOnly: true, minRole: 'supervisor' },
-      { to: '/training/certs',icon: Award,         label: 'Certifications',     proOnly: true, minRole: 'supervisor' },
-      { to: '/training/plans',icon: ClipboardList, label: 'Training Plans',     proOnly: true, minRole: 'supervisor' },
+      { to: '/training',      icon: GraduationCap, label: 'Skills Matrix',      proOnly: true, minRole: 'supervisor', module: 'training' },
+      { to: '/training/certs',icon: Award,         label: 'Certifications',     proOnly: true, minRole: 'supervisor', module: 'training' },
+      { to: '/training/plans',icon: ClipboardList, label: 'Training Plans',     proOnly: true, minRole: 'supervisor', module: 'training' },
     ],
   },
   {
@@ -120,18 +125,38 @@ export const SECTIONS: NavSection[] = [
     icon: BarChart3,
     description: 'Analyze results and quality',
     items: [
-      { to: '/dashboards',       icon: LayoutGrid,  label: 'Dashboards' },
-      { to: '/leaderboard',      icon: Trophy,      label: 'Leaderboard' },
-      { to: '/oee',              icon: Cpu,         label: 'OEE Tracker',      minRole: 'supervisor', proOnly: true },
-      { to: '/analytics',        icon: BarChart3,   label: 'Operation Analytics' },
-      { to: '/facilities',       icon: Network,     label: 'Facilities',       minRole: 'manager', enterpriseOnly: true },
-      { to: '/tables',           icon: Database,    label: 'Tables',           minRole: 'supervisor', proOnly: true },
-      { to: '/transaction-log',  icon: History,     label: 'Transaction Log',  minRole: 'supervisor' },
+      { to: '/dashboards',       icon: LayoutGrid,  label: 'Dashboards',       module: 'apps' },
+      { to: '/leaderboard',      icon: Trophy,      label: 'Leaderboard',      module: 'analytics' },
+      { to: '/oee',              icon: Cpu,         label: 'OEE Tracker',      minRole: 'supervisor', proOnly: true, module: 'production' },
+      { to: '/analytics',        icon: BarChart3,   label: 'Operation Analytics', module: 'analytics' },
+      { to: '/facilities',       icon: Network,     label: 'Facilities',       minRole: 'manager', enterpriseOnly: true, module: 'production' },
+      { to: '/tables',           icon: Database,    label: 'Tables',           minRole: 'supervisor', proOnly: true, module: 'apps' },
+      { to: '/transaction-log',  icon: History,     label: 'Transaction Log',  minRole: 'supervisor', module: 'analytics' },
       { to: '/audit-log',        icon: AlertTriangle, label: 'Audit Log',      minRole: 'supervisor' },
       { to: '/admin',            icon: ShieldCheck, label: 'Admin Dashboard',   minRole: 'developer' },
     ],
   },
 ];
+
+// ─── Composable-MES filtering ─────────────────────────────────────────────────
+// Filters nav sections down to the modules a company has enabled. Items with
+// no `module` key always survive; sections left with zero items are dropped.
+export function filterNavByModules(
+  sections: NavSection[],
+  isEnabled: (key: string) => boolean,
+): NavSection[] {
+  return sections
+    .map(s => ({ ...s, items: s.items.filter(i => !i.module || isEnabled(i.module)) }))
+    .filter(s => s.items.length > 0);
+}
+
+/** SECTIONS filtered to this company's enabled modules. Drop-in replacement
+ *  for the static SECTIONS export anywhere inside the ModulesProvider tree —
+ *  Layout.tsx only needs to swap `SECTIONS` for `useVisibleSections()`. */
+export function useVisibleSections(): NavSection[] {
+  const { isEnabled } = useModules();
+  return useMemo(() => filterNavByModules(SECTIONS, isEnabled), [isEnabled]);
+}
 
 export const ALL_SECTION_ITEMS: NavItem[] = SECTIONS.flatMap(s => s.items);
 

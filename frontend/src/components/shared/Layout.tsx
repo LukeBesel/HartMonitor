@@ -9,7 +9,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useBranding } from '../../context/BrandingContext';
 import { useNavPrefs } from '../../context/NavPrefsContext';
 import { usePermissions } from '../../context/PermissionsContext';
-import { PINNED_ITEMS, SECTIONS, NavItem } from '../../config/navigation';
+import { PINNED_ITEMS, NavItem, useVisibleSections } from '../../config/navigation';
 import AlertsBubble from './AlertsBubble';
 import SiteSwitcher from './SiteSwitcher';
 import UpgradeModal from './UpgradeModal';
@@ -104,7 +104,8 @@ export default function Layout() {
   // Sections the user has kept enabled in Settings. Planning is off by default
   // (see NavPrefsContext) but once a user enables it, the toggle reveals it
   // regardless of plan tier — individual Pro items inside stay gated by canShow.
-  const enabledSections = SECTIONS.filter(s => !isSectionHidden(s.id));
+  const moduleSections = useVisibleSections();
+  const enabledSections = moduleSections.filter(s => !isSectionHidden(s.id));
 
   // Default to first enabled section if current focus is no longer valid
   const effectiveFocus = enabledSections.some(s => s.id === focus)
