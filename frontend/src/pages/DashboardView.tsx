@@ -8,7 +8,7 @@ import {
 } from 'recharts';
 import {
   LayoutGrid, Plus, Trash2, Edit, RefreshCw, ChevronLeft, Settings,
-  TrendingUp, BarChart3, PieChart as PieIcon, Table, Award, Clipboard, Hash
+  TrendingUp, BarChart3, PieChart as PieIcon, Table, Award, Clipboard, Hash, AlertTriangle
 } from 'lucide-react';
 import { v4 as uuidv4 } from '../utils/uuid';
 import { useAuth } from '../context/AuthContext';
@@ -55,6 +55,11 @@ const PERIOD_OPTIONS = [7, 14, 30, 60, 90];
 const CHART_COLORS = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#14b8a6','#f43f5e','#64748b'];
 
 // ── Card renderer ─────────────────────────────────────────────────────────────
+
+function formatRunTime(iso: string) {
+  const t = new Date(iso);
+  return isNaN(t.getTime()) ? '—' : t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
 
 function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
   if (!data) return <div className="flex items-center justify-center h-24 text-gray-300 text-sm">No data</div>;
@@ -183,7 +188,7 @@ function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
                     </span>
                   </td>
                   <td className="py-1.5 px-2 text-right text-gray-500">
-                    {new Date(r.started_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {formatRunTime(r.started_at)}
                   </td>
                 </tr>
               ))}
@@ -203,10 +208,21 @@ function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
 // ── Card config form ──────────────────────────────────────────────────────────
 
 function CardConfigForm({ card, apps, onSave, onCancel }: {
-  card: Partial<DashboardCard>; apps: any[]; onSave: (c: DashboardCard) => void; onCancel: () => void;
+  card: Partial<DashboardCard>; apps: any[]; onSave: (c: DashboardCard) => void | Promise<void>; onCancel: () => void;
 }) {
   const [cfg, setCfg] = useState<Partial<DashboardCard>>({ size: 'md', period_days: 30, ...card });
+  const [saving, setSaving] = useState(false);
   const set = (k: string, v: any) => setCfg(prev => ({ ...prev, [k]: v }));
+
+  const handleSave = async () => {
+    if (!cfg.type || !cfg.title || saving) return;
+    setSaving(true);
+    try {
+      await onSave(cfg as DashboardCard);
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="space-y-3">
@@ -306,13 +322,13 @@ function CardConfigForm({ card, apps, onSave, onCancel }: {
 
       <div className="flex items-center gap-2 pt-1">
         <button
-          onClick={() => cfg.type && cfg.title && onSave(cfg as DashboardCard)}
-          disabled={!cfg.type || !cfg.title}
+          onClick={handleSave}
+          disabled={!cfg.type || !cfg.title || saving}
           className="btn-primary text-xs py-1.5 px-3"
         >
-          Save Card
+          {saving ? 'Saving…' : 'Save Card'}
         </button>
-        <button onClick={onCancel} className="btn-secondary text-xs py-1.5 px-3">Cancel</button>
+        <button onClick={onCancel} disabled={saving} className="btn-secondary text-xs py-1.5 px-3">Cancel</button>
       </div>
     </div>
   );
@@ -331,6 +347,7 @@ export default function DashboardView() {
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [cardData, setCardData] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [refreshing, setRefreshing] = useState(false);
   const [apps, setApps] = useState<any[]>([]);
   const [addingCard, setAddingCard] = useState(false);
@@ -349,26 +366,35 @@ export default function DashboardView() {
       ]);
       if (!dashboard) { setDashboard(d); setTitle(d.name); }
       const map: Record<string, any> = {};
-      for (const c of dd.cards) { if (c.data) map[c.card_id] = c.data; }
+      for (const c of dd.cards ?? []) { if (c.data) map[c.card_id] = c.data; }
       setCardData(map);
+    } catch (err: any) {
+      // Keep showing existing data on background-refresh failures.
+      if (!dashboard) setLoadError(err?.message || 'Failed to load dashboard');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   }, [id, dashboard]);
 
-  useEffect(() => {
+  const loadAll = useCallback(() => {
     if (!id) return;
-    Promise.all([api.getDashboard(id), api.getDashboardData(id), api.getApps()]).then(([d, dd, appList]) => {
-      setDashboard(d);
-      setTitle(d.name);
-      setApps(appList);
-      const map: Record<string, any> = {};
-      for (const c of dd.cards) { if (c.data) map[c.card_id] = c.data; }
-      setCardData(map);
-      setLoading(false);
-    });
+    setLoading(true);
+    setLoadError('');
+    Promise.all([api.getDashboard(id), api.getDashboardData(id), api.getApps()])
+      .then(([d, dd, appList]) => {
+        setDashboard(d);
+        setTitle(d.name);
+        setApps(appList);
+        const map: Record<string, any> = {};
+        for (const c of dd.cards ?? []) { if (c.data) map[c.card_id] = c.data; }
+        setCardData(map);
+      })
+      .catch((err: any) => setLoadError(err?.message || 'Failed to load dashboard'))
+      .finally(() => setLoading(false));
   }, [id]);
+
+  useEffect(() => { loadAll(); }, [loadAll]);
 
   useEffect(() => {
     if (!isEditMode) {
@@ -384,46 +410,78 @@ export default function DashboardView() {
     // Re-fetch data for new cards
     const dd = await api.getDashboardData(id);
     const map: Record<string, any> = {};
-    for (const c of dd.cards) { if (c.data) map[c.card_id] = c.data; }
+    for (const c of dd.cards ?? []) { if (c.data) map[c.card_id] = c.data; }
     setCardData(map);
   };
 
   const addCard = async (cfg: DashboardCard) => {
     if (!dashboard) return;
     const newCard = { ...cfg, id: uuidv4() };
-    await saveCards([...dashboard.cards, newCard]);
-    setAddingCard(false);
-    setSelectedType('');
+    try {
+      await saveCards([...(dashboard.cards ?? []), newCard]);
+      setAddingCard(false);
+      setSelectedType('');
+    } catch (err: any) {
+      alert(err.message || 'Failed to add card');
+    }
   };
 
   const removeCard = async (cardId: string) => {
     if (!dashboard) return;
-    await saveCards(dashboard.cards.filter(c => c.id !== cardId));
+    try {
+      await saveCards((dashboard.cards ?? []).filter(c => c.id !== cardId));
+    } catch (err: any) {
+      alert(err.message || 'Failed to remove card');
+    }
   };
 
   const updateCard = async (updated: DashboardCard) => {
     if (!dashboard) return;
-    await saveCards(dashboard.cards.map(c => c.id === updated.id ? updated : c));
-    setEditingCard(null);
+    try {
+      await saveCards((dashboard.cards ?? []).map(c => c.id === updated.id ? updated : c));
+      setEditingCard(null);
+    } catch (err: any) {
+      alert(err.message || 'Failed to update card');
+    }
   };
 
   const saveTitle = async () => {
     if (!id || !title.trim()) return;
     setSavingTitle(true);
-    await api.updateDashboard(id, { name: title.trim() });
-    setDashboard(prev => prev ? { ...prev, name: title.trim() } : prev);
-    setSavingTitle(false);
+    try {
+      await api.updateDashboard(id, { name: title.trim() });
+      setDashboard(prev => prev ? { ...prev, name: title.trim() } : prev);
+    } catch (err: any) {
+      alert(err.message || 'Failed to rename dashboard');
+    } finally {
+      setSavingTitle(false);
+    }
   };
 
   if (loading) return (
-    <div className="flex items-center justify-center h-64">
-      <RefreshCw size={28} className="animate-spin text-blue-500" />
+    <div className="p-6 space-y-5">
+      <div className="h-9 w-64 animate-pulse bg-gray-200 rounded-lg" />
+      <div className="grid grid-cols-4 gap-4">
+        {[1, 2, 3, 4].map(i => (
+          <div key={i} className="col-span-2 h-48 animate-pulse bg-white border border-gray-200 rounded-2xl" />
+        ))}
+      </div>
     </div>
   );
 
   if (!dashboard) return (
-    <div className="flex items-center justify-center h-64 text-gray-400">Dashboard not found</div>
+    <div className="p-6 flex flex-col items-center justify-center py-24 gap-3 text-center">
+      <AlertTriangle size={40} className="text-red-400" />
+      <div>
+        <p className="font-medium text-gray-500">Couldn't load this dashboard</p>
+        <p className="text-sm text-gray-400 mt-1">{loadError || 'Dashboard not found'}</p>
+      </div>
+      <button className="btn-secondary" onClick={loadAll}>Retry</button>
+      <Link to="/dashboards" className="text-blue-600 text-sm hover:underline">← Back to Dashboards</Link>
+    </div>
   );
+
+  const cards = dashboard.cards ?? [];
 
   return (
     <div className="min-h-screen bg-[#f8fafc] p-6 space-y-5">
@@ -508,10 +566,11 @@ export default function DashboardView() {
       )}
 
       {/* Cards grid */}
-      {dashboard.cards.length === 0 && !isEditMode ? (
+      {cards.length === 0 && !isEditMode ? (
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm py-16 text-center">
           <BarChart3 size={40} className="mx-auto mb-3 text-gray-200" />
           <div className="text-gray-500 font-medium">No cards yet</div>
+          <p className="text-gray-400 text-sm mt-1">Add KPI, chart and table widgets to bring this dashboard to life.</p>
           {canEdit && (
             <Link to={`/dashboards/${id}/edit`} className="btn-primary mt-4 mx-auto text-sm">
               <Settings size={14} /> Configure Dashboard
@@ -520,7 +579,7 @@ export default function DashboardView() {
         </div>
       ) : (
         <div className="grid grid-cols-4 gap-4">
-          {dashboard.cards.map(card => (
+          {cards.map(card => (
             <div
               key={card.id}
               className={`bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden ${SIZE_COLS[card.size || 'md'] || 'col-span-2'}`}

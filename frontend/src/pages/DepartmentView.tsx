@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import {
   CheckCircle2, Activity, TrendingUp, Clock, Package, RefreshCw,
-  ArrowLeft, Monitor, User, ChevronRight, Calendar
+  ArrowLeft, Monitor, User, ChevronRight, Calendar, AlertTriangle
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 
@@ -49,33 +49,42 @@ const SCHEDULE_PILL: Record<string, string> = {
 };
 
 function elapsedSince(iso: string) {
-  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return '—';
+  const mins = Math.floor((Date.now() - t) / 60000);
   if (mins < 1) return 'just started';
   if (mins < 60) return `${mins}m`;
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
 function formatTimeAgo(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime();
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return '—';
+  const diff = Date.now() - t;
   if (diff < 60000) return 'just now';
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
   return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
+function formatShortDate(iso: string) {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
 export default function DepartmentView() {
   const { id } = useParams<{ id: string }>();
   const [data, setData] = useState<DeptViewData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState('');
 
   const load = useCallback(async () => {
     if (!id) return;
     try {
       setData(await api.getDepartmentView(id));
-      setError(false);
-    } catch {
-      setError(true);
+      setError('');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load department');
     } finally {
       setLoading(false);
     }
@@ -88,25 +97,33 @@ export default function DepartmentView() {
     return () => clearInterval(interval);
   }, [load]);
 
-  if (loading) return (
+  if (loading && !data) return (
     <div className="flex items-center justify-center h-64">
       <RefreshCw size={28} className="animate-spin text-blue-500" />
     </div>
   );
 
-  if (error || !data) return (
-    <div className="p-6 text-center text-gray-400">
-      <p>Department not found</p>
-      <Link to="/dashboard" className="text-blue-600 text-sm hover:underline mt-2 inline-block">← Back to Command Center</Link>
+  if (!data) return (
+    <div className="p-6 flex flex-col items-center justify-center py-24 gap-3 text-center">
+      <AlertTriangle size={40} className="text-red-400" />
+      <div>
+        <p className="font-medium text-gray-500">Couldn't load this department</p>
+        <p className="text-sm text-gray-400 mt-1">{error || 'Department not found'}</p>
+      </div>
+      <button className="btn-secondary" onClick={() => { setLoading(true); load(); }}>Retry</button>
+      <Link to="/dashboard" className="text-blue-600 text-sm hover:underline">← Back to Command Center</Link>
     </div>
   );
 
   const { department: dept, kpis } = data;
+  const stations = data.stations ?? [];
+  const workOrders = data.work_orders ?? [];
+  const recentCompletions = data.recent_completions ?? [];
 
   return (
     <div className="min-h-screen bg-[#f8fafc] p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-4">
           <Link to="/dashboard" className="p-2 hover:bg-gray-100 rounded-lg text-gray-400 hover:text-gray-600 transition-colors">
             <ArrowLeft size={18} />
@@ -117,7 +134,7 @@ export default function DepartmentView() {
             <p className="text-gray-500 text-sm">
               {dept.manager_name && <>Manager: {dept.manager_name} · </>}
               {dept.headcount > 0 && <>{dept.headcount} operators · </>}
-              {data.stations.length} station{data.stations.length !== 1 ? 's' : ''}
+              {stations.length} station{stations.length !== 1 ? 's' : ''}
             </p>
           </div>
         </div>
@@ -138,13 +155,13 @@ export default function DepartmentView() {
       {/* Stations */}
       <div>
         <h2 className="text-base font-semibold text-gray-900 mb-3">Stations</h2>
-        {data.stations.length === 0 ? (
+        {stations.length === 0 ? (
           <div className="text-center text-gray-400 text-sm py-8 bg-white rounded-xl border border-gray-200">
             No stations assigned to this department yet. Assign stations from the <Link to="/stations" className="text-blue-600 hover:underline">Stations</Link> page.
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {data.stations.map(st => {
+            {stations.map(st => {
               const ms = MACHINE_STATUS[st.current_status] ?? MACHINE_STATUS.idle;
               return (
                 <Link key={st.id} to={`/stations/${st.id}`}
@@ -195,10 +212,10 @@ export default function DepartmentView() {
             </Link>
           </div>
           <div className="space-y-2.5">
-            {data.work_orders.length === 0 && (
+            {workOrders.length === 0 && (
               <div className="text-center text-gray-400 text-sm py-8">No active work orders</div>
             )}
-            {data.work_orders.map(wo => (
+            {workOrders.map(wo => (
               <div key={wo.id} className="border border-gray-100 rounded-lg p-3">
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-2">
@@ -208,7 +225,7 @@ export default function DepartmentView() {
                     </span>
                   </div>
                   <span className="text-xs text-gray-400 flex items-center gap-1">
-                    <Calendar size={10} /> {new Date(wo.scheduled_end).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                    <Calendar size={10} /> {formatShortDate(wo.scheduled_end)}
                   </span>
                 </div>
                 <div className="text-xs text-gray-600 truncate mb-1.5">{wo.part_name}</div>
@@ -230,7 +247,7 @@ export default function DepartmentView() {
               <span className="text-xs text-gray-400">Last 24 hours</span>
             </div>
             <ResponsiveContainer width="100%" height={150}>
-              <BarChart data={data.hourly_throughput} barSize={14}>
+              <BarChart data={data.hourly_throughput ?? []} barSize={14}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
                 <XAxis dataKey="hour" tick={{ fontSize: 10 }} tickFormatter={h => h.slice(11, 16)} interval={3} />
                 <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
@@ -243,10 +260,10 @@ export default function DepartmentView() {
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
             <h2 className="font-semibold text-gray-900 mb-3">Recent Completions</h2>
             <div className="divide-y divide-gray-50">
-              {data.recent_completions.length === 0 && (
+              {recentCompletions.length === 0 && (
                 <div className="text-center text-gray-400 text-xs py-6">No completions yet</div>
               )}
-              {data.recent_completions.slice(0, 8).map(c => (
+              {recentCompletions.slice(0, 8).map(c => (
                 <div key={c.id} className="flex items-center justify-between py-2 text-xs">
                   <div className="min-w-0">
                     <div className="font-medium text-gray-900 truncate">{c.app_name}</div>

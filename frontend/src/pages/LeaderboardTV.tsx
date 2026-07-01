@@ -35,12 +35,15 @@ export default function LeaderboardTV() {
     : 'week') as LeaderboardPeriod;
 
   const [data, setData] = useState<LeaderboardResponse | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const [index, setIndex] = useState(0);
   const { companyName } = useBranding();
   const now = useClock();
 
   useEffect(() => {
-    const load = () => api.getLeaderboard(period).then(setData).catch(() => {});
+    const load = () => api.getLeaderboard(period)
+      .then(d => { setData(d); setLoadFailed(false); })
+      .catch(() => setLoadFailed(true));
     load();
     const refresh = setInterval(load, REFRESH_MS);
     return () => clearInterval(refresh);
@@ -84,7 +87,9 @@ export default function LeaderboardTV() {
       {/* Body */}
       <div className="flex-1 flex flex-col items-center justify-center px-10 py-8">
         {!data ? (
-          <div className="text-white/40 text-lg">Loading…</div>
+          <div className="text-white/40 text-lg">
+            {loadFailed ? 'Unable to load leaderboard. Retrying automatically…' : 'Loading…'}
+          </div>
         ) : !board ? (
           <div className="text-center text-white/40">
             <Trophy size={56} className="mx-auto mb-4 opacity-20" />

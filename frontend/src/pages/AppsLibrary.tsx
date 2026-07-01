@@ -4,7 +4,7 @@ import { api } from '../api/client';
 import { App } from '../types';
 import {
   Plus, Play, Edit3, Trash2, Search, CheckCircle,
-  Clock, FileText, MoreVertical, Globe, Lock, Copy, Download, RefreshCw, Database, AppWindow
+  Clock, FileText, MoreVertical, Globe, Lock, Copy, Download, RefreshCw, Database, AppWindow, AlertTriangle
 } from 'lucide-react';
 import UpgradeModal from '../components/shared/UpgradeModal';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
@@ -17,6 +17,8 @@ export default function AppsLibrary() {
   const [showCreate, setShowCreate] = useState(false);
   const [newApp, setNewApp] = useState({ name: '', description: '' });
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
   const [limitReason, setLimitReason] = useState<string | null>(null);
   const [loadingSample, setLoadingSample] = useState(false);
   const [sampleError, setSampleError] = useState('');
@@ -24,11 +26,18 @@ export default function AppsLibrary() {
   const { isAtLeast, canEdit } = useAuth();
   const navigate = useNavigate();
 
-  const load = () => api.getApps().then(setApps).finally(() => setLoading(false));
+  const load = () => {
+    setLoadError(null);
+    return api.getApps()
+      .then(setApps)
+      .catch((err: any) => setLoadError(err.message || 'Failed to load apps'))
+      .finally(() => setLoading(false));
+  };
   useEffect(() => { load(); }, []);
 
   const handleCreate = async () => {
-    if (!newApp.name.trim()) return;
+    if (!newApp.name.trim() || creating) return;
+    setCreating(true);
     try {
       const app = await api.createApp(newApp);
       setShowCreate(false);
@@ -42,20 +51,30 @@ export default function AppsLibrary() {
       } else {
         alert(err.message || 'Failed to create app');
       }
+    } finally {
+      setCreating(false);
     }
   };
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.preventDefault();
     if (!confirm('Delete this app and all its data?')) return;
-    await api.deleteApp(id);
-    load();
+    try {
+      await api.deleteApp(id);
+      load();
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete app');
+    }
   };
 
   const handlePublish = async (id: string, e: React.MouseEvent) => {
     e.preventDefault();
-    await api.publishApp(id);
-    load();
+    try {
+      await api.publishApp(id);
+      load();
+    } catch (err: any) {
+      alert(err.message || 'Failed to publish app');
+    }
   };
 
   const handleLoadSampleData = async () => {
@@ -72,8 +91,8 @@ export default function AppsLibrary() {
   };
 
   const filtered = apps.filter(a =>
-    a.name.toLowerCase().includes(search.toLowerCase()) ||
-    a.description.toLowerCase().includes(search.toLowerCase())
+    (a.name || '').toLowerCase().includes(search.toLowerCase()) ||
+    (a.description || '').toLowerCase().includes(search.toLowerCase())
   );
 
   return (
@@ -91,7 +110,7 @@ export default function AppsLibrary() {
         icon={AppWindow}
         color="#8b5cf6"
       />
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">App Library</h1>
           <p className="text-gray-500 text-sm mt-0.5">Build and manage manufacturing process apps</p>
@@ -116,7 +135,7 @@ export default function AppsLibrary() {
       </div>
 
       {/* Stats bar */}
-      <div className="flex gap-4 text-sm text-gray-500">
+      <div className="flex flex-wrap gap-4 text-sm text-gray-500">
         <span>{apps.length} total</span>
         <span className="text-green-600 font-medium">{apps.filter(a => a.status === 'published').length} published</span>
         <span className="text-yellow-600 font-medium">{apps.filter(a => a.status === 'draft').length} drafts</span>
@@ -127,12 +146,23 @@ export default function AppsLibrary() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[1,2,3].map(i => <div key={i} className="card h-48 animate-pulse bg-gray-100" />)}
         </div>
+      ) : loadError ? (
+        <div className="text-center py-16">
+          <AlertTriangle size={40} className="mx-auto mb-3 text-red-400" />
+          <p className="font-medium text-gray-500">Couldn't load apps</p>
+          <p className="text-sm text-gray-400 mt-1">{loadError}</p>
+          <div className="flex items-center justify-center mt-4">
+            <button onClick={() => { setLoading(true); load(); }} className="btn-secondary">
+              <RefreshCw size={14} /> Retry
+            </button>
+          </div>
+        </div>
       ) : filtered.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
           <FileText size={40} className="mx-auto mb-3 opacity-30" />
-          <p className="font-medium">No apps found</p>
-          <p className="text-sm">Create your first manufacturing app to get started</p>
-          {canEdit && (
+          <p className="font-medium">{search ? 'No apps match your search' : 'No apps found'}</p>
+          <p className="text-sm">{search ? 'Try a different search term' : 'Create your first manufacturing app to get started'}</p>
+          {!search && canEdit && (
             <div className="flex items-center justify-center gap-2 mt-4">
               <button onClick={() => setShowCreate(true)} className="btn-primary">
                 <Plus size={14} /> Create App
@@ -193,8 +223,8 @@ export default function AppsLibrary() {
             </div>
             <div className="flex gap-2 mt-5">
               <button onClick={() => setShowCreate(false)} className="btn-secondary flex-1">Cancel</button>
-              <button onClick={handleCreate} disabled={!newApp.name.trim()} className="btn-primary flex-1">
-                Create & Edit
+              <button onClick={handleCreate} disabled={!newApp.name.trim() || creating} className="btn-primary flex-1">
+                {creating ? 'Creating…' : 'Create & Edit'}
               </button>
             </div>
           </div>
@@ -211,6 +241,11 @@ export default function AppsLibrary() {
       )}
     </div>
   );
+}
+
+function fmtUpdated(iso: string) {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '—' : d.toLocaleDateString();
 }
 
 function AppCard({ app, canEdit, onDelete, onPublish }: { app: App; canEdit: boolean; onDelete: any; onPublish: any }) {
@@ -295,8 +330,8 @@ function AppCard({ app, canEdit, onDelete, onPublish }: { app: App; canEdit: boo
       </div>
 
       <div className="flex items-center gap-3 text-xs text-gray-500">
-        <span className="flex items-center gap-1"><FileText size={12} />{app.steps.length} steps</span>
-        <span>Updated {new Date(app.updated_at).toLocaleDateString()}</span>
+        <span className="flex items-center gap-1"><FileText size={12} />{app.steps?.length ?? 0} steps</span>
+        <span>Updated {fmtUpdated(app.updated_at)}</span>
       </div>
 
       <div className="flex gap-2 mt-auto pt-2 border-t border-gray-100">

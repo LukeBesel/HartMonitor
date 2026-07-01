@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Network, Building2, Layers, Monitor, ClipboardList, ChevronRight,
-  ArrowLeft, MapPin, RefreshCw,
+  ArrowLeft, MapPin, RefreshCw, AlertTriangle,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { usePlan } from '../context/PlanContext';
@@ -41,6 +41,7 @@ export default function Facilities() {
   const [stations, setStations] = useState<any[]>([]);
   const [operations, setOperations] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const siteId = useMemo(() => trail.find(c => c.level === 'departments')?.id ?? null, [trail]);
   const deptId = useMemo(() => trail.find(c => c.level === 'workcenters')?.id ?? null, [trail]);
@@ -48,18 +49,24 @@ export default function Facilities() {
 
   const load = async () => {
     setLoading(true);
+    setError(null);
     try {
       if (current.level === 'facilities') {
-        setSites(await api.getSites());
+        const s = await api.getSites();
+        setSites(Array.isArray(s) ? s : []);
       } else if (current.level === 'departments') {
-        setDepartments(await api.getDepartments(siteId ? { site_id: siteId } : undefined));
+        const d = await api.getDepartments(siteId ? { site_id: siteId } : undefined);
+        setDepartments(Array.isArray(d) ? d : []);
       } else if (current.level === 'workcenters') {
         const all = await api.getStations(siteId ? { site_id: siteId } : undefined);
-        setStations(deptId ? all.filter(s => s.department_id === deptId) : all);
+        const list = Array.isArray(all) ? all : [];
+        setStations(deptId ? list.filter(s => s.department_id === deptId) : list);
       } else if (current.level === 'operations') {
         const all = await api.getCompletions({ limit: 200 });
-        setOperations(all.filter((c: any) => c.station_id === stationId));
+        setOperations((Array.isArray(all) ? all : []).filter((c: any) => c.station_id === stationId));
       }
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load data');
     } finally {
       setLoading(false);
     }
@@ -139,7 +146,18 @@ export default function Facilities() {
         </div>
       )}
 
-      {!loading && current.level === 'facilities' && (
+      {!loading && error && (
+        <div className="py-16 flex flex-col items-center gap-3 text-center">
+          <AlertTriangle size={28} className="text-red-400" />
+          <p className="text-gray-500 font-medium text-sm">Couldn't load this view</p>
+          <p className="text-xs text-gray-400">{error}</p>
+          <button onClick={load} className="btn-secondary">
+            <RefreshCw size={14} /> Retry
+          </button>
+        </div>
+      )}
+
+      {!loading && !error && current.level === 'facilities' && (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {sites.length === 0 && <Empty label="No facilities yet. Add sites in Settings." />}
           {sites.map(s => (
@@ -166,7 +184,7 @@ export default function Facilities() {
         </div>
       )}
 
-      {!loading && current.level === 'departments' && (
+      {!loading && !error && current.level === 'departments' && (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {departments.length === 0 && <Empty label="No departments in this facility yet." />}
           {departments.map(d => (
@@ -193,7 +211,7 @@ export default function Facilities() {
         </div>
       )}
 
-      {!loading && current.level === 'workcenters' && (
+      {!loading && !error && current.level === 'workcenters' && (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {stations.length === 0 && <Empty label="No work centers in this department yet." />}
           {stations.map(st => (
@@ -220,7 +238,7 @@ export default function Facilities() {
         </div>
       )}
 
-      {!loading && current.level === 'operations' && (
+      {!loading && !error && current.level === 'operations' && (
         <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
           {operations.length === 0 ? (
             <Empty label="No operations have been run at this work center yet." />
@@ -237,9 +255,14 @@ export default function Facilities() {
                   }`} />
                   <div className="min-w-0 flex-1">
                     <div className="font-medium text-gray-900 text-sm truncate">{op.app_name}</div>
-                    <div className="text-xs text-gray-400 truncate">{op.operator_name} · {op.status.replace('_', ' ')}</div>
+                    <div className="text-xs text-gray-400 truncate">{op.operator_name} · {(op.status || 'unknown').replace('_', ' ')}</div>
                   </div>
-                  <div className="text-xs text-gray-400 flex-shrink-0">{timeAgo(op.completed_at || op.started_at)}</div>
+                  <div className="text-xs text-gray-400 flex-shrink-0">
+                    {(() => {
+                      const when = op.completed_at || op.started_at;
+                      return when && !isNaN(new Date(when).getTime()) ? timeAgo(when) : '—';
+                    })()}
+                  </div>
                   <ChevronRight size={15} className="text-gray-300 flex-shrink-0" />
                 </button>
               ))}
@@ -253,6 +276,10 @@ export default function Facilities() {
 
 function Empty({ label }: { label: string }) {
   return (
-    <div className="col-span-full py-12 text-center text-sm text-gray-400">{label}</div>
+    <div className="col-span-full py-12 flex flex-col items-center gap-2 text-center">
+      <ClipboardList size={28} className="text-gray-300" />
+      <p className="text-sm font-medium text-gray-500">Nothing here yet</p>
+      <p className="text-xs text-gray-400">{label}</p>
+    </div>
   );
 }

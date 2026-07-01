@@ -88,6 +88,7 @@ export default function OperatorPortal() {
   const [operatorName, setOperatorName] = useState('');
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(false);
+  const [identifyError, setIdentifyError] = useState('');
   const [selectedWO, setSelectedWO] = useState<WorkOrder | null>(null);
 
   // Floor identity (clock-in) state.
@@ -119,10 +120,13 @@ export default function OperatorPortal() {
     setOperatorName(name);
     localStorage.setItem('hm_operator_name', name);
     setLoading(true);
+    setIdentifyError('');
     try {
       await loadWorkOrders();
       setStep('main');
       setActiveTab('jobs');
+    } catch (err: any) {
+      setIdentifyError(err?.message || "Couldn't load your jobs — please try again.");
     } finally {
       setLoading(false);
     }
@@ -195,6 +199,7 @@ export default function OperatorPortal() {
         onManualSubmit={handleNameSubmit}
         onIdentify={identify}
         onExit={() => navigate('/dashboard')}
+        identifyError={identifyError}
       />
     );
   }
@@ -275,6 +280,7 @@ export default function OperatorPortal() {
 function IdentifyScreen({
   roster, rosterLoaded, loading, currentUser, manualMode, setManualMode,
   operatorName, setOperatorName, onManualSubmit, onIdentify, onExit,
+  identifyError,
 }: {
   roster: RosterEntry[];
   rosterLoaded: boolean;
@@ -287,6 +293,7 @@ function IdentifyScreen({
   onManualSubmit: () => void;
   onIdentify: (name: string) => void;
   onExit: () => void;
+  identifyError?: string;
 }) {
   const [selectedOp, setSelectedOp] = useState<RosterEntry | null>(null);
   const [pin, setPin] = useState('');
@@ -497,6 +504,10 @@ function IdentifyScreen({
 
           {scanError && (
             <div className="mb-4 bg-amber-500/15 border border-amber-500/30 text-amber-300 rounded-xl px-3 py-2 text-sm text-center">{scanError}</div>
+          )}
+
+          {identifyError && (
+            <div className="mb-4 bg-red-500/15 border border-red-500/30 text-red-300 rounded-xl px-3 py-2 text-sm text-center">{identifyError}</div>
           )}
 
           {!rosterLoaded ? (

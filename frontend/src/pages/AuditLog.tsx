@@ -45,6 +45,11 @@ function truncateId(id: string): string {
   return id.length > 8 ? `${id.slice(0, 8)}…` : id;
 }
 
+function formatTimestamp(iso: string): string {
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? '—' : d.toLocaleString();
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 
 export default function AuditLog() {
@@ -224,7 +229,7 @@ export default function AuditLog() {
         </div>
       </div>
 
-      {error && (
+      {error && entries.length > 0 && (
         <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
           <AlertCircle size={14} /> {error}
         </div>
@@ -237,12 +242,26 @@ export default function AuditLog() {
             <div key={i} className="card h-12 animate-pulse bg-gray-100" />
           ))}
         </div>
+      ) : error && entries.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
+          <AlertCircle size={40} className="text-red-400" />
+          <div>
+            <p className="font-medium text-gray-500">Couldn't load the transaction log</p>
+            <p className="text-sm text-gray-400 mt-1">{error}</p>
+          </div>
+          <button className="btn-secondary" onClick={() => fetchEntries()}>Retry</button>
+        </div>
       ) : entries.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-24 text-gray-400 gap-3">
           <ScrollText size={48} className="text-gray-200" />
           <div className="text-center">
             <p className="font-semibold text-gray-500">
               {hasFilters ? 'No results match your filters' : 'No activity recorded yet'}
+            </p>
+            <p className="text-xs text-gray-400 mt-1">
+              {hasFilters
+                ? 'Try widening the date range or clearing a filter.'
+                : 'Production events appear here automatically as jobs are started and finished.'}
             </p>
           </div>
         </div>
@@ -263,7 +282,7 @@ export default function AuditLog() {
                 {entries.map(entry => (
                   <tr key={entry.id} className="hover:bg-gray-50">
                     <td className="px-4 py-2.5 text-gray-600 whitespace-nowrap">
-                      {new Date(entry.created_at).toLocaleString()}
+                      {formatTimestamp(entry.created_at)}
                     </td>
                     <td className="px-4 py-2.5">
                       <span className={entityBadgeClass(entry.entity_type)}>

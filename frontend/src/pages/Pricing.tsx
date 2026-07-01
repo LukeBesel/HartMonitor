@@ -25,10 +25,17 @@ export default function Pricing() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const [pricing, setPricing] = useState<PricingCatalog | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+
+  const loadPricing = () => {
+    setLoadFailed(false);
+    api.getPublicPricing().then(setPricing).catch(() => setLoadFailed(true));
+  };
 
   useEffect(() => {
-    api.getPublicPricing().then(setPricing).catch(() => {});
+    loadPricing();
     document.title = 'Pricing — HartMonitor';
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Buying happens inside the app (tied to your workspace & billing). Send
@@ -63,6 +70,21 @@ export default function Pricing() {
 
       {/* Tiers */}
       <section className="max-w-6xl mx-auto px-6 pb-8">
+        {!pricing && !loadFailed && (
+          <div className="grid md:grid-cols-3 gap-6">
+            {[1, 2, 3].map(i => (
+              <div key={i} className="rounded-2xl p-8 border border-white/10 bg-white/[0.03] h-96 animate-pulse" />
+            ))}
+          </div>
+        )}
+        {!pricing && loadFailed && (
+          <div className="text-center py-16">
+            <p className="text-gray-400">Couldn't load pricing right now.</p>
+            <button onClick={loadPricing} className="mt-4 px-6 py-2.5 rounded-full border border-white/15 text-sm font-semibold text-white hover:bg-white/5 transition-colors">
+              Retry
+            </button>
+          </div>
+        )}
         <div className="grid md:grid-cols-3 gap-6">
           {pricing && Object.entries(pricing.tiers).map(([key, tier], i) => {
             const featured = key === 'pro';

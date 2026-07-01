@@ -61,7 +61,9 @@ interface CapacityData {
 
 function fmtDate(iso: string | null) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -72,13 +74,16 @@ export default function CapacityPlanning() {
   const { canEdit } = useAuth();
   const [data, setData] = useState<CapacityData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [sortBy, setSortBy] = useState<'days' | 'hours' | 'operators'>('days');
   const [showTable, setShowTable] = useState(false);
 
   const load = () => {
     setLoading(true);
+    setLoadError(null);
     api.getCapacity()
       .then(setData)
+      .catch((err: any) => setLoadError(err?.message || 'Failed to load capacity data'))
       .finally(() => setLoading(false));
   };
 
@@ -119,8 +124,19 @@ export default function CapacityPlanning() {
         <div className="flex items-center justify-center h-64">
           <RefreshCw size={28} className="animate-spin text-blue-500" />
         </div>
+      ) : loadError ? (
+        <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+          <AlertTriangle size={28} className="text-red-400" />
+          <p className="text-gray-500 font-medium">Couldn't load capacity data</p>
+          <p className="text-xs text-gray-400">{loadError}</p>
+          <button onClick={load} className="btn-secondary">Retry</button>
+        </div>
       ) : !data ? (
-        <div className="text-center py-16 text-gray-400">No capacity data available</div>
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <Users size={32} className="mb-3 text-gray-300" />
+          <p className="text-gray-500 font-medium">No capacity data available</p>
+          <p className="text-gray-400 text-xs mt-1">Create work orders with due dates on the Schedule page to see staffing requirements.</p>
+        </div>
       ) : (
         <>
           {/* Verdict banner */}
@@ -197,7 +213,7 @@ export default function CapacityPlanning() {
                 <span className="text-xs text-gray-500 font-medium">Due This Week</span>
               </div>
               <div className="text-3xl font-bold text-amber-600">
-                {data.work_orders.filter(w => w.days_remaining !== null && w.days_remaining <= 7).length}
+                {(data.work_orders ?? []).filter(w => w.days_remaining !== null && w.days_remaining <= 7).length}
               </div>
               <div className="text-xs text-gray-400 mt-1">work orders</div>
             </div>
@@ -206,9 +222,17 @@ export default function CapacityPlanning() {
           {/* Department capacity cards */}
           <div>
             <h2 className="text-sm font-semibold text-gray-900 mb-3">Capacity by Department</h2>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              {depts.map(dept => <DeptCapacityCard key={dept.name} dept={dept} onSaved={load} canEdit={canEdit} />)}
-            </div>
+            {depts.length === 0 ? (
+              <div className="bg-white rounded-xl border border-gray-200 shadow-sm py-10 text-center">
+                <Users size={28} className="mx-auto mb-2 text-gray-300" />
+                <p className="text-gray-500 font-medium text-sm">No departments yet</p>
+                <p className="text-gray-400 text-xs mt-1">Add departments with headcount to see per-department capacity.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                {depts.map(dept => <DeptCapacityCard key={dept.name} dept={dept} onSaved={load} canEdit={canEdit} />)}
+              </div>
+            )}
           </div>
 
           {/* Load timeline */}
@@ -219,7 +243,7 @@ export default function CapacityPlanning() {
             </div>
             <p className="text-xs text-gray-400 mb-4">Each work order's remaining hours spread across the days until it's due. Bars above the line mean you can't finish everything on time with current staff.</p>
             <ResponsiveContainer width="100%" height={240}>
-              <BarChart data={data.summary.timeline} margin={{ left: 0, right: 20, top: 5, bottom: 5 }}>
+              <BarChart data={data.summary.timeline ?? []} margin={{ left: 0, right: 20, top: 5, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" vertical={false} />
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={d => new Date(d + 'T00:00:00').toLocaleDateString([], { month: 'short', day: 'numeric' })} />
                 <YAxis tick={{ fontSize: 10 }} label={{ value: 'hours', angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#9ca3af' } }} />
@@ -257,7 +281,7 @@ export default function CapacityPlanning() {
             </button>
             {showTable && (
               <>
-                <div className="flex items-center gap-2 px-4 pb-3 border-b border-gray-100">
+                <div className="flex items-center gap-2 px-4 pb-3 border-b border-gray-100 flex-wrap">
                   <span className="text-xs text-gray-500">Sort by:</span>
                   {(['days', 'hours', 'operators'] as const).map(s => (
                     <button
@@ -400,6 +424,8 @@ function DeptCapacityCard({ dept, onSaved, canEdit }: { dept: DeptSummary; onSav
       if (match) await api.updateDepartment(match.id, { headcount: Math.max(0, parseInt(value) || 0) });
       setEditing(false);
       onSaved();
+    } catch (err: any) {
+      alert(err?.message || 'Failed to update headcount');
     } finally {
       setSaving(false);
     }
