@@ -5,6 +5,15 @@ const { requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
+// Returns the id if the row exists in this company, else null. Step app/dept
+// references outside the tenant would leak the other tenant's names through
+// the step JOINs (app_name / department_name).
+function ownedOrNull(table, id, companyId) {
+  if (!id) return null;
+  const row = db.prepare(`SELECT id FROM ${table} WHERE id = ? AND company_id = ?`).get(id, companyId);
+  return row ? id : null;
+}
+
 // ─── GET / — list all routings with step count ────────────────────────────────
 
 router.get('/', (req, res) => {
@@ -66,8 +75,8 @@ router.post('/', requireRole('supervisor'), (req, res) => {
         step.step_number ?? i + 1,
         step.name || `Step ${i + 1}`,
         step.description || '',
-        step.app_id || null,
-        step.department_id || null,
+        ownedOrNull('apps', step.app_id, req.companyId),
+        ownedOrNull('departments', step.department_id, req.companyId),
         step.estimated_cycle_seconds ?? 0,
       );
     }
@@ -162,7 +171,10 @@ router.post('/:id/steps', requireRole('supervisor'), (req, res) => {
     INSERT INTO routing_steps
       (id, routing_id, company_id, step_number, name, description, app_id, department_id, estimated_cycle_seconds)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(stepId, req.params.id, req.companyId, step_number, name, description, app_id || null, department_id || null, estimated_cycle_seconds);
+  `).run(stepId, req.params.id, req.companyId, step_number, name, description,
+         ownedOrNull('apps', app_id, req.companyId),
+         ownedOrNull('departments', department_id, req.companyId),
+         estimated_cycle_seconds);
 
   // Touch the parent routing's updated_at
   db.prepare("UPDATE product_routings SET updated_at = datetime('now') WHERE id = ?").run(req.params.id);
@@ -230,8 +242,8 @@ router.put('/:id/steps/:stepId', requireRole('supervisor'), (req, res) => {
   const name                    = req.body.name                    ?? step.name;
   const description             = req.body.description             ?? step.description;
   const step_number             = req.body.step_number             ?? step.step_number;
-  const app_id                  = req.body.app_id                  !== undefined ? (req.body.app_id || null)        : step.app_id;
-  const department_id           = req.body.department_id           !== undefined ? (req.body.department_id || null) : step.department_id;
+  const app_id                  = req.body.app_id                  !== undefined ? ownedOrNull('apps', req.body.app_id, req.companyId)               : step.app_id;
+  const department_id           = req.body.department_id           !== undefined ? ownedOrNull('departments', req.body.department_id, req.companyId) : step.department_id;
   const estimated_cycle_seconds = req.body.estimated_cycle_seconds ?? step.estimated_cycle_seconds;
 
   db.prepare(`

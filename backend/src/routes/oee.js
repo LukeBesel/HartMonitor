@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { notify } = require('../notifications');
 const { deliverWebhooks } = require('../webhooks');
+const { requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -120,7 +121,7 @@ router.get('/:id', (req, res) => {
 
 // ─── POST /:id/event - log status change ──────────────────────────────────────
 
-router.post('/:id/event', (req, res) => {
+router.post('/:id/event', requireRole('operator'), (req, res) => {
   const station = db.prepare('SELECT * FROM stations WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!station) return res.status(404).json({ error: 'Not found' });
 
@@ -176,17 +177,21 @@ router.post('/:id/event', (req, res) => {
 
 // ─── PUT /:id/settings - update OEE settings ──────────────────────────────────
 
-router.put('/:id/settings', (req, res) => {
+router.put('/:id/settings', requireRole('supervisor'), (req, res) => {
   const station = db.prepare('SELECT * FROM stations WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!station) return res.status(404).json({ error: 'Not found' });
 
   const { planned_hours_per_day, ideal_cycle_seconds } = req.body;
+  const hours = planned_hours_per_day ?? station.planned_hours_per_day ?? 8;
+  const cycle = ideal_cycle_seconds ?? station.ideal_cycle_seconds ?? 0;
+  if (!Number.isFinite(Number(hours)) || Number(hours) < 0 || Number(hours) > 24) {
+    return res.status(400).json({ error: 'planned_hours_per_day must be a number between 0 and 24' });
+  }
+  if (!Number.isFinite(Number(cycle)) || Number(cycle) < 0) {
+    return res.status(400).json({ error: 'ideal_cycle_seconds must be a non-negative number' });
+  }
   db.prepare(`UPDATE stations SET planned_hours_per_day=?, ideal_cycle_seconds=? WHERE id=?`)
-    .run(
-      planned_hours_per_day ?? station.planned_hours_per_day ?? 8,
-      ideal_cycle_seconds ?? station.ideal_cycle_seconds ?? 0,
-      station.id
-    );
+    .run(Number(hours), Number(cycle), station.id);
   const updated = db.prepare('SELECT * FROM stations WHERE id = ?').get(station.id);
   res.json({ ...updated, oee: calcOEE(updated) });
 });
@@ -202,7 +207,7 @@ router.get('/:id/history', (req, res) => {
     WHERE station_id = ?
     ORDER BY started_at DESC
     LIMIT ?
-  `).all(req.params.id, parseInt(limit));
+  `).all(req.params.id, Math.min(Math.max(parseInt(limit, 10) || 50, 1), 500));
   res.json(events);
 });
 

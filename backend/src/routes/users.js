@@ -66,6 +66,13 @@ router.put('/:id', requireRole('developer'), (req, res) => {
   const { email, display_name, role, is_active, password, department_id, job_title } = req.body;
   if (role && !VALID_ROLES.includes(role)) return res.status(400).json({ error: `role must be one of: ${VALID_ROLES.join(', ')}` });
 
+  // Emails are globally unique — surface a clean 409 instead of letting the
+  // UNIQUE constraint blow up into a 500.
+  if (email && email.toLowerCase().trim() !== user.email) {
+    const existing = db.prepare('SELECT id FROM users WHERE email = ? AND id != ?').get(email.toLowerCase().trim(), req.params.id);
+    if (existing) return res.status(409).json({ error: 'A user with that email already exists' });
+  }
+
   const updates = {
     email: email ? email.toLowerCase().trim() : user.email,
     display_name: display_name ?? user.display_name,

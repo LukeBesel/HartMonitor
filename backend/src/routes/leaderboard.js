@@ -43,7 +43,9 @@ const DEPT_EXPR = 'COALESCE(wo.department_id, st.department_id)';
 
 router.get('/departments', (req, res) => {
   const cid = req.companyId;
-  const period = PERIODS[req.query.period] !== undefined ? req.query.period : 'week';
+  // hasOwn guard: a lookup like ?period=constructor would otherwise hit an
+  // inherited Object.prototype member and inject "[object Object]" into the SQL.
+  const period = Object.hasOwn(PERIODS, req.query.period) ? req.query.period : 'week';
   const periodFilter = PERIODS[period];
   const periodDays = { today: 1, week: 7, month: 30, all: null }[period];
 
@@ -102,7 +104,7 @@ router.get('/departments', (req, res) => {
 //   app_id        — restrict to a single app/operation
 router.get('/', (req, res) => {
   const cid = req.companyId;
-  const period = PERIODS[req.query.period] !== undefined ? req.query.period : 'week';
+  const period = Object.hasOwn(PERIODS, req.query.period) ? req.query.period : 'week';
   const periodFilter = PERIODS[period];
 
   // Optional drill-down scoping. A department scope joins through the work

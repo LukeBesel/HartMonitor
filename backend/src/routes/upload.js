@@ -2,6 +2,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -46,10 +47,10 @@ function getFileCategory(mimeType, ext) {
 
 // ─── POST /image — accept base64-encoded file and write to disk ──────────────
 
-router.post('/image', (req, res) => {
+router.post('/image', requireRole('operator'), (req, res) => {
   const { data, mimeType, filename } = req.body;
 
-  if (!data)     return res.status(400).json({ error: 'data is required' });
+  if (!data || typeof data !== 'string') return res.status(400).json({ error: 'data is required' });
   if (!mimeType) return res.status(400).json({ error: 'mimeType is required' });
 
   const origExt = filename ? path.extname(filename).toLowerCase() : '';
@@ -68,9 +69,22 @@ router.post('/image', (req, res) => {
   const base64Data = data.replace(/^data:[^;]+;base64,/, '');
   const buffer = Buffer.from(base64Data, 'base64');
 
+  if (buffer.length === 0) {
+    return res.status(400).json({ error: 'data must be valid base64' });
+  }
   const maxBytes = MAX_BYTES[category];
   if (buffer.length > maxBytes) {
     return res.status(400).json({ error: `File exceeds ${maxBytes / 1024 / 1024} MB limit` });
+  }
+
+  // SVGs are XML documents that browsers will execute scripts in when served
+  // from our own origin (/uploads/...) — a stored-XSS vector. Reject any SVG
+  // containing active content.
+  if (mimeType === 'image/svg+xml') {
+    const svgText = buffer.toString('utf8');
+    if (/<\s*script|\bon\w+\s*=|javascript:|<\s*foreignObject|href\s*=\s*["']?\s*data:/i.test(svgText)) {
+      return res.status(400).json({ error: 'SVG contains active content (scripts/event handlers) and was rejected' });
+    }
   }
 
   // Determine extension: prefer filename ext for models/videos, else MIME map
