@@ -79,7 +79,10 @@ const PRIORITY: Record<string, { label: string; cls: string }> = {
 function useElapsedSeconds(startedAt: string) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
-    const update = () => setElapsed(Math.floor((Date.now() - new Date(startedAt).getTime()) / 1000));
+    const update = () => {
+      const start = new Date(startedAt).getTime();
+      setElapsed(isNaN(start) ? 0 : Math.max(0, Math.floor((Date.now() - start) / 1000)));
+    };
     update();
     const t = setInterval(update, 1000);
     return () => clearInterval(t);
@@ -97,7 +100,9 @@ function formatElapsed(seconds: number) {
 
 function formatDate(iso: string) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 function calcETA(wo: WorkOrder): string {
@@ -218,6 +223,7 @@ const ALL_DEPARTMENTS = 'All';
 export default function ManagerView() {
   const [data, setData] = useState<ManagerViewData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [activeDept, setActiveDept] = useState(ALL_DEPARTMENTS);
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -227,8 +233,10 @@ export default function ManagerView() {
     try {
       const mvData = await api.getManagerView();
       setData(mvData);
-    } catch {
-      // keep stale
+      setError(null);
+    } catch (err: any) {
+      // keep stale data if we have it; surface the error otherwise
+      setError(err.message || 'Failed to load operations data');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -258,7 +266,7 @@ export default function ManagerView() {
   return (
     <div className="min-h-screen bg-[#f8fafc] p-6 space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <div className="flex items-center gap-2">
             <Activity size={20} className="text-blue-600" />
@@ -282,6 +290,15 @@ export default function ManagerView() {
             <RefreshCw size={28} className="animate-spin text-blue-500" />
             <span className="text-gray-500 text-sm">Loading operations data…</span>
           </div>
+        </div>
+      ) : error && !data ? (
+        <div className="flex flex-col items-center justify-center h-64 text-center">
+          <AlertTriangle size={32} className="text-red-400 mb-3" />
+          <p className="text-gray-500 font-medium">Couldn't load operations data</p>
+          <p className="text-gray-400 text-sm mt-1">{error}</p>
+          <button onClick={() => load(true)} className="btn-secondary mt-4">
+            <RefreshCw size={14} /> Retry
+          </button>
         </div>
       ) : (
         <>

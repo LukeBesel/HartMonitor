@@ -157,12 +157,16 @@ function fmtWhole(amount: number) {
 
 function fmtDate(iso: string | undefined) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function fmtDateShort(iso: string | undefined) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 function defaultVendorForm(): VendorFormData {
@@ -293,6 +297,7 @@ function VendorModal({
 
   async function handleSave() {
     if (!form.name.trim() || !form.code.trim()) { setError('Name and Code are required.'); return; }
+    if (!Number.isFinite(form.lead_time_days) || form.lead_time_days < 0) { setError('Enter a valid lead time.'); return; }
     setSaving(true);
     setError('');
     try { await onSave(form); }
@@ -407,6 +412,8 @@ function CreatePOModal({
 
   function addLine() {
     if (!selectedItem) return;
+    if (!Number.isFinite(lineQty) || lineQty <= 0) { setError('Enter a valid line quantity.'); return; }
+    setError('');
     setForm(p => ({
       ...p,
       lines: [...p.lines, {
@@ -414,7 +421,7 @@ function CreatePOModal({
         item_sku: selectedItem.sku,
         item_name: selectedItem.name,
         quantity_ordered: lineQty,
-        unit_cost: lineCost,
+        unit_cost: Number.isFinite(lineCost) && lineCost >= 0 ? lineCost : 0,
         notes: lineNotes,
       }],
     }));
@@ -435,6 +442,7 @@ function CreatePOModal({
     if (!form.vendor_id) { setError('Select a vendor.'); return; }
     if (!form.expected_date) { setError('Expected date is required.'); return; }
     if (form.lines.length === 0) { setError('Add at least one line item.'); return; }
+    if (!Number.isFinite(form.shipping_cost) || form.shipping_cost < 0) { setError('Enter a valid shipping cost.'); return; }
     setSaving(true);
     setError('');
     try { await onSave(form); }
@@ -606,6 +614,7 @@ function PODetailModal({
   const { canEdit } = useAuth();
   const [po, setPO] = useState<PurchaseOrder | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [sending, setSending] = useState(false);
   const [showReceive, setShowReceive] = useState(false);
   const [locations, setLocations] = useState<Location[]>([]);
@@ -617,9 +626,12 @@ function PODetailModal({
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const data = await api.getPurchaseOrder(poId);
       setPO(data);
+    } catch (e: any) {
+      setLoadError(e.message || 'Failed to load purchase order');
     } finally {
       setLoading(false);
     }
@@ -647,6 +659,7 @@ function PODetailModal({
     if (!po) return;
     setSending(true);
     try { await api.sendPurchaseOrder(po.id); await load(); onRefresh(); }
+    catch (e: any) { alert(e.message || 'Failed to send PO'); }
     finally { setSending(false); }
   }
 
@@ -670,6 +683,22 @@ function PODetailModal({
     } finally {
       setReceiving(false);
     }
+  }
+
+  if (loadError) {
+    return (
+      <Modal title="Purchase Order" onClose={onClose} wide>
+        <div className="flex flex-col items-center gap-3 py-8 text-center">
+          <ShoppingCart className="w-8 h-8 text-red-300" />
+          <div className="text-gray-600 font-medium">Couldn't load purchase order</div>
+          <div className="text-gray-400 text-sm">{loadError}</div>
+          <div className="flex gap-2">
+            <button className="btn-secondary" onClick={load}>Retry</button>
+            <button className="btn-ghost" onClick={onClose}>Close</button>
+          </div>
+        </div>
+      </Modal>
+    );
   }
 
   if (loading || !po) {
@@ -874,6 +903,7 @@ function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const [pos, setPOs] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [search, setSearch] = useState('');
 
@@ -896,12 +926,15 @@ function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const data = await api.getPurchaseOrders({
         status: statusFilter !== 'All' ? statusFilter : undefined,
         search: search || undefined,
       });
-      setPOs(data);
+      setPOs(Array.isArray(data) ? data : []);
+    } catch (e: any) {
+      setLoadError(e.message || 'Failed to load purchase orders');
     } finally {
       setLoading(false);
     }
@@ -923,8 +956,12 @@ function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
 
   async function handleDelete(po: PurchaseOrder) {
     if (!confirm(`Delete ${po.po_number}?`)) return;
-    await api.deletePurchaseOrder(po.id);
-    load();
+    try {
+      await api.deletePurchaseOrder(po.id);
+      load();
+    } catch (e: any) {
+      alert(e.message || 'Failed to delete PO');
+    }
   }
 
   const amountColor = (po: PurchaseOrder) => {
@@ -962,7 +999,7 @@ function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
               onChange={e => setSearch(e.target.value)}
             />
           </div>
-          <button className="btn-secondary whitespace-nowrap" onClick={() => api.downloadExport('purchase-orders')}>
+          <button className="btn-secondary whitespace-nowrap" onClick={() => api.downloadExport('purchase-orders').catch((e: any) => alert(e.message || 'Export failed'))}>
             <Download className="w-4 h-4" /> Export CSV
           </button>
           {canEdit && (
@@ -990,13 +1027,33 @@ function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
           <tbody className="divide-y divide-gray-50">
             {loading
               ? Array.from({ length: 5 }).map((_, i) => <SkeletonRow key={i} cols={8} />)
+              : loadError && pos.length === 0
+                ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-16 text-center">
+                      <ShoppingCart className="w-10 h-10 text-red-200 mx-auto mb-3" />
+                      <div className="text-gray-500 font-medium">Couldn't load purchase orders</div>
+                      <div className="text-gray-400 text-xs mt-1">{loadError}</div>
+                      <button className="btn-secondary mt-3" onClick={load}>Retry</button>
+                    </td>
+                  </tr>
+                )
               : pos.length === 0
                 ? (
                   <tr>
                     <td colSpan={8} className="px-4 py-16 text-center">
                       <ShoppingCart className="w-10 h-10 text-gray-200 mx-auto mb-3" />
                       <div className="text-gray-400 font-medium">No purchase orders found</div>
-                      <div className="text-gray-300 text-xs mt-1">Create your first PO to get started</div>
+                      <div className="text-gray-300 text-xs mt-1">
+                        {statusFilter !== 'All' || search
+                          ? 'Try adjusting your filters or search'
+                          : 'Create your first PO to get started'}
+                      </div>
+                      {canEdit && statusFilter === 'All' && !search && (
+                        <button className="btn-primary mt-3" onClick={() => setShowCreate(true)}>
+                          <Plus className="w-4 h-4" /> New PO
+                        </button>
+                      )}
                     </td>
                   </tr>
                 )
@@ -1072,6 +1129,7 @@ function VendorsTab({ onVendorsChange }: { onVendorsChange: (vendors: Vendor[]) 
   const { canEdit } = useAuth();
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [search, setSearch] = useState('');
   const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<Vendor | null>(null);
@@ -1079,10 +1137,13 @@ function VendorsTab({ onVendorsChange }: { onVendorsChange: (vendors: Vendor[]) 
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError('');
     try {
       const data = await api.getVendors({ search: search || undefined });
-      setVendors(data);
+      setVendors(Array.isArray(data) ? data : []);
       onVendorsChange(data);
+    } catch (e: any) {
+      setLoadError(e.message || 'Failed to load vendors');
     } finally {
       setLoading(false);
     }
@@ -1105,15 +1166,19 @@ function VendorsTab({ onVendorsChange }: { onVendorsChange: (vendors: Vendor[]) 
 
   async function handleDelete(v: Vendor) {
     if (!confirm(`Deactivate "${v.name}"?`)) return;
-    await api.deleteVendor(v.id);
-    load();
+    try {
+      await api.deleteVendor(v.id);
+      load();
+    } catch (e: any) {
+      alert(e.message || 'Failed to deactivate vendor');
+    }
   }
 
   const paymentTermsLabel = (t: PaymentTerms) => PAYMENT_TERMS_OPTIONS.find(o => o.value === t)?.label ?? t;
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-3 items-center justify-between">
+      <div className="flex flex-wrap gap-3 items-center justify-between">
         <div className="relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input className="input-field pl-9 w-64" placeholder="Search vendors…" value={search} onChange={e => setSearch(e.target.value)} />
@@ -1129,11 +1194,25 @@ function VendorsTab({ onVendorsChange }: { onVendorsChange: (vendors: Vendor[]) 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
         </div>
+      ) : loadError && vendors.length === 0 ? (
+        <div className="card py-20 text-center">
+          <Building2 className="w-10 h-10 text-red-200 mx-auto mb-3" />
+          <div className="text-gray-500 font-medium">Couldn't load vendors</div>
+          <div className="text-gray-400 text-xs mt-1">{loadError}</div>
+          <button className="btn-secondary mt-3" onClick={load}>Retry</button>
+        </div>
       ) : vendors.length === 0 ? (
         <div className="card py-20 text-center">
           <Building2 className="w-10 h-10 text-gray-200 mx-auto mb-3" />
           <div className="text-gray-400 font-medium">No vendors found</div>
-          <div className="text-gray-300 text-xs mt-1">Add your first vendor to start purchasing</div>
+          <div className="text-gray-300 text-xs mt-1">
+            {search ? 'Try a different search' : 'Add your first vendor to start purchasing'}
+          </div>
+          {canEdit && !search && (
+            <button className="btn-primary mt-3" onClick={() => setShowCreate(true)}>
+              <Plus className="w-4 h-4" /> New Vendor
+            </button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">

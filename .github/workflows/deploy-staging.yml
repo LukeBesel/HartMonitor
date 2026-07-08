@@ -1,0 +1,38 @@
+name: Staging health check
+
+# Railway auto-deploys the `staging` branch to the staging service (configured in
+# the Railway dashboard). This workflow does NOT trigger the deploy — it waits for
+# Railway to finish, then verifies the staging URL is healthy. Set the repo
+# variable STAGING_URL (Settings → Secrets and variables → Actions → Variables)
+# to your staging URL, e.g. https://staging.yourdomain.com. If unset, this is a
+# no-op so the workflow never fails before staging exists.
+
+on:
+  push:
+    branches: [staging]
+
+jobs:
+  health:
+    name: Verify staging is healthy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for Railway deploy, then health-check
+        if: ${{ vars.STAGING_URL != '' }}
+        run: |
+          echo "Waiting for Railway to deploy ${{ vars.STAGING_URL }} ..."
+          for i in $(seq 1 30); do
+            STATUS=$(curl -sf "${{ vars.STAGING_URL }}/api/health" 2>/dev/null \
+              | python3 -c "import sys,json; print(json.load(sys.stdin).get('status','unknown'))" 2>/dev/null \
+              || echo "unreachable")
+            echo "Attempt $i: $STATUS"
+            if [ "$STATUS" = "ok" ]; then
+              echo "✅ Staging is healthy."
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "❌ Staging health check timed out" && exit 1
+
+      - name: Skipped (no STAGING_URL set)
+        if: ${{ vars.STAGING_URL == '' }}
+        run: echo "STAGING_URL not set — skipping health check. Set it once the staging service exists."

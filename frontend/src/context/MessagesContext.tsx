@@ -38,15 +38,15 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!user) return;
-    const token = localStorage.getItem('hm_token');
-    if (!token) return;
 
     let cancelled = false;
 
     const connect = () => {
       if (cancelled) return;
-      const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(`${proto}://${window.location.host}/ws?token=${encodeURIComponent(token)}`);
+      // Cookie is sent automatically on same-origin WebSocket connections.
+      // No token in the URL — the httpOnly cookie handles auth.
+      const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws`);
       wsRef.current = ws;
 
       ws.onopen = () => {
@@ -55,14 +55,16 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       };
 
       ws.onmessage = ev => {
-        let data: any;
+        let data: unknown;
         try {
           data = JSON.parse(ev.data);
         } catch {
           return;
         }
-        if (data?.type !== 'message' || !data.message) return;
-        const incoming: BroadcastMessage = data.message;
+        if (!data || typeof data !== 'object') return;
+        const d = data as Record<string, unknown>;
+        if (d.type !== 'message' || !d.message) return;
+        const incoming = d.message as BroadcastMessage;
         setMessages(prev => prev.some(m => m.id === incoming.id) ? prev : [incoming, ...prev].slice(0, MAX_HISTORY));
         if (incoming.sender_id !== user.id) {
           setUnreadCount(c => c + 1);

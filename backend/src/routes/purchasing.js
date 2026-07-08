@@ -154,6 +154,15 @@ router.put('/orders/:id', (req, res) => {
   const po = ownedPO(req);
   if (!po) return res.status(404).json({ error: 'Not found' });
   const { vendor_id, status, expected_date, shipping_cost, notes } = req.body;
+  // The vendor must belong to this company — otherwise the PO detail JOIN
+  // would expose another tenant's vendor name/contact/email.
+  if (vendor_id != null) {
+    const vendor = db.prepare('SELECT id FROM vendors WHERE id = ? AND company_id = ?').get(vendor_id, req.companyId);
+    if (!vendor) return res.status(400).json({ error: 'Unknown vendor' });
+  }
+  if (status != null && !Object.keys(PO_STATUS_LABELS).includes(status)) {
+    return res.status(400).json({ error: `status must be one of: ${Object.keys(PO_STATUS_LABELS).join(', ')}` });
+  }
   db.prepare(`UPDATE purchase_orders SET vendor_id=COALESCE(?,vendor_id), status=COALESCE(?,status), expected_date=COALESCE(?,expected_date), shipping_cost=COALESCE(?,shipping_cost), notes=COALESCE(?,notes), updated_at=datetime('now') WHERE id=?`)
     .run(vendor_id, status, expected_date, shipping_cost, notes, req.params.id);
 

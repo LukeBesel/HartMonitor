@@ -89,7 +89,10 @@ export default function DepartmentTV() {
   }, [load]);
 
   const accent = data?.department.color || '#6366f1';
-  const maxHour = Math.max(1, ...(data?.hourly.map(h => h.count) ?? [1]));
+  const hourly = data?.hourly ?? [];
+  const issues = data?.issues ?? [];
+  const leaderboard = data?.leaderboard ?? [];
+  const maxHour = Math.max(1, ...hourly.map(h => h.count), 1);
   const behind = data?.behind_takt ?? [];
   const anyBehind = !!data?.any_behind && behind.length > 0;
 
@@ -153,7 +156,7 @@ export default function DepartmentTV() {
 
       {error && !data ? (
         <div className="flex-1 flex items-center justify-center text-white/40 text-2xl">
-          Unable to load department display.
+          Unable to load department display. Retrying automatically…
         </div>
       ) : !data ? (
         <div className="flex-1 flex items-center justify-center text-white/40 text-2xl">Loading…</div>
@@ -173,7 +176,7 @@ export default function DepartmentTV() {
               <h2 className="text-lg font-semibold text-white/70 mb-3 flex-shrink-0">Hourly Throughput</h2>
               <div className="flex-1 min-h-0">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={data.hourly} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
+                  <BarChart data={hourly} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
                     <XAxis
                       dataKey="hour"
                       stroke="#ffffff40"
@@ -187,7 +190,7 @@ export default function DepartmentTV() {
                       formatter={(v: number) => [v, 'Completions']}
                     />
                     <Bar dataKey="count" radius={[6, 6, 0, 0]}>
-                      {data.hourly.map((h, i) => (
+                      {hourly.map((h, i) => (
                         <Cell key={i} fill={h.count >= maxHour ? accent : `${accent}99`} />
                       ))}
                     </Bar>
@@ -201,20 +204,20 @@ export default function DepartmentTV() {
               <div className="flex items-center gap-3 mb-3">
                 <AlertTriangle size={20} className="text-red-400" />
                 <h2 className="text-lg font-semibold text-white/70">Active Issues</h2>
-                {data.issues.length > 0 && (
+                {issues.length > 0 && (
                   <span className="bg-red-500/20 text-red-300 text-sm font-bold px-3 py-0.5 rounded-full">
-                    {data.issues.length}
+                    {issues.length}
                   </span>
                 )}
               </div>
-              {data.issues.length === 0 ? (
+              {issues.length === 0 ? (
                 <div className="flex items-center gap-3 text-emerald-400 text-lg">
                   <CheckCircle2 size={22} />
                   <span>All clear — no active issues.</span>
                 </div>
               ) : (
                 <div className="grid grid-cols-2 gap-3">
-                  {data.issues.slice(0, 4).map((iss, i) => (
+                  {issues.slice(0, 4).map((iss, i) => (
                     <div key={i} className="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-2xl px-4 py-3">
                       <AlertTriangle size={18} className="text-red-400 mt-0.5 flex-shrink-0" />
                       <div className="min-w-0">
@@ -234,13 +237,13 @@ export default function DepartmentTV() {
               <Crown size={24} className="text-amber-400" />
               <h2 className="text-xl font-bold">Fastest Today</h2>
             </div>
-            {data.leaderboard.length === 0 ? (
+            {leaderboard.length === 0 ? (
               <div className="flex-1 flex items-center justify-center text-white/30 text-center text-lg">
                 No completed runs yet today.
               </div>
             ) : (
               <div className="flex flex-col gap-3 overflow-y-auto min-h-0">
-                {data.leaderboard.map((l, i) => {
+                {leaderboard.map((l, i) => {
                   const rank = i + 1;
                   return (
                     <div

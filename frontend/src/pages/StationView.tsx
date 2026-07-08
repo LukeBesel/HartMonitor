@@ -49,14 +49,18 @@ const EVENT_ICONS: Record<string, React.ReactNode> = {
 };
 
 function elapsedSince(iso: string) {
-  const mins = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return '—';
+  const mins = Math.floor((Date.now() - t) / 60000);
   if (mins < 1) return 'just now';
   if (mins < 60) return `${mins}m`;
   return `${Math.floor(mins / 60)}h ${mins % 60}m`;
 }
 
 function formatTimeAgo(iso: string) {
-  const diff = Date.now() - new Date(iso).getTime();
+  const t = new Date(iso).getTime();
+  if (isNaN(t)) return '—';
+  const diff = Date.now() - t;
   if (diff < 60000) return 'just now';
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
@@ -67,15 +71,15 @@ export default function StationView() {
   const { id } = useParams<{ id: string }>();
   const [data, setData] = useState<StationViewData | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState('');
 
   const load = useCallback(async () => {
     if (!id) return;
     try {
       setData(await api.getStationView(id));
-      setError(false);
-    } catch {
-      setError(true);
+      setError('');
+    } catch (err: any) {
+      setError(err?.message || 'Failed to load station');
     } finally {
       setLoading(false);
     }
@@ -88,21 +92,28 @@ export default function StationView() {
     return () => clearInterval(interval);
   }, [load]);
 
-  if (loading) return (
+  if (loading && !data) return (
     <div className="flex items-center justify-center h-64">
       <RefreshCw size={28} className="animate-spin text-blue-500" />
     </div>
   );
 
-  if (error || !data) return (
-    <div className="p-6 text-center text-gray-400">
-      <p>Station not found</p>
-      <Link to="/stations" className="text-blue-600 text-sm hover:underline mt-2 inline-block">← Back to Stations</Link>
+  if (!data) return (
+    <div className="p-6 flex flex-col items-center justify-center py-24 gap-3 text-center">
+      <AlertTriangle size={40} className="text-red-400" />
+      <div>
+        <p className="font-medium text-gray-500">Couldn't load this station</p>
+        <p className="text-sm text-gray-400 mt-1">{error || 'Station not found'}</p>
+      </div>
+      <button className="btn-secondary" onClick={() => { setLoading(true); load(); }}>Retry</button>
+      <Link to="/stations" className="text-blue-600 text-sm hover:underline">← Back to Stations</Link>
     </div>
   );
 
   const { station: st, oee } = data;
   const ms = MACHINE_STATUS[st.current_status] ?? MACHINE_STATUS.idle;
+  const recentCompletions = data.recent_completions ?? [];
+  const recentEvents = data.recent_events ?? [];
 
   return (
     <div className="min-h-screen bg-[#f8fafc] p-6 space-y-6">
@@ -209,17 +220,17 @@ export default function StationView() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-50">
-                {data.recent_completions.length === 0 && (
+                {recentCompletions.length === 0 && (
                   <tr><td colSpan={6} className="text-center text-gray-400 text-xs py-6">No completions yet</td></tr>
                 )}
-                {data.recent_completions.map(c => (
+                {recentCompletions.map(c => (
                   <tr key={c.id} className="hover:bg-gray-50 transition-colors">
                     <td className="py-2.5 pr-3 text-xs font-medium text-gray-900">
                       <Link to={`/completions/${c.id}`} className="hover:text-blue-600">{c.app_name}</Link>
                     </td>
                     <td className="py-2.5 pr-3 text-xs text-gray-600">{c.operator_name}</td>
                     <td className="py-2.5 pr-3 text-xs text-gray-500">{c.work_order_number || '—'}</td>
-                    <td className="py-2.5 pr-3 text-xs text-gray-700 text-right tabular-nums">{c.duration_minutes}m</td>
+                    <td className="py-2.5 pr-3 text-xs text-gray-700 text-right tabular-nums">{c.duration_minutes != null && !isNaN(c.duration_minutes) ? `${c.duration_minutes}m` : '—'}</td>
                     <td className="py-2.5 pr-3 text-right">
                       {c.qc_result === 'pass' && <span className="text-xs font-semibold text-green-600">Pass</span>}
                       {c.qc_result === 'fail' && <span className="text-xs font-semibold text-red-600">Fail</span>}
@@ -242,10 +253,10 @@ export default function StationView() {
             </Link>
           </div>
           <div className="space-y-2.5">
-            {data.recent_events.length === 0 && (
+            {recentEvents.length === 0 && (
               <div className="text-center text-gray-400 text-xs py-6">No events logged. Use the OEE Tracker to log up/down/maintenance events.</div>
             )}
-            {data.recent_events.map(ev => (
+            {recentEvents.map(ev => (
               <div key={ev.id} className="flex items-start gap-2.5 text-xs">
                 <div className="mt-0.5">{EVENT_ICONS[ev.event_type] ?? EVENT_ICONS.idle}</div>
                 <div className="flex-1 min-w-0">
@@ -264,7 +275,8 @@ export default function StationView() {
   );
 }
 
-function OEECard({ label, value, highlight }: { label: string; value: number; highlight?: boolean }) {
+function OEECard({ label, value: rawValue, highlight }: { label: string; value: number; highlight?: boolean }) {
+  const value = Number.isFinite(rawValue) ? rawValue : 0;
   const color = value >= 80 ? 'text-green-600' : value >= 60 ? 'text-amber-600' : 'text-red-600';
   return (
     <div className={`bg-white rounded-xl border shadow-sm p-5 ${highlight ? 'border-blue-200 ring-1 ring-blue-100' : 'border-gray-200'}`}>

@@ -62,6 +62,15 @@ function nextWorkOrderNumber(companyId) {
   return `${prefix}${String(seq + 1).padStart(3, '0')}`;
 }
 
+// Returns the id if the row exists in this company, else null. Keeps foreign
+// references (department/app/site) from pointing at another tenant's records,
+// which would leak their names through the enriched JOINs.
+function ownedOrNull(table, id, companyId) {
+  if (!id) return null;
+  const row = db.prepare(`SELECT id FROM ${table} WHERE id = ? AND company_id = ?`).get(id, companyId);
+  return row ? id : null;
+}
+
 // ─── Reusable enriched-fetch query ───────────────────────────────────────────
 
 const ENRICHED_SELECT = `
@@ -114,9 +123,14 @@ router.post('/', (req, res) => {
   if (!part_number)              return res.status(400).json({ error: 'part_number is required' });
   if (!part_name)                return res.status(400).json({ error: 'part_name is required' });
   if (!quantity || quantity < 1) return res.status(400).json({ error: 'quantity must be a positive integer' });
+  if (!STATUS_LABELS[status])    return res.status(400).json({ error: `status must be one of: ${Object.keys(STATUS_LABELS).join(', ')}` });
+  if (!PRIORITY_LABELS[priority]) return res.status(400).json({ error: `priority must be one of: ${Object.keys(PRIORITY_LABELS).join(', ')}` });
 
   const id       = uuidv4();
   const woNumber = work_order_number || nextWorkOrderNumber(req.companyId);
+  const safeAppId  = ownedOrNull('apps', app_id, req.companyId);
+  const safeDeptId = ownedOrNull('departments', department_id, req.companyId);
+  const safeSiteId = ownedOrNull('sites', site_id, req.companyId);
 
   db.prepare(`
     INSERT INTO work_orders
@@ -126,13 +140,13 @@ router.post('/', (req, res) => {
     VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `).run(
     id, woNumber, part_number, part_name, quantity,
-    app_id || null, department_id || null,
+    safeAppId, safeDeptId,
     scheduled_start || null, scheduled_end || null,
-    takt_time_minutes, status, priority, notes, req.companyId, site_id || null
+    takt_time_minutes, status, priority, notes, req.companyId, safeSiteId
   );
 
   const wo = db.prepare(ENRICHED_SELECT + ' WHERE wo.id = ?').get(id);
-  logActivity(req.companyId, 'work_order', id, 'Work order created', req.user?.display_name, { department_id: department_id || null });
+  logActivity(req.companyId, 'work_order', id, 'Work order created', req.user?.display_name, { department_id: safeDeptId });
   res.status(201).json(enrichWorkOrder(wo));
 });
 
@@ -166,6 +180,19 @@ router.put('/:id', (req, res) => {
   for (const f of fields) {
     updates[f] = req.body[f] !== undefined ? req.body[f] : wo[f];
   }
+
+  if (req.body.status !== undefined && !STATUS_LABELS[updates.status]) {
+    return res.status(400).json({ error: `status must be one of: ${Object.keys(STATUS_LABELS).join(', ')}` });
+  }
+  if (req.body.priority !== undefined && !PRIORITY_LABELS[updates.priority]) {
+    return res.status(400).json({ error: `priority must be one of: ${Object.keys(PRIORITY_LABELS).join(', ')}` });
+  }
+
+  // Cross-tenant reference guard: linked ids supplied by the client must
+  // belong to this company (existing stored values are already trusted).
+  if (req.body.app_id !== undefined)        updates.app_id        = ownedOrNull('apps', updates.app_id, req.companyId);
+  if (req.body.department_id !== undefined) updates.department_id = ownedOrNull('departments', updates.department_id, req.companyId);
+  if (req.body.site_id !== undefined)       updates.site_id       = ownedOrNull('sites', updates.site_id, req.companyId);
 
   db.prepare(`
     UPDATE work_orders SET

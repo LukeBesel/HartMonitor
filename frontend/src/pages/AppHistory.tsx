@@ -60,12 +60,16 @@ function fmtDuration(seconds: number) {
 
 function fmtDate(iso: string | null) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function fmtDateShort(iso: string | null) {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 function stepBarColor(avg: number, takt: number) {

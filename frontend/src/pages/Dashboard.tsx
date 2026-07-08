@@ -4,7 +4,7 @@ import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import { useSite } from '../context/SiteContext';
 import {
-  TrendingUp, TrendingDown, Activity, CheckCircle,
+  TrendingUp, Activity, CheckCircle,
   RefreshCw, CalendarCheck,
   BarChart2, Clock, Package,
   AlertTriangle, CheckCircle2, ChevronRight, ChevronDown, Lock, SlidersHorizontal, RotateCcw,
@@ -21,6 +21,9 @@ import { useDashboardPrefs, DASHBOARD_SECTIONS, DashboardSectionId } from '../ho
 import Toggle from '../components/shared/Toggle';
 import OnboardingWizard from '../components/shared/OnboardingWizard';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
+import PageHeader from '../components/shared/PageHeader';
+import StatCard from '../components/shared/StatCard';
+import EmptyState from '../components/shared/EmptyState';
 import {
   LayoutDashboard, Tablet, AppWindow, CalendarRange,
   GitBranch, ShieldCheck, Bell, Database, Sparkles,
@@ -121,46 +124,6 @@ function SkeletonBox({ className = '' }: { className?: string }) {
   return <div className={`bg-gray-200 animate-pulse rounded ${className}`} />;
 }
 
-// ─── KPI card with delta ──────────────────────────────────────────────────────
-
-function DeltaStatCard({ label, value, delta, deltaLabel, icon, iconBg, iconColor, pulse }: {
-  label: string;
-  value: React.ReactNode;
-  delta?: number | null;
-  deltaLabel?: string;
-  icon: React.ReactNode;
-  iconBg: string;
-  iconColor: string;
-  pulse?: boolean;
-}) {
-  return (
-    <div className="stat-card">
-      <div className="flex items-start gap-3">
-        <div className={`relative w-10 h-10 ${iconBg} rounded-lg flex items-center justify-center flex-shrink-0`}>
-          <span className={iconColor}>{icon}</span>
-          {pulse && (
-            <span className="absolute -top-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-amber-400">
-              <span className="absolute inset-0 rounded-full bg-amber-400 animate-ping opacity-75" />
-            </span>
-          )}
-        </div>
-        <div className="min-w-0">
-          <div className="text-2xl font-bold text-gray-900 leading-none">{value}</div>
-          <div className="text-xs font-medium text-gray-600 mt-0.5">{label}</div>
-          {delta !== undefined && delta !== null ? (
-            <div className={`flex items-center gap-1 text-xs mt-0.5 font-medium ${delta >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {delta >= 0 ? <TrendingUp size={11} /> : <TrendingDown size={11} />}
-              {delta >= 0 ? '+' : ''}{delta}% {deltaLabel}
-            </div>
-          ) : deltaLabel ? (
-            <div className="text-xs text-gray-400 mt-0.5">{deltaLabel}</div>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ─── Customize panel ──────────────────────────────────────────────────────────
 
 function CustomizePanel({
@@ -172,7 +135,7 @@ function CustomizePanel({
   onClose: () => void;
 }) {
   return (
-    <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-xl shadow-xl border border-gray-100 z-50 overflow-hidden">
+    <div className="absolute right-0 top-full mt-2 w-72 popover z-50 animate-slide-up">
       <div className="px-3.5 py-2.5 border-b border-gray-100 flex items-center justify-between">
         <div>
           <div className="text-sm font-semibold text-gray-800">Customize this page</div>
@@ -301,7 +264,7 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="p-4 sm:p-6 space-y-6">
+    <div className="p-4 sm:p-6 space-y-6 animate-fade-in">
       <OnboardingWizard />
       <ModuleOnboarding
         moduleId="dashboard"
@@ -331,45 +294,41 @@ export default function Dashboard() {
       />
 
       {/* Header */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">
-            {getGreeting()}{user?.display_name ? `, ${user.display_name.split(' ')[0]}` : ''}
-          </h1>
-          <p className="text-gray-500 text-sm mt-0.5">
-            {formatDate()}{companyName ? ` · ${companyName}` : ''}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => loadData(true)}
-            className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 shadow-sm"
-          >
-            <RefreshCw size={14} className={refreshing ? 'animate-spin text-blue-500' : ''} />
-            Refresh
-          </button>
-          <div className="relative" ref={customizeRef}>
+      <PageHeader
+        title={<>{getGreeting()}{user?.display_name ? `, ${user.display_name.split(' ')[0]}` : ''}</>}
+        subtitle={<>{formatDate()}{companyName ? ` · ${companyName}` : ''}</>}
+        actions={
+          <>
             <button
-              onClick={() => setShowCustomize(o => !o)}
-              title="Customize this page"
-              className={`flex items-center gap-2 px-3 py-2 border rounded-lg text-sm shadow-sm transition-colors ${
-                showCustomize ? 'bg-gray-100 border-gray-300 text-gray-800' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-              }`}
+              onClick={() => loadData(true)}
+              className="btn-secondary"
             >
-              <SlidersHorizontal size={14} />
-              Customize
+              <RefreshCw size={14} className={refreshing ? 'animate-spin text-blue-500' : ''} />
+              Refresh
             </button>
-            {showCustomize && (
-              <CustomizePanel
-                isHidden={isHidden}
-                toggleSection={toggleSection}
-                resetSections={resetSections}
-                onClose={() => setShowCustomize(false)}
-              />
-            )}
-          </div>
-        </div>
-      </div>
+            <div className="relative" ref={customizeRef}>
+              <button
+                onClick={() => setShowCustomize(o => !o)}
+                title="Customize this page"
+                className={`flex items-center gap-2 px-4 py-2 border rounded-lg text-sm font-medium shadow-sm transition-colors ${
+                  showCustomize ? 'bg-gray-100 border-gray-300 text-gray-800' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
+                }`}
+              >
+                <SlidersHorizontal size={14} />
+                Customize
+              </button>
+              {showCustomize && (
+                <CustomizePanel
+                  isHidden={isHidden}
+                  toggleSection={toggleSection}
+                  resetSections={resetSections}
+                  onClose={() => setShowCustomize(false)}
+                />
+              )}
+            </div>
+          </>
+        }
+      />
 
       {/* First-run empty state — offer to populate a realistic starter dataset */}
       {isEmptyWorkspace && (
@@ -422,11 +381,12 @@ export default function Dashboard() {
             {[1, 2, 3].map(i => <SkeletonBox key={i} className="h-12 w-full" />)}
           </div>
         ) : attention.length === 0 ? (
-          <div className="text-center py-6">
-            <CheckCircle2 size={30} className="text-green-400 mx-auto mb-2" />
-            <p className="text-gray-500 text-sm font-medium">Nothing needs your attention right now</p>
-            <p className="text-gray-400 text-xs mt-0.5">Work orders are on schedule, no critical issues open.</p>
-          </div>
+          <EmptyState
+            compact
+            icon={CheckCircle2}
+            title="Nothing needs your attention right now"
+            description="Work orders are on schedule, no critical issues open."
+          />
         ) : (
           <div className="space-y-2">
             {attention.map((item, i) => (
@@ -466,26 +426,26 @@ export default function Dashboard() {
           [1, 2, 3, 4].map(i => <SkeletonBox key={i} className="h-24 w-full" />)
         ) : (
           <>
-            <DeltaStatCard
+            <StatCard
               label="Completed Today"
               value={kpis?.completed_today ?? 0}
               delta={kpis?.vs_7day_avg_pct}
               deltaLabel="vs 7-day avg"
               icon={<CheckCircle size={18} />} iconBg="bg-green-50" iconColor="text-green-600"
             />
-            <DeltaStatCard
+            <StatCard
               label="Schedule Adherence"
               value={kpis?.schedule_adherence !== null ? `${kpis?.schedule_adherence}%` : '—'}
               deltaLabel={`${kpis?.work_orders_on_track ?? 0} of ${kpis?.work_orders_total ?? 0} WOs on track`}
               icon={<CalendarCheck size={18} />} iconBg="bg-teal-50" iconColor="text-teal-600"
             />
-            <DeltaStatCard
+            <StatCard
               label="Pass Rate (7 days)"
               value={kpis?.pass_rate_7d !== null ? `${kpis?.pass_rate_7d}%` : '—'}
               deltaLabel="from QC results"
               icon={<TrendingUp size={18} />} iconBg="bg-purple-50" iconColor="text-purple-600"
             />
-            <DeltaStatCard
+            <StatCard
               label="Active Now"
               value={kpis?.active_now ?? 0}
               deltaLabel="processes running"
@@ -511,10 +471,11 @@ export default function Dashboard() {
           {loading ? (
             <div className="space-y-2">{[1, 2, 3].map(i => <SkeletonBox key={i} className="h-14 w-full" />)}</div>
           ) : (brief?.due_soon ?? []).length === 0 ? (
-            <div className="text-center py-8">
-              <CheckCircle2 size={26} className="text-green-400 mx-auto mb-2" />
-              <p className="text-gray-400 text-sm">Nothing due in the next two days</p>
-            </div>
+            <EmptyState
+              icon={CalendarCheck}
+              title="Nothing due in the next two days"
+              description="Scheduled work orders will show up here as their due dates approach."
+            />
           ) : (
             <div className="space-y-2.5">
               {brief!.due_soon.map(wo => (
@@ -623,7 +584,11 @@ export default function Dashboard() {
                 <RefreshCw size={14} className="animate-spin" /> Loading floor data…
               </div>
             ) : !plantData ? (
-              <div className="text-center py-8 text-gray-400 text-sm">No plant data available</div>
+              <EmptyState
+                icon={Building2}
+                title="No plant data available"
+                description="Live floor metrics will appear here once stations start reporting activity."
+              />
             ) : (
               <>
                 {/* KPI row */}
@@ -700,7 +665,13 @@ export default function Dashboard() {
                         );
                       })}
                       {plantData.department_performance.length === 0 && (
-                        <div className="col-span-2 text-center py-6 text-gray-400 text-sm">No department data</div>
+                        <EmptyState
+                          compact
+                          className="col-span-2"
+                          icon={BarChart2}
+                          title="No department data"
+                          description="Department performance appears once completions are recorded today."
+                        />
                       )}
                     </div>
                   </div>

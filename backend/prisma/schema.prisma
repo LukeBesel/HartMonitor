@@ -1,0 +1,1100 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Core / App Builder ──────────────────────────────────────────────────────
+
+model App {
+  id                 String    @id @default(uuid())
+  name               String
+  description        String    @default("")
+  status             String    @default("draft")
+  steps              String    @default("[]")
+  variables          String    @default("[]")
+  company_id         String?
+  department_id      String?
+  site_id            String?
+  station_id         String?
+  show_takt_warnings Int       @default(1)
+  created_at         DateTime  @default(now())
+  updated_at         DateTime  @default(now())
+
+  company            Organization? @relation(fields: [company_id], references: [id])
+  department         Department?   @relation(fields: [department_id], references: [id])
+  site               Site?         @relation(fields: [site_id], references: [id])
+  station            Station?      @relation(fields: [station_id], references: [id])
+
+  completions        Completion[]
+  product_types      ProductType[]
+  ncrs               Ncr[]
+  training_records   TrainingRecord[]
+  training_plans     TrainingPlan[]
+  routing_steps      RoutingStep[]
+
+  @@map("apps")
+}
+
+model Completion {
+  id                   String    @id @default(uuid())
+  app_id               String
+  app_name             String
+  station_id           String?
+  operator_name        String    @default("Unknown")
+  started_at           DateTime  @default(now())
+  completed_at         DateTime?
+  status               String    @default("in_progress")
+  data                 String    @default("{}")
+  step_times           String    @default("{}")
+  work_order_id        String?
+  takt_exceeded_steps  String    @default("[]")
+  product_type_id      String?
+  company_id           String?
+
+  app                  App       @relation(fields: [app_id], references: [id], onDelete: Cascade)
+  company              Organization? @relation(fields: [company_id], references: [id])
+  ncrs                 Ncr[]
+
+  @@map("completions")
+}
+
+model Table {
+  id          String        @id @default(uuid())
+  name        String
+  description String        @default("")
+  fields      String        @default("[]")
+  company_id  String?
+  created_at  DateTime      @default(now())
+  updated_at  DateTime      @default(now())
+
+  company     Organization? @relation(fields: [company_id], references: [id])
+  records     TableRecord[]
+
+  @@map("tables")
+}
+
+model TableRecord {
+  id         String   @id @default(uuid())
+  table_id   String
+  data       String   @default("{}")
+  created_at DateTime @default(now())
+  updated_at DateTime @default(now())
+
+  table      Table    @relation(fields: [table_id], references: [id], onDelete: Cascade)
+
+  @@map("table_records")
+}
+
+// ── Operations ───────────────────────────────────────────────────────────────
+
+model Station {
+  id                    String    @id @default(uuid())
+  name                  String
+  description           String    @default("")
+  location              String    @default("")
+  status                String    @default("active")
+  current_app_id        String?
+  planned_hours_per_day Float     @default(8)
+  ideal_cycle_seconds   Float     @default(0)
+  current_status        String    @default("idle")
+  current_status_since  DateTime?
+  department_id         String?
+  company_id            String?
+  site_id               String?
+  created_at            DateTime  @default(now())
+
+  company               Organization? @relation(fields: [company_id], references: [id])
+  department            Department?   @relation(fields: [department_id], references: [id])
+  site                  Site?         @relation(fields: [site_id], references: [id])
+
+  machine_events        MachineEvent[]
+  andon_calls           AndonCall[]
+  apps_with_station     App[]
+
+  @@map("stations")
+}
+
+model Department {
+  id           String    @id @default(uuid())
+  name         String
+  description  String    @default("")
+  manager_name String    @default("")
+  color        String    @default("#3b82f6")
+  headcount    Int       @default(0)
+  company_id   String?
+  site_id      String?
+  created_at   DateTime  @default(now())
+
+  company      Organization? @relation(fields: [company_id], references: [id])
+  site         Site?         @relation(fields: [site_id], references: [id])
+
+  stations               Station[]
+  work_orders            WorkOrder[]
+  apps                   App[]
+  users                  User[]
+  routing_steps          RoutingStep[]
+  sqdc_entries           SqdcEntry[]
+  andon_calls            AndonCall[]
+  capa_items             CapaItem[]
+  assets                 Asset[]
+  maintenance_work_orders MaintenanceWorkOrder[]
+  shift_notes            ShiftNote[]
+  kaizen_ideas           KaizenIdea[]
+
+  @@map("departments")
+}
+
+model WorkOrder {
+  id                  String    @id @default(uuid())
+  work_order_number   String
+  part_number         String
+  part_name           String
+  quantity            Int
+  quantity_completed  Int       @default(0)
+  app_id              String?
+  department_id       String?
+  scheduled_start     DateTime?
+  scheduled_end       DateTime?
+  takt_time_minutes   Float     @default(0)
+  status              String    @default("pending")
+  priority            String    @default("medium")
+  notes               String    @default("")
+  company_id          String?
+  site_id             String?
+  routing_id          String?
+  assigned_user_id    String?
+  created_at          DateTime  @default(now())
+  updated_at          DateTime  @default(now())
+
+  company             Organization?   @relation(fields: [company_id], references: [id])
+  department          Department?     @relation(fields: [department_id], references: [id])
+  site                Site?           @relation(fields: [site_id], references: [id])
+  routing             ProductRouting? @relation(fields: [routing_id], references: [id])
+  assigned_user       User?           @relation("assigned_work_orders", fields: [assigned_user_id], references: [id])
+
+  ncrs                Ncr[]
+  comments            WoComment[]
+
+  @@unique([company_id, work_order_number])
+  @@map("work_orders")
+}
+
+model ProductType {
+  id             String   @id @default(uuid())
+  app_id         String
+  name           String
+  description    String   @default("")
+  takt_overrides String   @default("{}")
+  company_id     String?
+  created_at     DateTime @default(now())
+  updated_at     DateTime @default(now())
+
+  app            App      @relation(fields: [app_id], references: [id], onDelete: Cascade)
+  company        Organization? @relation(fields: [company_id], references: [id])
+
+  @@map("product_types")
+}
+
+model MachineEvent {
+  id               String    @id @default(uuid())
+  station_id       String
+  event_type       String
+  reason           String    @default("")
+  started_at       DateTime  @default(now())
+  ended_at         DateTime?
+  duration_minutes Float?
+
+  station          Station   @relation(fields: [station_id], references: [id], onDelete: Cascade)
+
+  @@map("machine_events")
+}
+
+model Dashboard {
+  id          String   @id @default(uuid())
+  name        String
+  description String   @default("")
+  cards       String   @default("[]")
+  company_id  String?
+  created_at  DateTime @default(now())
+  updated_at  DateTime @default(now())
+
+  company     Organization? @relation(fields: [company_id], references: [id])
+
+  @@map("dashboards")
+}
+
+model WoComment {
+  id            String    @id @default(uuid())
+  work_order_id String
+  author_id     String?
+  author_name   String    @default("")
+  body          String
+  created_at    DateTime  @default(now())
+
+  work_order    WorkOrder @relation(fields: [work_order_id], references: [id], onDelete: Cascade)
+  author        User?     @relation(fields: [author_id], references: [id], onDelete: SetNull)
+
+  @@map("wo_comments")
+}
+
+// ── ERP / Inventory ──────────────────────────────────────────────────────────
+
+model CompanySetting {
+  key        String   @id
+  value      String
+  updated_at DateTime @default(now())
+
+  @@map("company_settings")
+}
+
+model Plan {
+  id                     Int      @id @default(1)
+  tier                   String   @default("free")
+  app_limit              Int      @default(5)
+  dashboard_limit        Int      @default(2)
+  extra_app_slots        Int      @default(0)
+  extra_dashboard_slots  Int      @default(0)
+  billing_email          String   @default("")
+  stripe_customer_id     String?
+  stripe_subscription_id String?
+  subscription_status    String   @default("")
+  company_id             String?
+  created_at             DateTime @default(now())
+  updated_at             DateTime @default(now())
+
+  company                Organization? @relation(fields: [company_id], references: [id])
+
+  @@map("plan")
+}
+
+model Item {
+  id              String   @id @default(uuid())
+  sku             String
+  name            String
+  description     String   @default("")
+  category        String   @default("General")
+  unit_of_measure String   @default("ea")
+  unit_cost       Float    @default(0)
+  reorder_point   Float    @default(0)
+  reorder_qty     Float    @default(0)
+  reorder_max     Float    @default(0)
+  lead_time_days  Int      @default(7)
+  is_active       Int      @default(1)
+  company_id      String?
+  created_at      DateTime @default(now())
+  updated_at      DateTime @default(now())
+
+  company         Organization?   @relation(fields: [company_id], references: [id])
+  stock_levels    StockLevel[]
+  stock_movements StockMovement[]
+  po_lines        PoLine[]
+  ncrs            Ncr[]
+
+  @@unique([company_id, sku])
+  @@map("items")
+}
+
+model Location {
+  id          String   @id @default(uuid())
+  name        String
+  code        String
+  description String   @default("")
+  type        String   @default("warehouse")
+  is_active   Int      @default(1)
+  company_id  String?
+  site_id     String?
+  created_at  DateTime @default(now())
+
+  company         Organization?   @relation(fields: [company_id], references: [id])
+  site            Site?           @relation(fields: [site_id], references: [id])
+  stock_levels    StockLevel[]
+  stock_movements StockMovement[]
+
+  @@unique([company_id, code])
+  @@map("locations")
+}
+
+model StockLevel {
+  id          String   @id @default(uuid())
+  item_id     String
+  location_id String
+  quantity    Float    @default(0)
+  updated_at  DateTime @default(now())
+
+  item        Item     @relation(fields: [item_id], references: [id], onDelete: Cascade)
+  location    Location @relation(fields: [location_id], references: [id], onDelete: Cascade)
+
+  @@unique([item_id, location_id])
+  @@map("stock_levels")
+}
+
+model StockMovement {
+  id             String   @id @default(uuid())
+  item_id        String
+  location_id    String?
+  movement_type  String
+  quantity       Float
+  unit_cost      Float    @default(0)
+  reference_type String   @default("")
+  reference_id   String   @default("")
+  notes          String   @default("")
+  operator_name  String   @default("")
+  created_by     String   @default("")
+  created_at     DateTime @default(now())
+
+  item           Item      @relation(fields: [item_id], references: [id], onDelete: Cascade)
+  location       Location? @relation(fields: [location_id], references: [id])
+
+  @@map("stock_movements")
+}
+
+model Vendor {
+  id             String   @id @default(uuid())
+  name           String
+  code           String
+  contact_name   String   @default("")
+  email          String   @default("")
+  phone          String   @default("")
+  address        String   @default("")
+  payment_terms  String   @default("net30")
+  lead_time_days Int      @default(14)
+  rating         Int      @default(3)
+  notes          String   @default("")
+  is_active      Int      @default(1)
+  company_id     String?
+  created_at     DateTime @default(now())
+  updated_at     DateTime @default(now())
+
+  company         Organization?   @relation(fields: [company_id], references: [id])
+  purchase_orders PurchaseOrder[]
+
+  @@unique([company_id, code])
+  @@map("vendors")
+}
+
+model PurchaseOrder {
+  id            String    @id @default(uuid())
+  po_number     String
+  vendor_id     String
+  status        String    @default("draft")
+  order_date    DateTime
+  expected_date DateTime?
+  received_date DateTime?
+  shipping_cost Float     @default(0)
+  notes         String    @default("")
+  company_id    String?
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @default(now())
+
+  vendor     Vendor    @relation(fields: [vendor_id], references: [id])
+  company    Organization? @relation(fields: [company_id], references: [id])
+  lines      PoLine[]
+  shipments  Shipment[]
+
+  @@unique([company_id, po_number])
+  @@map("purchase_orders")
+}
+
+model PoLine {
+  id                String        @id @default(uuid())
+  po_id             String
+  item_id           String
+  quantity_ordered  Float
+  quantity_received Float         @default(0)
+  unit_cost         Float         @default(0)
+  notes             String        @default("")
+
+  purchase_order    PurchaseOrder @relation(fields: [po_id], references: [id], onDelete: Cascade)
+  item              Item          @relation(fields: [item_id], references: [id])
+
+  @@map("po_lines")
+}
+
+model Ncr {
+  id                String    @id @default(uuid())
+  ncr_number        String
+  title             String
+  description       String    @default("")
+  severity          String    @default("minor")
+  status            String    @default("open")
+  source            String    @default("production")
+  app_id            String?
+  completion_id     String?
+  work_order_id     String?
+  item_id           String?
+  assigned_to       String    @default("")
+  root_cause        String    @default("")
+  corrective_action String    @default("")
+  due_date          DateTime?
+  resolved_at       DateTime?
+  company_id        String?
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @default(now())
+
+  app               App?        @relation(fields: [app_id], references: [id], onDelete: SetNull)
+  completion        Completion? @relation(fields: [completion_id], references: [id], onDelete: SetNull)
+  work_order        WorkOrder?  @relation(fields: [work_order_id], references: [id], onDelete: SetNull)
+  item              Item?       @relation(fields: [item_id], references: [id], onDelete: SetNull)
+  company           Organization? @relation(fields: [company_id], references: [id])
+  comments          NcrComment[]
+
+  @@unique([company_id, ncr_number])
+  @@map("ncrs")
+}
+
+model NcrComment {
+  id         String   @id @default(uuid())
+  ncr_id     String
+  author     String
+  body       String
+  created_at DateTime @default(now())
+
+  ncr        Ncr      @relation(fields: [ncr_id], references: [id], onDelete: Cascade)
+
+  @@map("ncr_comments")
+}
+
+model BillingHistory {
+  id          String   @id @default(uuid())
+  type        String
+  description String
+  quantity    Int      @default(1)
+  unit_price  Float    @default(0)
+  amount      Float    @default(0)
+  recurring   Int      @default(1)
+  company_id  String?
+  created_at  DateTime @default(now())
+
+  company     Organization? @relation(fields: [company_id], references: [id])
+
+  @@map("billing_history")
+}
+
+model Shipment {
+  id                String    @id @default(uuid())
+  company_id        String?
+  po_id             String?
+  carrier           String    @default("")
+  tracking_number   String    @default("")
+  origin            String    @default("")
+  status            String    @default("pending")
+  shipped_date      DateTime?
+  estimated_arrival DateTime?
+  actual_arrival    DateTime?
+  notes             String    @default("")
+  created_at        DateTime  @default(now())
+  updated_at        DateTime  @default(now())
+
+  company        Organization?  @relation(fields: [company_id], references: [id])
+  purchase_order PurchaseOrder? @relation(fields: [po_id], references: [id], onDelete: SetNull)
+
+  @@map("shipments")
+}
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  display_name  String
+  password_hash String
+  role          String    @default("viewer")
+  is_active     Int       @default(1)
+  last_login    DateTime?
+  sso_provider  String    @default("")
+  company_id    String?
+  department_id String?
+  job_title     String    @default("")
+  pin_hash      String    @default("")
+  badge_code    String    @default("")
+  created_at    DateTime  @default(now())
+  updated_at    DateTime  @default(now())
+
+  company       Organization? @relation(fields: [company_id], references: [id])
+  department    Department?   @relation(fields: [department_id], references: [id])
+
+  sessions                   Session[]
+  password_reset_tokens      PasswordResetToken[]
+  messages_sent              Message[]            @relation("sender")
+  wo_comments                WoComment[]
+  training_records           TrainingRecord[]
+  certifications             Certification[]
+  training_plans_user        TrainingPlan[]       @relation("training_plan_user")
+  training_plans_assigned_by TrainingPlan[]       @relation("training_plan_assigned_by")
+  training_records_certified TrainingRecord[]     @relation("certified_by")
+  assigned_work_orders       WorkOrder[]          @relation("assigned_work_orders")
+
+  @@map("users")
+}
+
+model Session {
+  id         String   @id @default(uuid())
+  user_id    String
+  token      String   @unique
+  expires_at DateTime
+  created_at DateTime @default(now())
+
+  user       User     @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+model PasswordResetToken {
+  id         String    @id @default(uuid())
+  user_id    String
+  token_hash String    @unique
+  expires_at DateTime
+  used_at    DateTime?
+  created_at DateTime  @default(now())
+
+  user       User      @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("password_reset_tokens")
+}
+
+// ── Multi-tenancy ────────────────────────────────────────────────────────────
+
+model Organization {
+  id         String   @id @default(uuid())
+  name       String
+  slug       String?  @unique
+  created_at DateTime @default(now())
+
+  org_settings             OrgSetting[]
+  sites                    Site[]
+  messages                 Message[]
+  notification_log         NotificationLog[]
+  api_keys                 ApiKey[]
+  webhooks                 Webhook[]
+  activity_log             ActivityLog[]
+  apps                     App[]
+  completions              Completion[]
+  tables                   Table[]
+  stations                 Station[]
+  departments              Department[]
+  work_orders              WorkOrder[]
+  product_types            ProductType[]
+  dashboards               Dashboard[]
+  users                    User[]
+  items                    Item[]
+  locations                Location[]
+  vendors                  Vendor[]
+  purchase_orders          PurchaseOrder[]
+  ncrs                     Ncr[]
+  billing_history          BillingHistory[]
+  plan                     Plan[]
+  training_records         TrainingRecord[]
+  certifications           Certification[]
+  training_plans           TrainingPlan[]
+  shipments                Shipment[]
+  product_routings         ProductRouting[]
+  sqdc_entries             SqdcEntry[]
+  andon_calls              AndonCall[]
+  capa_items               CapaItem[]
+  assets                   Asset[]
+  pm_schedules             PmSchedule[]
+  maintenance_work_orders  MaintenanceWorkOrder[]
+  shift_notes              ShiftNote[]
+  kaizen_ideas             KaizenIdea[]
+
+  @@map("organizations")
+}
+
+model OrgSetting {
+  company_id String
+  key        String
+  value      String
+  updated_at DateTime @default(now())
+
+  company    Organization @relation(fields: [company_id], references: [id])
+
+  @@id([company_id, key])
+  @@map("org_settings")
+}
+
+model SchemaMeta {
+  key   String @id
+  value String
+
+  @@map("schema_meta")
+}
+
+model RolePermission {
+  company_id String
+  role       String
+  nav_key    String
+  visible    Int    @default(1)
+
+  @@id([company_id, role, nav_key])
+  @@map("role_permissions")
+}
+
+// ── Sites ────────────────────────────────────────────────────────────────────
+
+model Site {
+  id         String   @id @default(uuid())
+  company_id String?
+  name       String
+  code       String
+  address    String   @default("")
+  timezone   String   @default("")
+  is_primary Int      @default(0)
+  created_at DateTime @default(now())
+
+  company     Organization? @relation(fields: [company_id], references: [id])
+  stations    Station[]
+  departments Department[]
+  work_orders WorkOrder[]
+  locations   Location[]
+  apps        App[]
+
+  @@unique([company_id, code])
+  @@map("sites")
+}
+
+// ── Messaging ────────────────────────────────────────────────────────────────
+
+model Message {
+  id           String   @id @default(uuid())
+  company_id   String?
+  sender_id    String?
+  sender_name  String
+  sender_role  String   @default("")
+  body         String
+  severity     String   @default("info")
+  recipient_id String?
+  created_at   DateTime @default(now())
+
+  company Organization? @relation(fields: [company_id], references: [id])
+  sender  User?         @relation("sender", fields: [sender_id], references: [id])
+
+  @@map("messages")
+}
+
+// ── Notifications ────────────────────────────────────────────────────────────
+
+model NotificationLog {
+  id         String   @id @default(uuid())
+  company_id String?
+  channel    String
+  event      String
+  recipient  String
+  subject    String   @default("")
+  body       String
+  status     String   @default("simulated")
+  created_at DateTime @default(now())
+
+  company Organization? @relation(fields: [company_id], references: [id])
+
+  @@map("notification_log")
+}
+
+// ── API Keys & Webhooks ──────────────────────────────────────────────────────
+
+model ApiKey {
+  id           String    @id @default(uuid())
+  company_id   String?
+  name         String
+  key_prefix   String
+  key_hash     String
+  created_by   String    @default("")
+  last_used_at DateTime?
+  created_at   DateTime  @default(now())
+
+  company Organization? @relation(fields: [company_id], references: [id])
+
+  @@map("api_keys")
+}
+
+model Webhook {
+  id         String   @id @default(uuid())
+  company_id String?
+  url        String
+  events     String   @default("[]")
+  secret     String
+  is_active  Int      @default(1)
+  created_at DateTime @default(now())
+
+  company    Organization?     @relation(fields: [company_id], references: [id])
+  deliveries WebhookDelivery[]
+
+  @@map("webhooks")
+}
+
+model WebhookDelivery {
+  id          String   @id @default(uuid())
+  webhook_id  String
+  event       String
+  status_code Int?
+  success     Int      @default(0)
+  error       String   @default("")
+  created_at  DateTime @default(now())
+
+  webhook Webhook @relation(fields: [webhook_id], references: [id], onDelete: Cascade)
+
+  @@map("webhook_deliveries")
+}
+
+// ── Activity Log ─────────────────────────────────────────────────────────────
+
+model ActivityLog {
+  id            String   @id @default(uuid())
+  company_id    String?
+  entity_type   String
+  entity_id     String
+  action        String
+  actor         String   @default("")
+  department_id String?
+  station_id    String?
+  created_at    DateTime @default(now())
+
+  company Organization? @relation(fields: [company_id], references: [id])
+
+  @@map("activity_log")
+}
+
+// ── Training ─────────────────────────────────────────────────────────────────
+
+model TrainingRecord {
+  id             String    @id @default(uuid())
+  company_id     String?
+  user_id        String
+  app_id         String
+  status         String    @default("not_started")
+  certified_date DateTime?
+  expiry_date    DateTime?
+  certified_by   String?
+  score          Float?
+  attempts       Int       @default(0)
+  notes          String    @default("")
+  created_at     DateTime  @default(now())
+  updated_at     DateTime  @default(now())
+
+  company    Organization? @relation(fields: [company_id], references: [id])
+  user       User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  app        App           @relation(fields: [app_id], references: [id], onDelete: Cascade)
+  certifier  User?         @relation("certified_by", fields: [certified_by], references: [id], onDelete: SetNull)
+
+  @@unique([company_id, user_id, app_id])
+  @@map("training_records")
+}
+
+model Certification {
+  id           String    @id @default(uuid())
+  company_id   String?
+  user_id      String
+  name         String
+  issuer       String    @default("")
+  cert_number  String    @default("")
+  issued_date  DateTime?
+  expiry_date  DateTime?
+  document_url String    @default("")
+  notes        String    @default("")
+  created_at   DateTime  @default(now())
+  updated_at   DateTime  @default(now())
+
+  company Organization? @relation(fields: [company_id], references: [id])
+  user    User          @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@map("certifications")
+}
+
+model TrainingPlan {
+  id          String    @id @default(uuid())
+  company_id  String?
+  user_id     String
+  app_id      String?
+  assigned_by String?
+  target_date DateTime?
+  status      String    @default("pending")
+  notes       String    @default("")
+  created_at  DateTime  @default(now())
+  updated_at  DateTime  @default(now())
+
+  company  Organization? @relation(fields: [company_id], references: [id])
+  user     User          @relation("training_plan_user", fields: [user_id], references: [id], onDelete: Cascade)
+  app      App?          @relation(fields: [app_id], references: [id], onDelete: Cascade)
+  assigner User?         @relation("training_plan_assigned_by", fields: [assigned_by], references: [id], onDelete: SetNull)
+
+  @@map("training_plans")
+}
+
+// ── Product Routings ─────────────────────────────────────────────────────────
+
+model ProductRouting {
+  id          String   @id @default(uuid())
+  company_id  String?
+  name        String
+  description String   @default("")
+  created_at  DateTime @default(now())
+  updated_at  DateTime @default(now())
+
+  company     Organization? @relation(fields: [company_id], references: [id])
+  steps       RoutingStep[]
+  work_orders WorkOrder[]
+
+  @@map("product_routings")
+}
+
+model RoutingStep {
+  id                      String   @id @default(uuid())
+  routing_id              String
+  company_id              String?
+  step_number             Int
+  name                    String
+  description             String   @default("")
+  app_id                  String?
+  department_id           String?
+  estimated_cycle_seconds Float    @default(0)
+  created_at              DateTime @default(now())
+
+  routing    ProductRouting @relation(fields: [routing_id], references: [id], onDelete: Cascade)
+  company    Organization?  @relation(fields: [company_id], references: [id])
+  app        App?           @relation(fields: [app_id], references: [id], onDelete: SetNull)
+  department Department?    @relation(fields: [department_id], references: [id], onDelete: SetNull)
+
+  @@map("routing_steps")
+}
+
+// ── SQDC ─────────────────────────────────────────────────────────────────────
+
+model SqdcEntry {
+  id            String   @id @default(uuid())
+  company_id    String
+  category      String
+  subtype       String   @default("")
+  department_id String?
+  location      String   @default("")
+  description   String   @default("")
+  value         Float?
+  entry_date    DateTime
+  created_by    String   @default("")
+  created_at    DateTime @default(now())
+
+  company    Organization @relation(fields: [company_id], references: [id])
+  department Department?  @relation(fields: [department_id], references: [id], onDelete: SetNull)
+
+  @@map("sqdc_entries")
+}
+
+// ── Andon ─────────────────────────────────────────────────────────────────────
+
+model AndonCall {
+  id              String    @id @default(uuid())
+  company_id      String
+  department_id   String?
+  station_id      String?
+  type            String
+  priority        String    @default("normal")
+  status          String    @default("open")
+  description     String    @default("")
+  raised_by       String    @default("")
+  acknowledged_by String    @default("")
+  acknowledged_at DateTime?
+  resolved_by     String    @default("")
+  resolved_at     DateTime?
+  resolution      String    @default("")
+  created_at      DateTime  @default(now())
+
+  company    Organization @relation(fields: [company_id], references: [id])
+  department Department?  @relation(fields: [department_id], references: [id], onDelete: SetNull)
+  station    Station?     @relation(fields: [station_id], references: [id], onDelete: SetNull)
+
+  @@map("andon_calls")
+}
+
+// ── CAPA ─────────────────────────────────────────────────────────────────────
+
+model CapaItem {
+  id                String    @id @default(uuid())
+  company_id        String
+  number            String
+  title             String
+  source            String    @default("internal")
+  type              String    @default("corrective")
+  priority          String    @default("medium")
+  status            String    @default("open")
+  department_id     String?
+  assigned_to       String    @default("")
+  due_date          DateTime?
+  description       String    @default("")
+  containment       String    @default("")
+  root_cause        String    @default("")
+  corrective_action String    @default("")
+  preventive_action String    @default("")
+  created_by        String    @default("")
+  created_at        DateTime  @default(now())
+  closed_at         DateTime?
+  verified_at       DateTime?
+
+  company    Organization @relation(fields: [company_id], references: [id])
+  department Department?  @relation(fields: [department_id], references: [id], onDelete: SetNull)
+  actions    CapaAction[]
+
+  @@map("capa_items")
+}
+
+model CapaAction {
+  id           String    @id @default(uuid())
+  capa_id      String
+  description  String
+  assigned_to  String    @default("")
+  due_date     DateTime?
+  status       String    @default("open")
+  created_at   DateTime  @default(now())
+  completed_at DateTime?
+
+  capa_item CapaItem @relation(fields: [capa_id], references: [id], onDelete: Cascade)
+
+  @@map("capa_actions")
+}
+
+// ── Maintenance / CMMS ───────────────────────────────────────────────────────
+
+model Asset {
+  id              String    @id @default(uuid())
+  company_id      String
+  name            String
+  asset_number    String    @default("")
+  category        String    @default("")
+  manufacturer    String    @default("")
+  model           String    @default("")
+  serial_number   String    @default("")
+  department_id   String?
+  location        String    @default("")
+  status          String    @default("active")
+  purchase_date   DateTime?
+  warranty_expiry DateTime?
+  notes           String    @default("")
+  created_at      DateTime  @default(now())
+
+  company                 Organization          @relation(fields: [company_id], references: [id])
+  department              Department?           @relation(fields: [department_id], references: [id], onDelete: SetNull)
+  pm_schedules            PmSchedule[]
+  maintenance_work_orders MaintenanceWorkOrder[]
+
+  @@map("assets")
+}
+
+model PmSchedule {
+  id                String    @id @default(uuid())
+  company_id        String
+  asset_id          String?
+  title             String
+  description       String    @default("")
+  frequency_value   Int       @default(1)
+  frequency_type    String    @default("months")
+  last_completed_at DateTime?
+  next_due_at       DateTime?
+  assigned_to       String    @default("")
+  estimated_hours   Float     @default(1)
+  created_at        DateTime  @default(now())
+
+  company Organization @relation(fields: [company_id], references: [id])
+  asset   Asset?       @relation(fields: [asset_id], references: [id], onDelete: Cascade)
+
+  @@map("pm_schedules")
+}
+
+model MaintenanceWorkOrder {
+  id              String    @id @default(uuid())
+  company_id      String
+  number          String
+  title           String
+  type            String    @default("corrective")
+  priority        String    @default("medium")
+  status          String    @default("open")
+  asset_id        String?
+  department_id   String?
+  assigned_to     String    @default("")
+  description     String    @default("")
+  resolution      String    @default("")
+  estimated_hours Float?
+  actual_hours    Float?
+  requested_by    String    @default("")
+  due_date        DateTime?
+  completed_at    DateTime?
+  created_at      DateTime  @default(now())
+
+  company    Organization @relation(fields: [company_id], references: [id])
+  asset      Asset?       @relation(fields: [asset_id], references: [id], onDelete: SetNull)
+  department Department?  @relation(fields: [department_id], references: [id], onDelete: SetNull)
+
+  @@map("maintenance_work_orders")
+}
+
+// ── Shift Notes ──────────────────────────────────────────────────────────────
+
+model ShiftNote {
+  id               String    @id @default(uuid())
+  company_id       String
+  department_id    String?
+  shift_name       String    @default("Day")
+  shift_date       DateTime
+  supervisor       String    @default("")
+  good_count       Int       @default(0)
+  scrap_count      Int       @default(0)
+  downtime_minutes Int       @default(0)
+  notes            String    @default("")
+  issues           String    @default("[]")
+  status           String    @default("active")
+  handed_off_to    String    @default("")
+  handed_off_at    DateTime?
+  created_by       String    @default("")
+  created_at       DateTime  @default(now())
+
+  company    Organization @relation(fields: [company_id], references: [id])
+  department Department?  @relation(fields: [department_id], references: [id], onDelete: SetNull)
+
+  @@map("shift_notes")
+}
+
+// ── Kaizen / CI Ideas ────────────────────────────────────────────────────────
+
+model KaizenIdea {
+  id                String    @id @default(uuid())
+  company_id        String
+  number            String
+  title             String
+  description       String    @default("")
+  category          String    @default("quality")
+  status            String    @default("submitted")
+  department_id     String?
+  submitted_by      String    @default("")
+  assigned_to       String    @default("")
+  estimated_savings Float     @default(0)
+  actual_savings    Float     @default(0)
+  created_at        DateTime  @default(now())
+  completed_at      DateTime?
+
+  company    Organization @relation(fields: [company_id], references: [id])
+  department Department?  @relation(fields: [department_id], references: [id], onDelete: SetNull)
+
+  @@map("kaizen_ideas")
+}
+
+// ── Misc ─────────────────────────────────────────────────────────────────────
+
+model GameScore {
+  id          String   @id @default(uuid())
+  player_name String
+  company     String   @default("")
+  score       Int
+  created_at  DateTime @default(now())
+
+  @@map("game_scores")
+}
+
+model SsoState {
+  id         String   @id @default(uuid())
+  state      String   @unique
+  provider   String
+  created_at DateTime @default(now())
+  expires_at DateTime
+
+  @@map("sso_state")
+}

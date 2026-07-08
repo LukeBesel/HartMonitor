@@ -5,12 +5,16 @@ import {
   AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis,
   Tooltip, ResponsiveContainer, CartesianGrid, Legend, PieChart, Pie, Cell
 } from 'recharts';
-import { TrendingUp, CheckCircle, Clock, Users, Activity, BarChart2, Filter, X, Timer, ChevronDown } from 'lucide-react';
+import { TrendingUp, CheckCircle, Clock, Users, Activity, BarChart2, Filter, X, Timer, ChevronDown, AlertTriangle, RefreshCw } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import { StepMetricsPanel } from './StepMetrics';
 
 const COLORS = ['#22c55e', '#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6'];
 const DAYS_OPTIONS = [7, 14, 30, 90];
+
+function Skeleton({ className }: { className?: string }) {
+  return <div className={`animate-pulse bg-gray-200 rounded ${className ?? ''}`} />;
+}
 
 export default function Analytics() {
   const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
@@ -20,6 +24,8 @@ export default function Analytics() {
   const [appPerf, setAppPerf] = useState<any[]>([]);
   const [quality, setQuality] = useState<any[]>([]);
   const [days, setDays] = useState(30);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   // ── Filters ──
   const [apps, setApps] = useState<any[]>([]);
@@ -45,6 +51,8 @@ export default function Analytics() {
   }, [appId]);
 
   const load = (d: number, filters: AnalyticsFilters) => {
+    setLoading(true);
+    setError(null);
     Promise.all([
       api.getOverview(filters),
       api.getThroughput(d, filters),
@@ -54,13 +62,19 @@ export default function Analytics() {
       api.getQualityData(d, filters),
     ]).then(([ov, tp, ct, ops, ap, q]) => {
       setOverview(ov);
-      setThroughput(tp);
-      setCycleTimes(ct);
-      setOperators(ops);
-      setAppPerf(ap);
-      setQuality(q);
+      setThroughput(Array.isArray(tp) ? tp : []);
+      setCycleTimes(Array.isArray(ct) ? ct : []);
+      setOperators(Array.isArray(ops) ? ops : []);
+      setAppPerf(Array.isArray(ap) ? ap : []);
+      setQuality(Array.isArray(q) ? q : []);
+    }).catch((err: any) => {
+      setError(err?.message || 'Failed to load analytics data');
+    }).finally(() => {
+      setLoading(false);
     });
   };
+
+  const currentFilters: AnalyticsFilters = { app_id: appId || undefined, product_type_id: productTypeId || undefined, department_id: departmentId || undefined };
 
   useEffect(() => {
     load(days, { app_id: appId || undefined, product_type_id: productTypeId || undefined, department_id: departmentId || undefined });
@@ -92,7 +106,7 @@ export default function Analytics() {
         icon={BarChart2}
         color="#0ea5e9"
       />
-      <div className="flex items-center justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Operation Analytics</h1>
           <p className="text-gray-500 text-sm mt-0.5">Manufacturing performance metrics — pick a department and operation to drill into step timing</p>
@@ -216,6 +230,36 @@ export default function Analytics() {
         </div>
       )}
 
+      {error ? (
+        <div className="card p-10 flex flex-col items-center gap-3 text-center">
+          <AlertTriangle size={28} className="text-red-400" />
+          <p className="text-gray-600 font-medium">Couldn't load analytics</p>
+          <p className="text-sm text-gray-400">{error}</p>
+          <button onClick={() => load(days, currentFilters)} className="btn-secondary">
+            <RefreshCw size={14} /> Retry
+          </button>
+        </div>
+      ) : loading && !overview ? (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map(i => (
+              <div key={i} className="stat-card flex items-center gap-3">
+                <Skeleton className="w-10 h-10 rounded-lg flex-shrink-0" />
+                <div className="space-y-1.5 flex-1">
+                  <Skeleton className="h-5 w-16" />
+                  <Skeleton className="h-3 w-24" />
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <div className="lg:col-span-2 card p-5"><Skeleton className="h-48 w-full" /></div>
+            <div className="card p-5"><Skeleton className="h-48 w-full" /></div>
+          </div>
+          <div className="card p-5"><Skeleton className="h-48 w-full" /></div>
+        </>
+      ) : (
+      <>
       {/* KPI cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard icon={<CheckCircle size={18} className="text-green-600" />} bg="bg-green-50" label="Total Completions" value={overview?.totalCompletions ?? '—'} />
@@ -346,6 +390,8 @@ export default function Analytics() {
           </div>
         </div>
       </div>
+      </>
+      )}
     </div>
   );
 }

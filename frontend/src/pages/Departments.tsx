@@ -4,7 +4,7 @@ import { api } from '../api/client';
 import { useSite } from '../context/SiteContext';
 import {
   Building2, RefreshCw, Activity, CheckCircle2, Clock, Calendar,
-  ChevronRight, Tv
+  ChevronRight, Tv, AlertTriangle
 } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 
@@ -43,7 +43,9 @@ function isToday(iso?: string): boolean {
 
 function formatElapsed(startedAt?: string): string {
   if (!startedAt) return '—';
-  const diff = Date.now() - new Date(startedAt).getTime();
+  const started = new Date(startedAt).getTime();
+  if (isNaN(started)) return '—';
+  const diff = Math.max(0, Date.now() - started);
   const mins = Math.floor(diff / 60000);
   if (mins < 60) return `${mins}m`;
   const hours = Math.floor(mins / 60);
@@ -53,7 +55,9 @@ function formatElapsed(startedAt?: string): string {
 
 function formatDate(iso?: string): string {
   if (!iso) return '—';
-  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
 export default function Departments() {
@@ -64,28 +68,38 @@ export default function Departments() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastRefresh, setLastRefresh] = useState(new Date());
+  const [deptError, setDeptError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Load departments list
-  useEffect(() => {
+  const loadDepartments = useCallback(() => {
+    setDeptError(null);
     api.getDepartments({ site_id: selectedSiteId || undefined })
       .then((depts: Department[]) => {
-        setDepartments(depts);
-        if (depts.length > 0 && !selectedDeptId) {
-          setSelectedDeptId(depts[0].id);
+        const list = Array.isArray(depts) ? depts : [];
+        setDepartments(list);
+        if (list.length > 0) {
+          setSelectedDeptId(prev => prev || list[0].id);
         }
       })
-      .catch(() => {});
+      .catch((err: any) => {
+        setDeptError(err?.message || 'Failed to load departments');
+      });
   }, [selectedSiteId]);
+
+  useEffect(() => { loadDepartments(); }, [loadDepartments]);
 
   const loadWorkOrders = useCallback(async (showSpinner = false) => {
     if (!selectedDeptId) return;
     if (showSpinner) setRefreshing(true);
     try {
       const all = await api.getWorkOrders({ department_id: selectedDeptId });
-      setWorkOrders(all);
+      setWorkOrders(Array.isArray(all) ? all : []);
       setLastRefresh(new Date());
-    } catch {
-      // keep stale data
+      setLoadError(null);
+    } catch (err: any) {
+      // keep stale data on background refreshes; surface the error otherwise
+      setLoadError(err?.message || 'Failed to load work orders');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -139,7 +153,7 @@ export default function Departments() {
             <p className="text-xs text-gray-500 mt-0.5">Live job status by department</p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {/* Department selector */}
           <select
             value={selectedDeptId}
@@ -171,7 +185,16 @@ export default function Departments() {
         </div>
       </div>
 
-      {!selectedDeptId ? (
+      {deptError && departments.length === 0 ? (
+        <div className="flex items-center justify-center py-24 flex-col gap-3 text-center">
+          <AlertTriangle size={28} className="text-red-400" />
+          <p className="text-gray-500 font-medium text-sm">Couldn't load departments</p>
+          <p className="text-xs text-gray-400">{deptError}</p>
+          <button onClick={loadDepartments} className="btn-secondary">
+            <RefreshCw size={14} /> Retry
+          </button>
+        </div>
+      ) : !selectedDeptId ? (
         <div className="flex items-center justify-center py-24 text-gray-400 flex-col gap-3">
           <Building2 size={48} className="text-gray-200" />
           <p className="text-sm font-medium">Select a department to view its jobs</p>
@@ -179,6 +202,15 @@ export default function Departments() {
       ) : loading ? (
         <div className="flex items-center justify-center py-24">
           <RefreshCw size={28} className="animate-spin text-blue-500" />
+        </div>
+      ) : loadError && workOrders.length === 0 ? (
+        <div className="flex items-center justify-center py-24 flex-col gap-3 text-center">
+          <AlertTriangle size={28} className="text-red-400" />
+          <p className="text-gray-500 font-medium text-sm">Couldn't load work orders</p>
+          <p className="text-xs text-gray-400">{loadError}</p>
+          <button onClick={() => loadWorkOrders(true)} className="btn-secondary">
+            <RefreshCw size={14} /> Retry
+          </button>
         </div>
       ) : (
         <>

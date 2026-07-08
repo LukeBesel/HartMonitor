@@ -1,7 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
-const { requireRole } = require('../middleware/auth');
+const { requireRole, requireAuth } = require('../middleware/auth');
 const { getStripe, isConfigured, billingMode, currency } = require('../stripe');
 const { PRICING } = require('../pricing');
 const { logActivity } = require('../activity');
@@ -238,8 +238,8 @@ router.get('/integrations', requireRole('manager'), (req, res) => {
 
 // ─── POST /plan/checkout — start a real Stripe Checkout session (manager+) ────
 // Returns { url } to redirect the browser to Stripe's hosted, PCI-compliant
-// payment page. Works for a tier upgrade or an à-la-carte add-on, both billed
-// as monthly subscriptions. Falls back with a clear error if Stripe is off.
+// payment page. Prices are defined in code (price_data) — no need to create
+// Stripe Products manually or set STRIPE_PRICE_* env vars.
 
 router.post('/plan/checkout', requireRole('manager'), async (req, res) => {
   const stripe = getStripe();
@@ -321,23 +321,74 @@ router.post('/plan/checkout', requireRole('manager'), async (req, res) => {
 
 // ─── POST /plan/portal — open Stripe billing portal to manage/cancel ──────────
 
-router.post('/plan/portal', requireRole('manager'), async (req, res) => {
-  const stripe = getStripe();
-  if (!stripe) return res.status(400).json({ error: 'not_configured' });
+router.post('/plan/portal', requireAuth, async (req, res) => {
   try {
-    const plan = getPlanRow(req.companyId);
-    if (!plan.stripe_customer_id) {
-      return res.status(400).json({ error: 'no_customer', message: 'No billing account yet — make a purchase first.' });
+    const stripe = getStripe();
+    if (!stripe) return res.status(503).json({ error: 'Stripe not configured' });
+
+    const plan = db.prepare('SELECT * FROM plan WHERE company_id = ?').get(req.companyId);
+    if (!plan?.stripe_customer_id) {
+      return res.status(400).json({ error: 'No billing account found. Please subscribe first.' });
     }
+
+    const base = appUrl(req);
     const session = await stripe.billingPortal.sessions.create({
       customer: plan.stripe_customer_id,
-      return_url: `${appUrl(req)}/settings?tab=plan`,
+      return_url: `${base}/settings/billing`,
     });
+
     res.json({ url: session.url });
-  } catch (e) {
-    console.error('[stripe] portal error:', e.message);
-    res.status(502).json({ error: 'portal_failed', message: e.message });
+  } catch (err) {
+    console.error('[portal]', err);
+    res.status(500).json({ error: 'Failed to open billing portal' });
   }
+});
+
+// ─── GET /export-data — self-service full data export (any auth role) ─────────
+// Legal/trust requirement: customers must be able to extract all their data.
+// Returns a JSON file containing every table scoped to the authenticated company.
+
+router.get('/export-data', (req, res) => {
+  const cid = req.companyId;
+  const date = new Date().toISOString().slice(0, 10);
+
+  const bundle = {
+    exported_at: new Date().toISOString(),
+    company_id: cid,
+    tables: {
+      work_orders: db.prepare('SELECT * FROM work_orders WHERE company_id = ? ORDER BY created_at DESC').all(cid),
+      completions: db.prepare('SELECT * FROM completions WHERE company_id = ? ORDER BY started_at DESC').all(cid),
+      departments: db.prepare('SELECT * FROM departments WHERE company_id = ? ORDER BY name').all(cid),
+      stations: db.prepare('SELECT * FROM stations WHERE company_id = ? ORDER BY name').all(cid),
+      users: db.prepare('SELECT id, email, display_name, role, is_active, department_id, job_title, last_login, created_at, updated_at FROM users WHERE company_id = ? ORDER BY created_at').all(cid),
+      items: db.prepare('SELECT * FROM items WHERE company_id = ? ORDER BY sku').all(cid),
+      stock_movements: db.prepare('SELECT sm.* FROM stock_movements sm JOIN items i ON i.id = sm.item_id WHERE i.company_id = ? ORDER BY sm.created_at DESC').all(cid),
+      purchase_orders: db.prepare('SELECT * FROM purchase_orders WHERE company_id = ? ORDER BY order_date DESC').all(cid),
+      ncrs: db.prepare('SELECT * FROM ncrs WHERE company_id = ? ORDER BY created_at DESC').all(cid),
+      andon_calls: (() => {
+        try { return db.prepare('SELECT * FROM andon_calls WHERE company_id = ? ORDER BY created_at DESC').all(cid); } catch { return []; }
+      })(),
+      capa_items: (() => {
+        try { return db.prepare('SELECT * FROM capa_items WHERE company_id = ? ORDER BY created_at DESC').all(cid); } catch { return []; }
+      })(),
+      kaizen_ideas: (() => {
+        try { return db.prepare('SELECT * FROM kaizen_ideas WHERE company_id = ? ORDER BY created_at DESC').all(cid); } catch { return []; }
+      })(),
+      shift_notes: (() => {
+        try { return db.prepare('SELECT * FROM shift_notes WHERE company_id = ? ORDER BY created_at DESC').all(cid); } catch { return []; }
+      })(),
+      maintenance_work_orders: (() => {
+        try { return db.prepare('SELECT * FROM maintenance_work_orders WHERE company_id = ? ORDER BY created_at DESC').all(cid); } catch { return []; }
+      })(),
+      assets: (() => {
+        try { return db.prepare('SELECT * FROM assets WHERE company_id = ? ORDER BY created_at DESC').all(cid); } catch { return []; }
+      })(),
+    },
+  };
+
+  res.setHeader('Content-Disposition', `attachment; filename="hartmonitor-export-${date}.json"`);
+  res.setHeader('Content-Type', 'application/json');
+  res.json(bundle);
 });
 
 module.exports = router;

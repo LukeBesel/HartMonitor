@@ -29,6 +29,10 @@ interface Routing {
   steps?: RoutingStep[];
 }
 
+function Skeleton({ className }: { className?: string }) {
+  return <div className={`animate-pulse bg-gray-200 rounded ${className ?? ''}`} />;
+}
+
 function Toast({ message, type, onDismiss }: { message: string; type: 'success' | 'error'; onDismiss: () => void }) {
   return (
     <div className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-white text-sm font-medium ${type === 'success' ? 'bg-emerald-600' : 'bg-red-600'}`}>
@@ -45,6 +49,7 @@ export default function Routings() {
   const [routings, setRoutings] = useState<Routing[]>([]);
   const [selected, setSelected] = useState<Routing | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [apps, setApps] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -66,17 +71,26 @@ export default function Routings() {
     setTimeout(() => setToast(null), 3000);
   };
 
-  useEffect(() => {
-    if (isFree) return;
+  const loadAll = () => {
+    setLoading(true);
+    setLoadError(null);
     Promise.all([
       api.getRoutings(),
       api.getApps(),
       api.getDepartments(),
     ]).then(([r, a, d]) => {
-      setRoutings(r);
-      setApps(a);
-      setDepartments(d);
-    }).catch(() => {}).finally(() => setLoading(false));
+      setRoutings(Array.isArray(r) ? r : []);
+      setApps(Array.isArray(a) ? a : []);
+      setDepartments(Array.isArray(d) ? d : []);
+    }).catch((err: any) => {
+      setLoadError(err?.message || 'Failed to load routings');
+    }).finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    if (isFree) return;
+    loadAll();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFree]);
 
   const loadRouting = async (id: string) => {
@@ -221,7 +235,23 @@ export default function Routings() {
   }
 
   if (loading) {
-    return <div className="flex items-center justify-center py-20 text-gray-400 text-sm">Loading routings…</div>;
+    return (
+      <div className="p-6 space-y-3 max-w-2xl">
+        <Skeleton className="h-8 w-48" />
+        {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-16" />)}
+      </div>
+    );
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center py-20 gap-3 text-center px-6">
+        <AlertCircle size={28} className="text-red-400" />
+        <p className="text-gray-500 font-medium">Couldn't load routings</p>
+        <p className="text-xs text-gray-400">{loadError}</p>
+        <button onClick={loadAll} className="btn-secondary">Retry</button>
+      </div>
+    );
   }
 
   const sortedSteps = selected?.steps ? [...selected.steps].sort((a, b) => a.step_number - b.step_number) : [];
@@ -264,9 +294,18 @@ export default function Routings() {
 
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
           {routings.length === 0 && (
-            <div className="text-center py-10 text-gray-400 text-sm px-4">
-              <GitBranch size={28} className="mx-auto mb-2 opacity-30" />
-              No routings yet. Create one to define a manufacturing sequence.
+            <div className="text-center py-10 px-4">
+              <GitBranch size={28} className="mx-auto mb-2 text-gray-300" />
+              <p className="text-sm text-gray-500 font-medium">No routings yet</p>
+              <p className="text-xs text-gray-400 mt-1">Create one to define a manufacturing sequence.</p>
+              {canEdit && (
+                <button
+                  onClick={() => setShowCreate(true)}
+                  className="mt-3 text-sm font-semibold text-blue-500 hover:text-blue-600"
+                >
+                  + New routing
+                </button>
+              )}
             </div>
           )}
           {routings.map(r => (

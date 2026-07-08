@@ -6,6 +6,7 @@ const { requireRole } = require('../middleware/auth');
 const { getPlanRow } = require('./config');
 const { sendTestDelivery } = require('../webhooks');
 const { EVENTS } = require('../notifications');
+const { logActivity } = require('../activity');
 
 const router = express.Router();
 
@@ -55,14 +56,16 @@ router.post('/api-keys', requireRole('manager'), requireEnterprise, (req, res) =
     INSERT INTO api_keys (id, company_id, name, key_prefix, key_hash, created_by) VALUES (?, ?, ?, ?, ?, ?)
   `).run(id, req.companyId, name, prefix, hashKey(key), req.user.id);
 
+  logActivity(req.companyId, 'api_key', id, 'API key created: ' + name, req.user?.display_name || 'system');
   res.status(201).json({ id, name, key_prefix: prefix, key, created_at: new Date().toISOString() });
 });
 
 // DELETE /api-keys/:id — revoke a key (manager+)
 router.delete('/api-keys/:id', requireRole('manager'), requireEnterprise, (req, res) => {
-  const row = db.prepare('SELECT id FROM api_keys WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
+  const row = db.prepare('SELECT id, name FROM api_keys WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!row) return res.status(404).json({ error: 'API key not found' });
   db.prepare('DELETE FROM api_keys WHERE id = ?').run(req.params.id);
+  logActivity(req.companyId, 'api_key', req.params.id, 'API key deleted: ' + (row.name || req.params.id), req.user?.display_name || 'system');
   res.json({ success: true });
 });
 
@@ -103,7 +106,7 @@ router.put('/webhooks/:id', requireRole('manager'), requireEnterprise, (req, res
 
   db.prepare('UPDATE webhooks SET url=?, events=?, is_active=? WHERE id=?').run(url, JSON.stringify(events), is_active, req.params.id);
 
-  const row = db.prepare('SELECT id, url, events, secret, is_active, created_at FROM webhooks WHERE id = ?').get(req.params.id);
+  const row = db.prepare('SELECT id, url, events, is_active, created_at FROM webhooks WHERE id = ?').get(req.params.id);
   res.json({ ...row, events: JSON.parse(row.events || '[]') });
 });
 

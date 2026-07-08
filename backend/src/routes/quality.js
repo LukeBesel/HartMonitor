@@ -97,6 +97,9 @@ router.post('/ncrs', (req, res) => {
     assigned_to = '', due_date
   } = req.body;
   if (!title) return res.status(400).json({ error: 'title required' });
+  if (!['minor', 'major', 'critical'].includes(severity)) {
+    return res.status(400).json({ error: 'severity must be one of: minor, major, critical' });
+  }
   const cid = req.companyId;
   const id = uuidv4();
   const ncr_number = nextNCRNumber(cid);
@@ -136,9 +139,39 @@ router.put('/ncrs/:id', requireRole('supervisor'), (req, res) => {
   const ncr = db.prepare('SELECT * FROM ncrs WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!ncr) return res.status(404).json({ error: 'Not found' });
 
+  // Strip fields that must never be overwritten from client input
+  const FORBIDDEN_FIELDS = ['id', 'company_id', 'created_at', 'created_by'];
+  for (const f of FORBIDDEN_FIELDS) {
+    if (f in req.body) delete req.body[f];
+  }
+
+  const { severity, status } = req.body;
+  const VALID_SEVERITIES = ['minor', 'major', 'critical'];
+  const VALID_STATUSES = ['open', 'investigating', 'resolved', 'closed'];
+  if (severity && !VALID_SEVERITIES.includes(severity)) {
+    return res.status(400).json({ error: 'severity must be one of: minor, major, critical' });
+  }
+  if (status && !VALID_STATUSES.includes(status)) {
+    return res.status(400).json({ error: 'status must be one of: open, investigating, resolved, closed' });
+  }
+
   const fields = ['title','description','severity','status','source','app_id','work_order_id','item_id','assigned_to','root_cause','corrective_action','due_date','resolved_at'];
   const updates = {};
   for (const f of fields) if (req.body[f] !== undefined) updates[f] = req.body[f];
+
+  // Validate enum fields so bad values can't corrupt summaries/reporting.
+  if (updates.status !== undefined && !Object.keys(NCR_STATUS_LABELS).includes(updates.status)) {
+    return res.status(400).json({ error: `status must be one of: ${Object.keys(NCR_STATUS_LABELS).join(', ')}` });
+  }
+  if (updates.severity !== undefined && !['minor', 'major', 'critical'].includes(updates.severity)) {
+    return res.status(400).json({ error: 'severity must be one of: minor, major, critical' });
+  }
+
+  // Linked records must belong to this company — otherwise the detail view's
+  // JOINs would leak another tenant's work order / item / app names.
+  if (updates.app_id !== undefined)        updates.app_id        = ownedOrNull('apps', updates.app_id, req.companyId);
+  if (updates.work_order_id !== undefined) updates.work_order_id = ownedOrNull('work_orders', updates.work_order_id, req.companyId);
+  if (updates.item_id !== undefined)       updates.item_id       = ownedOrNull('items', updates.item_id, req.companyId);
 
   // Auto-set resolved_at when status moves to resolved
   if (updates.status === 'resolved' && !ncr.resolved_at && !updates.resolved_at) {

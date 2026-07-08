@@ -203,12 +203,14 @@ function computeCardData(card, companyId) {
 
     case 'leaderboard': {
       const metric = card.leaderboard_metric || 'completions';
+      // card.limit is user-controlled JSON — never interpolate it into SQL.
+      const limit = Math.min(Math.max(parseInt(card.limit, 10) || 10, 1), 100);
       if (metric === 'completions') {
         const rows = db.prepare(`
           SELECT operator_name as name, COUNT(*) as value
           FROM completions WHERE company_id = ? AND status='completed'${appFilter}
-          GROUP BY operator_name ORDER BY value DESC LIMIT ${card.limit || 10}
-        `).all(companyId, ...appParams);
+          GROUP BY operator_name ORDER BY value DESC LIMIT ?
+        `).all(companyId, ...appParams, limit);
         return { rows, label: 'Completions' };
       }
       if (metric === 'cycle_time') {
@@ -216,8 +218,8 @@ function computeCardData(card, companyId) {
           SELECT operator_name as name,
             ROUND(AVG((julianday(completed_at)-julianday(started_at))*24*60),1) as value
           FROM completions WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL${appFilter}
-          GROUP BY operator_name HAVING COUNT(*) >= 3 ORDER BY value ASC LIMIT ${card.limit || 10}
-        `).all(companyId, ...appParams);
+          GROUP BY operator_name HAVING COUNT(*) >= 3 ORDER BY value ASC LIMIT ?
+        `).all(companyId, ...appParams, limit);
         return { rows, label: 'Avg Cycle (min)', lower_is_better: true };
       }
       return { rows: [] };
@@ -233,7 +235,7 @@ function computeCardData(card, companyId) {
     }
 
     case 'table': {
-      const limit = card.limit || 10;
+      const limit = Math.min(Math.max(parseInt(card.limit, 10) || 10, 1), 100);
       const appFilterC = card.app_id ? ' AND c.app_id = ?' : '';
       const rows = db.prepare(`
         SELECT c.id, c.app_name, c.operator_name, c.started_at, c.completed_at,

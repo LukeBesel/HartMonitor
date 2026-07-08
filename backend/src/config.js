@@ -56,6 +56,16 @@ function validate() {
   const errors = [];
 
   if (IS_PROD) {
+    // Hard stop: these secrets must be explicitly set in production. Running
+    // with the default or an empty value would be a critical security hole.
+    const REQUIRED_SECRETS = ['JWT_SECRET', 'SESSION_SECRET'];
+    const missing = REQUIRED_SECRETS.filter(k => !process.env[k] || process.env[k].includes('change-this'));
+    if (missing.length) {
+      console.error(`FATAL: Missing required env vars: ${missing.join(', ')}`);
+      console.error('Generate values with: node -e "console.log(require(\'crypto\').randomBytes(64).toString(\'hex\'))"');
+      process.exit(1);
+    }
+
     if (SEED_DEMO_DATA) {
       warnings.push(
         'SEED_DEMO_DATA=true — demo accounts (admin@hartmonitor.demo / Admin123!) are active. ' +

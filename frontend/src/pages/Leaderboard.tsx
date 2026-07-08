@@ -36,6 +36,19 @@ function boardTitle(board: LeaderboardBoard): string {
   return board.product_type_name ? `${board.app_name} — ${board.product_type_name}` : board.app_name;
 }
 
+function LoadError({ title, message, onRetry }: { title: string; message: string; onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
+      <AlertCircle size={40} className="text-red-400" />
+      <div>
+        <p className="font-medium text-gray-500">{title}</p>
+        <p className="text-sm text-gray-400 mt-1">{message}</p>
+      </div>
+      <button className="btn-secondary" onClick={onRetry}>Retry</button>
+    </div>
+  );
+}
+
 function BoardCard({ board }: { board: LeaderboardBoard }) {
   return (
     <div className="card p-5 flex flex-col gap-3">
@@ -66,7 +79,7 @@ function BoardCard({ board }: { board: LeaderboardBoard }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-gray-50">
-          {board.leaders.map(l => {
+          {(board.leaders ?? []).map(l => {
             const rankStyle = RANK_ICON[l.rank];
             return (
               <tr key={l.operator_name}>
@@ -105,7 +118,7 @@ function BoardCard({ board }: { board: LeaderboardBoard }) {
 }
 
 function ChampionCard({ board }: { board: LeaderboardBoard }) {
-  const champ = board.leaders[0];
+  const champ = board.leaders?.[0];
   if (!champ) return null;
   return (
     <div className="flex-shrink-0 w-64 rounded-xl p-4 text-white shadow-lg"
@@ -246,7 +259,7 @@ export default function Leaderboard() {
   const departments = deptData?.departments ?? [];
   const boards = boardData?.boards ?? [];
   const appOptions = boardData?.apps ?? [];
-  const champions = boards.filter(b => b.leaders.length > 0);
+  const champions = boards.filter(b => (b.leaders?.length ?? 0) > 0);
 
   return (
     <div className="p-6 space-y-6">
@@ -323,7 +336,7 @@ export default function Leaderboard() {
         })}
       </div>
 
-      {error && (
+      {error && (selectedDept ? boards.length > 0 : departments.length > 0) && (
         <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
           <AlertCircle size={14} /> {error}
         </div>
@@ -335,10 +348,16 @@ export default function Leaderboard() {
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {[1, 2, 3].map(i => <div key={i} className="card h-40 animate-pulse bg-gray-100" />)}
           </div>
+        ) : error && departments.length === 0 ? (
+          <LoadError
+            title="Couldn't load the leaderboard"
+            message={error}
+            onRetry={() => { setDeptLoading(true); loadDepartments(period); }}
+          />
         ) : departments.length === 0 ? (
           <div className="text-center py-20 text-gray-400">
             <Trophy size={40} className="mx-auto mb-3 opacity-30" />
-            <p className="font-medium">No qualifying runs {period === 'all' ? 'yet' : `for ${deptData?.period_label.toLowerCase()}`}</p>
+            <p className="font-medium">No qualifying runs {period === 'all' ? 'yet' : `for ${deptData?.period_label?.toLowerCase() ?? 'this period'}`}</p>
             <p className="text-sm mt-1 max-w-md mx-auto">
               Leaderboards appear once a published app has completed runs with status "completed"
               and no open quality issues (NCRs).
@@ -380,6 +399,12 @@ export default function Leaderboard() {
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {[1, 2, 3].map(i => <div key={i} className="card h-56 animate-pulse bg-gray-100" />)}
             </div>
+          ) : error && boards.length === 0 ? (
+            <LoadError
+              title="Couldn't load operator rankings"
+              message={error}
+              onRetry={() => loadBoards(period, selectedDept.department_id, appId)}
+            />
           ) : boards.length === 0 ? (
             <div className="text-center py-20 text-gray-400">
               <Trophy size={40} className="mx-auto mb-3 opacity-30" />

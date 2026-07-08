@@ -6,6 +6,10 @@ import {
 } from 'recharts';
 import { Timer, TrendingUp, AlertTriangle, ChevronDown, RefreshCw, CheckCircle } from 'lucide-react';
 
+function Skeleton({ className }: { className?: string }) {
+  return <div className={`animate-pulse bg-gray-200 rounded ${className ?? ''}`} />;
+}
+
 interface StepStat {
   index: number;
   name: string;
@@ -141,7 +145,7 @@ function StepCard({ step, expanded, onToggle }: { step: StepStat; expanded: bool
           </div>
 
           {/* Trend chart */}
-          {step.trend.length > 1 && (
+          {(step.trend ?? []).length > 1 && (
             <div>
               <div className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Daily Average Trend</div>
               <ResponsiveContainer width="100%" height={150}>
@@ -190,16 +194,20 @@ function StepCard({ step, expanded, onToggle }: { step: StepStat; expanded: bool
 export function StepMetricsPanel({ appId, days }: { appId: string; days: number }) {
   const [data, setData] = useState<StepMetricsData | null>(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (!appId) { setData(null); return; }
     setLoading(true);
+    setError(null);
     setExpandedSteps(new Set());
     api.getStepMetrics(appId, days)
       .then(setData)
+      .catch((err: any) => setError(err.message || 'Failed to load step metrics'))
       .finally(() => setLoading(false));
-  }, [appId, days]);
+  }, [appId, days, reloadKey]);
 
   const toggleStep = (idx: number) => {
     setExpandedSteps(prev => {
@@ -222,6 +230,18 @@ export function StepMetricsPanel({ appId, days }: { appId: string; days: number 
     return (
       <div className="flex items-center justify-center h-64">
         <RefreshCw size={28} className="animate-spin text-blue-500" />
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <AlertTriangle size={32} className="text-red-400 mb-3" />
+        <p className="text-gray-500 font-medium">Couldn't load step metrics</p>
+        <p className="text-gray-400 text-sm mt-1">{error}</p>
+        <button onClick={() => setReloadKey(k => k + 1)} className="btn-secondary mt-4">
+          <RefreshCw size={14} /> Retry
+        </button>
       </div>
     );
   }
@@ -319,13 +339,23 @@ export default function StepMetrics() {
   const [apps, setApps] = useState<{ id: string; name: string }[]>([]);
   const [selectedAppId, setSelectedAppId] = useState('');
   const [days, setDays] = useState(30);
+  const [appsLoading, setAppsLoading] = useState(true);
+  const [appsError, setAppsError] = useState<string | null>(null);
 
-  useEffect(() => {
-    api.getApps().then((list: any[]) => {
-      setApps(list.filter(a => a.status === 'published'));
-      if (list.length > 0) setSelectedAppId(list[0].id);
-    });
-  }, []);
+  const loadApps = () => {
+    setAppsLoading(true);
+    setAppsError(null);
+    api.getApps()
+      .then((list: any[]) => {
+        const published = list.filter(a => a.status === 'published');
+        setApps(published);
+        if (published.length > 0) setSelectedAppId(published[0].id);
+      })
+      .catch((err: any) => setAppsError(err.message || 'Failed to load apps'))
+      .finally(() => setAppsLoading(false));
+  };
+
+  useEffect(() => { loadApps(); }, []);
 
   return (
     <div className="min-h-screen bg-[#f8fafc] p-6 space-y-6">
@@ -359,9 +389,33 @@ export default function StepMetrics() {
         </div>
       </div>
 
-      {selectedAppId
-        ? <StepMetricsPanel appId={selectedAppId} days={days} />
-        : <div className="text-center py-16 text-gray-400">Select an app to view step metrics</div>}
+      {appsLoading ? (
+        <div className="space-y-6">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {[0, 1, 2, 3].map(i => <Skeleton key={i} className="h-20" />)}
+          </div>
+          <Skeleton className="h-64" />
+        </div>
+      ) : appsError ? (
+        <div className="flex flex-col items-center justify-center py-16 text-center">
+          <AlertTriangle size={32} className="text-red-400 mb-3" />
+          <p className="text-gray-500 font-medium">Couldn't load apps</p>
+          <p className="text-gray-400 text-sm mt-1">{appsError}</p>
+          <button onClick={loadApps} className="btn-secondary mt-4">
+            <RefreshCw size={14} /> Retry
+          </button>
+        </div>
+      ) : apps.length === 0 ? (
+        <div className="text-center py-16">
+          <Timer size={32} className="mx-auto mb-3 text-gray-300" />
+          <p className="text-gray-500 font-medium">No published apps yet</p>
+          <p className="text-gray-400 text-sm mt-1">Publish an app and complete a few runs to see step metrics here</p>
+        </div>
+      ) : selectedAppId ? (
+        <StepMetricsPanel appId={selectedAppId} days={days} />
+      ) : (
+        <div className="text-center py-16 text-gray-400">Select an app to view step metrics</div>
+      )}
     </div>
   );
 }

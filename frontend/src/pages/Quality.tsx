@@ -219,6 +219,8 @@ function CommentThread({ ncrId, comments, onAdded }: {
       await api.addNCRComment(ncrId, { author: author.trim(), body: body.trim() });
       setBody('');
       onAdded();
+    } catch (err: any) {
+      alert(err.message || 'Failed to post comment');
     } finally {
       setSubmitting(false);
     }
@@ -284,21 +286,26 @@ function NCRDetail({ ncrId, onClose, onRefresh }: {
 }) {
   const [ncr, setNcr] = useState<NCR | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [rootCause, setRootCause] = useState('');
   const [correctiveAction, setCorrectiveAction] = useState('');
   const [savingField, setSavingField] = useState<string | null>(null);
   const [statusUpdating, setStatusUpdating] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const { canEdit } = useAuth();
   const navigate = useNavigate();
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const data = await api.getNCR(ncrId);
       setNcr(data);
       setRootCause(data.root_cause ?? '');
       setCorrectiveAction(data.corrective_action ?? '');
+    } catch (err: any) {
+      setLoadError(err.message || 'Failed to load NCR');
     } finally {
       setLoading(false);
     }
@@ -314,6 +321,8 @@ function NCRDetail({ ncrId, onClose, onRefresh }: {
     try {
       await api.updateNCR(ncrId, { [field]: value });
       await load();
+    } catch (err: any) {
+      alert(err.message || 'Failed to save changes');
     } finally {
       setSavingField(null);
     }
@@ -327,22 +336,47 @@ function NCRDetail({ ncrId, onClose, onRefresh }: {
       await api.updateNCR(ncrId, patch);
       await load();
       onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'Failed to update status');
     } finally {
       setStatusUpdating(false);
     }
   }
 
   async function handleSeverityChange(newSeverity: string) {
-    await api.updateNCR(ncrId, { severity: newSeverity });
-    await load();
-    onRefresh();
+    try {
+      await api.updateNCR(ncrId, { severity: newSeverity });
+      await load();
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'Failed to update severity');
+    }
   }
 
   async function handleDelete() {
-    await api.deleteNCR(ncrId);
-    onClose();
-    navigate('/quality');
-    onRefresh();
+    setDeleting(true);
+    try {
+      await api.deleteNCR(ncrId);
+      onClose();
+      navigate('/quality');
+      onRefresh();
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete NCR');
+      setDeleting(false);
+    }
+  }
+
+  if (loadError) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-3 p-6 text-center">
+        <AlertCircle size={32} className="text-red-400" />
+        <p className="text-sm text-gray-500">{loadError}</p>
+        <div className="flex items-center gap-2">
+          <button className="btn-secondary" onClick={load}>Retry</button>
+          <button className="btn-ghost" onClick={onClose}>Close</button>
+        </div>
+      </div>
+    );
   }
 
   if (loading || !ncr) {
@@ -561,8 +595,10 @@ function NCRDetail({ ncrId, onClose, onRefresh }: {
           ) : (
             <div className="flex items-center gap-2">
               <span className="text-sm text-gray-600">Are you sure?</span>
-              <button className="btn-danger" onClick={handleDelete}>Delete</button>
-              <button className="btn-ghost" onClick={() => setConfirmDelete(false)}>Cancel</button>
+              <button className="btn-danger" onClick={handleDelete} disabled={deleting}>
+                {deleting ? 'Deleting…' : 'Delete'}
+              </button>
+              <button className="btn-ghost" onClick={() => setConfirmDelete(false)} disabled={deleting}>Cancel</button>
             </div>
           )}
         </div>
@@ -623,6 +659,8 @@ function CreateNCRModal({ onClose, onCreated }: { onClose: () => void; onCreated
       };
       const created = await api.createNCR(payload);
       onCreated(created.id);
+    } catch (err: any) {
+      alert(err.message || 'Failed to create NCR');
     } finally {
       setSubmitting(false);
     }
@@ -834,6 +872,7 @@ export default function Quality() {
   const [ncrs, setNcrs] = useState<NCR[]>([]);
   const [summary, setSummary] = useState<QualitySummary | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [severityFilter, setSeverityFilter] = useState<string>('All');
@@ -855,13 +894,19 @@ export default function Quality() {
     if (sourceFilter !== 'All')   params.source   = sourceFilter;
     if (search.trim())            params.search   = search.trim();
 
-    const [list, sum] = await Promise.all([
-      api.getNCRs(params),
-      api.getQualitySummary(),
-    ]);
-    setNcrs(list);
-    setSummary(sum);
-    setLoading(false);
+    try {
+      const [list, sum] = await Promise.all([
+        api.getNCRs(params),
+        api.getQualitySummary(),
+      ]);
+      setNcrs(Array.isArray(list) ? list : []);
+      setSummary(sum);
+      setLoadError(null);
+    } catch (err: any) {
+      setLoadError(err.message || 'Failed to load NCRs');
+    } finally {
+      setLoading(false);
+    }
   }, [statusFilter, severityFilter, sourceFilter, search]);
 
   useEffect(() => {
@@ -903,7 +948,7 @@ export default function Quality() {
               <p className="text-sm text-gray-500 mt-0.5">Track and resolve non-conformance reports</p>
             </div>
             <div className="flex items-center gap-2 flex-wrap">
-              <button onClick={() => api.downloadExport('ncrs')} className="btn-secondary whitespace-nowrap">
+              <button onClick={() => api.downloadExport('ncrs').catch((err: any) => alert(err.message || 'Export failed'))} className="btn-secondary whitespace-nowrap">
                 <Download size={14} /> Export CSV
               </button>
               {canEdit && (
@@ -985,13 +1030,31 @@ export default function Quality() {
                 <div key={i} className="card h-24 animate-pulse bg-gray-100" />
               ))}
             </div>
+          ) : loadError ? (
+            <div className="flex flex-col items-center justify-center py-24 gap-4">
+              <AlertCircle size={48} className="text-red-300" />
+              <div className="text-center">
+                <p className="font-semibold text-gray-600">Couldn't load NCRs</p>
+                <p className="text-sm text-gray-400">{loadError}</p>
+              </div>
+              <button className="btn-secondary" onClick={() => { setLoading(true); loadNCRs(); }}>Retry</button>
+            </div>
           ) : ncrs.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-24 text-gray-400 gap-4">
               <ShieldCheck size={48} className="text-gray-200" />
               <div className="text-center">
                 <p className="font-semibold text-gray-500">No NCRs found</p>
-                <p className="text-sm">Try adjusting filters or create a new NCR</p>
+                <p className="text-sm">
+                  {statusFilter !== 'All' || severityFilter !== 'All' || sourceFilter !== 'All' || search.trim()
+                    ? 'Try adjusting your filters or search'
+                    : 'Log your first non-conformance report to start tracking quality'}
+                </p>
               </div>
+              {canEdit && (
+                <button className="btn-danger" onClick={() => setShowCreate(true)}>
+                  <Plus size={14} /> New NCR
+                </button>
+              )}
             </div>
           ) : (
             <div className="space-y-2">

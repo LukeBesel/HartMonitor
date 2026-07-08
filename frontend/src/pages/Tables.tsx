@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { MESTable, TableField, FieldType } from '../types';
-import { Plus, Trash2, Database, ChevronRight, X, Edit3 } from 'lucide-react';
+import { Plus, Trash2, Database, ChevronRight, X, AlertTriangle } from 'lucide-react';
 import { v4 as uuidv4 } from '../utils/uuid';
 import { useAuth } from '../context/AuthContext';
 
@@ -16,7 +16,10 @@ const FIELD_TYPES: { value: FieldType; label: string }[] = [
 
 export default function Tables() {
   const [tables, setTables] = useState<MESTable[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [newTable, setNewTable] = useState({ name: '', description: '' });
   const [newFields, setNewFields] = useState<TableField[]>([
     { id: uuidv4(), name: '', type: 'text' }
@@ -24,7 +27,10 @@ export default function Tables() {
   const navigate = useNavigate();
   const { canEdit } = useAuth();
 
-  const load = () => api.getTables().then(setTables);
+  const load = () => api.getTables()
+    .then(t => { setTables(t); setError(''); })
+    .catch((err: any) => setError(err?.message || 'Failed to load tables'))
+    .finally(() => setLoading(false));
   useEffect(() => { load(); }, []);
 
   const addField = () => setNewFields(f => [...f, { id: uuidv4(), name: '', type: 'text' }]);
@@ -34,26 +40,37 @@ export default function Tables() {
   };
 
   const handleCreate = async () => {
-    if (!newTable.name.trim()) return;
+    if (!newTable.name.trim() || creating) return;
     const validFields = newFields.filter(f => f.name.trim());
-    const t = await api.createTable({ ...newTable, fields: validFields });
-    setShowCreate(false);
-    setNewTable({ name: '', description: '' });
-    setNewFields([{ id: uuidv4(), name: '', type: 'text' }]);
-    navigate(`/tables/${t.id}`);
+    setCreating(true);
+    try {
+      const t = await api.createTable({ ...newTable, fields: validFields });
+      setShowCreate(false);
+      setNewTable({ name: '', description: '' });
+      setNewFields([{ id: uuidv4(), name: '', type: 'text' }]);
+      navigate(`/tables/${t.id}`);
+    } catch (err: any) {
+      alert(err.message || 'Failed to create table');
+    } finally {
+      setCreating(false);
+    }
   };
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
     if (!confirm('Delete this table and all its records?')) return;
-    await api.deleteTable(id);
-    load();
+    try {
+      await api.deleteTable(id);
+      load();
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete table');
+    }
   };
 
   return (
     <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Tables</h1>
           <p className="text-gray-500 text-sm mt-0.5 max-w-xl">
@@ -68,7 +85,20 @@ export default function Tables() {
         )}
       </div>
 
-      {tables.length === 0 ? (
+      {loading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1, 2, 3].map(i => <div key={i} className="card h-36 animate-pulse bg-gray-100" />)}
+        </div>
+      ) : error && tables.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 gap-3 text-center">
+          <AlertTriangle size={40} className="text-red-400" />
+          <div>
+            <p className="font-medium text-gray-500">Couldn't load tables</p>
+            <p className="text-sm text-gray-400 mt-1">{error}</p>
+          </div>
+          <button className="btn-secondary" onClick={() => { setLoading(true); load(); }}>Retry</button>
+        </div>
+      ) : tables.length === 0 ? (
         <div className="text-center py-16 text-gray-400">
           <Database size={40} className="mx-auto mb-3 opacity-30" />
           <p className="font-medium">No tables yet</p>
@@ -105,7 +135,7 @@ export default function Tables() {
               <h3 className="font-semibold text-gray-900">{table.name}</h3>
               {table.description && <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">{table.description}</p>}
               <div className="flex items-center justify-between mt-3 text-xs text-gray-400">
-                <span>{table.fields.length} fields · {table.record_count} records</span>
+                <span>{table.fields?.length ?? 0} fields · {table.record_count ?? 0} records</span>
                 <ChevronRight size={14} className="group-hover:translate-x-0.5 transition-transform" />
               </div>
             </Link>
@@ -163,7 +193,9 @@ export default function Tables() {
             </div>
             <div className="flex gap-2 p-5 border-t border-gray-200">
               <button onClick={() => setShowCreate(false)} className="btn-secondary flex-1">Cancel</button>
-              <button onClick={handleCreate} disabled={!newTable.name.trim()} className="btn-primary flex-1">Create Table</button>
+              <button onClick={handleCreate} disabled={!newTable.name.trim() || creating} className="btn-primary flex-1">
+                {creating ? 'Creating…' : 'Create Table'}
+              </button>
             </div>
           </div>
         </div>
