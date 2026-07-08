@@ -139,12 +139,6 @@ function handlePaymentFailed(invoice) {
   console.log(`[stripe] Payment failed for company ${companyId}, grace period until ${gracePeriodEnds}`);
 }
 
-function handleTrialWillEnd(subscription) {
-  const companyId = subscription.metadata?.company_id;
-  if (!companyId) return;
-  console.log(`[stripe] Trial ending soon for company ${companyId}`);
-}
-
 function handleSubscriptionDeleted(subscription) {
   const companyId = subscription.metadata?.company_id;
   if (!companyId) return;
@@ -185,9 +179,6 @@ function stripeWebhook(req, res) {
       case 'customer.subscription.deleted':
         handleSubscriptionChange(event.data.object);
         handleSubscriptionDeleted(event.data.object);
-        break;
-      case 'customer.subscription.trial_will_end':
-        handleTrialWillEnd(event.data.object);
         break;
       case 'customer.subscription.trial_will_end':
         handleTrialWillEnd(event.data.object);

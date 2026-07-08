@@ -149,6 +149,11 @@ app.use('/api/health', healthRouter);
 // registered before the JSON parser and outside requireAuth.
 app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), stripeWebhook);
 
+// File uploads arrive as base64 JSON (~37% overhead), so this route needs a much
+// larger body cap than the rest of the API: 200 MB video × 1.37 ≈ 275 MB. Scoped
+// to /api/upload only — once parsed here, the global parser below skips the body.
+app.use('/api/upload', express.json({ limit: '280mb' }));
+
 app.use(express.json({ limit: '10mb' }));
 
 // Throttle credential endpoints specifically, then everything under /api.

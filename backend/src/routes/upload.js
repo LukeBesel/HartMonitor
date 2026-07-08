@@ -11,7 +11,7 @@ fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const ALLOWED_MIME_TYPES = new Set([
   // Images
-  'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+  'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/avif',
   // 3D Models / CAD
   'model/gltf-binary', 'model/gltf+json', 'application/octet-stream',
   'model/obj', 'model/stl', 'model/x.stl-ascii', 'model/x.stl-binary',
@@ -27,13 +27,13 @@ const EXTENSION_OVERRIDES = {
 
 const MIME_TO_EXT = {
   'image/jpeg': 'jpg', 'image/png': 'png', 'image/gif': 'gif',
-  'image/webp': 'webp', 'image/svg+xml': 'svg',
+  'image/webp': 'webp', 'image/svg+xml': 'svg', 'image/avif': 'avif',
   'model/gltf-binary': 'glb', 'model/gltf+json': 'gltf',
   'video/mp4': 'mp4', 'video/webm': 'webm', 'video/quicktime': 'mov',
 };
 
 const MAX_BYTES = {
-  image: 5 * 1024 * 1024,   // 5 MB
+  image: 15 * 1024 * 1024,  // 15 MB — modern phone/DSLR photos run 4-12 MB
   model: 50 * 1024 * 1024,  // 50 MB for CAD files
   video: 200 * 1024 * 1024, // 200 MB for video
 };
@@ -60,9 +60,17 @@ router.post('/image', requireRole('operator'), (req, res) => {
   const isKnownModelExt = ['.glb', '.gltf', '.obj', '.stl', '.3mf'].includes(origExt);
   const isKnownVideoExt = ['.mp4', '.webm', '.mov', '.avi'].includes(origExt);
 
+  // HEIC/HEIF (iPhone photos) can't be displayed by web browsers — give a
+  // specific, actionable message instead of the generic "unsupported type".
+  if (/image\/hei[cf]/i.test(mimeType) || ['.heic', '.heif'].includes(origExt)) {
+    return res.status(400).json({
+      error: 'HEIC photos can\'t be shown in web browsers. Export the photo as JPG or PNG and upload that instead.',
+    });
+  }
+
   if (!ALLOWED_MIME_TYPES.has(mimeType) && !isKnownModelExt && !isKnownVideoExt) {
     return res.status(400).json({
-      error: 'Unsupported file type. Allowed: jpg, png, gif, webp, svg, glb, gltf, obj, stl, 3mf, mp4, webm, mov',
+      error: 'Unsupported file type. Allowed: jpg, png, gif, webp, avif, svg, glb, gltf, obj, stl, 3mf, mp4, webm, mov',
     });
   }
 

@@ -975,6 +975,59 @@ function WidgetProperties({ widget, isCanvas, onUpdate, onUpdateConfig, onUpdate
   const layout = widget.layout ?? defaultLayout(widget.type);
   const setLayout = (patch: Partial<WidgetLayout>) => onUpdateLayout?.({ ...layout, ...patch });
 
+  // Shared file-upload pipeline for image/video/model fields: pre-checks size
+  // and format, shows progress, and surfaces every failure instead of silently
+  // doing nothing (which read as "upload is broken").
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState('');
+  const UPLOAD_LIMITS_MB: Record<string, number> = { image: 15, video: 200, model: 50 };
+
+  const uploadFile = (file: File, kind: 'image' | 'video' | 'model', onDone: (url: string) => void) => {
+    setUploadError('');
+    const maxMB = UPLOAD_LIMITS_MB[kind];
+    if (file.size > maxMB * 1024 * 1024) {
+      setUploadError(`"${file.name}" is ${(file.size / 1024 / 1024).toFixed(1)} MB — the ${kind} limit is ${maxMB} MB.`);
+      return;
+    }
+    if (kind === 'image' && (/\.hei[cf]$/i.test(file.name) || /image\/hei[cf]/i.test(file.type))) {
+      setUploadError('HEIC photos can\'t be shown in web browsers. Export as JPG or PNG and upload that instead.');
+      return;
+    }
+    setUploading(true);
+    const reader = new FileReader();
+    reader.onerror = () => {
+      setUploading(false);
+      setUploadError('Could not read the file from your device — please try again.');
+    };
+    reader.onload = async (ev) => {
+      try {
+        const base64 = (ev.target?.result as string).split(',')[1];
+        const result = await api.uploadImage(base64, file.type || 'application/octet-stream', file.name);
+        onDone(result.url);
+      } catch (err: any) {
+        setUploadError(err?.message || 'Upload failed — check your connection and try again.');
+      } finally {
+        setUploading(false);
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const uploadStatus = (
+    <>
+      {uploading && (
+        <p className="flex items-center gap-1.5 text-[11px] text-blue-500 mt-1">
+          <Loader2 size={11} className="animate-spin" /> Uploading…
+        </p>
+      )}
+      {uploadError && (
+        <p className="flex items-start gap-1.5 text-[11px] text-red-500 mt-1">
+          <AlertTriangle size={11} className="mt-0.5 shrink-0" /> {uploadError}
+        </p>
+      )}
+    </>
+  );
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -1218,30 +1271,27 @@ function WidgetProperties({ widget, isCanvas, onUpdate, onUpdateConfig, onUpdate
             <input className="input-field text-xs" value={config.imageUrl || ''} onChange={e => onUpdateConfig({ imageUrl: e.target.value })} placeholder="https://example.com/image.png" />
           </Field>
           <Field label="Upload from Device">
-            <label className="flex items-center gap-2 cursor-pointer w-full px-3 py-2 rounded-lg border border-dashed border-gray-300 hover:border-blue-400 hover:bg-blue-50/30 text-xs text-gray-500 hover:text-blue-600 transition-colors">
-              <Image size={13} />
-              {config.imageUrl ? 'Replace image…' : 'Choose image file…'}
+            <label className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-dashed text-xs transition-colors ${
+              uploading
+                ? 'border-blue-300 bg-blue-50/30 text-blue-500 cursor-wait'
+                : 'cursor-pointer border-gray-300 hover:border-blue-400 hover:bg-blue-50/30 text-gray-500 hover:text-blue-600'
+            }`}>
+              {uploading ? <Loader2 size={13} className="animate-spin" /> : <Image size={13} />}
+              {uploading ? 'Uploading…' : config.imageUrl ? 'Replace image…' : 'Choose image file…'}
               <input
                 type="file"
-                accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml"
+                accept="image/jpeg,image/png,image/gif,image/webp,image/avif,image/svg+xml"
                 className="hidden"
-                onChange={async (e) => {
+                disabled={uploading}
+                onChange={(e) => {
                   const file = e.target.files?.[0];
+                  e.target.value = ''; // allow re-selecting the same file
                   if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = async (ev) => {
-                    try {
-                      const base64 = (ev.target?.result as string).split(',')[1];
-                      const result = await api.uploadImage(base64, file.type, file.name);
-                      onUpdateConfig({ imageUrl: result.url });
-                    } catch {
-                      // silently fail — user can paste URL manually
-                    }
-                  };
-                  reader.readAsDataURL(file);
+                  uploadFile(file, 'image', url => onUpdateConfig({ imageUrl: url }));
                 }}
               />
             </label>
+            {uploadStatus}
             {config.imageUrl && (
               <div className="mt-1.5">
                 <img src={config.imageUrl} alt="" className="max-h-16 rounded border border-gray-200 object-contain" />
@@ -1271,29 +1321,28 @@ function WidgetProperties({ widget, isCanvas, onUpdate, onUpdateConfig, onUpdate
           </Field>
           {config.videoType === 'upload' ? (
             <Field label="Upload Video">
-              <label className="flex items-center gap-2 cursor-pointer w-full px-3 py-2 rounded-lg border border-dashed border-gray-300 hover:border-blue-400 hover:bg-blue-50/30 text-xs text-gray-500 hover:text-blue-600 transition-colors">
-                <Video size={13} />
-                {config.videoUrl ? 'Replace video…' : 'Choose video file (.mp4, .webm, .mov)'}
+              <label className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-dashed text-xs transition-colors ${
+                uploading
+                  ? 'border-blue-300 bg-blue-50/30 text-blue-500 cursor-wait'
+                  : 'cursor-pointer border-gray-300 hover:border-blue-400 hover:bg-blue-50/30 text-gray-500 hover:text-blue-600'
+              }`}>
+                {uploading ? <Loader2 size={13} className="animate-spin" /> : <Video size={13} />}
+                {uploading ? 'Uploading…' : config.videoUrl ? 'Replace video…' : 'Choose video file (.mp4, .webm, .mov)'}
                 <input
                   type="file"
                   accept="video/mp4,video/webm,video/quicktime,.mov"
                   className="hidden"
-                  onChange={async (e) => {
+                  disabled={uploading}
+                  onChange={(e) => {
                     const file = e.target.files?.[0];
+                    e.target.value = '';
                     if (!file) return;
-                    const reader = new FileReader();
-                    reader.onload = async (ev) => {
-                      try {
-                        const base64 = (ev.target?.result as string).split(',')[1];
-                        const result = await api.uploadImage(base64, file.type, file.name);
-                        onUpdateConfig({ videoUrl: result.url, videoType: 'upload' });
-                      } catch { /* silently fail */ }
-                    };
-                    reader.readAsDataURL(file);
+                    uploadFile(file, 'video', url => onUpdateConfig({ videoUrl: url, videoType: 'upload' }));
                   }}
                 />
               </label>
-              {config.videoUrl && <p className="text-[11px] text-green-600 mt-1">✓ Video uploaded</p>}
+              {uploadStatus}
+              {config.videoUrl && !uploading && <p className="text-[11px] text-green-600 mt-1">✓ Video uploaded</p>}
             </Field>
           ) : (
             <Field label="YouTube URL or Video Link">
@@ -1323,29 +1372,28 @@ function WidgetProperties({ widget, isCanvas, onUpdate, onUpdateConfig, onUpdate
       {widget.type === 'model-viewer' && (
         <>
           <Field label="Upload 3D Model">
-            <label className="flex items-center gap-2 cursor-pointer w-full px-3 py-2 rounded-lg border border-dashed border-gray-300 hover:border-indigo-400 hover:bg-indigo-50/30 text-xs text-gray-500 hover:text-indigo-600 transition-colors">
-              <Box size={13} />
-              {config.modelUrl ? 'Replace model…' : 'Choose file (.glb, .gltf, .obj, .stl)'}
+            <label className={`flex items-center gap-2 w-full px-3 py-2 rounded-lg border border-dashed text-xs transition-colors ${
+              uploading
+                ? 'border-indigo-300 bg-indigo-50/30 text-indigo-500 cursor-wait'
+                : 'cursor-pointer border-gray-300 hover:border-indigo-400 hover:bg-indigo-50/30 text-gray-500 hover:text-indigo-600'
+            }`}>
+              {uploading ? <Loader2 size={13} className="animate-spin" /> : <Box size={13} />}
+              {uploading ? 'Uploading…' : config.modelUrl ? 'Replace model…' : 'Choose file (.glb, .gltf, .obj, .stl)'}
               <input
                 type="file"
                 accept=".glb,.gltf,.obj,.stl,.3mf"
                 className="hidden"
-                onChange={async (e) => {
+                disabled={uploading}
+                onChange={(e) => {
                   const file = e.target.files?.[0];
+                  e.target.value = '';
                   if (!file) return;
-                  const reader = new FileReader();
-                  reader.onload = async (ev) => {
-                    try {
-                      const base64 = (ev.target?.result as string).split(',')[1];
-                      const result = await api.uploadImage(base64, file.type || 'application/octet-stream', file.name);
-                      onUpdateConfig({ modelUrl: result.url });
-                    } catch { /* silently fail */ }
-                  };
-                  reader.readAsDataURL(file);
+                  uploadFile(file, 'model', url => onUpdateConfig({ modelUrl: url }));
                 }}
               />
             </label>
-            {config.modelUrl && (
+            {uploadStatus}
+            {config.modelUrl && !uploading && (
               <p className="text-[11px] text-green-600 mt-1">✓ Model uploaded: {config.modelUrl.split('/').pop()}</p>
             )}
           </Field>

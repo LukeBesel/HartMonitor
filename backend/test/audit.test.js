@@ -145,3 +145,23 @@ test('upload rejects SVG containing script (stored XSS guard)', async () => {
   });
   assert.equal(r.status, 400, 'malicious SVG rejected');
 });
+
+test('upload accepts a 9 MB photo (regression: JSON body limit + 15 MB image cap)', async () => {
+  // 9 MB file → ~12.3 MB of base64, which exceeded the old global 10mb JSON cap.
+  const photo = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.alloc(9 * 1024 * 1024)]).toString('base64');
+  const r = await api('POST', '/api/upload/image', {
+    token: tokenA,
+    body: { data: photo, mimeType: 'image/jpeg', filename: 'big-photo.jpg' },
+  });
+  assert.equal(r.status, 201, `large photo uploads (got ${r.status}: ${JSON.stringify(r.json)})`);
+  assert.ok(r.json.url.startsWith('/uploads/'), 'returns a served URL');
+});
+
+test('upload rejects HEIC with an actionable message', async () => {
+  const r = await api('POST', '/api/upload/image', {
+    token: tokenA,
+    body: { data: 'aGVsbG8=', mimeType: 'image/heic', filename: 'IMG_1234.heic' },
+  });
+  assert.equal(r.status, 400);
+  assert.match(r.json.error, /JPG or PNG/, 'tells the user what to do instead');
+});

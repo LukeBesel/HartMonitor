@@ -14,3 +14,4 @@ backend/mes.db
 # Commit these if you want CI to build them; exclude to keep the repo lean.
 frontend/ios/
 frontend/android/
+backend/uploads/
