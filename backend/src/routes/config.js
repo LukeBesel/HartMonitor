@@ -130,6 +130,9 @@ router.get('/plan', (req, res) => {
 // ─── PUT /plan — change tier (manager+) ───────────────────────────────────────
 
 router.put('/plan', requireRole('manager'), (req, res) => {
+  if (config.earlyAccess) {
+    return res.status(400).json({ error: 'early_access', message: 'Everything is free during early access — plan changes are disabled until billing launches.' });
+  }
   const { tier } = req.body;
   const validTiers = Object.keys(PRICING.tiers);
   if (!tier || !validTiers.includes(tier)) {
@@ -156,6 +159,9 @@ router.put('/plan', requireRole('manager'), (req, res) => {
 // Demo checkout: records the purchase and unlocks capacity instantly.
 
 router.post('/plan/purchase', requireRole('manager'), (req, res) => {
+  if (config.earlyAccess) {
+    return res.status(400).json({ error: 'early_access', message: 'Everything is free during early access — there is nothing to purchase yet.' });
+  }
   const { type, quantity = 1 } = req.body;
   const addon = PRICING.addons[type];
   if (!addon) return res.status(400).json({ error: `type must be one of: ${Object.keys(PRICING.addons).join(', ')}` });
@@ -245,6 +251,9 @@ router.get('/integrations', requireRole('manager'), (req, res) => {
 // Stripe Products manually or set STRIPE_PRICE_* env vars.
 
 router.post('/plan/checkout', requireRole('manager'), async (req, res) => {
+  if (config.earlyAccess) {
+    return res.status(400).json({ error: 'early_access', message: 'Everything is free during early access — there is nothing to purchase yet.' });
+  }
   const stripe = getStripe();
   if (!stripe) {
     return res.status(400).json({ error: 'not_configured', message: 'Live payments are not enabled on this deployment.' });

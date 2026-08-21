@@ -29,7 +29,6 @@ const Schedule         = lazy(() => import('./pages/Schedule'));
 const DepartmentView   = lazy(() => import('./pages/DepartmentView'));
 const DepartmentTV     = lazy(() => import('./pages/DepartmentTV'));
 const Departments      = lazy(() => import('./pages/Departments'));
-const SQDC             = lazy(() => import('./pages/SQDC'));
 const StationView      = lazy(() => import('./pages/StationView'));
 const ManagerView      = lazy(() => import('./pages/ManagerView'));
 const CompletionDetail = lazy(() => import('./pages/CompletionDetail'));
@@ -60,6 +59,8 @@ const Routings             = lazy(() => import('./pages/Routings'));
 const ReceivingPortal      = lazy(() => import('./pages/ReceivingPortal'));
 const ShipmentTracker      = lazy(() => import('./pages/ShipmentTracker'));
 const InventoryRequirements = lazy(() => import('./pages/InventoryRequirements'));
+const BOMs                 = lazy(() => import('./pages/BOMs'));
+const Kitting              = lazy(() => import('./pages/Kitting'));
 const Training             = lazy(() => import('./pages/Training'));
 const Andon                = lazy(() => import('./pages/Andon'));
 const CAPA                 = lazy(() => import('./pages/CAPA'));
@@ -152,7 +153,8 @@ export default function App() {
                 <Route path="/tables" element={<ModuleGate module="apps"><Tables /></ModuleGate>} />
                 <Route path="/tables/:id" element={<ModuleGate module="apps"><TableDetail /></ModuleGate>} />
                 <Route path="/analytics" element={<Analytics />} />
-                <Route path="/sqdc" element={<ModuleGate module="quality"><SQDC /></ModuleGate>} />
+                {/* SQDC is shelved for now — route redirects until it returns */}
+                <Route path="/sqdc" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/stations" element={<Stations />} />
                 <Route path="/stations/:id" element={<StationView />} />
                 <Route path="/schedule" element={<Schedule />} />
@@ -169,6 +171,9 @@ export default function App() {
                 <Route path="/dashboards/:id" element={<ModuleGate module="apps"><DashboardView /></ModuleGate>} />
                 <Route path="/dashboards/:id/:mode" element={<ModuleGate module="apps"><DashboardView /></ModuleGate>} />
                 <Route path="/inventory" element={<ModuleGate module="inventory"><Inventory /></ModuleGate>} />
+                <Route path="/inventory/boms" element={<ModuleGate module="inventory"><BOMs /></ModuleGate>} />
+                <Route path="/inventory/kitting" element={<ModuleGate module="inventory"><Kitting /></ModuleGate>} />
+                <Route path="/inventory/kitting/:kitId" element={<ModuleGate module="inventory"><Kitting /></ModuleGate>} />
                 <Route path="/inventory/:id" element={<ModuleGate module="inventory"><Inventory /></ModuleGate>} />
                 <Route path="/receiving" element={<ModuleGate module="inventory"><ReceivingPortal /></ModuleGate>} />
                 <Route path="/requirements" element={<ModuleGate module="inventory"><InventoryRequirements /></ModuleGate>} />

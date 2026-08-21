@@ -124,6 +124,20 @@ export default function Login() {
               </button>
             </div>
 
+            {/* Instant sandbox — no account needed */}
+            <button
+              type="button"
+              onClick={async () => {
+                try {
+                  await api.startDemo();
+                  window.location.href = '/dashboard';
+                } catch { /* rate-limited or offline — leave the form usable */ }
+              }}
+              className="w-full mb-2 text-center text-sm font-medium text-blue-600 hover:text-blue-700 hover:underline"
+            >
+              Just exploring? Try the live demo — no sign-up needed
+            </button>
+
             {mode === 'signin' ? (
               <form onSubmit={doLogin} className="space-y-4">
                 <div>

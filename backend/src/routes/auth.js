@@ -125,6 +125,27 @@ router.post('/signup', (req, res) => {
   });
 });
 
+// ─── POST /demo — instant no-sign-in sandbox workspace (public) ───────────────
+// Creates an isolated throwaway org with sample data and logs the visitor in.
+// Rate-limited at the mount (same limiter as login/signup). Sandboxes and all
+// their data are deleted automatically after 24 hours (see ../sandbox.js).
+
+router.post('/demo', (req, res) => {
+  const { createSandbox } = require('../sandbox');
+  const { rawToken, userId, email } = createSandbox(generateToken);
+  const user = db.prepare('SELECT id, email, display_name, role FROM users WHERE id = ?').get(userId);
+
+  res.cookie('hm_token', rawToken, {
+    httpOnly: true,
+    secure: config.isProd,
+    sameSite: 'lax',
+    maxAge: 24 * 60 * 60 * 1000, // sandbox lives 24h
+    path: '/',
+  });
+
+  res.status(201).json({ token: rawToken, user, sandbox: true, sandbox_email: email });
+});
+
 // ─── POST /logout ─────────────────────────────────────────────────────────────
 
 router.post('/logout', requireAuth, (req, res) => {
@@ -139,7 +160,10 @@ router.get('/me', requireAuth, (req, res) => {
   const user = db.prepare('SELECT id, email, display_name, role, company_id, last_login, created_at FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const company = db.prepare("SELECT value FROM org_settings WHERE company_id = ? AND key = 'company_name'").get(req.companyId);
-  res.json({ ...user, company_name: company?.value || 'HartMonitor' });
+  // Kiosk lock: when on, operator-role users are confined to the Operator
+  // Portal / App Player and never see the management dashboards.
+  const kiosk = db.prepare("SELECT value FROM org_settings WHERE company_id = ? AND key = 'operator_kiosk_lock'").get(req.companyId);
+  res.json({ ...user, company_name: company?.value || 'HartMonitor', kiosk_lock: kiosk?.value === 'true' });
 });
 
 // ─── PUT /change-password ─────────────────────────────────────────────────────

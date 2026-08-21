@@ -19,10 +19,35 @@ export default {
           2: 'var(--surface-2)',
         },
         'border-subtle': 'var(--border-subtle)',
+        // ── App-platform v2 token mapping (remodel spec §1.2) ──
+        page: 'var(--page)',
+        grid: 'var(--grid-line)',
+        baseline: 'var(--baseline)',
+        ink: { DEFAULT: 'var(--ink)', 2: 'var(--ink-2)' },
+        muted: 'var(--muted)',
+        accent: {
+          DEFAULT: 'rgb(var(--accent-rgb) / <alpha-value>)',
+          hover: 'var(--accent-hover)',
+          tint: 'var(--accent-tint)',
+        },
+        'on-accent': 'var(--on-accent)',
+        gold: { DEFAULT: 'var(--gold)', wash: 'var(--gold-wash)' },
+        good: 'var(--good)',
+        bad: 'var(--bad)',
+        warn: { DEFAULT: 'var(--warn)', ink: 'var(--warn-ink)' },
+        live: 'var(--live)',
+      },
+      borderRadius: {
+        card: 'var(--r-card)',
+        ctrl: 'var(--r-ctrl)',
       },
       boxShadow: {
         // Subtle elevation for popovers / dropdowns / menus.
         elevation: '0 4px 6px -2px rgb(0 0 0 / 0.05), 0 12px 28px -8px rgb(0 0 0 / 0.14)',
+        card: 'var(--shadow-card)',
+        pop: 'var(--shadow-pop)',
+        toast: 'var(--shadow-toast)',
+        ring: 'var(--focus-ring)',
       },
       keyframes: {
         fadeIn: {

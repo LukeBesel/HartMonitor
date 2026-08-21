@@ -14,6 +14,11 @@ interface RequirementItem {
   required_qty: number;
   on_hand_qty: number;
   shortage: number;
+  /** 'bom' = exact-keyed from the work order's active BOM (wins over string
+   *  matching); 'parts_list' = legacy per-step parts list string match. */
+  source?: 'bom' | 'parts_list';
+  unit?: string;
+  item_id?: string;
   work_orders: Array<{ wo_number: string; part_name: string; needed: number }>;
 }
 
@@ -32,13 +37,14 @@ interface RequirementsResult {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function exportCSV(items: RequirementItem[]) {
-  const header = ['Name', 'SKU', 'Required Qty', 'On Hand Qty', 'Shortage', 'Work Orders'];
+  const header = ['Name', 'SKU', 'Required Qty', 'On Hand Qty', 'Shortage', 'Source', 'Work Orders'];
   const rows = items.map(item => [
     `"${item.name.replace(/"/g, '""')}"`,
     item.sku ?? '',
     item.required_qty,
     item.on_hand_qty,
     item.shortage,
+    item.source === 'bom' ? 'BOM' : 'Parts list',
     `"${item.work_orders.map(wo => wo.wo_number).join('; ')}"`,
   ]);
   const csv = [header, ...rows].map(r => r.join(',')).join('\n');
@@ -122,6 +128,14 @@ function RequirementRow({ item }: { item: RequirementItem }) {
             {item.sku && (
               <span className="text-xs font-mono text-gray-400 bg-gray-50 border border-gray-100 px-1.5 py-0.5 rounded">
                 {item.sku}
+              </span>
+            )}
+            {item.source === 'bom' && (
+              <span
+                className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-indigo-50 text-indigo-600 border border-indigo-100 uppercase tracking-wide"
+                title="Exact requirement from the work order's active BOM (keyed by item)"
+              >
+                BOM
               </span>
             )}
             {isShort && (
@@ -254,7 +268,8 @@ export default function InventoryRequirements() {
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Materials Required</h1>
             <p className="text-gray-500 text-sm mt-0.5">
-              Inventory needed for planned work orders
+              Inventory needed for planned work orders — rows tagged <span className="font-semibold text-indigo-600">BOM</span> come
+              from each work order's active bill of material
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">

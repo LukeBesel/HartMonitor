@@ -20,28 +20,38 @@ const HANDLES = [
 
 type HandleId = typeof HANDLES[number]['id'];
 
-export default function CanvasEditor({ step, selectedId, onSelect, onChangeLayout }: {
+export default function CanvasEditor({ step, selectedId, onSelect, onChangeLayout, zoom }: {
   step: Step;
   selectedId: string | null;
   onSelect: (id: string | null) => void;
   onChangeLayout: (id: string, layout: WidgetLayout) => void;
+  /** Explicit zoom factor. Omit (or undefined) for the classic scale-to-fit. */
+  zoom?: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const scale = useCanvasScale(containerRef);
+  const fitScale = useCanvasScale(containerRef);
+  const scale = zoom ?? fitScale;
   const height = step.canvasHeight ?? 560;
   const ordered = [...step.widgets].sort((a, b) => (a.layout?.z ?? 0) - (b.layout?.z ?? 0));
 
   return (
-    <div ref={containerRef} className="w-full" style={{ maxWidth: CANVAS_W, margin: '0 auto' }}>
+    <div
+      ref={containerRef}
+      className="w-full"
+      style={zoom
+        ? { width: CANVAS_W * scale, margin: '0 auto' }
+        : { maxWidth: CANVAS_W, margin: '0 auto' }}
+    >
       <div style={{ height: height * scale }}>
         <div
-          className="relative rounded-xl shadow-lg overflow-hidden ring-1 ring-gray-200"
+          className="relative overflow-hidden rounded-card shadow-card"
           style={{
             width: CANVAS_W, height,
             background: step.canvasBackground || '#ffffff',
             transform: `scale(${scale})`, transformOrigin: 'top left',
-            backgroundImage: 'radial-gradient(#e5e7eb 1px, transparent 1px)',
+            backgroundImage: 'radial-gradient(var(--grid-line) 1px, transparent 1px)',
             backgroundSize: `${GRID * 2}px ${GRID * 2}px`,
+            boxShadow: 'var(--shadow-card), 0 0 0 1px var(--border-subtle)',
           }}
           onPointerDown={e => { if (e.target === e.currentTarget) onSelect(null); }}
         >
@@ -155,7 +165,7 @@ function EditableWidget({ widget, scale, canvasHeight, selected, onSelect, onCha
         zIndex: selected ? 1000 : (l.z ?? 1),
       }}
       onPointerDown={startMove}
-      className={`cursor-move select-none ${selected ? 'outline outline-2 outline-blue-500' : 'hover:outline hover:outline-1 hover:outline-blue-300'}`}
+      className={`cursor-move select-none ${selected ? 'outline outline-2 outline-accent' : 'hover:outline hover:outline-1 hover:outline-accent/40'}`}
     >
       {/* Inert visual — pointer events off so dragging/clicks hit the frame */}
       <div className="w-full h-full pointer-events-none">
@@ -168,12 +178,22 @@ function EditableWidget({ widget, scale, canvasHeight, selected, onSelect, onCha
           <div
             onPointerDown={startRotate}
             title="Rotate"
-            style={{ position: 'absolute', top: -28, left: '50%', transform: 'translateX(-50%)' }}
-            className="w-6 h-6 rounded-full bg-blue-500 text-white flex items-center justify-center cursor-grab active:cursor-grabbing shadow"
+            style={{ position: 'absolute', top: -28, left: '50%', transform: 'translateX(-50%)', background: 'rgb(var(--accent-rgb))', color: 'var(--on-accent)' }}
+            className="w-6 h-6 rounded-full flex items-center justify-center cursor-grab active:cursor-grabbing shadow"
           >
             <RotateCw size={12} />
           </div>
-          <div style={{ position: 'absolute', top: -16, left: '50%', width: 1, height: 16, background: '#3b82f6', transform: 'translateX(-50%)' }} />
+          <div style={{ position: 'absolute', top: -16, left: '50%', width: 1, height: 16, background: 'rgb(var(--accent-rgb))', transform: 'translateX(-50%)' }} />
+
+          {/* Trigger-count badge on the selection outline (spec §3.3) */}
+          {(widget.triggers?.filter(t => !t.id.startsWith('legacy_')).length ?? 0) > 0 && (
+            <span
+              className="trigger-pill"
+              style={{ position: 'absolute', top: -11, right: -8, background: '#fdf3dd', pointerEvents: 'none' }}
+            >
+              ⚡ {widget.triggers!.filter(t => !t.id.startsWith('legacy_')).length}
+            </span>
+          )}
 
           {/* Resize handles */}
           {HANDLES.map(h => (
@@ -185,8 +205,9 @@ function EditableWidget({ widget, scale, canvasHeight, selected, onSelect, onCha
                 left: `calc(${h.x * 100}% - 5px)`,
                 top: `calc(${h.y * 100}% - 5px)`,
                 cursor: h.cursor,
+                borderColor: 'rgb(var(--accent-rgb))',
               }}
-              className="w-2.5 h-2.5 rounded-sm bg-white border-2 border-blue-500"
+              className="w-2.5 h-2.5 rounded-sm bg-white border-2"
             />
           ))}
         </>

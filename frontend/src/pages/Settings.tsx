@@ -214,6 +214,56 @@ function Toast({ message, type = 'success', onDismiss }: {
 
 // ─── Tab 1: Company ───────────────────────────────────────────────────────────
 
+// ─── Kiosk lock — confine operator accounts to the shop-floor views ───────────
+// Saves immediately (own toggle, separate from the company form's save button).
+function KioskLockCard({ showToast }: { showToast: (m: string, t?: 'success' | 'error') => void }) {
+  const [locked, setLocked] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.getCompanySettings()
+      .then((data: Record<string, string>) => setLocked(data.operator_kiosk_lock === 'true'))
+      .catch(() => {});
+  }, []);
+
+  const toggle = async () => {
+    const next = !locked;
+    setLocked(next); setBusy(true);
+    try {
+      await api.updateCompanySettings({ operator_kiosk_lock: String(next) });
+      showToast(next
+        ? 'Kiosk lock ON — operators are now confined to the Operator Portal and App Player.'
+        : 'Kiosk lock OFF — operators can move between the shop floor and dashboards.');
+    } catch (err: any) {
+      setLocked(!next);
+      showToast(err?.message || 'Could not update the kiosk lock', 'error');
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="card p-5 border border-gray-200 rounded-xl">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold text-gray-900">Lock operators to the shop floor</p>
+          <p className="text-xs text-gray-500 mt-1 max-w-xl">
+            When on, operator-role accounts only see the Operator Portal and App Player — no dashboards,
+            analytics, or settings. Supervisors and above are never locked. Applies at next page load.
+          </p>
+        </div>
+        <button
+          onClick={toggle}
+          disabled={busy}
+          role="switch"
+          aria-checked={locked}
+          className={`relative shrink-0 w-11 h-6 rounded-full transition-colors ${locked ? 'bg-blue-600' : 'bg-gray-300'} ${busy ? 'opacity-60' : ''}`}
+        >
+          <span className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${locked ? 'translate-x-5' : ''}`} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function CompanyTab() {
   const [form, setForm] = useState<CompanyForm>(DEFAULT_FORM);
   const [saved, setSaved] = useState<CompanyForm>(DEFAULT_FORM);
@@ -507,6 +557,9 @@ function CompanyTab() {
         </div>
       </div>
 
+      {/* Shop-floor kiosk lock */}
+      <KioskLockCard showToast={showToast} />
+
       {/* Save */}
       <div className="flex items-center gap-3 pt-2">
         <button
@@ -797,6 +850,22 @@ function PlanTab() {
 
   if (loading || !plan) {
     return <div className="flex items-center justify-center py-20 text-gray-400 text-sm">Loading plan…</div>;
+  }
+
+  // Early access: billing is off — no upgrade CTAs, no checkout, nothing to buy.
+  if ((plan as any).early_access) {
+    return (
+      <div className="max-w-3xl">
+        <div className="card p-8 border border-blue-200 bg-blue-50/50 rounded-xl text-center">
+          <Zap size={28} className="mx-auto text-blue-600 mb-3" />
+          <h3 className="text-lg font-semibold text-gray-900">Everything is free during early access</h3>
+          <p className="text-sm text-gray-600 mt-2 max-w-lg mx-auto">
+            Every module, unlimited apps and dashboards, no card required. When paid plans launch,
+            you'll get advance notice and a founding discount — billing controls will appear here then.
+          </p>
+        </div>
+      </div>
+    );
   }
 
   const tiers = plan.pricing?.tiers;
