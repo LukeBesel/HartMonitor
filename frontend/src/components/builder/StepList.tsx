@@ -277,11 +277,15 @@ export default function StepList({ app, activeStepIdx, onSelectStep, onChangeApp
       </div>
 
       {canEdit && (
-        <div className="flex items-center gap-1.5 px-2.5 py-2.5 border-t border-grid flex-shrink-0">
-          <button onClick={addStep} className="wb-btn flex-1 justify-center !min-h-[34px] !text-[12.5px]">
-            <Plus size={13} /> Step
+        <div className="px-2.5 py-2.5 border-t border-grid flex-shrink-0 space-y-1.5">
+          {/* Prominent, always-visible add — the main way to grow the app. */}
+          <button
+            onClick={addStep}
+            className="wb-btn-primary w-full justify-center !min-h-[38px] !text-[13px]"
+          >
+            <Plus size={14} /> New step
           </button>
-          <button onClick={addGroup} className="wb-btn flex-1 justify-center !min-h-[34px] !text-[12.5px]">
+          <button onClick={addGroup} className="wb-btn w-full justify-center !min-h-[30px] !text-[12px]">
             <FolderPlus size={13} /> Group
           </button>
         </div>

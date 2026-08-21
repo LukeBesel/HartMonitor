@@ -1,7 +1,10 @@
-// ─── Widget palette — horizontal grouped toolbar above the canvas (spec §4.1) ──
+// ─── Widget palette — ribbon-style tabbed toolbar above the canvas (spec §4.1) ─
+// Excel-ribbon category tabs (Display / Inputs / Actions / Production) across
+// the top; the row below shows only the active category's widget buttons.
 // Also the shared registry of widget metadata (icon/label/group) and the
 // defaultWidget() factory, imported by AppBuilder / StepList / ContextPanel.
 
+import { useRef, useState } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import {
   Type, AlignLeft, Image, Video, Box, Minus, Variable, Shapes,
@@ -81,43 +84,92 @@ export function defaultWidget(type: WidgetType): Widget {
   }
 }
 
-// ─── The toolbar ──────────────────────────────────────────────────────────────
+// ─── The ribbon toolbar ───────────────────────────────────────────────────────
+
+export type PaletteGroup = (typeof PALETTE_GROUPS)[number];
+
+/** localStorage key for the active ribbon tab (persists per browser session). */
+export const PALETTE_TAB_STORAGE_KEY = 'hm.builder.paletteTab';
+
+function loadPaletteTab(): PaletteGroup {
+  try {
+    const v = localStorage.getItem(PALETTE_TAB_STORAGE_KEY);
+    if (v && (PALETTE_GROUPS as readonly string[]).includes(v)) return v as PaletteGroup;
+  } catch { /* storage unavailable (private mode, SSR) — fall through */ }
+  return PALETTE_GROUPS[0];
+}
 
 export default function WidgetPalette({ onAdd, disabled }: {
   onAdd: (type: WidgetType) => void;
   disabled?: boolean;
 }) {
+  const [tab, setTab] = useState<PaletteGroup>(loadPaletteTab);
+  const tabRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  const selectTab = (g: PaletteGroup) => {
+    setTab(g);
+    try { localStorage.setItem(PALETTE_TAB_STORAGE_KEY, g); } catch { /* noop */ }
+  };
+
+  // Roving-tabindex arrow-key navigation between category tabs.
+  const handleTabKeyDown = (e: React.KeyboardEvent, idx: number) => {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    e.preventDefault();
+    const dir = e.key === 'ArrowRight' ? 1 : -1;
+    const next = (idx + dir + PALETTE_GROUPS.length) % PALETTE_GROUPS.length;
+    selectTab(PALETTE_GROUPS[next]);
+    tabRefs.current[next]?.focus();
+  };
+
+  const types = (Object.keys(WIDGET_META) as WidgetType[]).filter(t => WIDGET_META[t].group === tab);
+
   return (
-    <div
-      className="flex items-stretch gap-0 overflow-x-auto flex-shrink-0 bg-surface-1 border-b border-border-subtle"
-      style={{ scrollbarWidth: 'thin' }}
-    >
-      {PALETTE_GROUPS.map((group, gi) => {
-        const types = (Object.keys(WIDGET_META) as WidgetType[]).filter(t => WIDGET_META[t].group === group);
-        return (
-          <div
-            key={group}
-            className={`flex items-center gap-0.5 px-2.5 py-1.5 ${gi > 0 ? 'border-l border-grid' : ''}`}
+    <div className="flex-shrink-0 bg-surface-1 border-b border-border-subtle">
+      {/* Category tabs */}
+      <div role="tablist" aria-label="Widget categories" className="flex items-end gap-0.5 px-2 border-b border-grid">
+        {PALETTE_GROUPS.map((g, i) => (
+          <button
+            key={g}
+            ref={el => { tabRefs.current[i] = el; }}
+            role="tab"
+            id={`palette-tab-${g}`}
+            aria-selected={tab === g}
+            aria-controls="palette-tabpanel"
+            tabIndex={tab === g ? 0 : -1}
+            onClick={() => selectTab(g)}
+            onKeyDown={e => handleTabKeyDown(e, i)}
+            className={`gold-tab px-3 py-1.5 ${tab === g ? 'is-active' : ''}`}
+            style={{ fontSize: 12 }}
           >
-            <span className="wb-label mr-1.5 select-none" style={{ fontSize: 10 }}>{group}</span>
-            {types.map(t => {
-              const { icon: Icon, label } = WIDGET_META[t];
-              return (
-                <button
-                  key={t}
-                  onClick={() => onAdd(t)}
-                  disabled={disabled}
-                  title={`Add ${label}`}
-                  className="flex flex-col items-center justify-center gap-0.5 rounded-ctrl px-2 py-1 min-w-[52px] text-muted hover:text-accent hover:bg-accent-tint transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <Icon size={15} />
-                  <span className="whitespace-nowrap" style={{ fontSize: 10, fontWeight: 550 }}>{label}</span>
-                </button>
-              );
-            })}
-          </div>
-        );
-      })}
+            {g}
+          </button>
+        ))}
+      </div>
+
+      {/* Active category's widget buttons */}
+      <div
+        id="palette-tabpanel"
+        role="tabpanel"
+        aria-labelledby={`palette-tab-${tab}`}
+        className="flex items-center gap-0.5 px-2.5 py-1.5 overflow-x-auto"
+        style={{ scrollbarWidth: 'thin' }}
+      >
+        {types.map(t => {
+          const { icon: Icon, label } = WIDGET_META[t];
+          return (
+            <button
+              key={t}
+              onClick={() => onAdd(t)}
+              disabled={disabled}
+              title={`Add ${label}`}
+              className="flex flex-col items-center justify-center gap-0.5 rounded-ctrl px-2 py-1 min-w-[52px] text-muted hover:text-accent hover:bg-accent-tint transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Icon size={15} />
+              <span className="whitespace-nowrap" style={{ fontSize: 10, fontWeight: 550 }}>{label}</span>
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
