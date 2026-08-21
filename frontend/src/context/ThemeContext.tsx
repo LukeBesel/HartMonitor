@@ -112,7 +112,10 @@ function loadDarkMode(): boolean {
   } catch {
     // ignore
   }
-  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false;
+  // Default is LIGHT everywhere (the operator player manages its own dark
+  // surface). Following the OS preference here made some tabs open dark and
+  // others light; the Settings appearance toggle is the one source of truth.
+  return false;
 }
 
 function applyDarkMode(dark: boolean) {

@@ -67,9 +67,10 @@ function seedSandboxData(orgId, tag, siteId) {
   db.prepare(`INSERT INTO departments (id, name, description, color, company_id) VALUES (?, 'Assembly', 'Main assembly line', '#3b82f6', ?)`).run(deptA, orgId);
   db.prepare(`INSERT INTO departments (id, name, description, color, company_id) VALUES (?, 'Packaging', 'Pack-out and shipping prep', '#8b5cf6', ?)`).run(deptB, orgId);
 
-  const st1 = uuidv4();
-  db.prepare(`INSERT INTO stations (id, name, description, location, status, current_app_id, company_id, department_id) VALUES (?, 'Station 1', 'Bracket assembly bench', 'Line A', 'active', ?, ?, ?)`).run(st1, appId, orgId, deptA);
-  db.prepare(`INSERT INTO stations (id, name, description, location, status, company_id, department_id) VALUES (?, 'Station 2', 'Pack-out bench', 'Line A', 'active', ?, ?)`).run(uuidv4(), orgId, deptB);
+  const st1 = uuidv4(), st2 = uuidv4();
+  db.prepare(`INSERT INTO stations (id, name, description, location, status, current_app_id, company_id, department_id, current_status) VALUES (?, 'Station 1', 'Bracket assembly bench', 'Line A', 'active', ?, ?, ?, 'running')`).run(st1, appId, orgId, deptA);
+  // Station 2 is down — gives the Command Center a live "machine down" attention item.
+  db.prepare(`INSERT INTO stations (id, name, description, location, status, company_id, department_id, current_status, current_status_since) VALUES (?, 'Station 2', 'Pack-out bench', 'Line A', 'active', ?, ?, 'down', datetime('now', '-47 minutes'))`).run(st2, orgId, deptB);
 
   const ptStd = uuidv4();
   db.prepare(`INSERT INTO product_types (id, app_id, name, description, company_id) VALUES (?, ?, 'BRKT-100 Standard', 'Standard bracket', ?)`).run(ptStd, appId, orgId);
@@ -82,15 +83,58 @@ function seedSandboxData(orgId, tag, siteId) {
     ['Wire Harness',   '12-pin harness',            'Electronics', 6.4, 15],
     ['Foam Packaging', 'Molded foam insert',        'Packaging',   1.1, 40],
   ];
+  const itemIds = {};
   for (const [name, description, category, cost, reorder] of items) {
+    const iid = uuidv4();
+    itemIds[name] = iid;
     db.prepare(`INSERT INTO items (id, sku, name, description, category, unit_of_measure, unit_cost, reorder_point, company_id) VALUES (?, ?, ?, ?, ?, 'ea', ?, ?, ?)`)
-      .run(uuidv4(), `${tag}-${name.replace(/[^A-Za-z0-9]+/g, '').slice(0, 10).toUpperCase()}`, name, description, category, cost, reorder, orgId);
+      .run(iid, `${tag}-${name.replace(/[^A-Za-z0-9]+/g, '').slice(0, 10).toUpperCase()}`, name, description, category, cost, reorder, orgId);
   }
 
-  db.prepare(`INSERT INTO work_orders (id, work_order_number, part_number, part_name, quantity, quantity_completed, app_id, department_id, status, priority, company_id, site_id) VALUES (?, ?, 'BRKT-100', 'Standard Bracket', 25, 8, ?, ?, 'in_progress', 'high', ?, ?)`)
-    .run(uuidv4(), `${tag}-WO-1001`, appId, deptA, orgId, siteId);
-  db.prepare(`INSERT INTO work_orders (id, work_order_number, part_number, part_name, quantity, quantity_completed, app_id, department_id, status, priority, company_id, site_id) VALUES (?, ?, 'BRKT-200', 'Heavy Duty Bracket', 10, 0, ?, ?, 'pending', 'medium', ?, ?)`)
+  // Stock on hand — the M6 Bolt Kit sits below its reorder point, so the
+  // dashboard's attention feed gets a genuine "low stock" row.
+  const locId = uuidv4();
+  db.prepare(`INSERT INTO locations (id, name, code, type, company_id) VALUES (?, 'Main Warehouse', ?, 'warehouse', ?)`).run(locId, `${tag}-MAIN`, orgId);
+  const stockPlan = [['Base Bracket', 180], ['M6 Bolt Kit', 42], ['Control Board', 35], ['Wire Harness', 60], ['Foam Packaging', 220]];
+  for (const [name, qty] of stockPlan) {
+    db.prepare(`INSERT INTO stock_levels (id, item_id, location_id, quantity) VALUES (?, ?, ?, ?)`)
+      .run(uuidv4(), itemIds[name], locId, qty);
+  }
+
+  // Work orders due soon but ON TRACK — the demo should feel healthy, with the
+  // drama coming from the down station and low stock, not overdue paperwork.
+  const wo1 = uuidv4();
+  db.prepare(`INSERT INTO work_orders (id, work_order_number, part_number, part_name, quantity, quantity_completed, app_id, department_id, status, priority, company_id, site_id, takt_time_minutes, scheduled_start, scheduled_end) VALUES (?, ?, 'BRKT-100', 'Standard Bracket', 25, 18, ?, ?, 'in_progress', 'high', ?, ?, 12, datetime('now', '-2 days'), datetime('now', '+1 day'))`)
+    .run(wo1, `${tag}-WO-1001`, appId, deptA, orgId, siteId);
+  db.prepare(`INSERT INTO work_orders (id, work_order_number, part_number, part_name, quantity, quantity_completed, app_id, department_id, status, priority, company_id, site_id, takt_time_minutes, scheduled_start, scheduled_end) VALUES (?, ?, 'BRKT-200', 'Heavy Duty Bracket', 10, 0, ?, ?, 'pending', 'medium', ?, ?, 15, datetime('now', '+1 day'), datetime('now', '+4 days'))`)
     .run(uuidv4(), `${tag}-WO-1002`, appId, deptA, orgId, siteId);
+
+  // A week of realistic completions so KPIs, the output chart, pass rate, and
+  // recent activity are all populated the moment the demo opens.
+  const operators = ['Maria Santos', 'Bob Chen', 'Devon Wright'];
+  const insCompletion = db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, started_at, completed_at, status, data, step_times, work_order_id, company_id) VALUES (?, ?, 'Bracket Assembly', ?, ?, datetime('now', ?), datetime('now', ?), 'completed', ?, ?, ?, ?)`);
+  let seq = 0;
+  for (let day = 6; day >= 0; day--) {
+    const perDay = day === 0 ? 4 : 3 + ((day * 7) % 3); // 3-5 per day, 4 today
+    for (let k = 0; k < perDay; k++) {
+      seq++;
+      const durMin = 9 + ((seq * 13) % 8);              // 9-16 minutes
+      const hour = 8 + ((seq * 5) % 8);                 // spread across the shift
+      const failed = seq % 11 === 0;                    // ~91% first-pass yield
+      // SQLite accepts ONE modifier string — express everything in minutes.
+      // "Hour of day" is approximated as an offset back from now.
+      const endMins = day * 24 * 60 + Math.max(0, (18 - hour)) * 60;
+      const endOff = `-${endMins} minutes`;
+      const startOff = `-${endMins + durMin} minutes`;
+      insCompletion.run(
+        uuidv4(), appId, st1, operators[seq % operators.length],
+        startOff, endOff,
+        JSON.stringify({ ppe_worn: true, area_clear: true, torque_value: 15, serial_number: `SN-${1000 + seq}`, visual_ok: failed ? 'Fail' : 'Pass', function_ok: 'Pass' }),
+        JSON.stringify({ 0: 55 + (seq % 20), 1: (durMin - 4) * 60, 2: 110 + (seq % 40) }),
+        day <= 2 ? wo1 : null, orgId
+      );
+    }
+  }
 
   db.prepare(`INSERT INTO kaizen_ideas (id, company_id, number, title, description, category, status, submitted_by) VALUES (?, ?, ?, 'Pre-kit bolts at receiving', 'Bag bolts into per-unit kits when they arrive so assemblers stop counting at the bench.', 'delivery', 'under_review', 'Bob Operator')`)
     .run(uuidv4(), orgId, `${tag}-KZ-1`);
