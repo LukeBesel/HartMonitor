@@ -5,6 +5,7 @@ const { requireRole, requireAuth } = require('../middleware/auth');
 const { getStripe, isConfigured, billingMode, currency } = require('../stripe');
 const { PRICING } = require('../pricing');
 const { logActivity } = require('../activity');
+const { config } = require('../config');
 
 const router = express.Router();
 
@@ -79,6 +80,8 @@ function planResponse(companyId) {
     features: (PRICING.tiers[plan.tier] || PRICING.tiers.free).features,
     pricing: PRICING,
     billing_history: billing,
+    // While true, the frontend treats every account as fully unlocked.
+    early_access: config.earlyAccess,
   };
 }
 

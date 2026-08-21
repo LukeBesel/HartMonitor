@@ -358,14 +358,14 @@ export default function Landing() {
                 className="group inline-flex items-center gap-2 px-7 py-3.5 rounded-full text-white font-semibold text-base transition-all hover:scale-[1.03] shadow-lg shadow-pink-500/30"
                 style={{ background: GRADIENT }}
               >
-                Start 14-day free trial
+                Start free — early access
                 <ArrowRight size={17} className="group-hover:translate-x-0.5 transition-transform" />
               </Link>
               <Link to="/pricing" className="inline-flex items-center gap-2 px-7 py-3.5 rounded-full text-gray-200 font-semibold text-base border border-white/15 hover:bg-white/5 transition-all">
                 View pricing
               </Link>
             </div>
-            <p className="mt-5 text-sm text-gray-500">14-day free trial · No credit card required · Cancel anytime</p>
+            <p className="mt-5 text-sm text-gray-500">Free during early access · Every module included · No credit card, no limits</p>
           </Reveal>
         </div>
 
@@ -479,7 +479,7 @@ export default function Landing() {
         <Reveal className="text-center max-w-2xl mx-auto">
           <p className="text-sm font-semibold uppercase tracking-widest mb-4 bg-gradient-to-r from-indigo-400 to-pink-400 bg-clip-text text-transparent">Pricing</p>
           <h2 className="text-4xl md:text-5xl font-semibold tracking-tight">Simple, honest pricing.</h2>
-          <p className="mt-5 text-lg text-gray-400">14-day free trial on every plan. Upgrade when you're ready to scale across the plant.</p>
+          <p className="mt-5 text-lg text-gray-400">Everything is free while we are in early access — every module, unlimited apps, no card required. Paid plans arrive later; early users get notice first and a founding discount.</p>
         </Reveal>
 
         <div className="mt-16 grid md:grid-cols-3 gap-6">
@@ -523,7 +523,7 @@ export default function Landing() {
             See full pricing <ArrowRight size={15} />
           </Link>
           <Link to="/login?mode=signup" className="inline-flex items-center gap-2 text-gray-400 hover:text-white font-medium text-sm transition-colors">
-            Or start your free trial — no credit card required
+            Everything is free during early access — no credit card required
           </Link>
         </Reveal>
       </section>
@@ -534,13 +534,13 @@ export default function Landing() {
           <div className="relative max-w-5xl mx-auto rounded-3xl overflow-hidden border border-white/10 px-8 py-16 md:py-24 text-center">
             <div className="absolute inset-0 opacity-25 blur-2xl" style={{ background: GRADIENT }} />
             <div className="relative">
-              <h2 className="text-4xl md:text-5xl font-semibold tracking-tight">Start your free 14-day trial.</h2>
+              <h2 className="text-4xl md:text-5xl font-semibold tracking-tight">Try the whole platform free.</h2>
               <p className="mt-5 text-lg text-gray-300 max-w-xl mx-auto">Set up your workspace in minutes. No credit card required — just open the app and go.</p>
               <Link
                 to="/login?mode=signup"
                 className="mt-9 inline-flex items-center gap-2 px-8 py-4 rounded-full bg-white text-gray-900 font-semibold text-base transition-all hover:scale-[1.03] shadow-xl"
               >
-                Start free 14-day trial <ArrowRight size={18} />
+                Create your free workspace <ArrowRight size={18} />
               </Link>
               <p className="mt-4 text-sm text-gray-500">No credit card required · Cancel anytime</p>
             </div>

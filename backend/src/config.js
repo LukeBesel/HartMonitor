@@ -39,6 +39,11 @@ const config = {
 
   seedDemoData: SEED_DEMO_DATA,
 
+  // Early-access mode: while true (the default for launch), every plan gate is
+  // open — all modules, no app/dashboard limits, no billing prompts. Flip off
+  // later with EARLY_ACCESS=false to enforce paid tiers.
+  earlyAccess: process.env.EARLY_ACCESS !== 'false',
+
   // Integration credentials — presence of these flips a feature from demo mode
   // (logs/simulates) to live.
   stripe:  { configured: !!(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET) },
@@ -56,14 +61,33 @@ function validate() {
   const errors = [];
 
   if (IS_PROD) {
-    // Hard stop: these secrets must be explicitly set in production. Running
-    // with the default or an empty value would be a critical security hole.
+    // Session/JWT secrets: prefer explicit env vars. When missing, generate
+    // once and persist next to the database (the volume) so the app always
+    // boots and the values survive redeploys — a solo founder should never be
+    // locked out of their own deploy over a missing env var. Explicit env vars
+    // still win when present.
     const REQUIRED_SECRETS = ['JWT_SECRET', 'SESSION_SECRET'];
     const missing = REQUIRED_SECRETS.filter(k => !process.env[k] || process.env[k].includes('change-this'));
     if (missing.length) {
-      console.error(`FATAL: Missing required env vars: ${missing.join(', ')}`);
-      console.error('Generate values with: node -e "console.log(require(\'crypto\').randomBytes(64).toString(\'hex\'))"');
-      process.exit(1);
+      const fs = require('fs');
+      const crypto = require('crypto');
+      const secretsPath = path.join(path.dirname(config.databasePath), '.hm-secrets.json');
+      let stored = {};
+      try { stored = JSON.parse(fs.readFileSync(secretsPath, 'utf8')); } catch { /* first boot */ }
+      let dirty = false;
+      for (const key of missing) {
+        if (!stored[key]) { stored[key] = crypto.randomBytes(64).toString('hex'); dirty = true; }
+        process.env[key] = stored[key];
+      }
+      if (dirty) {
+        try {
+          fs.mkdirSync(path.dirname(secretsPath), { recursive: true });
+          fs.writeFileSync(secretsPath, JSON.stringify(stored), { mode: 0o600 });
+          warnings.push(`${missing.join(' + ')} not set — generated and saved to ${secretsPath}. Set them as env vars to manage them explicitly.`);
+        } catch (err) {
+          warnings.push(`${missing.join(' + ')} not set and could not persist generated values (${err.message}) — using in-memory secrets; sessions will reset on redeploy.`);
+        }
+      }
     }
 
     if (SEED_DEMO_DATA) {
