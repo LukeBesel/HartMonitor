@@ -98,7 +98,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     const err = await res.json().catch(() => ({ code: 'INVALID_TOKEN' }));
     if (err.code === 'INVALID_TOKEN' || err.code === 'NO_TOKEN') {
       localStorage.removeItem('hm_user');
-      if (!window.location.pathname.startsWith('/login')) {
+      // Only force the login screen from inside the app. On public pages
+      // (landing, pricing, legal, auth flows) an expired session must never
+      // hijack the visit — that bounced every returning visitor to /login.
+      const p = window.location.pathname;
+      const isPublic = p === '/' || p.startsWith('/pricing') || p.startsWith('/terms')
+        || p.startsWith('/privacy') || p.startsWith('/login') || p.startsWith('/forgot-password')
+        || p.startsWith('/reset-password') || p.startsWith('/sso/');
+      if (!isPublic) {
         window.location.href = '/login';
       }
     }
