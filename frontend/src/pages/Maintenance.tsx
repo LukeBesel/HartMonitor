@@ -83,32 +83,32 @@ function isOverdue(dateStr?: string): boolean {
 
 function priorityColor(p: string): string {
   switch (p) {
-    case 'critical': return 'bg-red-500/20 text-red-400 border border-red-500/30';
-    case 'high':     return 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
-    case 'normal':   return 'bg-blue-500/20 text-blue-400 border border-blue-500/30';
-    case 'low':      return 'bg-gray-700 text-gray-400 border border-gray-600';
-    default:         return 'bg-gray-700 text-gray-400 border border-gray-600';
+    case 'critical': return 'bg-red-50 text-red-700 border border-red-200';
+    case 'high':     return 'bg-amber-50 text-amber-700 border border-amber-200';
+    case 'normal':   return 'bg-blue-50 text-blue-700 border border-blue-200';
+    case 'low':      return 'bg-gray-100 text-gray-500 border border-gray-300';
+    default:         return 'bg-gray-100 text-gray-500 border border-gray-300';
   }
 }
 
 function statusColor(s: string): string {
   switch (s) {
-    case 'open':        return 'bg-blue-500/20 text-blue-400 border border-blue-500/30';
-    case 'in_progress': return 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
-    case 'on_hold':     return 'bg-gray-700 text-gray-400 border border-gray-600';
-    case 'complete':    return 'bg-green-500/20 text-green-400 border border-green-500/30';
-    case 'cancelled':   return 'bg-red-500/20 text-red-400 border border-red-500/30';
-    default:            return 'bg-gray-700 text-gray-400 border border-gray-600';
+    case 'open':        return 'bg-blue-50 text-blue-700 border border-blue-200';
+    case 'in_progress': return 'bg-amber-50 text-amber-700 border border-amber-200';
+    case 'on_hold':     return 'bg-gray-100 text-gray-500 border border-gray-300';
+    case 'complete':    return 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+    case 'cancelled':   return 'bg-red-50 text-red-700 border border-red-200';
+    default:            return 'bg-gray-100 text-gray-500 border border-gray-300';
   }
 }
 
 function assetStatusColor(s: string): string {
   switch (s) {
-    case 'active':            return 'bg-green-500/20 text-green-400 border border-green-500/30';
-    case 'inactive':          return 'bg-gray-700 text-gray-400 border border-gray-600';
-    case 'under_maintenance': return 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
-    case 'retired':           return 'bg-gray-700 text-gray-300 border border-gray-600';
-    default:                  return 'bg-gray-700 text-gray-400 border border-gray-600';
+    case 'active':            return 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+    case 'inactive':          return 'bg-gray-100 text-gray-500 border border-gray-300';
+    case 'under_maintenance': return 'bg-amber-50 text-amber-700 border border-amber-200';
+    case 'retired':           return 'bg-gray-100 text-gray-700 border border-gray-300';
+    default:                  return 'bg-gray-100 text-gray-500 border border-gray-300';
   }
 }
 
@@ -124,11 +124,11 @@ function woTypeLabel(t: string): string {
 
 function woTypeColor(t: string): string {
   switch (t) {
-    case 'pm':          return 'bg-blue-500/20 text-blue-300 border border-blue-500/30';
-    case 'corrective':  return 'bg-amber-500/20 text-amber-300 border border-amber-500/30';
-    case 'emergency':   return 'bg-red-500/20 text-red-300 border border-red-500/30';
-    case 'inspection':  return 'bg-purple-500/20 text-purple-300 border border-purple-500/30';
-    default:            return 'bg-gray-700 text-gray-400 border border-gray-600';
+    case 'pm':          return 'bg-blue-50 text-blue-700 border border-blue-200';
+    case 'corrective':  return 'bg-amber-50 text-amber-700 border border-amber-200';
+    case 'emergency':   return 'bg-red-50 text-red-700 border border-red-200';
+    case 'inspection':  return 'bg-purple-50 text-purple-700 border border-purple-200';
+    default:            return 'bg-gray-100 text-gray-500 border border-gray-300';
   }
 }
 
@@ -140,16 +140,16 @@ function capitalize(s: string): string {
 
 function SkeletonCard() {
   return (
-    <div className="animate-pulse bg-gray-800 rounded-xl p-4 h-28" />
+    <div className="animate-pulse bg-gray-100 rounded-xl p-4 h-28" />
   );
 }
 
 function SkeletonRow() {
   return (
-    <div className="animate-pulse flex gap-3 p-3 border-b border-gray-800">
-      <div className="bg-gray-800 rounded h-4 w-24" />
-      <div className="bg-gray-800 rounded h-4 flex-1" />
-      <div className="bg-gray-800 rounded h-4 w-16" />
+    <div className="animate-pulse flex gap-3 p-3 border-b border-gray-200">
+      <div className="bg-gray-100 rounded h-4 w-24" />
+      <div className="bg-gray-100 rounded h-4 flex-1" />
+      <div className="bg-gray-100 rounded h-4 w-16" />
     </div>
   );
 }
@@ -164,13 +164,13 @@ interface StatCardProps {
   sub?: string;
 }
 
-function StatCard({ label, value, icon, accent = 'text-blue-400', sub }: StatCardProps) {
+function StatCard({ label, value, icon, accent = 'text-blue-700', sub }: StatCardProps) {
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-start gap-3">
+    <div className="bg-white border border-gray-200 rounded-xl p-4 flex items-start gap-3">
       <div className={`mt-0.5 ${accent}`}>{icon}</div>
       <div>
-        <div className="text-2xl font-bold text-white">{value}</div>
-        <div className="text-xs font-medium text-gray-400 mt-0.5">{label}</div>
+        <div className="text-2xl font-bold text-gray-900">{value}</div>
+        <div className="text-xs font-medium text-gray-500 mt-0.5">{label}</div>
         {sub && <div className="text-xs text-gray-500 mt-0.5">{sub}</div>}
       </div>
     </div>
@@ -188,8 +188,8 @@ interface EmptyStateProps {
 function EmptyState({ icon, title, sub }: EmptyStateProps) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
-      <div className="text-gray-700 mb-3">{icon}</div>
-      <div className="text-gray-400 font-semibold text-base mb-1">{title}</div>
+      <div className="text-gray-400 mb-3">{icon}</div>
+      <div className="text-gray-500 font-semibold text-base mb-1">{title}</div>
       {sub && <div className="text-gray-500 text-sm">{sub}</div>}
     </div>
   );
@@ -247,25 +247,25 @@ function CreateWOModal({ assets, onClose, onCreated }: CreateWOModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-gray-900 rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
-          <h2 className="text-white font-semibold text-base">New Work Order</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <h2 className="text-gray-900 font-semibold text-base">New Work Order</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-900 transition-colors">
             <X size={18} />
           </button>
         </div>
         <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
           {error && (
-            <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-3 py-2">
+            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">
               {error}
             </div>
           )}
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-1">Asset (optional)</label>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Asset (optional)</label>
             <select
               value={form.asset_id}
               onChange={e => set('asset_id', e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             >
               <option value="">— No asset —</option>
               {assets.map(a => (
@@ -275,11 +275,11 @@ function CreateWOModal({ assets, onClose, onCreated }: CreateWOModalProps) {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Type</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Type</label>
               <select
                 value={form.type}
                 onChange={e => set('type', e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               >
                 <option value="corrective">Corrective</option>
                 <option value="pm">Preventive (PM)</option>
@@ -288,11 +288,11 @@ function CreateWOModal({ assets, onClose, onCreated }: CreateWOModalProps) {
               </select>
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Priority</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Priority</label>
               <select
                 value={form.priority}
                 onChange={e => set('priority', e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               >
                 <option value="low">Low</option>
                 <option value="normal">Normal</option>
@@ -302,52 +302,52 @@ function CreateWOModal({ assets, onClose, onCreated }: CreateWOModalProps) {
             </div>
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-1">Title *</label>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Title *</label>
             <input
               type="text"
               value={form.title}
               onChange={e => set('title', e.target.value)}
               placeholder="e.g. Replace conveyor belt"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-1">Description</label>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Description</label>
             <textarea
               value={form.description}
               onChange={e => set('description', e.target.value)}
               rows={3}
               placeholder="Describe the work to be done..."
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Assigned To</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Assigned To</label>
               <input
                 type="text"
                 value={form.assigned_to}
                 onChange={e => set('assigned_to', e.target.value)}
                 placeholder="Technician name"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Due Date</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Due Date</label>
               <input
                 type="date"
                 value={form.due_date}
                 onChange={e => set('due_date', e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
           </div>
         </form>
-        <div className="px-6 py-4 border-t border-gray-800 flex justify-end gap-3">
+        <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-gray-800 text-gray-200 border border-gray-700 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors"
           >
             Cancel
           </button>
@@ -425,36 +425,36 @@ function CreateAssetModal({ departments, onClose, onCreated }: CreateAssetModalP
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-gray-900 rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
-          <h2 className="text-white font-semibold text-base">New Asset</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <h2 className="text-gray-900 font-semibold text-base">New Asset</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-900 transition-colors">
             <X size={18} />
           </button>
         </div>
         <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
           {error && (
-            <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-3 py-2">
+            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">
               {error}
             </div>
           )}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Asset Number *</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Asset Number *</label>
               <input
                 type="text"
                 value={form.asset_number}
                 onChange={e => set('asset_number', e.target.value)}
                 placeholder="e.g. AST-001"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Type</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Type</label>
               <select
                 value={form.type}
                 onChange={e => set('type', e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               >
                 <option>Machine</option>
                 <option>Tool</option>
@@ -465,54 +465,54 @@ function CreateAssetModal({ departments, onClose, onCreated }: CreateAssetModalP
             </div>
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-1">Name *</label>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Name *</label>
             <input
               type="text"
               value={form.name}
               onChange={e => set('name', e.target.value)}
               placeholder="e.g. CNC Mill #3"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Make</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Make</label>
               <input
                 type="text"
                 value={form.make}
                 onChange={e => set('make', e.target.value)}
                 placeholder="e.g. Haas"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Model</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Model</label>
               <input
                 type="text"
                 value={form.model}
                 onChange={e => set('model', e.target.value)}
                 placeholder="e.g. VF-2SS"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-1">Serial Number</label>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Serial Number</label>
             <input
               type="text"
               value={form.serial_number}
               onChange={e => set('serial_number', e.target.value)}
               placeholder="e.g. SN-20240001"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Department</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Department</label>
               <select
                 value={form.department_id}
                 onChange={e => set('department_id', e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               >
                 <option value="">— None —</option>
                 {departments.map(d => (
@@ -521,41 +521,41 @@ function CreateAssetModal({ departments, onClose, onCreated }: CreateAssetModalP
               </select>
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Location</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Location</label>
               <input
                 type="text"
                 value={form.location}
                 onChange={e => set('location', e.target.value)}
                 placeholder="e.g. Bay 4, Line 2"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-1">Install Date</label>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Install Date</label>
             <input
               type="date"
               value={form.install_date}
               onChange={e => set('install_date', e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-1">Notes</label>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Notes</label>
             <textarea
               value={form.notes}
               onChange={e => set('notes', e.target.value)}
               rows={2}
               placeholder="Any additional notes..."
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
             />
           </div>
         </form>
-        <div className="px-6 py-4 border-t border-gray-800 flex justify-end gap-3">
+        <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-gray-800 text-gray-200 border border-gray-700 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors"
           >
             Cancel
           </button>
@@ -623,25 +623,25 @@ function CreatePMModal({ assets, onClose, onCreated }: CreatePMModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-gray-900 rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800">
-          <h2 className="text-white font-semibold text-base">Add PM Schedule</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
+          <h2 className="text-gray-900 font-semibold text-base">Add PM Schedule</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-900 transition-colors">
             <X size={18} />
           </button>
         </div>
         <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
           {error && (
-            <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-lg px-3 py-2">
+            <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-3 py-2">
               {error}
             </div>
           )}
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-1">Asset *</label>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Asset *</label>
             <select
               value={form.asset_id}
               onChange={e => set('asset_id', e.target.value)}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             >
               <option value="">— Select asset —</option>
               {assets.map(a => (
@@ -650,22 +650,22 @@ function CreatePMModal({ assets, onClose, onCreated }: CreatePMModalProps) {
             </select>
           </div>
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-1">Title *</label>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Title *</label>
             <input
               type="text"
               value={form.title}
               onChange={e => set('title', e.target.value)}
               placeholder="e.g. Lubrication & filter check"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Frequency Type</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Frequency Type</label>
               <select
                 value={form.frequency_type}
                 onChange={e => set('frequency_type', e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               >
                 <option value="daily">Daily</option>
                 <option value="weekly">Weekly</option>
@@ -675,45 +675,45 @@ function CreatePMModal({ assets, onClose, onCreated }: CreatePMModalProps) {
               </select>
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Every N</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Every N</label>
               <input
                 type="number"
                 min="1"
                 value={form.frequency_value}
                 onChange={e => set('frequency_value', e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Assigned To</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Assigned To</label>
               <input
                 type="text"
                 value={form.assigned_to}
                 onChange={e => set('assigned_to', e.target.value)}
                 placeholder="Technician name"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Est. Hours</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Est. Hours</label>
               <input
                 type="number"
                 min="0.5"
                 step="0.5"
                 value={form.estimated_hours}
                 onChange={e => set('estimated_hours', e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
           </div>
         </form>
-        <div className="px-6 py-4 border-t border-gray-800 flex justify-end gap-3">
+        <div className="px-6 py-4 border-t border-gray-200 flex justify-end gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-gray-800 text-gray-200 border border-gray-700 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors"
           >
             Cancel
           </button>
@@ -755,31 +755,31 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
               label="Open Work Orders"
               value={summary?.open_wos ?? 0}
               icon={<ClipboardList size={20} />}
-              accent="text-blue-400"
+              accent="text-blue-700"
             />
             <StatCard
               label="Overdue PMs"
               value={summary?.overdue_pms ?? 0}
               icon={<AlertTriangle size={20} />}
-              accent="text-red-400"
+              accent="text-red-700"
             />
             <StatCard
               label="Total Assets"
               value={summary?.assets_count ?? 0}
               icon={<Cpu size={20} />}
-              accent="text-purple-400"
+              accent="text-purple-700"
             />
             <StatCard
               label="Critical WOs"
               value={summary?.critical_wos ?? 0}
               icon={<AlertCircle size={20} />}
-              accent="text-amber-400"
+              accent="text-amber-700"
             />
             <StatCard
               label="Completed Today"
               value={summary?.completed_today ?? 0}
               icon={<CheckCircle2 size={20} />}
-              accent="text-green-400"
+              accent="text-emerald-700"
             />
           </>
         )}
@@ -787,10 +787,10 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         {/* Overdue / Due Soon PMs */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 mb-4">
-            <AlertTriangle size={16} className="text-red-400" />
-            <h3 className="text-white font-semibold text-sm">Overdue / Due Soon PMs</h3>
+            <AlertTriangle size={16} className="text-red-700" />
+            <h3 className="text-gray-900 font-semibold text-sm">Overdue / Due Soon PMs</h3>
           </div>
           {pmsLoading ? (
             <div className="space-y-2">
@@ -807,10 +807,10 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
               {overduePMs.map(pm => {
                 const overdue = isOverdue(pm.next_due_at);
                 return (
-                  <div key={pm.id} className="flex items-start justify-between gap-3 p-3 bg-gray-800/60 rounded-lg border border-gray-700/50">
+                  <div key={pm.id} className="flex items-start justify-between gap-3 p-3 bg-gray-50 rounded-lg border border-gray-300">
                     <div className="min-w-0">
-                      <div className="text-sm font-medium text-white truncate">{pm.title}</div>
-                      <div className="text-xs text-gray-400 mt-0.5">{pm.asset_name || '—'}</div>
+                      <div className="text-sm font-medium text-gray-900 truncate">{pm.title}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">{pm.asset_name || '—'}</div>
                       {pm.assigned_to && (
                         <div className="flex items-center gap-1 text-xs text-gray-500 mt-0.5">
                           <User size={10} />
@@ -819,7 +819,7 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
                       )}
                     </div>
                     <div className="shrink-0 text-right">
-                      <div className={`text-xs font-medium ${overdue ? 'text-red-400' : 'text-amber-400'}`}>
+                      <div className={`text-xs font-medium ${overdue ? 'text-red-700' : 'text-amber-700'}`}>
                         {pm.next_due_at ? formatDate(pm.next_due_at) : '—'}
                       </div>
                       {overdue && (
@@ -834,10 +834,10 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
         </div>
 
         {/* Open Work Orders */}
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+        <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 mb-4">
-            <Wrench size={16} className="text-blue-400" />
-            <h3 className="text-white font-semibold text-sm">Open Work Orders</h3>
+            <Wrench size={16} className="text-blue-700" />
+            <h3 className="text-gray-900 font-semibold text-sm">Open Work Orders</h3>
           </div>
           {wosLoading ? (
             <div className="space-y-2">
@@ -852,7 +852,7 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
           ) : (
             <div className="space-y-2">
               {openWOs.slice(0, 5).map(wo => (
-                <div key={wo.id} className="flex items-start justify-between gap-3 p-3 bg-gray-800/60 rounded-lg border border-gray-700/50">
+                <div key={wo.id} className="flex items-start justify-between gap-3 p-3 bg-gray-50 rounded-lg border border-gray-300">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-mono text-gray-500">{wo.wo_number}</span>
@@ -860,9 +860,9 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
                         {capitalize(wo.priority)}
                       </span>
                     </div>
-                    <div className="text-sm font-medium text-white mt-0.5 truncate">{wo.title}</div>
+                    <div className="text-sm font-medium text-gray-900 mt-0.5 truncate">{wo.title}</div>
                     {wo.asset_name && (
-                      <div className="text-xs text-gray-400 mt-0.5">{wo.asset_name}</div>
+                      <div className="text-xs text-gray-500 mt-0.5">{wo.asset_name}</div>
                     )}
                   </div>
                   <div className="shrink-0">
@@ -870,7 +870,7 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
                       {capitalize(wo.status)}
                     </span>
                     {wo.due_date && (
-                      <div className={`text-xs mt-1 text-right ${isOverdue(wo.due_date) ? 'text-red-400' : 'text-gray-500'}`}>
+                      <div className={`text-xs mt-1 text-right ${isOverdue(wo.due_date) ? 'text-red-700' : 'text-gray-500'}`}>
                         {formatDate(wo.due_date)}
                       </div>
                     )}
@@ -934,7 +934,7 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO }: WorkOrdersTabProps)
     }
   }
 
-  const selectCls = "bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm";
+  const selectCls = "bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm";
 
   return (
     <div className="space-y-4">
@@ -984,7 +984,7 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO }: WorkOrdersTabProps)
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
           {filtered.map(wo => (
-            <div key={wo.id} className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex flex-col gap-3 hover:border-gray-700 transition-colors">
+            <div key={wo.id} className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col gap-3 hover:border-gray-300 transition-colors">
               {/* Header row */}
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
@@ -994,16 +994,16 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO }: WorkOrdersTabProps)
                       {woTypeLabel(wo.type)}
                     </span>
                   </div>
-                  <div className="text-sm font-semibold text-white leading-snug">{wo.title}</div>
+                  <div className="text-sm font-semibold text-gray-900 leading-snug">{wo.title}</div>
                   {wo.asset_name && (
-                    <div className="flex items-center gap-1 text-xs text-gray-400 mt-1">
+                    <div className="flex items-center gap-1 text-xs text-gray-500 mt-1">
                       <Cpu size={10} /> {wo.asset_name}
                     </div>
                   )}
                 </div>
                 <button
                   onClick={() => setConfirmDelete(confirmDelete === wo.id ? null : wo.id)}
-                  className="text-gray-600 hover:text-red-400 transition-colors shrink-0 mt-0.5"
+                  className="text-gray-400 hover:text-red-800 transition-colors shrink-0 mt-0.5"
                 >
                   <Trash2 size={14} />
                 </button>
@@ -1025,7 +1025,7 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO }: WorkOrdersTabProps)
                   <span className="flex items-center gap-1"><User size={10} /> {wo.assigned_to}</span>
                 )}
                 {wo.due_date && (
-                  <span className={`flex items-center gap-1 ${isOverdue(wo.due_date) && wo.status !== 'complete' && wo.status !== 'cancelled' ? 'text-red-400' : ''}`}>
+                  <span className={`flex items-center gap-1 ${isOverdue(wo.due_date) && wo.status !== 'complete' && wo.status !== 'cancelled' ? 'text-red-700' : ''}`}>
                     <Calendar size={10} /> {formatDate(wo.due_date)}
                   </span>
                 )}
@@ -1038,7 +1038,7 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO }: WorkOrdersTabProps)
                   value={wo.status}
                   disabled={updatingId === wo.id}
                   onChange={e => handleStatusChange(wo.id, e.target.value)}
-                  className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs disabled:opacity-50"
+                  className="flex-1 bg-white border border-gray-300 rounded-lg px-2 py-1.5 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-xs disabled:opacity-50"
                 >
                   <option value="open">Open</option>
                   <option value="in_progress">In Progress</option>
@@ -1046,24 +1046,24 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO }: WorkOrdersTabProps)
                   <option value="complete">Complete</option>
                   <option value="cancelled">Cancelled</option>
                 </select>
-                {updatingId === wo.id && <RefreshCw size={12} className="animate-spin text-blue-400" />}
+                {updatingId === wo.id && <RefreshCw size={12} className="animate-spin text-blue-700" />}
               </div>
 
               {/* Delete confirm */}
               {confirmDelete === wo.id && (
-                <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
-                  <span className="text-xs text-red-400">Delete this WO?</span>
+                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
+                  <span className="text-xs text-red-700">Delete this WO?</span>
                   <div className="flex gap-2">
                     <button
                       onClick={() => setConfirmDelete(null)}
-                      className="text-xs text-gray-400 hover:text-white transition-colors"
+                      className="text-xs text-gray-500 hover:text-gray-900 transition-colors"
                     >
                       No
                     </button>
                     <button
                       onClick={() => handleDelete(wo.id)}
                       disabled={deletingId === wo.id}
-                      className="text-xs text-red-400 hover:text-red-300 font-medium transition-colors disabled:opacity-50"
+                      className="text-xs text-red-700 hover:text-red-800 font-medium transition-colors disabled:opacity-50"
                     >
                       {deletingId === wo.id ? 'Deleting…' : 'Yes, delete'}
                     </button>
@@ -1134,13 +1134,13 @@ function AssetsTab({ assets, departments, loading, onRefresh, onNewAsset }: Asse
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Search assets…"
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-8 pr-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            className="w-full bg-white border border-gray-300 rounded-lg pl-8 pr-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
           />
         </div>
         <select
           value={deptFilter}
           onChange={e => setDeptFilter(e.target.value)}
-          className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+          className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
         >
           <option value="">All Departments</option>
           {departments.map(d => (
@@ -1169,12 +1169,12 @@ function AssetsTab({ assets, departments, loading, onRefresh, onNewAsset }: Asse
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
           {filtered.map(asset => (
-            <div key={asset.id} className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex flex-col gap-3 hover:border-gray-700 transition-colors">
+            <div key={asset.id} className="bg-white border border-gray-200 rounded-xl p-4 flex flex-col gap-3 hover:border-gray-300 transition-colors">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
                   <div className="text-xs font-mono text-gray-500 mb-0.5">{asset.asset_number}</div>
-                  <div className="text-sm font-semibold text-white leading-snug truncate">{asset.name}</div>
-                  <div className="text-xs text-gray-400 mt-0.5">{asset.type}</div>
+                  <div className="text-sm font-semibold text-gray-900 leading-snug truncate">{asset.name}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{asset.type}</div>
                 </div>
                 <span className={`rounded-full px-2 py-0.5 text-xs font-medium shrink-0 ${assetStatusColor(asset.status)}`}>
                   {capitalize(asset.status)}
@@ -1183,19 +1183,19 @@ function AssetsTab({ assets, departments, loading, onRefresh, onNewAsset }: Asse
 
               <div className="space-y-1">
                 {(asset.make || asset.model) && (
-                  <div className="flex items-center gap-1 text-xs text-gray-400">
+                  <div className="flex items-center gap-1 text-xs text-gray-500">
                     <Settings size={10} className="shrink-0" />
                     {[asset.make, asset.model].filter(Boolean).join(' / ')}
                   </div>
                 )}
                 {asset.location && (
-                  <div className="flex items-center gap-1 text-xs text-gray-400">
+                  <div className="flex items-center gap-1 text-xs text-gray-500">
                     <MapPin size={10} className="shrink-0" />
                     {asset.location}
                   </div>
                 )}
                 {asset.department_name && (
-                  <div className="flex items-center gap-1 text-xs text-gray-400">
+                  <div className="flex items-center gap-1 text-xs text-gray-500">
                     <BarChart3 size={10} className="shrink-0" />
                     {asset.department_name}
                   </div>
@@ -1210,19 +1210,19 @@ function AssetsTab({ assets, departments, loading, onRefresh, onNewAsset }: Asse
 
               {/* Delete */}
               {confirmDelete === asset.id ? (
-                <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
-                  <span className="text-xs text-red-400">Delete asset?</span>
+                <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
+                  <span className="text-xs text-red-700">Delete asset?</span>
                   <div className="flex gap-2">
                     <button
                       onClick={() => setConfirmDelete(null)}
-                      className="text-xs text-gray-400 hover:text-white transition-colors"
+                      className="text-xs text-gray-500 hover:text-gray-900 transition-colors"
                     >
                       No
                     </button>
                     <button
                       onClick={() => handleDelete(asset.id)}
                       disabled={deletingId === asset.id}
-                      className="text-xs text-red-400 hover:text-red-300 font-medium transition-colors disabled:opacity-50"
+                      className="text-xs text-red-700 hover:text-red-800 font-medium transition-colors disabled:opacity-50"
                     >
                       {deletingId === asset.id ? 'Deleting…' : 'Yes, delete'}
                     </button>
@@ -1231,7 +1231,7 @@ function AssetsTab({ assets, departments, loading, onRefresh, onNewAsset }: Asse
               ) : (
                 <button
                   onClick={() => setConfirmDelete(asset.id)}
-                  className="flex items-center gap-1.5 text-xs text-gray-600 hover:text-red-400 transition-colors self-start"
+                  className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-red-700 transition-colors self-start"
                 >
                   <Trash2 size={12} /> Delete
                 </button>
@@ -1271,7 +1271,7 @@ function PMSchedulesTab({ pms, loading, onRefresh, onNewPM }: PMSchedulesTabProp
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <span className="text-sm text-gray-400">{pms.length} schedule{pms.length !== 1 ? 's' : ''}</span>
+        <span className="text-sm text-gray-500">{pms.length} schedule{pms.length !== 1 ? 's' : ''}</span>
         <button
           onClick={onNewPM}
           className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
@@ -1291,11 +1291,11 @@ function PMSchedulesTab({ pms, loading, onRefresh, onNewPM }: PMSchedulesTabProp
           sub="Add a preventive maintenance schedule to keep assets running."
         />
       ) : (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm whitespace-nowrap">
               <thead>
-                <tr className="border-b border-gray-800 bg-gray-800/40">
+                <tr className="border-b border-gray-200 bg-gray-50">
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Asset</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Title</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Frequency</th>
@@ -1306,39 +1306,39 @@ function PMSchedulesTab({ pms, loading, onRefresh, onNewPM }: PMSchedulesTabProp
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-800">
+              <tbody className="divide-y divide-gray-100">
                 {pms.map(pm => {
                   const overdue = isOverdue(pm.next_due_at);
                   return (
-                    <tr key={pm.id} className="hover:bg-gray-800/30 transition-colors">
-                      <td className="px-4 py-3 text-gray-300">{pm.asset_name || '—'}</td>
-                      <td className="px-4 py-3 text-white font-medium max-w-[200px] truncate">{pm.title}</td>
-                      <td className="px-4 py-3 text-gray-400">
+                    <tr key={pm.id} className="hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3 text-gray-700">{pm.asset_name || '—'}</td>
+                      <td className="px-4 py-3 text-gray-900 font-medium max-w-[200px] truncate">{pm.title}</td>
+                      <td className="px-4 py-3 text-gray-500">
                         Every {pm.frequency_value} {capitalize(pm.frequency_type)}
                         {pm.frequency_value !== 1 ? 's' : ''}
                       </td>
                       <td className="px-4 py-3">
                         {pm.next_due_at ? (
                           <div className="flex items-center gap-2">
-                            <span className={overdue ? 'text-red-400 font-medium' : 'text-gray-300'}>
+                            <span className={overdue ? 'text-red-700 font-medium' : 'text-gray-700'}>
                               {formatDate(pm.next_due_at)}
                             </span>
                             {overdue && (
-                              <span className="rounded-full px-2 py-0.5 text-xs font-medium bg-red-500/20 text-red-400 border border-red-500/30">
+                              <span className="rounded-full px-2 py-0.5 text-xs font-medium bg-red-50 text-red-700 border border-red-200">
                                 Overdue
                               </span>
                             )}
                           </div>
                         ) : '—'}
                       </td>
-                      <td className="px-4 py-3 text-gray-400">{formatDate(pm.last_completed_at)}</td>
-                      <td className="px-4 py-3 text-gray-400">{pm.assigned_to || '—'}</td>
-                      <td className="px-4 py-3 text-gray-400">{pm.estimated_hours}h</td>
+                      <td className="px-4 py-3 text-gray-500">{formatDate(pm.last_completed_at)}</td>
+                      <td className="px-4 py-3 text-gray-500">{pm.assigned_to || '—'}</td>
+                      <td className="px-4 py-3 text-gray-500">{pm.estimated_hours}h</td>
                       <td className="px-4 py-3">
                         <button
                           onClick={() => handleComplete(pm.id)}
                           disabled={completingId === pm.id}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-600/20 text-green-400 border border-green-500/30 rounded-lg text-xs font-medium hover:bg-green-600/30 transition-colors disabled:opacity-50"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-medium hover:bg-emerald-100 transition-colors disabled:opacity-50"
                         >
                           {completingId === pm.id ? (
                             <RefreshCw size={11} className="animate-spin" />
@@ -1483,15 +1483,15 @@ export default function Maintenance() {
   ];
 
   return (
-    <div className="min-h-full bg-gray-950 p-6 space-y-5">
+    <div className="min-h-full bg-gray-50 p-6 space-y-5">
       {/* Page header */}
       <div className="flex items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-2 mb-1">
-            <Wrench size={22} className="text-blue-400" />
-            <h1 className="text-2xl font-bold text-white">Maintenance</h1>
+            <Wrench size={22} className="text-blue-700" />
+            <h1 className="text-2xl font-bold text-gray-900">Maintenance</h1>
           </div>
-          <p className="text-sm text-gray-400">CMMS — Assets, work orders, and preventive maintenance schedules</p>
+          <p className="text-sm text-gray-500">CMMS — Assets, work orders, and preventive maintenance schedules</p>
         </div>
         <button
           onClick={() => {
@@ -1500,7 +1500,7 @@ export default function Maintenance() {
             else if (activeTab === 'assets') loadAssets();
             else if (activeTab === 'pm_schedules') loadPMs();
           }}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-gray-800 text-gray-200 border border-gray-700 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
+          className="inline-flex items-center gap-2 px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors"
         >
           <RefreshCw size={14} /> Refresh
         </button>
@@ -1508,17 +1508,17 @@ export default function Maintenance() {
 
       {/* Error banner */}
       {error && (
-        <div className="bg-red-500/10 border border-red-500/30 text-red-400 text-sm rounded-xl px-4 py-3 flex items-center gap-2">
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3 flex items-center gap-2">
           <AlertCircle size={15} />
           {error}
-          <button onClick={() => setError('')} className="ml-auto text-red-500 hover:text-red-300 transition-colors">
+          <button onClick={() => setError('')} className="ml-auto text-red-500 hover:text-red-800 transition-colors">
             <X size={14} />
           </button>
         </div>
       )}
 
       {/* Tab bar */}
-      <div className="border-b border-gray-800">
+      <div className="border-b border-gray-200">
         <nav className="-mb-px flex gap-1">
           {tabs.map(tab => (
             <button
@@ -1526,8 +1526,8 @@ export default function Maintenance() {
               onClick={() => setActiveTab(tab.key)}
               className={`inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 ${
                 activeTab === tab.key
-                  ? 'border-blue-500 text-white'
-                  : 'border-transparent text-gray-400 hover:text-gray-200'
+                  ? 'border-blue-500 text-gray-900'
+                  : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
             >
               {tab.icon}

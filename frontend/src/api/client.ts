@@ -8,6 +8,8 @@ import type {
   BOM, BOMLine, Kit, KitLine, KitLineStatus,
   CompletionValue, CompletionValueInput,
   MESTable,
+  AndonCall, AndonCallInput, AndonSummary, AndonTeam,
+  DepartmentMember, DepartmentMemberInput, DepartmentTeamRole,
 } from '../types';
 
 const BASE = '/api';
@@ -21,6 +23,13 @@ export interface AnalyticsFilters {
   app_id?: string;
   product_type_id?: string;
   department_id?: string;
+}
+
+/** Page-level filters for dashboard / report card data. Empty = unfiltered. */
+export interface DashboardFilters {
+  department_id?: string;
+  app_id?: string;
+  site_id?: string;
 }
 
 // Build a query string from analytics filters plus any extra params, omitting
@@ -319,6 +328,25 @@ export const api = {
     return request<any[]>(`/departments${s ? `?${s}` : ''}`);
   },
   createDepartment: (data: any) => request<any>('/departments', { method: 'POST', body: JSON.stringify(data) }),
+
+  // ── Department membership — who receives that department's Andon alerts
+  getDepartmentMembers: (departmentId: string) =>
+    request<DepartmentMember[]>(`/departments/${departmentId}/members`),
+  /** Company-wide lookup, e.g. everyone on the quality team. */
+  findDepartmentMembers: (params?: { team_role?: DepartmentTeamRole; user_id?: string; active_only?: boolean }) => {
+    const qs = new URLSearchParams();
+    if (params?.team_role) qs.set('team_role', params.team_role);
+    if (params?.user_id) qs.set('user_id', params.user_id);
+    if (params?.active_only) qs.set('active_only', 'true');
+    const s = qs.toString();
+    return request<DepartmentMember[]>(`/departments/members${s ? `?${s}` : ''}`);
+  },
+  addDepartmentMember: (departmentId: string, data: DepartmentMemberInput) =>
+    request<DepartmentMember>(`/departments/${departmentId}/members`, { method: 'POST', body: JSON.stringify(data) }),
+  updateDepartmentMember: (memberId: string, data: Partial<Omit<DepartmentMemberInput, 'user_id'>>) =>
+    request<DepartmentMember>(`/departments/members/${memberId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  removeDepartmentMember: (memberId: string) =>
+    request<{ success: boolean }>(`/departments/members/${memberId}`, { method: 'DELETE' }),
   updateDepartment: (id: string, data: any) => request<any>(`/departments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteDepartment: (id: string) => request<any>(`/departments/${id}`, { method: 'DELETE' }),
 
@@ -383,7 +411,16 @@ export const api = {
   createDashboard: (data: any) => request<any>('/dashboards', { method: 'POST', body: JSON.stringify(data) }),
   updateDashboard: (id: string, data: any) => request<any>(`/dashboards/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteDashboard: (id: string) => request<any>(`/dashboards/${id}`, { method: 'DELETE' }),
-  getDashboardData: (id: string) => request<any>(`/dashboards/${id}/data`),
+  // Card data honours optional page-level filters; the server applies each one
+  // to the card types it is meaningful for and ignores unknown ids.
+  getDashboardData: (id: string, filters?: DashboardFilters) => {
+    const qs = new URLSearchParams();
+    if (filters?.department_id) qs.set('department_id', filters.department_id);
+    if (filters?.app_id)        qs.set('app_id', filters.app_id);
+    if (filters?.site_id)       qs.set('site_id', filters.site_id);
+    const s = qs.toString();
+    return request<any>(`/dashboards/${id}/data${s ? `?${s}` : ''}`);
+  },
 
   // ── Inventory
   getInventoryItems: (params?: { category?: string; search?: string; low_stock?: boolean }) => {
@@ -563,6 +600,13 @@ export const api = {
       const data = await res.json();
       if (!res.ok) throw Object.assign(new Error(data.error || 'Signup failed'), { status: res.status });
       return data;
+    }),
+  /** Promote the CURRENT demo sandbox into a real free account, keeping every
+   *  row already in the workspace (same company_id). Sandbox session only. */
+  claimSandbox: (company_name: string, display_name: string, email: string, password: string) =>
+    request<{ token: string; user: any; claimed: true }>('/auth/claim-sandbox', {
+      method: 'POST',
+      body: JSON.stringify({ company_name, display_name, email, password }),
     }),
   logout: () => request<any>('/auth/logout', { method: 'POST' }),
   getMe: () => request<any>('/auth/me'),
@@ -772,21 +816,27 @@ export const api = {
     request<any>(`/shifts/${id}/handoff`, { method: 'POST', body: JSON.stringify(data) }),
   deleteShiftNote: (id: string) => request<any>(`/shifts/${id}`, { method: 'DELETE' }),
 
-  // ── Andon System
-  getAndonCalls: (params?: { status?: string; department_id?: string; type?: string }) => {
+  // ── Andon System / team calls
+  getAndonCalls: (params?: { status?: string; department_id?: string; type?: string; team?: AndonTeam; station_id?: string }) => {
     const qs = new URLSearchParams();
     if (params?.status)        qs.set('status', params.status);
     if (params?.department_id) qs.set('department_id', params.department_id);
     if (params?.type)          qs.set('type', params.type);
+    if (params?.team)          qs.set('team', params.team);
+    if (params?.station_id)    qs.set('station_id', params.station_id);
     const s = qs.toString();
-    return request<any[]>(`/andon${s ? `?${s}` : ''}`);
+    return request<AndonCall[]>(`/andon${s ? `?${s}` : ''}`);
   },
-  createAndonCall: (data: any) => request<any>('/andon', { method: 'POST', body: JSON.stringify(data) }),
-  acknowledgeAndonCall: (id: string) => request<any>(`/andon/${id}/acknowledge`, { method: 'PUT' }),
+  createAndonCall: (data: AndonCallInput) => request<AndonCall>('/andon', { method: 'POST', body: JSON.stringify(data) }),
+  /** "On my way" — records the responder and the response time. */
+  acknowledgeAndonCall: (id: string) => request<AndonCall>(`/andon/${id}/acknowledge`, { method: 'PUT' }),
   resolveAndonCall: (id: string, resolution?: string) =>
-    request<any>(`/andon/${id}/resolve`, { method: 'PUT', body: JSON.stringify({ resolution: resolution ?? '' }) }),
-  deleteAndonCall: (id: string) => request<any>(`/andon/${id}`, { method: 'DELETE' }),
-  getAndonSummary: () => request<any>('/andon/summary'),
+    request<AndonCall>(`/andon/${id}/resolve`, { method: 'PUT', body: JSON.stringify({ resolution: resolution ?? '' }) }),
+  /** The operator stood the call down — kept on the board with an honest reason. */
+  cancelAndonCall: (id: string, reason?: string) =>
+    request<AndonCall>(`/andon/${id}/cancel`, { method: 'PUT', body: JSON.stringify({ reason: reason ?? '' }) }),
+  deleteAndonCall: (id: string) => request<{ ok: boolean }>(`/andon/${id}`, { method: 'DELETE' }),
+  getAndonSummary: () => request<AndonSummary>('/andon/summary'),
 
   // ── CAPA (standalone module)
   getCAPAs: (params?: { status?: string; priority?: string; department_id?: string; search?: string }) => {
@@ -928,9 +978,12 @@ export const api = {
 
   // ── Player batch: run sessions, jobs in progress, supervisor authorization ──
   // (appended block — see CompletionSession / JobInProgress types at file end)
-  /** Supervisor sign-off for in-run actions (NCR filing). 403 = lower role or bad PIN. */
+  /** Supervisor sign-off for in-run actions (NCR filing). 403 = lower role or bad PIN.
+   *  `authorization_id` is a single-use, server-issued proof that the PIN was
+   *  verified — the authorized action must send it back or the server rejects
+   *  the claimed sign-off. */
   verifyAuthorizer: (pin: string) =>
-    request<{ user_id: string; display_name: string; role: string }>('/operators/verify-authorizer', {
+    request<{ authorization_id: string; user_id: string; display_name: string; role: string }>('/operators/verify-authorizer', {
       method: 'POST', body: JSON.stringify({ pin }),
     }),
   /** One completion with its operator sessions attached. */
@@ -949,6 +1002,19 @@ export const api = {
   /** This app's in_progress runs for the setup screen's "Jobs in progress" list. */
   getJobsInProgress: (appId: string) =>
     request<JobInProgress[]>(`/completions?status=in_progress&app_id=${encodeURIComponent(appId)}`),
+
+  // ── Apps-first slice: library stats, in-depth detail, duplicate ────────────
+  // (appended block — see AppRunStats / AppDetailResponse types at file end)
+  /** Per-app run counters for the App Library cards + "has this company ever
+   *  run anything?", the signal the first-run landing decision uses. */
+  getAppsStats: () => request<AppsStatsResponse>('/apps/stats'),
+  /** Everything the in-depth app page shows: bindings, run stats, operators,
+   *  recent runs. Tenant-scoped server-side (404 for other companies' apps). */
+  getAppDetail: (id: string) => request<AppDetailResponse>(`/apps/${id}/detail`),
+  /** Copy an app into a new draft with fresh step/widget ids. */
+  duplicateApp: (id: string, data: { name?: string } = {}) =>
+    request<App>(`/apps/${id}/duplicate`, { method: 'POST', body: JSON.stringify(data) }),
+  // ── end apps-first block ───────────────────────────────────────────────────
 };
 
 // ─── App templates (app-templates slice) ─────────────────────────────────────
@@ -1021,3 +1087,78 @@ export interface JobInProgress {
   } | null;
 
 }
+
+// ── Apps-first types (appended block) ────────────────────────────────────────
+
+/** One app's run counters, from GET /api/apps/stats. */
+export interface AppRunStats {
+  app_id: string;
+  runs_total: number;
+  runs_7d: number;
+  in_progress: number;
+  last_run_at: string | null;
+}
+
+/** Response of GET /api/apps/stats. */
+export interface AppsStatsResponse {
+  /** True once this company has ever started a run of any app. */
+  company_has_completions: boolean;
+  apps: AppRunStats[];
+}
+
+export interface AppDetailStationRef {
+  id: string; name: string; location: string; status: string;
+}
+
+export interface AppDetailRoutingRef {
+  routing_id: string; routing_name: string; step_name: string; step_number: number;
+}
+
+export interface AppDetailWorkOrderRef {
+  id: string; work_order_number: string; part_number: string; part_name: string;
+  status: string; quantity: number; quantity_completed: number;
+}
+
+/** Everything this app is wired into — all real rows that point at it. */
+export interface AppDetailBindings {
+  department: { id: string; name: string; color: string } | null;
+  site: { id: string; name: string; code: string } | null;
+  default_station: AppDetailStationRef | null;
+  stations: AppDetailStationRef[];
+  product_types: { id: string; name: string; description: string }[];
+  routings: AppDetailRoutingRef[];
+  work_orders: AppDetailWorkOrderRef[];
+  work_order_count: number;
+}
+
+export interface AppDetailStats {
+  runs_total: number; completed: number; abandoned: number; in_progress: number;
+  runs_7d: number; runs_30d: number; completed_30d: number;
+  avg_duration_s: number | null; avg_duration_30d_s: number | null;
+  first_run_at: string | null; last_run_at: string | null;
+  first_pass_yield: number | null;
+  operator_count: number;
+}
+
+export interface AppDetailOperator {
+  operator_name: string; runs: number; completed: number;
+  last_run_at: string | null; avg_duration_s: number | null;
+}
+
+export interface AppDetailRun {
+  id: string; started_at: string; completed_at: string | null;
+  status: 'in_progress' | 'completed' | 'abandoned';
+  operator_name: string; duration_s: number | null;
+  work_order_number: string | null; product_type_name: string | null;
+  station_name: string | null;
+}
+
+/** Response of GET /api/apps/:id/detail. */
+export interface AppDetailResponse {
+  app: App;
+  bindings: AppDetailBindings;
+  stats: AppDetailStats;
+  operators: AppDetailOperator[];
+  recent_runs: AppDetailRun[];
+}
+// ── end apps-first types ─────────────────────────────────────────────────────

@@ -1371,17 +1371,13 @@ function SidebarTab() {
   const {
     isItemHidden, toggleItem,
     isSectionHidden, toggleSection,
-    focus, setFocus, resetNavPrefs,
+    resetNavPrefs,
     itemOrder, moveItem,
     showProSidebar, setShowProSidebar,
   } = useNavPrefs();
   const { user } = useAuth();
   const isDeveloper = user?.role === 'developer';
   const [showAdvanced, setShowAdvanced] = useState(false);
-
-  const enabledSections = SECTIONS.filter(s => !isSectionHidden(s.id));
-  // Keep the default-view selector honest if the focused section is now hidden.
-  const focusValid = enabledSections.some(s => s.id === focus);
 
   // Apply the saved custom order to a section's items (matches the sidebar).
   const orderedItems = (section: typeof SECTIONS[number]) => {
@@ -1432,20 +1428,6 @@ function SidebarTab() {
             );
           })}
         </div>
-      </div>
-
-      {/* Default view */}
-      <div>
-        <SectionHeader title="Default view" subtitle="Which workspace the sidebar opens to. You can switch anytime from the buttons at the top of the sidebar." />
-        <select
-          className="input-field text-sm max-w-xs"
-          value={focusValid ? focus : (enabledSections[0]?.id ?? 'production')}
-          onChange={e => setFocus(e.target.value as any)}
-        >
-          {enabledSections.map(s => (
-            <option key={s.id} value={s.id}>{s.label}</option>
-          ))}
-        </select>
       </div>
 
       {/* Pro sidebar developer toggle */}

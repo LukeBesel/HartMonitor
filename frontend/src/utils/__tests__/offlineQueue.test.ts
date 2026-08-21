@@ -98,6 +98,39 @@ describe('flushOutbox', () => {
     expect((remaining[0].payload as { lineId: string }).lineId).toBe('l1');
     expect((remaining[1].payload as { lineId: string }).lineId).toBe('l2');
   });
+
+  // A flush awaits the network; the player keeps queueing during that window.
+  // Writing back the array loaded at the start silently deleted anything
+  // enqueued meanwhile — exactly what happens on reconnect.
+  it('keeps items enqueued while the flush was awaiting the network', async () => {
+    enqueueOutbox('ncr', { title: 'queued before flush' });
+    createNCR.mockImplementation(async () => {
+      // Simulates the player filing a second report mid-flush.
+      enqueueOutbox('ncr', { title: 'queued during flush' });
+      return { id: 'ncr1' };
+    });
+
+    const synced = await flushOutbox();
+    expect(synced).toBe(1);
+    const remaining = getOutbox();
+    expect(remaining).toHaveLength(1);
+    expect((remaining[0].payload as { title: string }).title).toBe('queued during flush');
+  });
+
+  it('does not delete a coalesced item that was updated mid-flight', async () => {
+    enqueueOutbox('completion_update', { completionId: 'c1', body: { data: { a: 1 } } }, 'completion:c1');
+    flushCompletion.mockImplementation(async () => {
+      // A newer autosave lands on the same coalescing key while the PUT is out.
+      enqueueOutbox('completion_update', { completionId: 'c1', body: { data: { a: 2 } } }, 'completion:c1');
+      return {};
+    });
+
+    const synced = await flushOutbox();
+    expect(synced).toBe(1);
+    const remaining = getOutbox();
+    expect(remaining).toHaveLength(1);
+    expect((remaining[0].payload as { body: { data: { a: number } } }).body.data.a).toBe(2);
+  });
 });
 
 describe('NCR API surface (unchanged)', () => {

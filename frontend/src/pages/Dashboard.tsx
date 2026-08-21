@@ -15,9 +15,13 @@ import {
   CartesianGrid, ReferenceLine,
   BarChart, Bar, PieChart, Pie, Cell,
 } from 'recharts';
-import type { DailyBrief } from '../types';
-import { ATTENTION_ICONS, ATTENTION_TYPE_LABELS } from '../config/attention';
+import type { AndonTeam, AttentionItem, DailyBrief } from '../types';
+import { attentionIcon, attentionLabel } from '../config/attention';
+import { ANDON_TEAMS, ANDON_TEAM_ORDER, teamConfig } from '../config/andonTeams';
+import { subscribeRealtime, isAndonEvent } from '../utils/realtime';
 import { useDashboardPrefs, DASHBOARD_SECTIONS, DashboardSectionId } from '../hooks/useDashboardPrefs';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
+import LastRefreshed from '../components/shared/LastRefreshed';
 import Toggle from '../components/shared/Toggle';
 import OnboardingWizard from '../components/shared/OnboardingWizard';
 import ModuleOnboarding, { markWalkthroughSeen } from '../components/shared/ModuleOnboarding';
@@ -35,9 +39,11 @@ interface PlantViewData {
   kpis: {
     total_completed_today: number;
     active_now: number;
-    pass_rate: number;
+    /** null when no run has recorded a QC result. */
+    pass_rate: number | null;
     avg_cycle_time: number;
-    schedule_adherence: number;
+    /** % of open work orders on track — null when there are none. */
+    schedule_adherence: number | null;
     work_orders_on_track: number;
     work_orders_total: number;
   };
@@ -50,7 +56,7 @@ interface PlantViewData {
     takt_time: number;
     on_track_count: number;
     total_count: number;
-    status: 'on_track' | 'at_risk' | 'behind';
+    status: 'on_track' | 'at_risk' | 'behind' | 'idle';
   }>;
   hourly_throughput: Array<{ hour: string; count: number }>;
   work_order_summary: { on_track: number; at_risk: number; behind: number; not_started: number };
@@ -83,6 +89,7 @@ function fmtAgo(iso: string) {
 function deptBorderColor(status: string) {
   if (status === 'on_track') return 'border-l-green-500';
   if (status === 'at_risk') return 'border-l-amber-500';
+  if (status === 'idle') return 'border-l-gray-300';
   return 'border-l-red-500';
 }
 
@@ -91,6 +98,8 @@ function StatusPill({ status }: { status: string }) {
     on_track: { label: 'On Track', cls: 'bg-green-100 text-green-700' },
     at_risk: { label: 'At Risk', cls: 'bg-amber-100 text-amber-700' },
     behind: { label: 'Behind', cls: 'bg-red-100 text-red-700' },
+    // No work orders assigned — neither good nor bad news.
+    idle: { label: 'No work', cls: 'bg-gray-100 text-gray-600' },
   };
   const s = map[status] ?? { label: status, cls: 'bg-gray-100 text-gray-600' };
   return <span className={`text-xs font-semibold px-2 py-1 rounded-full ${s.cls}`}>{s.label}</span>;
@@ -172,12 +181,17 @@ export default function Dashboard() {
   const [brief, setBrief] = useState<DailyBrief | null>(null);
   const [companyName, setCompanyName] = useState('');
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const { isHidden, toggleSection, resetSections } = useDashboardPrefs();
   const [showCustomize, setShowCustomize] = useState(false);
   const customizeRef = useRef<HTMLDivElement>(null);
   const [loadingSample, setLoadingSample] = useState(false);
   const [sampleError, setSampleError] = useState('');
+
+  // Help-request routing: filter the attention list to one team's queue, and
+  // acknowledge / resolve a request without leaving the Command Center.
+  const [attentionTeam, setAttentionTeam] = useState<AndonTeam | 'all'>('all');
+  const [callActionId, setCallActionId] = useState<string | null>(null);
+  const [callError, setCallError] = useState('');
 
   // Plant view data integrated into the Command Center
   const [plantData, setPlantData] = useState<PlantViewData | null>(null);
@@ -195,8 +209,7 @@ export default function Dashboard() {
     });
   };
 
-  const loadData = useCallback(async (isRefresh = false) => {
-    if (isRefresh) setRefreshing(true);
+  const loadData = useCallback(async () => {
     const [briefRes, cfgRes] = await Promise.allSettled([
       api.getDailyBrief(),
       api.getCompanySettings(),
@@ -204,7 +217,6 @@ export default function Dashboard() {
     if (briefRes.status === 'fulfilled') setBrief(briefRes.value);
     if (cfgRes.status === 'fulfilled') setCompanyName(cfgRes.value?.company_name ?? '');
     setLoading(false);
-    setRefreshing(false);
   }, []);
 
   const loadPlantData = useCallback(async () => {
@@ -218,17 +230,34 @@ export default function Dashboard() {
     }
   }, [selectedSiteId]);
 
-  useEffect(() => {
-    loadData();
-    const interval = setInterval(() => loadData(), 60000);
-    return () => clearInterval(interval);
-  }, [loadData]);
+  // Live data: the brief moves slowly (60s), the floor moves fast (30s). Both
+  // pause while the tab is hidden and catch up the moment it comes back.
+  const briefRefresh = useAutoRefresh(loadData, 60_000);
+  const plantRefresh = useAutoRefresh(loadPlantData, 30_000);
+  const refreshAll = () => { void briefRefresh.refresh(); void plantRefresh.refresh(); };
 
-  useEffect(() => {
-    loadPlantData();
-    const interval = setInterval(() => loadPlantData(), 30000);
-    return () => clearInterval(interval);
-  }, [loadPlantData]);
+  // A help request raised on any tablet appears here at once — the 60s poll
+  // above is only the backstop for a dropped socket. Refreshing through the
+  // hook keeps the freshness stamp honest about when the data actually landed.
+  const refreshBrief = briefRefresh.refresh;
+  useEffect(() => subscribeRealtime(evt => {
+    if (isAndonEvent(evt)) void refreshBrief();
+  }), [refreshBrief]);
+
+  const respondToCall = useCallback(async (item: AttentionItem, action: 'ack' | 'resolve') => {
+    if (!item.call_id || callActionId) return;
+    setCallActionId(item.call_id);
+    setCallError('');
+    try {
+      if (action === 'ack') await api.acknowledgeAndonCall(item.call_id);
+      else await api.resolveAndonCall(item.call_id);
+      await refreshBrief();
+    } catch (err) {
+      setCallError(err instanceof Error ? err.message : 'Could not update the request.');
+    } finally {
+      setCallActionId(null);
+    }
+  }, [callActionId, refreshBrief]);
 
   useEffect(() => {
     if (!showCustomize) return;
@@ -240,7 +269,17 @@ export default function Dashboard() {
   }, [showCustomize]);
 
   const kpis = brief?.kpis;
-  const attention = brief?.attention ?? [];
+  const allAttention = brief?.attention ?? [];
+
+  // Help requests can be filtered to one team — a maintenance lead wants their
+  // queue, not everyone's. Other items are never hidden by a team filter.
+  const callTeams = Array.from(new Set(
+    allAttention.filter(i => i.type === 'andon_call' && i.team).map(i => i.team as AndonTeam),
+  ));
+  const attention = attentionTeam === 'all'
+    ? allAttention
+    : allAttention.filter(i => i.type !== 'andon_call' || i.team === attentionTeam);
+  const openCallCount = allAttention.filter(i => i.type === 'andon_call').length;
 
   // A brand-new workspace: nothing has ever been scheduled, run, or flagged.
   // The CTA disappears the moment sample data (which creates work orders) loads.
@@ -255,7 +294,7 @@ export default function Dashboard() {
     setSampleError('');
     try {
       await api.loadSampleData();
-      await Promise.all([loadData(), loadPlantData()]);
+      await Promise.all([briefRefresh.refresh(), plantRefresh.refresh()]);
     } catch (err: any) {
       setSampleError(err?.message || 'Failed to load sample data');
     } finally {
@@ -301,13 +340,12 @@ export default function Dashboard() {
         subtitle={<>{formatDate()}{companyName ? ` · ${companyName}` : ''}</>}
         actions={
           <>
-            <button
-              onClick={() => loadData(true)}
-              className="btn-secondary"
-            >
-              <RefreshCw size={14} className={refreshing ? 'animate-spin text-blue-500' : ''} />
-              Refresh
-            </button>
+            <LastRefreshed
+              at={briefRefresh.lastRefreshed}
+              refreshing={briefRefresh.refreshing || plantRefresh.refreshing}
+              onRefresh={refreshAll}
+              className="mr-1"
+            />
             <div className="relative" ref={customizeRef}>
               <button
                 onClick={() => setShowCustomize(o => !o)}
@@ -369,7 +407,7 @@ export default function Dashboard() {
       {/* Needs attention */}
       {!isHidden('attention') && (
       <div className="card p-5">
-        <div className="flex items-center gap-2 mb-4">
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
           <AlertTriangle size={16} className={attention.length > 0 ? 'text-red-500' : 'text-gray-300'} />
           <h2 className="font-semibold text-gray-900">Needs Attention</h2>
           {attention.length > 0 && (
@@ -377,7 +415,54 @@ export default function Dashboard() {
               {attention.length}
             </span>
           )}
+          {openCallCount > 0 && (
+            <Link
+              to="/andon"
+              className="ml-auto text-xs font-semibold text-red-600 hover:text-red-700 inline-flex items-center gap-1"
+            >
+              {openCallCount} help request{openCallCount === 1 ? '' : 's'} waiting
+              <ChevronRight size={13} />
+            </Link>
+          )}
         </div>
+
+        {/* Route by team — a maintenance lead sees their queue, not everyone's. */}
+        {callTeams.length > 1 && (
+          <div className="flex flex-wrap items-center gap-1.5 mb-3">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mr-1">Team:</span>
+            <button
+              onClick={() => setAttentionTeam('all')}
+              className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                attentionTeam === 'all' ? 'bg-gray-900 border-gray-900 text-white' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+              }`}
+            >
+              All
+            </button>
+            {ANDON_TEAM_ORDER.filter(t => callTeams.includes(t)).map(team => {
+              const cfg = ANDON_TEAMS[team];
+              const Icon = cfg.icon;
+              const n = allAttention.filter(i => i.type === 'andon_call' && i.team === team).length;
+              return (
+                <button
+                  key={team}
+                  onClick={() => setAttentionTeam(team)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors inline-flex items-center gap-1.5 ${
+                    attentionTeam === team ? 'bg-gray-900 border-gray-900 text-white' : `${cfg.chip} hover:brightness-95`
+                  }`}
+                >
+                  <Icon size={12} />
+                  {cfg.label}
+                  <span className="opacity-70">{n}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {callError && (
+          <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{callError}</p>
+        )}
+
         {loading ? (
           <div className="space-y-2">
             {[1, 2, 3].map(i => <SkeletonBox key={i} className="h-12 w-full" />)}
@@ -391,31 +476,85 @@ export default function Dashboard() {
           />
         ) : (
           <div className="space-y-2">
-            {attention.map((item, i) => (
-              <Link
-                key={`${item.type}-${i}`}
-                to={item.link}
-                className={`flex items-center gap-3 p-3 rounded-lg border transition-colors group ${
-                  item.severity === 'red'
-                    ? 'bg-red-50 border-red-200 hover:bg-red-100'
-                    : 'bg-amber-50 border-amber-200 hover:bg-amber-100'
-                }`}
-              >
-                <span className={`flex-shrink-0 ${item.severity === 'red' ? 'text-red-500' : 'text-amber-500'}`}>
-                  {ATTENTION_ICONS[item.type]}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className={`text-[11px] font-semibold uppercase tracking-wide ${item.severity === 'red' ? 'text-red-600' : 'text-amber-600'}`}>
-                      {ATTENTION_TYPE_LABELS[item.type]}
+            {attention.map((item, i) => {
+              // A help request is answerable right here: who is needed, where,
+              // how long they have waited, and the two actions that end the wait.
+              if (item.type === 'andon_call' && item.call_id) {
+                const cfg = teamConfig(item.team);
+                const Icon = cfg.icon;
+                const busy = callActionId === item.call_id;
+                return (
+                  <div
+                    key={item.call_id}
+                    className={`flex items-start gap-3 p-3 rounded-lg border ${
+                      item.severity === 'red' ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'
+                    }`}
+                  >
+                    <span className={`flex-shrink-0 mt-0.5 ${item.severity === 'red' ? 'text-red-500' : 'text-amber-500'}`}>
+                      <Icon size={15} />
                     </span>
-                    <span className="text-sm font-medium text-gray-900 truncate">{item.label}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full border ${cfg.chip}`}>
+                          {item.target_label ?? item.team_label ?? cfg.label}
+                        </span>
+                        <span className="text-sm font-medium text-gray-900 truncate">{item.label}</span>
+                        <span className={`text-xs font-semibold tabular-nums ${item.severity === 'red' ? 'text-red-600' : 'text-amber-600'}`}>
+                          {item.age_minutes ?? 0}m
+                        </span>
+                      </div>
+                      {item.detail && <div className="text-xs text-gray-500 truncate">{item.detail}</div>}
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {item.call_status === 'open' && (
+                        <button
+                          onClick={() => void respondToCall(item, 'ack')}
+                          disabled={busy}
+                          className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors whitespace-nowrap"
+                        >
+                          {busy ? '…' : 'On my way'}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => void respondToCall(item, 'resolve')}
+                        disabled={busy}
+                        className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                      >
+                        Resolve
+                      </button>
+                      <Link to={item.link} className="text-gray-300 hover:text-gray-500" title="Open the Andon Board">
+                        <ChevronRight size={15} />
+                      </Link>
+                    </div>
                   </div>
-                  {item.detail && <div className="text-xs text-gray-500 truncate">{item.detail}</div>}
-                </div>
-                <ChevronRight size={15} className="text-gray-300 group-hover:text-gray-500 flex-shrink-0" />
-              </Link>
-            ))}
+                );
+              }
+              return (
+                <Link
+                  key={`${item.type}-${i}`}
+                  to={item.link}
+                  className={`flex items-center gap-3 p-3 rounded-lg border transition-colors group ${
+                    item.severity === 'red'
+                      ? 'bg-red-50 border-red-200 hover:bg-red-100'
+                      : 'bg-amber-50 border-amber-200 hover:bg-amber-100'
+                  }`}
+                >
+                  <span className={`flex-shrink-0 ${item.severity === 'red' ? 'text-red-500' : 'text-amber-500'}`}>
+                    {attentionIcon(item.type)}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-[11px] font-semibold uppercase tracking-wide ${item.severity === 'red' ? 'text-red-600' : 'text-amber-600'}`}>
+                        {attentionLabel(item.type)}
+                      </span>
+                      <span className="text-sm font-medium text-gray-900 truncate">{item.label}</span>
+                    </div>
+                    {item.detail && <div className="text-xs text-gray-500 truncate">{item.detail}</div>}
+                  </div>
+                  <ChevronRight size={15} className="text-gray-300 group-hover:text-gray-500 flex-shrink-0" />
+                </Link>
+              );
+            })}
           </div>
         )}
       </div>
@@ -435,16 +574,20 @@ export default function Dashboard() {
               deltaLabel="vs 7-day avg"
               icon={<CheckCircle size={18} />} iconBg="bg-green-50" iconColor="text-green-600"
             />
+            {/* Not "schedule adherence" (an on-time-delivery measure) — this is
+                exactly what it says: how many OPEN work orders are on track today. */}
             <StatCard
-              label="Schedule Adherence"
-              value={kpis?.schedule_adherence !== null ? `${kpis?.schedule_adherence}%` : '—'}
-              deltaLabel={`${kpis?.work_orders_on_track ?? 0} of ${kpis?.work_orders_total ?? 0} WOs on track`}
+              label="Open WOs On Track"
+              value={kpis?.schedule_adherence != null ? `${kpis.schedule_adherence}%` : '—'}
+              deltaLabel={(kpis?.work_orders_total ?? 0) > 0
+                ? `${kpis?.work_orders_on_track ?? 0} of ${kpis?.work_orders_total} open work orders`
+                : 'No open work orders'}
               icon={<CalendarCheck size={18} />} iconBg="bg-teal-50" iconColor="text-teal-600"
             />
             <StatCard
               label="Pass Rate (7 days)"
-              value={kpis?.pass_rate_7d !== null ? `${kpis?.pass_rate_7d}%` : '—'}
-              deltaLabel="from QC results"
+              value={kpis?.pass_rate_7d != null ? `${kpis.pass_rate_7d}%` : '—'}
+              deltaLabel={kpis?.pass_rate_7d != null ? 'from QC results' : 'No QC results recorded yet'}
               icon={<TrendingUp size={18} />} iconBg="bg-purple-50" iconColor="text-purple-600"
             />
             <StatCard
@@ -593,15 +736,27 @@ export default function Dashboard() {
               />
             ) : (
               <>
-                {/* KPI row */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                {/* KPI row — deliberately only the numbers the KPI cards above
+                    DON'T already show, so the page never states the same figure twice. */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {[
-                    { label: 'Done Today', value: plantData.kpis.total_completed_today, icon: <CheckCircle size={15} className="text-green-600" />, bg: 'bg-green-50' },
-                    { label: 'Active Now', value: plantData.kpis.active_now, icon: <Activity size={15} className="text-blue-600" />, bg: 'bg-blue-50' },
-                    { label: 'Pass Rate', value: `${plantData.kpis.pass_rate}%`, icon: <TrendingUp size={15} className="text-purple-600" />, bg: 'bg-purple-50' },
-                    { label: 'Avg Cycle', value: fmtDuration(plantData.kpis.avg_cycle_time), icon: <Clock size={15} className="text-orange-600" />, bg: 'bg-orange-50' },
-                    { label: 'Schedule', value: `${plantData.kpis.schedule_adherence}%`, icon: <CalendarCheck size={15} className="text-teal-600" />, bg: 'bg-teal-50' },
-                    { label: 'WOs On Track', value: `${plantData.kpis.work_orders_on_track}/${plantData.kpis.work_orders_total}`, icon: <Package size={15} className="text-indigo-600" />, bg: 'bg-indigo-50' },
+                    {
+                      label: 'Avg Cycle (all runs)',
+                      value: plantData.kpis.avg_cycle_time > 0 ? fmtDuration(plantData.kpis.avg_cycle_time) : '—',
+                      icon: <Clock size={15} className="text-orange-600" />, bg: 'bg-orange-50',
+                    },
+                    {
+                      label: 'Work Orders On Track',
+                      value: plantData.kpis.work_orders_total > 0
+                        ? `${plantData.kpis.work_orders_on_track}/${plantData.kpis.work_orders_total}`
+                        : '—',
+                      icon: <Package size={15} className="text-indigo-600" />, bg: 'bg-indigo-50',
+                    },
+                    {
+                      label: 'Behind or Overdue',
+                      value: plantData.active_alerts.length,
+                      icon: <AlertTriangle size={15} className="text-red-500" />, bg: 'bg-red-50',
+                    },
                   ].map(k => (
                     <div key={k.label} className="bg-gray-50 rounded-xl p-3 flex items-center gap-2.5">
                       <div className={`w-8 h-8 ${k.bg} rounded-lg flex items-center justify-center flex-shrink-0`}>{k.icon}</div>
@@ -631,7 +786,7 @@ export default function Dashboard() {
                         ...plantData.department_performance.filter(d => !pinnedStations.includes(d.id || d.department)),
                       ].slice(0, 6).map(dept => {
                         const isPinned = pinnedStations.includes(dept.id || dept.department);
-                        const onTrackPct = dept.total_count > 0 ? Math.round((dept.on_track_count / dept.total_count) * 100) : 0;
+                        const onTrackPct = dept.total_count > 0 ? Math.round((dept.on_track_count / dept.total_count) * 100) : null;
                         const barColor = dept.status === 'on_track' ? 'bg-green-500' : dept.status === 'at_risk' ? 'bg-amber-500' : 'bg-red-500';
                         return (
                           <div key={dept.id || dept.department} className={`bg-white rounded-xl border border-gray-200 p-3 border-l-4 ${deptBorderColor(dept.status)} ${isPinned ? 'ring-2 ring-blue-300' : ''}`}>
@@ -659,8 +814,8 @@ export default function Dashboard() {
                                 <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.min(100, dept.takt_time > 0 ? (dept.avg_cycle_time / dept.takt_time) * 100 : 0)}%` }} />
                               </div>
                               <div className="flex justify-between text-[11px] text-gray-400">
-                                <span>{onTrackPct}% on track</span>
-                                <span>{dept.avg_cycle_time.toFixed(1)}m avg</span>
+                                <span>{onTrackPct === null ? 'No work orders' : `${onTrackPct}% on track`}</span>
+                                <span>{dept.avg_cycle_time > 0 ? `${dept.avg_cycle_time.toFixed(1)}m avg` : 'no runs yet'}</span>
                               </div>
                             </div>
                           </div>
@@ -671,8 +826,8 @@ export default function Dashboard() {
                           compact
                           className="col-span-2"
                           icon={BarChart2}
-                          title="No department data"
-                          description="Department performance appears once completions are recorded today."
+                          title="No departments set up yet"
+                          description="Create departments to see per-area output and schedule status here."
                         />
                       )}
                     </div>

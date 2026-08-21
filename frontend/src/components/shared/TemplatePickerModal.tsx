@@ -16,14 +16,21 @@ interface Props {
   onCreated: (app: App) => void;
   /** Called with the server's message when the plan's app limit is hit (402). */
   onLimit: (reason: string) => void;
+  /** Preselected starting point — set when the user picked a card in the
+   *  library's inline template gallery instead of opening the modal cold. */
+  initialSelection?: Selection;
+  /** Name to prefill alongside `initialSelection` (usually the template's). */
+  initialName?: string;
 }
 
-export default function TemplatePickerModal({ onClose, onCreated, onLimit }: Props) {
+export default function TemplatePickerModal({
+  onClose, onCreated, onLimit, initialSelection, initialName,
+}: Props) {
   const [templates, setTemplates] = useState<AppTemplatesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [selection, setSelection] = useState<Selection>({ kind: 'blank' });
-  const [name, setName] = useState('');
+  const [selection, setSelection] = useState<Selection>(initialSelection ?? { kind: 'blank' });
+  const [name, setName] = useState(initialName ?? '');
   const [nameTouched, setNameTouched] = useState(false);
   const [description, setDescription] = useState('');
   const [creating, setCreating] = useState(false);

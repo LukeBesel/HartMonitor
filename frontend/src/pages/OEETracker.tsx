@@ -1,16 +1,22 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import {
-  Activity, RefreshCw, AlertTriangle, CheckCircle, Clock,
+  Activity, RefreshCw, AlertTriangle, CheckCircle,
   Plus, X, ChevronDown, ChevronUp, Cpu, TrendingUp, Circle,
   Play, Pause, Wrench, Monitor,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
+import LastRefreshed from '../components/shared/LastRefreshed';
 
+// Every factor is nullable: the backend reports `null` for anything it cannot
+// measure (no ideal cycle time configured, no runs today) instead of guessing.
 interface OEEData {
-  availability: number;
-  performance: number;
-  quality: number;
-  oee: number;
+  availability: number | null;
+  performance: number | null;
+  quality: number | null;
+  oee: number | null;
+  measurable: boolean;
+  missing: string[];
   uptime_minutes: number;
   downtime_minutes: number;
   planned_minutes: number;
@@ -35,16 +41,16 @@ interface LogEventForm {
 }
 
 const STATUS_CONFIG = {
-  running:     { color: 'bg-green-500',  text: 'text-green-400', label: 'Running',     icon: Play },
-  down:        { color: 'bg-red-500',    text: 'text-red-400',   label: 'Down',        icon: AlertTriangle },
-  maintenance: { color: 'bg-amber-500',  text: 'text-amber-400', label: 'Maintenance', icon: Wrench },
-  idle:        { color: 'bg-gray-400',   text: 'text-gray-400',  label: 'Idle',        icon: Pause },
+  running:     { color: 'bg-green-500',  text: 'text-emerald-700', label: 'Running',     icon: Play },
+  down:        { color: 'bg-red-500',    text: 'text-red-700',   label: 'Down',        icon: AlertTriangle },
+  maintenance: { color: 'bg-amber-500',  text: 'text-amber-700', label: 'Maintenance', icon: Wrench },
+  idle:        { color: 'bg-gray-400',   text: 'text-gray-500',  label: 'Idle',        icon: Pause },
 };
 
 function oeeColor(pct: number): string {
-  if (pct >= 80) return 'text-green-400';
-  if (pct >= 60) return 'text-amber-400';
-  return 'text-red-400';
+  if (pct >= 80) return 'text-emerald-700';
+  if (pct >= 60) return 'text-amber-700';
+  return 'text-red-700';
 }
 
 function oeeBgColor(pct: number): string {
@@ -66,19 +72,24 @@ function elapsedSince(iso: string | null): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-function MiniBar({ label, value, color }: { label: string; value: number; color: string }) {
-  const safe = Number.isFinite(value) ? value : 0;
+function MiniBar({ label, value, color, hint }: { label: string; value: number | null; color: string; hint?: string }) {
+  const known = value !== null && Number.isFinite(value);
+  const safe = known ? (value as number) : 0;
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-[10px]">
-        <span className="text-gray-400 font-medium">{label}</span>
-        <span className="text-gray-300 font-semibold">{safe.toFixed(1)}%</span>
+        <span className="text-gray-500 font-medium">{label}</span>
+        {known
+          ? <span className="text-gray-700 font-semibold">{safe.toFixed(1)}%</span>
+          : <span className="text-gray-400 font-semibold" title={hint}>not measured</span>}
       </div>
-      <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all ${color}`}
-          style={{ width: `${Math.min(safe, 100)}%` }}
-        />
+      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+        {known && (
+          <div
+            className={`h-full rounded-full transition-all ${color}`}
+            style={{ width: `${Math.min(safe, 100)}%` }}
+          />
+        )}
       </div>
     </div>
   );
@@ -100,9 +111,13 @@ function MachineCard({
 
   const statusCfg = STATUS_CONFIG[machine.current_status] ?? STATUS_CONFIG.idle;
   const oee: OEEData = machine.oee ?? {
-    availability: 0, performance: 0, quality: 0, oee: 0,
+    availability: null, performance: null, quality: null, oee: null,
+    measurable: false, missing: [],
     uptime_minutes: 0, downtime_minutes: 0, planned_minutes: 0, completions_today: 0,
   };
+  const missingHint = oee.missing?.length
+    ? `Needs ${oee.missing.join(' and ')} to measure OEE`
+    : 'Not enough data to measure OEE yet';
 
   const handleSave = async () => {
     setSaving(true);
@@ -117,7 +132,7 @@ function MachineCard({
   };
 
   return (
-    <div className="rounded-2xl border border-gray-700 overflow-hidden" style={{ backgroundColor: '#1a2235' }}>
+    <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
       {/* Card body */}
       <div className="p-4 space-y-3">
         {/* Status row */}
@@ -125,8 +140,8 @@ function MachineCard({
           <div className="flex items-center gap-2 min-w-0">
             <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${statusCfg.color}`} />
             <div className="min-w-0">
-              <div className="font-semibold text-white text-sm truncate">{machine.name}</div>
-              <div className="text-[11px] text-gray-400 truncate">{machine.location}</div>
+              <div className="font-semibold text-gray-900 text-sm truncate">{machine.name}</div>
+              <div className="text-[11px] text-gray-500 truncate">{machine.location}</div>
             </div>
           </div>
           <div className="text-right flex-shrink-0">
@@ -137,20 +152,29 @@ function MachineCard({
           </div>
         </div>
 
-        {/* OEE big number */}
+        {/* OEE big number — "—" when a factor can't be measured, never a guess */}
         <div className="flex items-end gap-2">
-          <div className={`text-3xl font-bold tabular-nums leading-none ${oeeColor(oee.oee)}`}>
-            {oee.oee.toFixed(1)}
-            <span className="text-base font-medium">%</span>
-          </div>
+          {oee.oee !== null ? (
+            <div className={`text-3xl font-bold tabular-nums leading-none ${oeeColor(oee.oee)}`}>
+              {oee.oee.toFixed(1)}
+              <span className="text-base font-medium">%</span>
+            </div>
+          ) : (
+            <div className="text-3xl font-bold leading-none text-gray-500">—</div>
+          )}
           <div className="text-xs text-gray-500 mb-1">OEE</div>
         </div>
+        {oee.oee === null && (
+          <div className="text-[10px] text-amber-400/90 leading-snug">{missingHint}</div>
+        )}
 
         {/* Progress bars */}
         <div className="space-y-1.5">
           <MiniBar label="Availability" value={oee.availability} color="bg-green-500" />
-          <MiniBar label="Performance"  value={oee.performance}  color="bg-blue-500" />
-          <MiniBar label="Quality"      value={oee.quality}      color="bg-purple-500" />
+          <MiniBar label="Performance"  value={oee.performance}  color="bg-blue-500"
+            hint="Set an ideal cycle time for this station to measure performance" />
+          <MiniBar label="Quality"      value={oee.quality}      color="bg-purple-500"
+            hint="Quality is measured from today's completed runs" />
         </div>
 
         {/* Footer row */}
@@ -161,7 +185,7 @@ function MachineCard({
           </div>
           <button
             onClick={onToggleExpand}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors text-gray-400 hover:text-white border border-gray-600 hover:border-gray-500 hover:bg-gray-700"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors text-gray-500 hover:text-gray-900 border border-gray-300 hover:border-gray-400 hover:bg-gray-100"
           >
             {isExpanded ? (
               <>
@@ -180,15 +204,15 @@ function MachineCard({
 
       {/* Expand: log event form */}
       {isExpanded && (
-        <div className="border-t border-gray-700 p-4 space-y-3" style={{ backgroundColor: '#111827' }}>
-          <div className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Log Status Event</div>
+        <div className="border-t border-gray-200 bg-gray-50 p-4 space-y-3">
+          <div className="text-xs font-semibold text-gray-700 uppercase tracking-wider">Log Status Event</div>
 
           <div>
-            <label className="text-[11px] text-gray-400 mb-1 block">New Status</label>
+            <label className="text-[11px] text-gray-500 mb-1 block">New Status</label>
             <select
               value={form.event_type}
               onChange={e => setForm(f => ({ ...f, event_type: e.target.value as LogEventForm['event_type'] }))}
-              className="w-full px-3 py-2 rounded-lg text-sm bg-gray-800 border border-gray-600 text-white focus:outline-none focus:border-blue-500 transition-colors"
+              className="w-full px-3 py-2 rounded-lg text-sm bg-white border border-gray-300 text-gray-900 focus:outline-none focus:border-blue-500 transition-colors"
             >
               <option value="running">Running</option>
               <option value="down">Down</option>
@@ -198,13 +222,13 @@ function MachineCard({
           </div>
 
           <div>
-            <label className="text-[11px] text-gray-400 mb-1 block">Reason (optional)</label>
+            <label className="text-[11px] text-gray-500 mb-1 block">Reason (optional)</label>
             <textarea
               value={form.reason}
               onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}
               rows={2}
               placeholder="Describe what happened..."
-              className="w-full px-3 py-2 rounded-lg text-sm bg-gray-800 border border-gray-600 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors resize-none"
+              className="w-full px-3 py-2 rounded-lg text-sm bg-white border border-gray-300 text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 transition-colors resize-none"
             />
           </div>
 
@@ -218,7 +242,7 @@ function MachineCard({
             </button>
             <button
               onClick={onToggleExpand}
-              className="px-4 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-white border border-gray-600 hover:border-gray-500 transition-colors"
+              className="px-4 py-2 rounded-lg text-sm font-medium text-gray-500 hover:text-gray-900 border border-gray-300 hover:border-gray-400 transition-colors"
             >
               Cancel
             </button>
@@ -233,48 +257,39 @@ export default function OEETracker() {
   const [machines, setMachines] = useState<OEEMachine[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setRefreshing(true);
+  const load = useCallback(async () => {
     try {
       const data = await api.getOEE();
       setMachines(Array.isArray(data) ? data : []);
-      setLastUpdated(new Date());
       setLoadError(null);
     } catch (err: any) {
       console.error('Failed to load OEE data', err);
       setLoadError(err?.message || 'Failed to load OEE data');
+      throw err;
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   }, []);
 
-  useEffect(() => {
-    load();
-    const interval = setInterval(() => load(), 30000);
-    return () => clearInterval(interval);
-  }, [load]);
+  // Machine state turns over fast on the floor — poll every 30s while visible.
+  const auto = useAutoRefresh(load, 30_000);
 
   const handleLogEvent = async (id: string, data: { event_type: string; reason: string }) => {
     const updated = await api.logOEEEvent(id, data);
     setMachines(prev => prev.map(m => (m.id === id && updated ? updated : m)));
-    setLastUpdated(new Date());
   };
 
   // KPI aggregates
   const totalMachines = machines.length;
   const runningNow = machines.filter(m => m.current_status === 'running').length;
   const downNow = machines.filter(m => m.current_status === 'down').length;
-  const plantOEE = totalMachines > 0
-    ? machines.reduce((sum, m) => sum + (m.oee?.oee ?? 0), 0) / totalMachines
-    : 0;
-
-  const formattedLastUpdated = lastUpdated
-    ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  // Plant-wide OEE averages ONLY the machines whose OEE is actually measurable —
+  // folding un-measurable machines in as zeros would understate the whole plant.
+  const measured = machines.filter(m => typeof m.oee?.oee === 'number');
+  const plantOEE = measured.length > 0
+    ? measured.reduce((sum, m) => sum + (m.oee.oee as number), 0) / measured.length
     : null;
 
   return (
@@ -289,23 +304,17 @@ export default function OEETracker() {
               Live
             </span>
           </div>
-          <p className="text-sm text-gray-500 mt-0.5">Overall Equipment Effectiveness — auto-refresh every 30s</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Overall Equipment Effectiveness for today, measured against each station's planned
+            hours and ideal cycle time — auto-refresh every 30s
+          </p>
         </div>
         <div className="flex items-center gap-3">
-          {formattedLastUpdated && (
-            <div className="flex items-center gap-1.5 text-xs text-gray-400">
-              <Clock size={12} />
-              Updated {formattedLastUpdated}
-            </div>
-          )}
-          <button
-            onClick={() => load(true)}
-            disabled={refreshing}
-            className="btn-secondary"
-          >
-            <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
-            Refresh
-          </button>
+          <LastRefreshed
+            at={auto.lastRefreshed}
+            refreshing={auto.refreshing}
+            onRefresh={() => { void auto.refresh(); }}
+          />
         </div>
       </div>
 
@@ -335,8 +344,11 @@ export default function OEETracker() {
           icon={<TrendingUp size={18} className="text-purple-600" />}
           iconBg="bg-purple-50"
           label="Plant-wide OEE"
-          value={`${plantOEE.toFixed(1)}%`}
-          valueClass={oeeColor(plantOEE).replace('text-', 'text-')}
+          value={plantOEE === null ? '—' : `${plantOEE.toFixed(1)}%`}
+          sub={plantOEE === null
+            ? 'No machine has enough data yet'
+            : `averaged over ${measured.length} of ${totalMachines} machines`}
+          valueClass={plantOEE === null ? 'text-gray-400' : oeeColor(plantOEE)}
         />
       </div>
 
@@ -349,15 +361,15 @@ export default function OEETracker() {
         </div>
       ) : loadError && machines.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
-          <AlertTriangle size={28} className="text-red-400" />
+          <AlertTriangle size={28} className="text-red-700" />
           <p className="text-gray-500 font-medium">Couldn't load machines</p>
-          <p className="text-sm text-gray-400">{loadError}</p>
-          <button onClick={() => load(true)} className="btn-secondary">
+          <p className="text-sm text-gray-500">{loadError}</p>
+          <button onClick={() => { void auto.refresh(); }} className="btn-secondary">
             <RefreshCw size={14} /> Retry
           </button>
         </div>
       ) : machines.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+        <div className="flex flex-col items-center justify-center py-20 text-gray-500">
           <Activity size={40} className="mb-3 opacity-30" />
           <div className="font-medium text-gray-500">No machines configured</div>
           <div className="text-sm mt-1">Add machines to the OEE system to see data here</div>
@@ -403,7 +415,7 @@ function KpiCard({
         <div>
           <div className={`text-2xl font-bold ${valueClass || 'text-gray-900'}`}>{value}</div>
           <div className="text-xs font-medium text-gray-500">{label}</div>
-          {sub && <div className="text-xs text-gray-400">{sub}</div>}
+          {sub && <div className="text-xs text-gray-500">{sub}</div>}
         </div>
       </div>
     </div>

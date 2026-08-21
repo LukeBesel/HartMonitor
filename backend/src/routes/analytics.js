@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { calcScheduleStatus } = require('./workorders');
 const { calcOEE } = require('./oee');
+const { teamOf: andonTeamOf, teamLabel: andonTeamLabel } = require('../andonTeams');
 
 const router = express.Router();
 
@@ -41,18 +42,20 @@ router.get('/overview', (req, res) => {
   `).get(cid, ...f.params);
   const avgCycleTime = cycleTimeResult?.avg_minutes ? Math.round(cycleTimeResult.avg_minutes) : 0;
 
-  const passFailData = db.prepare(`SELECT data FROM completions WHERE company_id = ? AND status='completed'${f.clause} LIMIT 500`).all(cid, ...f.params);
+  // Pass rate over every completed run that recorded a QC result (a run with
+  // both a Pass and a Fail counts once, as a fail). No QC results = null, so
+  // the UI can say "no data" instead of showing a 0% nobody measured.
+  const passFailData = db.prepare(`SELECT data FROM completions WHERE company_id = ? AND status='completed'${f.clause}`).all(cid, ...f.params);
   let passCount = 0, failCount = 0;
   for (const row of passFailData) {
-    const data = JSON.parse(row.data);
-    const vals = Object.values(data);
-    if (vals.some(v => v === 'Pass')) passCount++;
+    const vals = Object.values(JSON.parse(row.data));
     if (vals.some(v => v === 'Fail')) failCount++;
+    else if (vals.some(v => v === 'Pass')) passCount++;
   }
   const totalQC  = passCount + failCount;
-  const passRate = totalQC > 0 ? Math.round((passCount / totalQC) * 100) : 0;
+  const passRate = totalQC > 0 ? Math.round((passCount / totalQC) * 100) : null;
 
-  res.json({ totalCompletions, todayCompletions, inProgress, totalApps, publishedApps, activeStations, avgCycleTime, passRate });
+  res.json({ totalCompletions, todayCompletions, inProgress, totalApps, publishedApps, activeStations, avgCycleTime, passRate, qcSampleSize: totalQC });
 });
 
 // ─── GET /throughput ──────────────────────────────────────────────────────────
@@ -231,7 +234,10 @@ router.get('/plant-view', (req, res) => {
     ? `LEFT JOIN work_orders wo ON wo.id = completions.work_order_id
        LEFT JOIN stations    st ON st.id = completions.station_id`
     : '';
-  const siteClause = site_id ? ' AND COALESCE(wo.site_id, st.site_id) = ?' : '';
+  // Records that were never assigned to a site belong to the whole company, so
+  // they stay visible under every site — otherwise selecting the (auto-created)
+  // primary site empties the floor view for companies that never used sites.
+  const siteClause = site_id ? ' AND (COALESCE(wo.site_id, st.site_id) = ? OR COALESCE(wo.site_id, st.site_id) IS NULL)' : '';
   const siteParams = site_id ? [site_id] : [];
 
   // KPIs
@@ -262,15 +268,17 @@ router.get('/plant-view', (req, res) => {
     if (vals.some(v => v === 'Fail')) fail++;
     else if (vals.some(v => v === 'Pass')) pass++;
   }
-  const passRate = (pass + fail) > 0 ? Math.round((pass / (pass + fail)) * 100) : 0;
+  const passRate = (pass + fail) > 0 ? Math.round((pass / (pass + fail)) * 100) : null;
 
-  // Schedule adherence: % of work orders currently on_track or completed
+  // Share of this site's work orders currently on track (or already finished).
+  // Deliberately NOT called "schedule adherence" in the UI — that term means
+  // on-time delivery against plan, which is a different measure.
   const allWOs = db.prepare(`
     SELECT wo.*, d.name AS department_name, d.color AS department_color, a.name AS app_name
     FROM work_orders wo
     LEFT JOIN departments d ON d.id = wo.department_id
     LEFT JOIN apps        a ON a.id = wo.app_id
-    WHERE wo.company_id = ? AND wo.status != 'cancelled'${site_id ? ' AND wo.site_id = ?' : ''}
+    WHERE wo.company_id = ? AND wo.status != 'cancelled'${site_id ? ' AND (wo.site_id = ? OR wo.site_id IS NULL)' : ''}
   `).all(cid, ...siteParams).map(wo => ({ ...wo, schedule_status: calcScheduleStatus(wo) }));
 
   const woSummary = { on_track: 0, at_risk: 0, behind: 0, not_started: 0, completed: 0 };
@@ -281,11 +289,11 @@ router.get('/plant-view', (req, res) => {
   const adherenceBase = allWOs.length;
   const scheduleAdherence = adherenceBase > 0
     ? Math.round(((woSummary.on_track + woSummary.completed) / adherenceBase) * 100)
-    : 0;
+    : null;
 
   // Department performance. A completion belongs to its work order's department,
   // falling back to its station's department when it ran without a work order.
-  const depts = db.prepare(`SELECT * FROM departments WHERE company_id = ?${site_id ? ' AND site_id = ?' : ''}`).all(cid, ...siteParams);
+  const depts = db.prepare(`SELECT * FROM departments WHERE company_id = ?${site_id ? ' AND (site_id = ? OR site_id IS NULL)' : ''}`).all(cid, ...siteParams);
   const departmentPerformance = depts.map(dept => {
     const deptWOs = allWOs.filter(wo => wo.department_id === dept.id);
 
@@ -309,8 +317,12 @@ router.get('/plant-view', (req, res) => {
     const avgCycleDept = ctDept?.avg_minutes ? Math.round(ctDept.avg_minutes) : 0;
 
     const onTrack = deptWOs.filter(wo => wo.schedule_status === 'on_track' || wo.schedule_status === 'completed').length;
-    const onTrackPct = deptWOs.length > 0 ? Math.round((onTrack / deptWOs.length) * 100) : 100;
-    const status = deptWOs.length === 0 ? 'on_track' : onTrackPct >= 80 ? 'on_track' : onTrackPct >= 50 ? 'at_risk' : 'behind';
+    const onTrackPct = deptWOs.length > 0 ? Math.round((onTrack / deptWOs.length) * 100) : null;
+    // A department with no work orders is 'idle', not a green "on track" — there
+    // is nothing to be on track with.
+    const status = deptWOs.length === 0 ? 'idle'
+      : onTrackPct >= 80 ? 'on_track'
+      : onTrackPct >= 50 ? 'at_risk' : 'behind';
 
     const taktTimes = deptWOs.map(wo => wo.takt_time_minutes).filter(t => t > 0);
     const taktTime = taktTimes.length ? Math.round((taktTimes.reduce((s, t) => s + t, 0) / taktTimes.length) * 10) / 10 : 0;
@@ -364,7 +376,7 @@ router.get('/plant-view', (req, res) => {
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN stations st    ON st.id = c.station_id
     LEFT JOIN departments d  ON d.id  = COALESCE(wo.department_id, st.department_id)
-    WHERE c.company_id = ?${site_id ? ' AND COALESCE(wo.site_id, st.site_id) = ?' : ''}
+    WHERE c.company_id = ?${site_id ? ' AND (COALESCE(wo.site_id, st.site_id) = ? OR COALESCE(wo.site_id, st.site_id) IS NULL)' : ''}
     ORDER BY datetime(COALESCE(c.completed_at, c.started_at)) DESC
     LIMIT 15
   `).all(cid, ...siteParams).map(c => {
@@ -706,20 +718,84 @@ router.get('/daily-brief', (req, res) => {
     LEFT JOIN departments d ON d.id = wo.department_id
     WHERE wo.company_id = ? AND wo.status NOT IN ('completed', 'cancelled')
   `).all(cid);
-  for (const wo of activeWOs) {
-    const ss = calcScheduleStatus(wo);
-    if (ss === 'overdue' || ss === 'behind') {
-      attention.push({
-        type: ss === 'overdue' ? 'wo_overdue' : 'wo_behind',
-        severity: ss === 'overdue' ? 'red' : 'amber',
-        label: `${wo.work_order_number} · ${wo.part_name}`,
-        detail: `${wo.quantity_completed}/${wo.quantity} done${wo.department_name ? ` · ${wo.department_name}` : ''} · due ${new Date(wo.scheduled_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
-        link: `/schedule?highlight=${wo.id}`,
-      });
-    }
+  // Late work orders, most urgent first (overdue before behind, then by due date)
+  // and capped — a triage list a supervisor can actually work through beats a
+  // hundred-row wall. Anything beyond the cap is summarised in one honest row.
+  const WO_ATTENTION_CAP = 6;
+  const lateWOs = activeWOs
+    .map(wo => ({ wo, ss: calcScheduleStatus(wo) }))
+    .filter(({ ss }) => ss === 'overdue' || ss === 'behind')
+    .sort((a, b) =>
+      (a.ss === 'overdue' ? 0 : 1) - (b.ss === 'overdue' ? 0 : 1) ||
+      String(a.wo.scheduled_end ?? '').localeCompare(String(b.wo.scheduled_end ?? '')));
+
+  for (const { wo, ss } of lateWOs.slice(0, WO_ATTENTION_CAP)) {
+    attention.push({
+      type: ss === 'overdue' ? 'wo_overdue' : 'wo_behind',
+      severity: ss === 'overdue' ? 'red' : 'amber',
+      label: `${wo.work_order_number} · ${wo.part_name}`,
+      detail: `${wo.quantity_completed}/${wo.quantity} done${wo.department_name ? ` · ${wo.department_name}` : ''} · due ${new Date(wo.scheduled_end).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+      link: `/schedule?highlight=${wo.id}`,
+    });
+  }
+  if (lateWOs.length > WO_ATTENTION_CAP) {
+    const rest = lateWOs.length - WO_ATTENTION_CAP;
+    attention.push({
+      type: 'more',
+      severity: 'amber',
+      label: `${rest} more work order${rest === 1 ? '' : 's'} behind schedule`,
+      detail: 'Open the schedule to review them all',
+      link: '/schedule',
+    });
   }
 
-  const downStations = db.prepare(`SELECT id, name, current_status, current_status_since FROM stations WHERE company_id = ? AND current_status = 'down'`).all(cid);
+  // Open help requests (Andon) — someone on the floor is waiting for a person.
+  // These outrank most things: they are a human standing still.
+  const openCalls = db.prepare(`
+    SELECT a.id, a.team, a.type, a.target_type, a.status, a.title, a.step_name, a.created_by,
+           a.department_id, d.name AS department_name, s.name AS station_name,
+           wo.work_order_number, ap.name AS app_name, a.assigned_to, a.acknowledged_by,
+           CAST((julianday('now') - julianday(a.created_at)) * 86400 AS INTEGER) AS age_seconds
+    FROM andon_calls a
+    LEFT JOIN departments d  ON d.id  = a.department_id
+    LEFT JOIN stations s     ON s.id  = a.station_id
+    LEFT JOIN work_orders wo ON wo.id = a.work_order_id
+    LEFT JOIN apps ap        ON ap.id = a.app_id
+    WHERE a.company_id = ? AND a.status IN ('open', 'acknowledged')
+    ORDER BY a.created_at ASC LIMIT 20
+  `).all(cid);
+  for (const c of openCalls) {
+    const team = andonTeamOf(c);
+    const isDept = c.target_type === 'department' && !!c.department_name;
+    const targetLabel = isDept ? c.department_name : andonTeamLabel(team);
+    const mins = Math.max(0, Math.round((c.age_seconds ?? 0) / 60));
+    const location = c.station_name || (isDept ? '' : c.department_name) || '';
+    const responder = c.assigned_to || c.acknowledged_by || '';
+    attention.push({
+      type: 'andon_call',
+      severity: c.status === 'open' ? 'red' : 'amber',
+      label: `${targetLabel} needed${location ? ` · ${location}` : ''}`,
+      detail: [
+        c.status === 'open' ? `waiting ${mins}m` : `${responder || 'Someone'} on the way · ${mins}m`,
+        c.work_order_number && `WO ${c.work_order_number}`,
+        c.app_name && c.step_name ? `${c.app_name} · ${c.step_name}` : c.app_name,
+        c.created_by && `raised by ${c.created_by}`,
+      ].filter(Boolean).join(' · '),
+      link: isDept ? `/andon?department_id=${c.department_id}` : `/andon?team=${team}`,
+      team,
+      team_label: andonTeamLabel(team),
+      target_type: isDept ? 'department' : 'team',
+      target_label: targetLabel,
+      department_id: isDept ? c.department_id : null,
+      call_id: c.id,
+      call_status: c.status,
+      age_minutes: mins,
+      location,
+    });
+  }
+
+  // Capped and ordered: longest-down first, so the list stays a triage list.
+  const downStations = db.prepare(`SELECT id, name, current_status, current_status_since FROM stations WHERE company_id = ? AND current_status = 'down' ORDER BY current_status_since ASC LIMIT 10`).all(cid);
   for (const st of downStations) {
     const mins = st.current_status_since ? Math.floor((Date.now() - new Date(st.current_status_since).getTime()) / 60000) : null;
     attention.push({
@@ -785,7 +861,10 @@ router.get('/daily-brief', (req, res) => {
     }
   }
 
-  attention.sort((a, b) => (a.severity === 'red' ? 0 : 1) - (b.severity === 'red' ? 0 : 1));
+  // Red before amber; within a band, a team call outranks everything else —
+  // someone is standing at a machine waiting for a person.
+  const attnRank = i => (i.severity === 'red' ? 0 : 2) + (i.type === 'andon_call' ? 0 : 1);
+  attention.sort((a, b) => attnRank(a) - attnRank(b));
 
   // ── KPIs with deltas
   const completedToday = db.prepare("SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed' AND date(completed_at)=date('now')").get(cid).c;
@@ -907,7 +986,7 @@ router.get('/department/:id', (req, res) => {
     if (vals.some(v => v === 'Fail')) fail++;
     else if (vals.some(v => v === 'Pass')) pass++;
   }
-  const passRate = (pass + fail) > 0 ? Math.round((pass / (pass + fail)) * 100) : 0;
+  const passRate = (pass + fail) > 0 ? Math.round((pass / (pass + fail)) * 100) : null;
 
   // Work orders for this department
   const workOrders = db.prepare(`

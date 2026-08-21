@@ -26,6 +26,11 @@ export interface OutboxItem {
    *  item in place (position preserved) instead of appending — used so repeated
    *  autosave snapshots collapse to one queued update per completion. */
   coalesceKey?: string;
+  /** Bumped on every coalesce. flushOutbox uses it to retire ONLY the exact
+   *  version it delivered, so a fresher payload written while the request was
+   *  in flight survives. A wall-clock timestamp is not enough — two writes can
+   *  land in the same millisecond. Absent on items stored before this field. */
+  rev?: number;
 }
 
 // Legacy shape — unchanged (OperatorPortal depends on it).
@@ -123,11 +128,12 @@ export function enqueueOutbox(
     if (existing) {
       existing.payload = payload;
       existing.queuedAt = new Date().toISOString();
+      existing.rev = (existing.rev ?? 0) + 1;
       save(items);
       return existing;
     }
   }
-  const item: OutboxItem = { id: v4(), kind, payload, queuedAt: new Date().toISOString(), coalesceKey };
+  const item: OutboxItem = { id: v4(), kind, payload, queuedAt: new Date().toISOString(), coalesceKey, rev: 0 };
   items.push(item);
   save(items);
   return item;
@@ -167,19 +173,30 @@ export async function flushOutbox(): Promise<number> {
   const items = load();
   if (items.length === 0) return 0;
   let synced = 0;
-  const remaining: OutboxItem[] = [];
+  // Record WHICH VERSION of each item was actually delivered. A flush awaits
+  // the network for as long as the round trips take, and the player keeps
+  // queueing during that window — especially on reconnect, when a completion
+  // autosave or kit update can still be failing while this loop runs. Writing
+  // back the array we loaded at the start would delete anything enqueued
+  // meanwhile. `rev` identifies the exact version delivered: coalescing (see
+  // enqueueOutbox) rewrites an item's payload in place, keeping its id.
+  const sent: Array<{ id: string; rev: number }> = [];
   const failedKinds = new Set<OutboxKind>();
   for (const item of items) {
-    if (failedKinds.has(item.kind)) { remaining.push(item); continue; }
+    if (failedKinds.has(item.kind)) continue;   // preserve per-kind ordering
     try {
       await send(item);
       synced++;
+      sent.push({ id: item.id, rev: item.rev ?? 0 });
     } catch {
       failedKinds.add(item.kind);
-      remaining.push(item);
     }
   }
-  save(remaining);
+  if (sent.length > 0) {
+    const current = load();
+    const next = current.filter(i => !sent.some(s => s.id === i.id && s.rev === (i.rev ?? 0)));
+    if (next.length !== current.length) save(next);
+  }
   return synced;
 }
 

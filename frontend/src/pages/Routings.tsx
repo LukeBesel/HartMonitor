@@ -246,7 +246,7 @@ export default function Routings() {
   if (loadError) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-3 text-center px-6">
-        <AlertCircle size={28} className="text-red-400" />
+        <AlertCircle size={28} className="text-red-500" />
         <p className="text-gray-500 font-medium">Couldn't load routings</p>
         <p className="text-xs text-gray-400">{loadError}</p>
         <button onClick={loadAll} className="btn-secondary">Retry</button>

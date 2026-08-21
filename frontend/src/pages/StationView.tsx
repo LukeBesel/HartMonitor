@@ -1,10 +1,12 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import {
   RefreshCw, ArrowLeft, Monitor, MapPin, User, Play, Clock,
   Gauge, CheckCircle2, Wrench, AlertTriangle, Activity
 } from 'lucide-react';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
+import LastRefreshed from '../components/shared/LastRefreshed';
 
 interface StationViewData {
   station: {
@@ -19,7 +21,8 @@ interface StationViewData {
     started_at: string; work_order_number: string | null; part_name: string | null;
   } | null;
   oee: {
-    availability: number; performance: number; quality: number; oee: number;
+    availability: number | null; performance: number | null; quality: number | null; oee: number | null;
+    measurable?: boolean; missing?: string[];
     uptime_minutes: number; downtime_minutes: number; planned_minutes: number;
     completions_today: number;
   };
@@ -80,17 +83,14 @@ export default function StationView() {
       setError('');
     } catch (err: any) {
       setError(err?.message || 'Failed to load station');
+      throw err;
     } finally {
       setLoading(false);
     }
   }, [id]);
 
-  useEffect(() => {
-    setLoading(true);
-    load();
-    const interval = setInterval(load, 30000);
-    return () => clearInterval(interval);
-  }, [load]);
+  // Live machine state — 30s while the tab is visible.
+  const auto = useAutoRefresh(load, 30_000);
 
   if (loading && !data) return (
     <div className="flex items-center justify-center h-64">
@@ -105,7 +105,7 @@ export default function StationView() {
         <p className="font-medium text-gray-500">Couldn't load this station</p>
         <p className="text-sm text-gray-400 mt-1">{error || 'Station not found'}</p>
       </div>
-      <button className="btn-secondary" onClick={() => { setLoading(true); load(); }}>Retry</button>
+      <button className="btn-secondary" onClick={() => { setLoading(true); void auto.refresh(); }}>Retry</button>
       <Link to="/stations" className="text-blue-600 text-sm hover:underline">← Back to Stations</Link>
     </div>
   );
@@ -146,9 +146,11 @@ export default function StationView() {
             {ms.label}
             {st.current_status_since && <span className="font-normal opacity-70">for {elapsedSince(st.current_status_since)}</span>}
           </span>
-          <button onClick={load} className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 shadow-sm">
-            <RefreshCw size={14} /> Refresh
-          </button>
+          <LastRefreshed
+            at={auto.lastRefreshed}
+            refreshing={auto.refreshing}
+            onRefresh={() => { void auto.refresh(); }}
+          />
         </div>
       </div>
 
@@ -190,10 +192,13 @@ export default function StationView() {
 
       {/* OEE KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
-        <OEECard label="OEE" value={oee.oee} highlight />
+        <OEECard label="OEE" value={oee.oee} highlight
+          hint={oee.missing?.length ? `Needs ${oee.missing.join(' and ')}` : 'Not enough data yet'} />
         <OEECard label="Availability" value={oee.availability} />
-        <OEECard label="Performance" value={oee.performance} />
-        <OEECard label="Quality" value={oee.quality} />
+        <OEECard label="Performance" value={oee.performance}
+          hint="Set an ideal cycle time below" />
+        <OEECard label="Quality" value={oee.quality}
+          hint="Measured from today's runs" />
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
           <div className="w-9 h-9 bg-green-50 rounded-lg flex items-center justify-center mb-3">
             <CheckCircle2 size={18} className="text-green-600" />
@@ -275,16 +280,19 @@ export default function StationView() {
   );
 }
 
-function OEECard({ label, value: rawValue, highlight }: { label: string; value: number; highlight?: boolean }) {
-  const value = Number.isFinite(rawValue) ? rawValue : 0;
-  const color = value >= 80 ? 'text-green-600' : value >= 60 ? 'text-amber-600' : 'text-red-600';
+function OEECard({ label, value, highlight, hint }: { label: string; value: number | null; highlight?: boolean; hint?: string }) {
+  const known = value !== null && Number.isFinite(value);
+  const color = !known ? 'text-gray-400'
+    : (value as number) >= 80 ? 'text-green-600'
+    : (value as number) >= 60 ? 'text-amber-600' : 'text-red-600';
   return (
     <div className={`bg-white rounded-xl border shadow-sm p-5 ${highlight ? 'border-blue-200 ring-1 ring-blue-100' : 'border-gray-200'}`}>
       <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center mb-3">
         <Gauge size={18} className="text-blue-600" />
       </div>
-      <div className={`text-2xl font-bold ${color}`}>{value}%</div>
+      <div className={`text-2xl font-bold ${color}`}>{known ? `${value}%` : '—'}</div>
       <div className="text-xs text-gray-500 mt-0.5">{label}</div>
+      {!known && hint && <div className="text-[11px] text-gray-400 mt-1 leading-snug">{hint}</div>}
     </div>
   );
 }

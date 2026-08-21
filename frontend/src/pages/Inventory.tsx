@@ -15,6 +15,8 @@ import type { InventoryTrackerSummary, InventoryMovement } from '../types';
 import SavedViewsBar from '../components/shared/SavedViewsBar';
 import BarcodeScannerModal from '../components/shared/BarcodeScannerModal';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
+import LastRefreshed from '../components/shared/LastRefreshed';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import { useSite } from '../context/SiteContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -1612,28 +1614,38 @@ export default function Inventory() {
   const [movementsReloadKey, setMovementsReloadKey] = useState(0);
   const { isAtLeast, canEdit } = useAuth();
 
-  const loadSummary = useCallback(() => {
-    setSummaryLoading(true);
+  // `silent` skips the skeletons so a background poll never blanks the table
+  // the user is reading — the freshness stamp carries the reload signal instead.
+  const loadSummary = useCallback((silent = false) => {
+    if (!silent) setSummaryLoading(true);
     setSummaryError('');
-    api.getInventoryTrackerSummary()
+    return api.getInventoryTrackerSummary()
       .then(s => { setTrackerSummary(s); setSummaryLoading(false); })
-      .catch((err: any) => { setSummaryError(err.message || 'Failed to load inventory summary'); setSummaryLoading(false); });
+      .catch((err: any) => { setSummaryError(err.message || 'Failed to load inventory summary'); setSummaryLoading(false); throw err; });
   }, []);
 
-  const loadItems = useCallback(() => {
-    setLoading(true);
+  const loadItems = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
     setItemsError('');
     const params: any = {};
     if (search) params.search = search;
     if (category) params.category = category;
     if (lowStockOnly) params.low_stock = true;
-    api.getInventoryItems(params)
+    return api.getInventoryItems(params)
       .then(data => { setItems(Array.isArray(data) ? data : []); setLoading(false); })
-      .catch((err: any) => { setItemsError(err.message || 'Failed to load items'); setLoading(false); });
+      .catch((err: any) => { setItemsError(err.message || 'Failed to load items'); setLoading(false); throw err; });
   }, [search, category, lowStockOnly]);
 
-  useEffect(() => { loadSummary(); }, [loadSummary]);
-  useEffect(() => { loadItems(); }, [loadItems]);
+  // One poll drives the whole tracker: summary, item list and the movements
+  // tab (which reloads off `movementsReloadKey`). Stock moves at shift pace, so
+  // 60s is plenty — and it pauses entirely while the tab is hidden.
+  const loadAll = useCallback(async () => {
+    setMovementsReloadKey(k => k + 1);
+    const [s, i] = await Promise.allSettled([loadSummary(true), loadItems(true)]);
+    if (s.status === 'rejected' && i.status === 'rejected') throw s.reason;
+  }, [loadSummary, loadItems]);
+
+  const auto = useAutoRefresh(loadAll, 60_000);
 
   // Deep-linked item detail forces the Items tab so the panel is visible.
   useEffect(() => { if (id) setTab('items'); }, [id]);
@@ -1643,8 +1655,7 @@ export default function Inventory() {
     setSampleError('');
     try {
       await api.loadSampleData();
-      loadItems();
-      loadSummary();
+      await auto.refresh();
     } catch (err: any) {
       setSampleError(err?.message || 'Failed to load sample data');
     } finally {
@@ -1653,9 +1664,7 @@ export default function Inventory() {
   };
 
   function refresh() {
-    loadSummary();
-    loadItems();
-    setMovementsReloadKey(k => k + 1);
+    void auto.refresh();
   }
 
   async function handleDelete(item: any) {
@@ -1742,6 +1751,12 @@ export default function Inventory() {
           <p className="text-gray-500 text-sm mt-0.5">Track stock levels, movements and locations</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <LastRefreshed
+            at={auto.lastRefreshed}
+            refreshing={auto.refreshing}
+            onRefresh={() => { void auto.refresh(); }}
+            className="mr-1"
+          />
           <button onClick={() => api.downloadExport('inventory').catch((err: any) => alert(err.message || 'Export failed'))} className="btn-secondary whitespace-nowrap">
             <Download size={14} />
             Export CSV
@@ -1790,7 +1805,7 @@ export default function Inventory() {
           summary={trackerSummary}
           loading={summaryLoading}
           error={summaryError}
-          onRetry={loadSummary}
+          onRetry={() => { loadSummary().catch(() => {}); }}
           onSelectItem={(itemId) => { setTab('items'); navigate(`/inventory/${itemId}`); }}
         />
       )}
@@ -1882,7 +1897,7 @@ export default function Inventory() {
                             <AlertTriangle size={22} className="text-red-400" />
                             <p className="text-gray-500 font-medium">Couldn't load items</p>
                             <p className="text-xs text-gray-400">{itemsError}</p>
-                            <button onClick={loadItems} className="btn-secondary">
+                            <button onClick={() => { loadItems().catch(() => {}); }} className="btn-secondary">
                               <RefreshCw size={14} /> Retry
                             </button>
                           </div>

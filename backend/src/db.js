@@ -1929,6 +1929,20 @@ db.exec(`
     ON shift_notes(company_id, shift_date DESC, department_id);
 `);
 
+// ─── shift_notes: columns routes/shifts.js has always written ────────────────
+// The table shipped narrower than the route's INSERT, so creating a shift note
+// 500'd on every database ("no column named shift_label"). Additive, guarded.
+{
+  const shiftCols = db.prepare('PRAGMA table_info(shift_notes)').all().map(c => c.name);
+  const addShift = (name, decl) => { if (!shiftCols.includes(name)) db.exec(`ALTER TABLE shift_notes ADD COLUMN ${decl}`); };
+  addShift('shift_label',      "shift_label TEXT DEFAULT ''");
+  addShift('author_id',        'author_id TEXT');
+  addShift('author_name',      "author_name TEXT DEFAULT ''");
+  addShift('attendance_count', 'attendance_count INTEGER DEFAULT 0');
+  addShift('safety_incidents', 'safety_incidents INTEGER DEFAULT 0');
+  addShift('updated_at',       'updated_at TEXT');
+}
+
 // ─── Kaizen / CI Ideas ────────────────────────────────────────────────────────
 db.exec(`
   CREATE TABLE IF NOT EXISTS kaizen_ideas (
@@ -1950,6 +1964,33 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_kaizen_ideas_lookup
     ON kaizen_ideas(company_id, status, created_at DESC);
 `);
+
+// ─── kaizen_ideas: columns the routes/UI have always used ─────────────────────
+// The original table shipped a narrower shape than routes/kaizen.js writes, so
+// POST /api/kaizen 500'd on every fresh database. Additive, guarded ALTERs only;
+// idea_number is backfilled from the legacy `number` column so seeded rows sort
+// and search correctly.
+const kaizenCols = db.prepare('PRAGMA table_info(kaizen_ideas)').all().map(c => c.name);
+const KAIZEN_ADDITIONS = [
+  ['idea_number', "TEXT"],
+  ['type', "TEXT DEFAULT 'improvement'"],
+  ['submitter_id', 'TEXT'],
+  ['submitter_name', "TEXT DEFAULT ''"],
+  ['champion_name', "TEXT DEFAULT ''"],
+  ['estimated_hours', 'REAL DEFAULT 0'],
+  ['actual_hours', 'REAL DEFAULT 0'],
+  ['target_date', 'TEXT'],
+  ['rejection_reason', "TEXT DEFAULT ''"],
+  ['before_description', "TEXT DEFAULT ''"],
+  ['after_description', "TEXT DEFAULT ''"],
+  ['updated_at', 'TEXT'],
+];
+for (const [col, decl] of KAIZEN_ADDITIONS) {
+  if (!kaizenCols.includes(col)) db.exec(`ALTER TABLE kaizen_ideas ADD COLUMN ${col} ${decl}`);
+}
+if (!kaizenCols.includes('idea_number')) {
+  db.exec('UPDATE kaizen_ideas SET idea_number = number WHERE idea_number IS NULL');
+}
 
 // ─── SSO OAuth State (persisted so multi-process deployments work) ─────────────
 db.exec(`
@@ -2151,6 +2192,85 @@ db.exec(`
   if (!ncrCols.includes('authorized_by_user_id')) db.exec('ALTER TABLE ncrs ADD COLUMN authorized_by_user_id TEXT');
   if (!ncrCols.includes('step_name'))             db.exec("ALTER TABLE ncrs ADD COLUMN step_name TEXT DEFAULT ''");
 }
+
+// ─── Authorization grants: server-issued proof that a PIN was verified ───────
+// A supervisor sign-off is only worth anything if the server can prove it
+// happened. POST /operators/verify-authorizer mints one single-use, expiring
+// grant; the action that needs the sign-off (currently POST /quality/ncrs)
+// redeems it and copies the authorizer identity FROM THE GRANT — never from
+// client-supplied fields, which any authenticated caller could forge.
+// TTL is generous (12h) because the player queues NCRs while offline and
+// replays them when the tablet reconnects.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS authorization_grants (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    user_id TEXT NOT NULL REFERENCES users(id),
+    display_name TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL DEFAULT '',
+    purpose TEXT NOT NULL DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    used_for TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_authorization_grants_company
+    ON authorization_grants(company_id, expires_at);
+`);
+
+// ─── Help requests on Andon (additive) ────────────────────────────────────────
+// One mechanism for "request help": the player (or anyone in the app) raises an
+// andon_call tagged with the TEAM or DEPARTMENT being alerted plus whatever run
+// context it came from, so the Andon Board and Command Center can route and
+// resolve it. All guarded PRAGMA-checked ALTERs — never DROP/RENAME.
+// `title`/`message`/`created_by`/`assigned_to` back the existing /api/andon
+// contract (the table shipped with description/raised_by/acknowledged_by only);
+// legacy rows keep working because reads coalesce.
+{
+  const andonCols = db.prepare('PRAGMA table_info(andon_calls)').all().map(r => r.name);
+  const addAndon = (name, ddl) => { if (!andonCols.includes(name)) db.exec(`ALTER TABLE andon_calls ADD COLUMN ${ddl}`); };
+  addAndon('title',                   "title TEXT DEFAULT ''");
+  // 'team' (one of the four function teams) or 'department' (a row in departments).
+  addAndon('target_type',             "target_type TEXT DEFAULT 'team'");
+  addAndon('message',                 "message TEXT DEFAULT ''");
+  addAndon('created_by',              "created_by TEXT DEFAULT ''");
+  addAndon('assigned_to',             "assigned_to TEXT DEFAULT ''");
+  addAndon('team',                    "team TEXT DEFAULT ''");
+  addAndon('work_order_id',           'work_order_id TEXT');
+  addAndon('app_id',                  'app_id TEXT');
+  addAndon('step_name',               "step_name TEXT DEFAULT ''");
+  addAndon('completion_id',           'completion_id TEXT');
+  addAndon('created_by_user_id',      'created_by_user_id TEXT');
+  addAndon('acknowledged_by_user_id', 'acknowledged_by_user_id TEXT');
+  addAndon('resolved_by_user_id',     'resolved_by_user_id TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_andon_calls_team ON andon_calls(company_id, team, status, created_at DESC)');
+}
+
+// ─── Department membership (who gets an Andon alert) ─────────────────────────
+// A person can sit in several departments with a different role in each — the
+// quality lead on Assembly may also be a plain operator on Packaging. That is
+// why membership is its own table rather than a second column on users
+// (users.department_id stays the person's PRIMARY department).
+// `team_role` deliberately shares its vocabulary with the alert teams
+// (quality / supervisor / maintenance / materials, plus lead / operator), so
+// routing an alert is a direct lookup rather than a mapping table.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS department_members (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    department_id TEXT NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    team_role TEXT NOT NULL DEFAULT 'operator',
+    notify_email INTEGER NOT NULL DEFAULT 1,
+    notify_in_app INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(company_id, department_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_department_members_role
+    ON department_members(company_id, team_role);
+  CREATE INDEX IF NOT EXISTS idx_department_members_dept
+    ON department_members(company_id, department_id);
+`);
 
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;

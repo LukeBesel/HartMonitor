@@ -156,12 +156,19 @@ app.post('/api/webhooks/stripe', express.raw({ type: 'application/json' }), stri
 // to /api/upload only — once parsed here, the global parser below skips the body.
 app.use('/api/upload', express.json({ limit: '280mb' }));
 
+// Spreadsheet import is base64 JSON too: the route advertises a 10 MiB DECODED
+// file cap, which is ~13.4 MiB base64 plus JSON envelope. Without this the
+// global 10 MiB parser would 413 anything over ~7.5 MiB decoded before the
+// route's own limit (and its friendly error) ever ran.
+app.use('/api/tables/import', express.json({ limit: '16mb' }));
+
 app.use(express.json({ limit: '10mb' }));
 
 // Throttle credential endpoints specifically, then everything under /api.
 app.use('/api/auth/login',           authLimiter);
 app.use('/api/auth/signup',          authLimiter);
 app.use('/api/auth/demo',            authLimiter);   // sandbox creation is write-heavy — same throttle
+app.use('/api/auth/claim-sandbox',   authLimiter);   // creates a real account — same throttle as signup
 app.use('/api/auth/change-password', authLimiter);
 app.use('/api', generalLimiter);
 
@@ -276,6 +283,10 @@ initWebSocketServer(server);
 server.listen(PORT, () => {
   console.log(`HartMonitor backend running on http://localhost:${PORT}`);
   startBackups();
+  // Sandbox orgs self-destruct after 24h. The sweeper must start with the
+  // server — sandbox.js is required lazily by POST /auth/demo, so a restart
+  // with no subsequent demo visitor would otherwise never clean up.
+  require('./sandbox').startSandboxSweeper();
 });
 
 // ─── Resilience: never let an unhandled error take the process down silently ──

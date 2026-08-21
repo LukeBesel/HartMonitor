@@ -4,7 +4,7 @@ import { describe, it, expect } from 'vitest';
 import type { Step, Trigger, Widget } from '../../../types';
 import {
   stepHidesFooterNav, taktBarState, runContextRequired, runContextGate,
-  relativeLuminance, isLightColor, instructionInk, playerTextColor,
+  relativeLuminance, isLightColor, instructionInk, playerTextColor, stepTaktSeconds,
 } from '../runtime';
 
 function widget(partial: Partial<Widget> & { id: string; type: Widget['type'] }): Widget {
@@ -106,6 +106,19 @@ describe('takt countdown bar (green → amber at 20% → red)', () => {
   });
 });
 
+describe('step takt (legacy takt_time fallback)', () => {
+  it('reads the v2 key, then the v1 key, then reports zero', () => {
+    expect(stepTaktSeconds({ takt_time_seconds: 240 })).toBe(240);
+    // Apps built before the v2 builder — and the demo sandbox seed — use this.
+    expect(stepTaktSeconds({ takt_time: 240 })).toBe(240);
+    // v2 key wins when both exist.
+    expect(stepTaktSeconds({ takt_time_seconds: 200, takt_time: 240 })).toBe(200);
+    expect(stepTaktSeconds({})).toBe(0);
+    expect(stepTaktSeconds(null)).toBe(0);
+    expect(stepTaktSeconds({ takt_time_seconds: 0, takt_time: 240 })).toBe(240);
+  });
+});
+
 describe('run-context gating (work order OR part number)', () => {
   it('respects require_run_context: true always, false never, absent → schema v2+', () => {
     expect(runContextRequired({ require_run_context: true, schema_version: 1 })).toBe(true);
@@ -114,6 +127,17 @@ describe('run-context gating (work order OR part number)', () => {
     expect(runContextRequired({ schema_version: 1 })).toBe(false);
     expect(runContextRequired({})).toBe(false); // no schema_version = legacy v1
     expect(runContextRequired(null)).toBe(false);
+  });
+
+  it('accepts the SQLite 0/1 integers the API actually returns', () => {
+    // require_run_context is a nullable INTEGER column, so the wire value is a
+    // number. Strict boolean comparison sent both settings down the
+    // schema_version fallback and the builder toggle did nothing.
+    expect(runContextRequired({ require_run_context: 1, schema_version: 1 })).toBe(true);
+    expect(runContextRequired({ require_run_context: 0, schema_version: 2 })).toBe(false);
+    // null (column never set) still means "fall back to schema_version".
+    expect(runContextRequired({ require_run_context: null, schema_version: 2 })).toBe(true);
+    expect(runContextRequired({ require_run_context: null, schema_version: 1 })).toBe(false);
   });
 
   it('passes with a work order OR a typed part number', () => {

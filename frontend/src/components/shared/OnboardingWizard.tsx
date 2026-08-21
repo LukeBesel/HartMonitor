@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Sparkles, Database, Users, CheckCircle2, RefreshCw, X, ArrowRight, ArrowLeft,
-  LayoutDashboard, Tablet, AppWindow, Monitor, CalendarRange, BarChart3,
-  ShieldCheck, Bell,
+  Blocks, Tablet, BarChart3, Layers, Zap, Rocket,
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
@@ -12,36 +11,87 @@ import { useAuth } from '../../context/AuthContext';
 // dashboard, so the wizard re-opens even though onboarding was completed.
 export const REPLAY_FLAG = 'hm_replay_onboarding';
 
+/** Fired the moment the welcome is finished or skipped. The builder-training
+ *  coach waits for this so a brand-new manager never gets two tours at once. */
+export const ONBOARDING_DONE_EVENT = 'hm:onboarding-finished';
+
 function isTruthy(v: any): boolean {
   if (v === undefined || v === null) return false;
   const s = String(v).toLowerCase();
   return s === 'true' || s === '1' || s === 'yes';
 }
 
-type StepKind = 'intro' | 'sample' | 'invite' | 'tour' | 'finish';
+type StepKind = 'intro' | 'tour' | 'start';
 interface Step {
   kind: StepKind;
   icon: React.ElementType;
   title: string;
   body: string;
+  bullets?: string[];
 }
 
-// A guided walkthrough that introduces every major area of the app. Informational
-// "tour" steps just explain a section; the sample-data and invite steps are
-// interactive. Replayable anytime from Settings.
+// The welcome is BUILDER-FIRST on purpose. HartMonitor's differentiator is the
+// no-code app builder and the operator player it feeds, so the first thing a
+// new customer is told is how that loop works — everything else in the MES is
+// introduced as something that plugs into it. The wizard hands off to the
+// guided training coach (AppTrainingCoach), which walks the loop for real.
 const STEPS: Step[] = [
-  { kind: 'intro',  icon: Sparkles,        title: 'Welcome to your MES',        body: "This is your command center for running the shop floor — apps, work orders, stations, quality, and analytics, all in one place. Here's a quick tour of how it fits together." },
-  { kind: 'sample', icon: Database,        title: 'Load sample data',           body: 'Populate your workspace with example apps, work orders, stations, and inventory so you can explore right away. You can clear it anytime.' },
-  { kind: 'tour',   icon: LayoutDashboard, title: 'Command Center',             body: 'Your home dashboard. It surfaces what needs attention — overdue work orders, quality flags, and today’s output — so you always know where to look first.' },
-  { kind: 'tour',   icon: Tablet,          title: 'Operator Portal',            body: 'The shop-floor screen your operators use. They pick their name, choose a job and part, and start working — no menus or settings to get lost in. Open it anytime from the blue "Operator Portal" button in the sidebar.' },
-  { kind: 'tour',   icon: AppWindow,       title: 'App Library & Builder',      body: 'Build step-by-step digital work instructions with the drag-and-drop App Builder, then publish them. Operators run these guided apps at their stations.' },
-  { kind: 'tour',   icon: Monitor,         title: 'Stations & Plant View',      body: 'Define your physical work centers, assign apps to them, and watch live status across the floor in Plant View.' },
-  { kind: 'tour',   icon: CalendarRange,   title: 'Planning',                   body: 'Schedule work orders, balance capacity, and (on paid plans) manage inventory and purchasing. This whole section unlocks as your operation grows.' },
-  { kind: 'tour',   icon: BarChart3,       title: 'Reporting & Analytics',      body: 'Track throughput, cycle times, OEE, and a live leaderboard. Build custom dashboards to watch the numbers that matter to you.' },
-  { kind: 'tour',   icon: ShieldCheck,     title: 'Quality & NCR',              body: 'Capture pass/fail at each step and log non-conformance reports. Operators can even report issues straight from the portal.' },
-  { kind: 'tour',   icon: Bell,            title: 'Alerts & Messages',          body: 'The bell at the bottom-left combines what needs attention with team messages. You can broadcast to everyone or send a direct message to one teammate.' },
-  { kind: 'invite', icon: Users,           title: 'Invite your team',           body: 'Bring operators, supervisors, and managers on board so everyone collaborates from day one. You control who can see and do what with roles.' },
-  { kind: 'finish', icon: CheckCircle2,    title: "You're all set!",            body: 'That’s the whole tour. You can replay it anytime from Settings → Help & Guides. Now go build something.' },
+  {
+    kind: 'intro',
+    icon: Sparkles,
+    title: 'Welcome to HartMonitor',
+    body: 'HartMonitor starts with apps: guided procedures you build yourself and your operators run at their stations. Two minutes here and you will know exactly how that works.',
+  },
+  {
+    kind: 'tour',
+    icon: Blocks,
+    title: 'The app builder',
+    body: 'An app is a sequence of steps. Each step holds widgets — the things an operator reads, checks, photographs or types. You build it by dragging, not coding.',
+    bullets: [
+      'Steps are the screens an operator walks through, one at a time',
+      'Widgets capture data: numbers, pass/fail, photos, scans, signatures',
+      'Instructions, images, video and 3D models go on the same canvas',
+    ],
+  },
+  {
+    kind: 'tour',
+    icon: Zap,
+    title: 'Logic without code',
+    body: 'Triggers are the "if this, then that" of your process, written in plain language: When a button is pressed → If the reading is out of spec → Then block with an error and raise an NCR.',
+    bullets: [
+      'When: a button press, a step opening, a value changing, a scan',
+      'If: compare a captured value, a variable, or nothing at all',
+      'Then: jump to a step, show a message, block, save a record, file an NCR',
+    ],
+  },
+  {
+    kind: 'tour',
+    icon: Tablet,
+    title: 'Operators run it',
+    body: 'Publish, and the app is live on the floor. The player is a full-screen, tablet-first runtime — big targets, one clear next action, and it keeps working when the Wi-Fi drops.',
+    bullets: [
+      'Operators sign in with a badge or PIN and pick their job',
+      'Takt countdowns, kit checks and photo evidence are built in',
+      'Work done offline queues up and flushes when the connection returns',
+    ],
+  },
+  {
+    kind: 'tour',
+    icon: BarChart3,
+    title: 'The data comes back',
+    body: 'Every value an operator enters is stored against that run. App analytics turns it into cycle times, pass rates and per-field trends you can export — and the rest of the MES reads the same runs.',
+    bullets: [
+      'Per-app analytics: runs, durations, first-pass yield, field-by-field stats',
+      'Work orders, OEE, quality and the Command Center all read these runs',
+      'Everything exports to CSV, nothing is locked in',
+    ],
+  },
+  {
+    kind: 'start',
+    icon: Rocket,
+    title: 'Build your first app',
+    body: 'Start from a HartMonitor model template — a real, editable app — or from blank. A step-by-step coach will follow you through building, publishing and running it.',
+  },
 ];
 
 export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => void } = {}) {
@@ -81,14 +131,24 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
     return () => { cancelled = true; };
   }, [user?.role]);
 
+  const persistDone = () => {
+    // Lets the builder-training coach know the welcome is out of the way, so
+    // the two never stack on top of each other.
+    try { window.dispatchEvent(new CustomEvent(ONBOARDING_DONE_EVENT)); } catch { /* ignore */ }
+    return api.updateCompanySettings({ onboarding_completed: 'true' }).catch(() => {});
+  };
+
   const finish = async () => {
-    try {
-      await api.updateCompanySettings({ onboarding_completed: 'true' });
-    } catch {
-      // Even if persisting fails, don't block the user from dismissing.
-    } finally {
-      setClosed(true);
-    }
+    await persistDone();
+    setClosed(true);
+  };
+
+  /** Primary hand-off: close the welcome and drop the user straight into
+   *  creating their first app, where the training coach takes over. */
+  const startBuilding = () => {
+    persistDone();
+    setClosed(true);
+    navigate('/apps?new=1');
   };
 
   const handleLoadSampleData = async () => {
@@ -105,7 +165,7 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
   };
 
   const goToUsers = () => {
-    api.updateCompanySettings({ onboarding_completed: 'true' }).catch(() => {});
+    persistDone();
     setClosed(true);
     navigate('/settings?tab=users');
   };
@@ -119,7 +179,7 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-5">
           <div className="text-xs font-medium text-gray-400">Step {index + 1} of {STEPS.length}</div>
@@ -147,30 +207,41 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
             <step.icon size={26} />
           </div>
           <h2 className="text-lg font-bold text-gray-900">{step.title}</h2>
-          <p className="text-sm text-gray-500 mt-2">{step.body}</p>
+          <p className="text-sm text-gray-500 mt-2 leading-relaxed">{step.body}</p>
 
-          {/* Sample-data action */}
-          {step.kind === 'sample' && (
-            <div className="mt-5">
-              {sampleError && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mb-3">{sampleError}</p>}
-              {sampleLoaded ? (
-                <div className="flex items-center justify-center gap-2 text-green-600 text-sm font-medium">
-                  <CheckCircle2 size={16} /> Sample data loaded!
-                </div>
-              ) : (
-                <button onClick={handleLoadSampleData} disabled={loadingSample} className="btn-primary w-full justify-center">
-                  {loadingSample ? <><RefreshCw size={14} className="animate-spin" /> Loading…</> : 'Load Sample Data'}
-                </button>
-              )}
-            </div>
+          {step.bullets && (
+            <ul className="mt-4 space-y-2 text-left max-w-sm mx-auto">
+              {step.bullets.map((b, i) => (
+                <li key={i} className="flex items-start gap-2.5">
+                  <span className="mt-1.5 w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: 'var(--accent)' }} />
+                  <span className="text-sm text-gray-600 leading-snug">{b}</span>
+                </li>
+              ))}
+            </ul>
           )}
 
-          {/* Invite action */}
-          {step.kind === 'invite' && (
-            <div className="mt-5">
-              <button onClick={goToUsers} className="btn-primary w-full justify-center">
-                Invite Team Members <ArrowRight size={14} />
+          {/* Final page: hand off to the builder, with the other first-day
+              actions available but secondary. */}
+          {step.kind === 'start' && (
+            <div className="mt-5 space-y-3">
+              <button onClick={startBuilding} className="btn-primary w-full justify-center">
+                <Layers size={15} /> Build my first app
               </button>
+              {sampleError && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{sampleError}</p>}
+              <div className="flex flex-col sm:flex-row gap-2">
+                {sampleLoaded ? (
+                  <div className="flex-1 flex items-center justify-center gap-2 text-green-600 text-sm font-medium py-2">
+                    <CheckCircle2 size={16} /> Sample data loaded
+                  </div>
+                ) : (
+                  <button onClick={handleLoadSampleData} disabled={loadingSample} className="btn-secondary flex-1 justify-center">
+                    {loadingSample ? <><RefreshCw size={14} className="animate-spin" /> Loading…</> : <><Database size={14} /> Load sample data</>}
+                  </button>
+                )}
+                <button onClick={goToUsers} className="btn-secondary flex-1 justify-center">
+                  <Users size={14} /> Invite my team
+                </button>
+              </div>
             </div>
           )}
         </div>
@@ -186,7 +257,7 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
           </button>
           <button onClick={finish} className="text-xs text-gray-400 hover:text-gray-600">Skip tour</button>
           {isLast ? (
-            <button onClick={finish} className="btn-primary text-sm">Finish</button>
+            <button onClick={finish} className="btn-secondary text-sm">Not now</button>
           ) : (
             <button onClick={next} className="btn-primary text-sm">Next <ArrowRight size={14} /></button>
           )}

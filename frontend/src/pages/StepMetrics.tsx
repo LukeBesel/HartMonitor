@@ -4,11 +4,8 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, ReferenceLine, Legend
 } from 'recharts';
-import { Timer, TrendingUp, AlertTriangle, ChevronDown, RefreshCw, CheckCircle } from 'lucide-react';
+import { TrendingUp, AlertTriangle, ChevronDown, RefreshCw, CheckCircle } from 'lucide-react';
 
-function Skeleton({ className }: { className?: string }) {
-  return <div className={`animate-pulse bg-gray-200 rounded ${className ?? ''}`} />;
-}
 
 interface StepStat {
   index: number;
@@ -188,9 +185,10 @@ function StepCard({ step, expanded, onToggle }: { step: StepStat; expanded: bool
   );
 }
 
-// Reusable per-step metrics body for a single app/operation. Owns its own data
-// fetch so it can be embedded anywhere (the standalone Step Metrics page and the
-// Operation Analytics drill-down) by passing an appId + lookback window.
+// Per-step metrics body for a single app/operation. Owns its own data fetch so
+// it can be embedded anywhere by passing an appId + lookback window; it is
+// hosted by the Operation Analytics drill-down (there is no separate page —
+// a second, unlinked copy of this screen used to exist at /step-metrics).
 export function StepMetricsPanel({ appId, days }: { appId: string; days: number }) {
   const [data, setData] = useState<StepMetricsData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -222,9 +220,11 @@ export function StepMetricsPanel({ appId, days }: { appId: string; days: number 
 
   const totalOverTakt = data?.steps.reduce((s, step) => s + step.over_takt_count, 0) ?? 0;
   const stepsWithTakt = data?.steps.filter(s => s.takt_seconds > 0) ?? [];
+  // Only steps that actually have a takt time can have adherence — with none
+  // set there is nothing to adhere to, so this reads "—" rather than a free 100%.
   const avgTaktAdherence = stepsWithTakt.length > 0
     ? Math.round(stepsWithTakt.reduce((s, step) => s + (100 - step.over_takt_pct), 0) / stepsWithTakt.length)
-    : 100;
+    : null;
 
   if (loading) {
     return (
@@ -266,10 +266,21 @@ export function StepMetricsPanel({ appId, days }: { appId: string; days: number 
           <div className="text-xs text-gray-500 mt-0.5">Takt Time Exceedances</div>
         </div>
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
-          <div className={`text-2xl font-bold ${avgTaktAdherence >= 90 ? 'text-green-600' : avgTaktAdherence >= 75 ? 'text-amber-600' : 'text-red-500'}`}>
-            {avgTaktAdherence}%
-          </div>
-          <div className="text-xs text-gray-500 mt-0.5">Takt Adherence</div>
+          {avgTaktAdherence === null ? (
+            <>
+              <div className="text-2xl font-bold text-gray-300">—</div>
+              <div className="text-xs text-gray-500 mt-0.5">Takt Adherence</div>
+              <div className="text-[11px] text-gray-400">No takt times set on these steps</div>
+            </>
+          ) : (
+            <>
+              <div className={`text-2xl font-bold ${avgTaktAdherence >= 90 ? 'text-green-600' : avgTaktAdherence >= 75 ? 'text-amber-600' : 'text-red-500'}`}>
+                {avgTaktAdherence}%
+              </div>
+              <div className="text-xs text-gray-500 mt-0.5">Takt Adherence</div>
+              <div className="text-[11px] text-gray-400">across {stepsWithTakt.length} step{stepsWithTakt.length === 1 ? '' : 's'} with takt</div>
+            </>
+          )}
         </div>
       </div>
 
@@ -330,91 +341,6 @@ export function StepMetricsPanel({ appId, days }: { appId: string; days: number 
           <TrendingUp size={32} className="mx-auto mb-2 text-gray-300" />
           No completion data yet for this app
         </div>
-      )}
-    </div>
-  );
-}
-
-export default function StepMetrics() {
-  const [apps, setApps] = useState<{ id: string; name: string }[]>([]);
-  const [selectedAppId, setSelectedAppId] = useState('');
-  const [days, setDays] = useState(30);
-  const [appsLoading, setAppsLoading] = useState(true);
-  const [appsError, setAppsError] = useState<string | null>(null);
-
-  const loadApps = () => {
-    setAppsLoading(true);
-    setAppsError(null);
-    api.getApps()
-      .then((list: any[]) => {
-        const published = list.filter(a => a.status === 'published');
-        setApps(published);
-        if (published.length > 0) setSelectedAppId(published[0].id);
-      })
-      .catch((err: any) => setAppsError(err.message || 'Failed to load apps'))
-      .finally(() => setAppsLoading(false));
-  };
-
-  useEffect(() => { loadApps(); }, []);
-
-  return (
-    <div className="min-h-screen bg-[#f8fafc] p-6 space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between flex-wrap gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <Timer size={20} className="text-blue-600" />
-            <h1 className="text-2xl font-bold text-gray-900">Step Metrics</h1>
-          </div>
-          <p className="text-gray-500 text-sm mt-0.5">Analyze per-step timing performance across all completed runs</p>
-        </div>
-        <div className="flex items-center gap-3 flex-wrap">
-          <select
-            className="h-9 border border-gray-200 rounded-lg px-3 text-sm bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={selectedAppId}
-            onChange={e => setSelectedAppId(e.target.value)}
-          >
-            {apps.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
-          </select>
-          <select
-            className="h-9 border border-gray-200 rounded-lg px-3 text-sm bg-white shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={days}
-            onChange={e => setDays(Number(e.target.value))}
-          >
-            <option value={7}>Last 7 days</option>
-            <option value={30}>Last 30 days</option>
-            <option value={60}>Last 60 days</option>
-            <option value={90}>Last 90 days</option>
-          </select>
-        </div>
-      </div>
-
-      {appsLoading ? (
-        <div className="space-y-6">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {[0, 1, 2, 3].map(i => <Skeleton key={i} className="h-20" />)}
-          </div>
-          <Skeleton className="h-64" />
-        </div>
-      ) : appsError ? (
-        <div className="flex flex-col items-center justify-center py-16 text-center">
-          <AlertTriangle size={32} className="text-red-400 mb-3" />
-          <p className="text-gray-500 font-medium">Couldn't load apps</p>
-          <p className="text-gray-400 text-sm mt-1">{appsError}</p>
-          <button onClick={loadApps} className="btn-secondary mt-4">
-            <RefreshCw size={14} /> Retry
-          </button>
-        </div>
-      ) : apps.length === 0 ? (
-        <div className="text-center py-16">
-          <Timer size={32} className="mx-auto mb-3 text-gray-300" />
-          <p className="text-gray-500 font-medium">No published apps yet</p>
-          <p className="text-gray-400 text-sm mt-1">Publish an app and complete a few runs to see step metrics here</p>
-        </div>
-      ) : selectedAppId ? (
-        <StepMetricsPanel appId={selectedAppId} days={days} />
-      ) : (
-        <div className="text-center py-16 text-gray-400">Select an app to view step metrics</div>
       )}
     </div>
   );

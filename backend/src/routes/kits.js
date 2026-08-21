@@ -234,29 +234,39 @@ router.put('/:id/lines/:lineId', requireRole('operator'), (req, res) => {
     `).run(updates.status, updates.qty_picked, updates.short_reason, updates.picked_by, updates.picked_at,
            updates.verified_by, updates.verified_at, line.id);
 
-    // Exactly-once consume movement + stock decrement on first pick/verify with qty > 0.
-    if ((status === 'picked' || status === 'verified') && qty > 0) {
-      const alreadyConsumed = db.prepare(`
-        SELECT 1 FROM stock_movements
-        WHERE movement_type = 'consume' AND reference_type = 'kit' AND reference_id = ? AND notes = ?
-      `).get(kit.id, consumeMarker);
-      if (!alreadyConsumed) {
-        db.prepare(`
-          INSERT INTO stock_movements (id, item_id, location_id, movement_type, quantity, unit_cost,
-                                       reference_type, reference_id, notes, operator_name, created_by)
-          VALUES (?, ?, ?, 'consume', ?, 0, 'kit', ?, ?, ?, ?)
-        `).run(uuidv4(), line.item_id, kit.location_id || null, -Math.abs(qty), kit.id, consumeMarker, actor, actor);
+    // ── Inventory reconciliation (idempotent, delta-based) ───────────────────
+    // The ledger must always agree with the line: whatever quantity the line
+    // says was physically taken from the bin is what inventory shows consumed.
+    // A SHORT line with a partial qty_picked still consumed that material, and
+    // revising a quantity down (picked 10 → short 4) must give the difference
+    // back. So instead of a one-shot "consume once" marker we compute the net
+    // already booked against this line and post only the delta.
+    const netBooked = db.prepare(`
+      SELECT COALESCE(SUM(quantity), 0) AS q FROM stock_movements
+      WHERE reference_type = 'kit' AND reference_id = ? AND notes = ?
+    `).get(kit.id, consumeMarker).q;
+    const consumedSoFar = -netBooked;                  // movements are signed (consume < 0)
+    // pending lines have released nothing; every other state owns qty_picked.
+    const targetConsumed = status === 'pending' ? 0 : Math.max(0, qty);
+    const delta = targetConsumed - consumedSoFar;      // >0 take more, <0 give back
 
-        if (kit.location_id) {
-          const sl = db.prepare('SELECT id FROM stock_levels WHERE item_id = ? AND location_id = ?')
-            .get(line.item_id, kit.location_id);
-          if (sl) {
-            db.prepare(`UPDATE stock_levels SET quantity = quantity - ?, updated_at = datetime('now') WHERE id = ?`)
-              .run(Math.abs(qty), sl.id);
-          } else {
-            db.prepare('INSERT INTO stock_levels (id, item_id, location_id, quantity) VALUES (?, ?, ?, ?)')
-              .run(uuidv4(), line.item_id, kit.location_id, -Math.abs(qty));
-          }
+    if (Math.abs(delta) > 1e-9) {
+      db.prepare(`
+        INSERT INTO stock_movements (id, item_id, location_id, movement_type, quantity, unit_cost,
+                                     reference_type, reference_id, notes, operator_name, created_by)
+        VALUES (?, ?, ?, ?, ?, 0, 'kit', ?, ?, ?, ?)
+      `).run(uuidv4(), line.item_id, kit.location_id || null,
+             delta > 0 ? 'consume' : 'return', -delta, kit.id, consumeMarker, actor, actor);
+
+      if (kit.location_id) {
+        const sl = db.prepare('SELECT id FROM stock_levels WHERE item_id = ? AND location_id = ?')
+          .get(line.item_id, kit.location_id);
+        if (sl) {
+          db.prepare(`UPDATE stock_levels SET quantity = quantity - ?, updated_at = datetime('now') WHERE id = ?`)
+            .run(delta, sl.id);
+        } else {
+          db.prepare('INSERT INTO stock_levels (id, item_id, location_id, quantity) VALUES (?, ?, ?, ?)')
+            .run(uuidv4(), line.item_id, kit.location_id, -delta);
         }
       }
     }

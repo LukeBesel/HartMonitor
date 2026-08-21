@@ -207,7 +207,8 @@ router.get('/locations', (req, res) => {
     WHERE l.is_active = 1 AND l.company_id = ?
   `;
   const params = [req.companyId];
-  if (req.query.site_id) { sql += ' AND l.site_id = ?'; params.push(req.query.site_id); }
+  // Unassigned locations stay visible under every site (see departments.js).
+  if (req.query.site_id) { sql += ' AND (l.site_id = ? OR l.site_id IS NULL)'; params.push(req.query.site_id); }
   sql += ' GROUP BY l.id ORDER BY l.name';
   const locs = db.prepare(sql).all(...params);
   res.json(locs);

@@ -115,12 +115,46 @@ router.get('/', (req, res) => {
   const params = [req.companyId];
 
   if (department_id) { conditions.push('department_id = ?'); params.push(department_id); }
-  if (site_id)       { conditions.push('site_id = ?');       params.push(site_id); }
+  // Apps with no site assigned belong to the whole company (see departments.js).
+  if (site_id)       { conditions.push('(site_id = ? OR site_id IS NULL)'); params.push(site_id); }
 
   const apps = db.prepare(
     `SELECT * FROM apps WHERE ${conditions.join(' AND ')} ORDER BY updated_at DESC`
   ).all(...params);
   res.json(apps.map(a => ({ ...a, steps: JSON.parse(a.steps), variables: JSON.parse(a.variables), step_groups: JSON.parse(a.step_groups || '[]') })));
+});
+
+// ─── GET /stats — run counters for the App Library cards ─────────────────────
+// One row per app: lifetime runs, runs in the last 7 days, currently-open runs
+// and the last time anybody ran it. `company_has_completions` answers "has this
+// company ever run anything?" — the honest signal a brand-new account uses to
+// land on Apps instead of an empty Command Center.
+// ROUTE ORDER: registered before the /:id routes so "stats" is never read as an id.
+router.get('/stats', (req, res) => {
+  const rows = db.prepare(`
+    SELECT a.id AS app_id,
+           COUNT(c.id) AS runs_total,
+           SUM(CASE WHEN c.started_at >= datetime('now', '-7 days') THEN 1 ELSE 0 END) AS runs_7d,
+           SUM(CASE WHEN c.status = 'in_progress' THEN 1 ELSE 0 END) AS in_progress,
+           MAX(c.started_at) AS last_run_at
+    FROM apps a
+    LEFT JOIN completions c ON c.app_id = a.id AND c.company_id = a.company_id
+    WHERE a.company_id = ?
+    GROUP BY a.id
+  `).all(req.companyId);
+
+  const any = db.prepare('SELECT 1 AS x FROM completions WHERE company_id = ? LIMIT 1').get(req.companyId);
+
+  res.json({
+    company_has_completions: !!any,
+    apps: rows.map(r => ({
+      app_id: r.app_id,
+      runs_total: r.runs_total || 0,
+      runs_7d: r.runs_7d || 0,
+      in_progress: r.in_progress || 0,
+      last_run_at: r.last_run_at || null,
+    })),
+  });
 });
 
 // Plan limit check — base tier limit plus purchased add-on slots (skipped
@@ -179,7 +213,7 @@ const MODEL_TEMPLATES = [
     description: 'A guided 3-step work instruction: safety prep, torque-controlled assembly with photo evidence, and a pass/fail final inspection.',
     steps: [
       {
-        id: 'ba-step-1', name: 'Safety & Prep', order: 0, takt_time: 90,
+        id: 'ba-step-1', name: 'Safety & Prep', order: 0, takt_time_seconds: 90,
         widgets: [
           { id: 'ba-w-11', type: 'instruction', order: 0, label: 'Before You Start', config: { content: 'Put on safety glasses and gloves. Confirm the fixture is clamped and the torque driver is calibrated (cal sticker in date).', backgroundColor: '#fef3c7' } },
           { id: 'ba-w-12', type: 'checkbox', order: 1, label: 'PPE On (glasses + gloves)', config: { required: true, variableName: 'ppe_on' } },
@@ -188,7 +222,7 @@ const MODEL_TEMPLATES = [
         ],
       },
       {
-        id: 'ba-step-2', name: 'Assemble Bracket', order: 1, takt_time: 300,
+        id: 'ba-step-2', name: 'Assemble Bracket', order: 1, takt_time_seconds: 300,
         widgets: [
           { id: 'ba-w-21', type: 'instruction', order: 0, label: 'Assembly Sequence', config: { content: '1. Seat the bracket on the two locating pins\n2. Start all four M6 bolts by hand\n3. Torque in a cross pattern to 15 Nm\n4. Record the final torque reading below', backgroundColor: '#eff6ff' } },
           { id: 'ba-w-22', type: 'number-input', order: 1, label: 'Final Torque (Nm)', config: { required: true, variableName: 'final_torque', min: 14, max: 16, enforceRange: true, placeholder: '15' } },
@@ -197,7 +231,7 @@ const MODEL_TEMPLATES = [
         ],
       },
       {
-        id: 'ba-step-3', name: 'Final Inspection', order: 2, takt_time: 120,
+        id: 'ba-step-3', name: 'Final Inspection', order: 2, takt_time_seconds: 120,
         widgets: [
           { id: 'ba-w-31', type: 'pass-fail', order: 0, label: 'Visual Inspection (no burrs, scratches, or gaps)', config: { required: true, variableName: 'visual_ok' } },
           { id: 'ba-w-32', type: 'pass-fail', order: 1, label: 'Fit Check on Gauge', config: { required: true, variableName: 'fit_ok' } },
@@ -391,10 +425,218 @@ router.post('/:id/save-as-template', (req, res) => {
   res.status(201).json(templateSummary(row));
 });
 
+// POST /:id/duplicate { name? } — copy an app into a new draft. Uses the same
+// id regeneration as templates so the copy never shares step/widget/trigger ids
+// with the original, and picks a free "(copy)" name when none is supplied.
+router.post('/:id/duplicate', (req, res) => {
+  const app = db.prepare('SELECT * FROM apps WHERE id = ? AND company_id = ?')
+    .get(req.params.id, req.companyId);
+  if (!app) return res.status(404).json({ error: 'Not found' });
+
+  const requested = typeof req.body?.name === 'string' ? req.body.name.trim() : '';
+  const nameTaken = candidate => !!db
+    .prepare('SELECT id FROM apps WHERE company_id = ? AND LOWER(name) = LOWER(?)')
+    .get(req.companyId, candidate);
+
+  let name = requested;
+  if (name) {
+    if (nameTaken(name)) {
+      return res.status(409).json({ error: 'duplicate_name', message: `An app named "${name}" already exists` });
+    }
+  } else {
+    name = `${app.name} (copy)`;
+    for (let n = 2; nameTaken(name) && n < 100; n++) name = `${app.name} (copy ${n})`;
+  }
+
+  const limitErr = appLimitError(req.companyId);
+  if (limitErr) return res.status(402).json(limitErr);
+
+  let parsedSteps = [];
+  let parsedGroups = [];
+  try {
+    parsedSteps = JSON.parse(app.steps || '[]');
+    parsedGroups = JSON.parse(app.step_groups || '[]');
+  } catch {
+    return res.status(500).json({ error: 'This app\'s steps are corrupted and cannot be copied' });
+  }
+  const { steps, step_groups } = regenerateIds(parsedSteps, parsedGroups);
+
+  const id = uuidv4();
+  db.prepare(`INSERT INTO apps (id, name, description, status, steps, variables, step_groups, company_id,
+              department_id, site_id, station_id, show_takt_warnings, schema_version)
+              VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, name, app.description || '', JSON.stringify(steps), app.variables || '[]',
+      JSON.stringify(step_groups), req.companyId,
+      app.department_id || null, app.site_id || null, app.station_id || null,
+      app.show_takt_warnings === undefined ? 1 : app.show_takt_warnings,
+      app.schema_version ?? 1);
+  logActivity(req.companyId, 'app', id, `App "${name}" duplicated from "${app.name}"`, req.user?.display_name);
+  const created = db.prepare('SELECT * FROM apps WHERE id = ?').get(id);
+  res.status(201).json({
+    ...created,
+    steps: JSON.parse(created.steps),
+    variables: JSON.parse(created.variables),
+    step_groups: JSON.parse(created.step_groups || '[]'),
+  });
+});
+
 router.get('/:id', (req, res) => {
   const app = db.prepare('SELECT * FROM apps WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!app) return res.status(404).json({ error: 'Not found' });
   res.json({ ...app, steps: JSON.parse(app.steps), variables: JSON.parse(app.variables), step_groups: JSON.parse(app.step_groups || '[]') });
+});
+
+// ─── GET /:id/detail — everything the in-depth app page needs, in one call ────
+// Read-only and tenant-scoped (app ownership is checked first → cross-tenant
+// requests 404 before any other query runs). Nothing here is invented: every
+// number comes from this company's completions, and every binding is a real row
+// that points at this app.
+router.get('/:id/detail', (req, res) => {
+  const app = db.prepare('SELECT * FROM apps WHERE id = ? AND company_id = ?')
+    .get(req.params.id, req.companyId);
+  if (!app) return res.status(404).json({ error: 'Not found' });
+
+  const args = [req.params.id, req.companyId];
+
+  // ── Where this app is bound ──
+  const department = app.department_id
+    ? db.prepare('SELECT id, name, color FROM departments WHERE id = ? AND company_id = ?')
+        .get(app.department_id, req.companyId) || null
+    : null;
+  const site = app.site_id
+    ? db.prepare('SELECT id, name, code FROM sites WHERE id = ? AND company_id = ?')
+        .get(app.site_id, req.companyId) || null
+    : null;
+  const defaultStation = app.station_id
+    ? db.prepare('SELECT id, name, location, status FROM stations WHERE id = ? AND company_id = ?')
+        .get(app.station_id, req.companyId) || null
+    : null;
+
+  // Stations currently running this app (stations.current_app_id), plus the
+  // app's own default station so the page shows the full picture.
+  const assignedStations = db.prepare(`
+    SELECT id, name, location, status FROM stations
+    WHERE company_id = ? AND current_app_id = ? ORDER BY name LIMIT 50
+  `).all(req.companyId, req.params.id);
+  const stations = [...assignedStations];
+  if (defaultStation && !stations.some(s => s.id === defaultStation.id)) stations.unshift(defaultStation);
+
+  const productTypes = db.prepare(`
+    SELECT id, name, description FROM product_types
+    WHERE app_id = ? AND company_id = ? ORDER BY name LIMIT 100
+  `).all(...args);
+
+  const routings = db.prepare(`
+    SELECT r.id AS routing_id, r.name AS routing_name, rs.name AS step_name, rs.step_number
+    FROM routing_steps rs JOIN product_routings r ON r.id = rs.routing_id
+    WHERE rs.app_id = ? AND rs.company_id = ? ORDER BY r.name, rs.step_number LIMIT 50
+  `).all(...args);
+
+  const workOrders = db.prepare(`
+    SELECT id, work_order_number, part_number, part_name, status, quantity, quantity_completed
+    FROM work_orders WHERE app_id = ? AND company_id = ?
+    ORDER BY CASE status WHEN 'in_progress' THEN 0 WHEN 'overdue' THEN 1 WHEN 'pending' THEN 2 ELSE 3 END,
+             created_at DESC
+    LIMIT 10
+  `).all(...args);
+  const workOrderCount = db.prepare('SELECT COUNT(*) AS c FROM work_orders WHERE app_id = ? AND company_id = ?')
+    .get(...args).c;
+
+  // ── Run stats: lifetime counters plus a 30-day window ──
+  const lifetime = db.prepare(`
+    SELECT COUNT(*) AS runs,
+           SUM(CASE WHEN c.status = 'completed' THEN 1 ELSE 0 END) AS completed,
+           SUM(CASE WHEN c.status = 'abandoned' THEN 1 ELSE 0 END) AS abandoned,
+           SUM(CASE WHEN c.status = 'in_progress' THEN 1 ELSE 0 END) AS in_progress,
+           MAX(c.started_at) AS last_run_at,
+           MIN(c.started_at) AS first_run_at,
+           ${AVG_DURATION_S} AS avg_duration_s
+    FROM completions c WHERE c.app_id = ? AND c.company_id = ?
+  `).get(...args);
+
+  const win = db.prepare(`
+    SELECT COUNT(*) AS runs,
+           SUM(CASE WHEN c.status = 'completed' THEN 1 ELSE 0 END) AS completed,
+           ${AVG_DURATION_S} AS avg_duration_s
+    FROM completions c
+    WHERE c.app_id = ? AND c.company_id = ? AND c.started_at >= datetime('now', '-30 days')
+  `).get(...args);
+
+  const runs7d = db.prepare(`
+    SELECT COUNT(*) AS c FROM completions
+    WHERE app_id = ? AND company_id = ? AND started_at >= datetime('now', '-7 days')
+  `).get(...args).c;
+
+  // First-pass yield over all time: of the runs that recorded any pass/fail
+  // check, the share with no failures. Null when the app captures none.
+  const fpy = db.prepare(`
+    SELECT COUNT(*) AS total, SUM(CASE WHEN has_fail = 0 THEN 1 ELSE 0 END) AS passed
+    FROM (
+      SELECT c.id, MAX(CASE WHEN v.value_text = 'fail' THEN 1 ELSE 0 END) AS has_fail
+      FROM completions c
+      JOIN completion_values v ON v.completion_id = c.id AND v.value_type = 'pass_fail'
+      WHERE c.app_id = ? AND c.company_id = ?
+      GROUP BY c.id
+    )
+  `).get(...args);
+
+  const operators = db.prepare(`
+    SELECT c.operator_name, COUNT(*) AS runs,
+           SUM(CASE WHEN c.status = 'completed' THEN 1 ELSE 0 END) AS completed,
+           MAX(c.started_at) AS last_run_at,
+           ${AVG_DURATION_S} AS avg_duration_s
+    FROM completions c
+    WHERE c.app_id = ? AND c.company_id = ? AND c.operator_name IS NOT NULL AND c.operator_name != ''
+    GROUP BY c.operator_name ORDER BY runs DESC, c.operator_name LIMIT 25
+  `).all(...args);
+
+  const recentRuns = db.prepare(`
+    SELECT c.id, c.started_at, c.completed_at, c.status, c.operator_name,
+           CASE WHEN c.completed_at IS NOT NULL THEN CAST(ROUND(${DURATION_S}) AS INTEGER) END AS duration_s,
+           wo.work_order_number, pt.name AS product_type_name, st.name AS station_name
+    FROM completions c
+    LEFT JOIN work_orders wo ON wo.id = c.work_order_id
+    LEFT JOIN product_types pt ON pt.id = c.product_type_id
+    LEFT JOIN stations st ON st.id = c.station_id
+    WHERE c.app_id = ? AND c.company_id = ?
+    ORDER BY c.started_at DESC LIMIT 10
+  `).all(...args);
+
+  res.json({
+    app: {
+      ...app,
+      steps: JSON.parse(app.steps || '[]'),
+      variables: JSON.parse(app.variables || '[]'),
+      step_groups: JSON.parse(app.step_groups || '[]'),
+    },
+    bindings: {
+      department,
+      site,
+      default_station: defaultStation,
+      stations,
+      product_types: productTypes,
+      routings,
+      work_orders: workOrders,
+      work_order_count: workOrderCount,
+    },
+    stats: {
+      runs_total: lifetime.runs || 0,
+      completed: lifetime.completed || 0,
+      abandoned: lifetime.abandoned || 0,
+      in_progress: lifetime.in_progress || 0,
+      runs_7d: runs7d || 0,
+      runs_30d: win.runs || 0,
+      completed_30d: win.completed || 0,
+      avg_duration_s: lifetime.avg_duration_s ?? null,
+      avg_duration_30d_s: win.avg_duration_s ?? null,
+      first_run_at: lifetime.first_run_at || null,
+      last_run_at: lifetime.last_run_at || null,
+      first_pass_yield: fpy.total > 0 ? Math.round(((fpy.passed || 0) / fpy.total) * 1000) / 10 : null,
+      operator_count: operators.length,
+    },
+    operators,
+    recent_runs: recentRuns,
+  });
 });
 
 router.put('/:id', (req, res) => {
@@ -699,13 +941,11 @@ router.get('/:id/analytics', (req, res) => {
 
 // ─── GET /:id/export.csv — flattened per-run CSV with one column per widget ───
 
-// Same escaping conventions as backend/src/routes/export.js.
-function escapeCSV(val) {
-  if (val === null || val === undefined) return '';
-  const s = String(val);
-  if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
+const { escapeCSV } = require('../csv');
+
+// The CSV row query and the value query MUST agree on how many runs they cover,
+// or the export ships rows with silently blank widget columns.
+const EXPORT_ROW_LIMIT = 10000;
 
 router.get('/:id/export.csv', (req, res) => {
   const app = db.prepare('SELECT id, name, steps FROM apps WHERE id = ? AND company_id = ?')
@@ -721,13 +961,20 @@ router.get('/:id/export.csv', (req, res) => {
     FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN product_types pt ON pt.id = c.product_type_id
-    WHERE ${where} ORDER BY c.started_at DESC LIMIT 10000
+    WHERE ${where} ORDER BY c.started_at DESC LIMIT ${EXPORT_ROW_LIMIT}
   `).all(...params);
 
+  // Values are scoped to EXACTLY the completions the rows above selected.
+  // (The previous independent `LIMIT 200000` silently dropped an arbitrary,
+  // unordered subset once an app accumulated enough captured fields, leaving
+  // exported rows with blank widget columns.)
   const values = db.prepare(`
     SELECT v.completion_id, v.widget_id, v.variable_name, v.value_type, v.value_text, v.value_number
-    FROM completion_values v JOIN completions c ON c.id = v.completion_id
-    WHERE ${where} LIMIT 200000
+    FROM completion_values v
+    WHERE v.completion_id IN (
+      SELECT c.id FROM completions c
+      WHERE ${where} ORDER BY c.started_at DESC LIMIT ${EXPORT_ROW_LIMIT}
+    )
   `).all(...params);
 
   // Widget columns: blob order first, then any captured widget no longer in the

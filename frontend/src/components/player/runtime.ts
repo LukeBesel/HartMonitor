@@ -328,17 +328,43 @@ export function taktBarState(taktSeconds: number, elapsed: number): TaktBarState
 
 /**
  * Whether an app enforces run context, from its RAW (pre-normalizeApp) fields:
- *   • require_run_context true  → always enforce,
- *   • require_run_context false → never enforce,
- *   • absent → enforce only for schema_version >= 2 apps.
+ *   • require_run_context set (true / 1)  → always enforce,
+ *   • require_run_context clear (false / 0) → never enforce,
+ *   • absent (null / undefined) → enforce only for schema_version >= 2 apps.
  * (normalizeApp force-upgrades schema_version in memory, so callers must pass
  * the raw server blob here.)
+ *
+ * The column is a NULLABLE SQLite INTEGER, so the API returns 0 / 1 — not
+ * booleans. Comparing with === true/false would have sent BOTH stored values
+ * down the schema_version fallback, meaning the builder's toggle silently did
+ * nothing in the player.
  */
-export function runContextRequired(raw: { require_run_context?: boolean; schema_version?: number } | null | undefined): boolean {
+export function runContextRequired(
+  raw: { require_run_context?: boolean | number | null; schema_version?: number } | null | undefined,
+): boolean {
   if (!raw) return false;
-  if (raw.require_run_context === true) return true;
-  if (raw.require_run_context === false) return false;
+  const v = raw.require_run_context;
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v !== 0;
   return (raw.schema_version ?? 1) >= 2;
+}
+
+/** Step takt in seconds, tolerating the legacy v1 key. Apps built before the
+ *  v2 builder (and the demo sandbox seed) store `takt_time`; v2 writes
+ *  `takt_time_seconds`. Readers that only know the new key silently report a
+ *  takt of zero for every legacy app. */
+export function stepTaktSeconds(
+  step: { takt_time_seconds?: number | null; takt_time?: number | null } | null | undefined,
+): number {
+  if (!step) return 0;
+  // First POSITIVE value wins: a step carrying `takt_time_seconds: 0` alongside
+  // a real legacy `takt_time` is a half-migrated blob, and zero has always
+  // meant "no takt" here rather than "takt of zero seconds".
+  for (const v of [step.takt_time_seconds, step.takt_time]) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return 0;
 }
 
 export interface RunContextGate {

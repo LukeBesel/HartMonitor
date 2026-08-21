@@ -63,81 +63,104 @@ router.get('/app/:appId/history', (req, res) => {
   const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
   const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 25, 1), 100);
 
-  const rows = db.prepare(
-    `SELECT c.*, wo.work_order_number
-       FROM completions c
-       LEFT JOIN work_orders wo ON wo.id = c.work_order_id
-      WHERE c.app_id = ? AND c.company_id = ?
-      ORDER BY c.started_at DESC`
-  ).all(appId, req.companyId);
+  // ── Everything below is paged/aggregated IN SQLITE ──────────────────────────
+  // This endpoint used to SELECT every completion for the app and JSON.parse two
+  // blobs per row on every request, then slice a 25-row page out of it — so page
+  // 40 of a long-running production app blocked the single Node process for as
+  // long as page 1 did, and got worse forever. Now the page query is LIMIT/OFFSET
+  // and the rollups are SQL aggregates over json_each().
+  //
+  // `duration` keeps its original definition: the summed step_times when they add
+  // up to anything, else the wall clock between started_at and completed_at.
+  // json_valid() guards every json_each() so one malformed legacy blob can't
+  // abort the whole query.
+  const DURATION_SQL = `
+    CASE
+      WHEN COALESCE((SELECT SUM(CAST(je.value AS REAL)) FROM json_each(c.step_times) je
+                     WHERE json_valid(c.step_times)), 0) > 0
+        THEN CAST(ROUND((SELECT SUM(CAST(je.value AS REAL)) FROM json_each(c.step_times) je
+                         WHERE json_valid(c.step_times))) AS INTEGER)
+      WHEN c.completed_at IS NOT NULL AND c.started_at IS NOT NULL
+           AND (julianday(c.completed_at) - julianday(c.started_at)) > 0
+        THEN CAST(ROUND((julianday(c.completed_at) - julianday(c.started_at)) * 86400) AS INTEGER)
+      ELSE 0
+    END`;
+  // Legacy runs record Pass/Fail as plain values inside the data blob.
+  const HAS_FAIL = `EXISTS (SELECT 1 FROM json_each(c.data) jd WHERE json_valid(c.data) AND jd.value = 'Fail')`;
+  const HAS_PASS = `EXISTS (SELECT 1 FROM json_each(c.data) jd WHERE json_valid(c.data) AND jd.value = 'Pass')`;
+  const PASS_FAIL_SQL = `CASE WHEN ${HAS_FAIL} THEN 'fail' WHEN ${HAS_PASS} THEN 'pass' ELSE NULL END`;
 
-  const durationOf = (c, stepTimes) => {
-    const summed = Object.values(stepTimes).reduce((a, b) => a + (Number(b) || 0), 0);
-    if (summed > 0) return summed;
-    if (c.completed_at && c.started_at) {
-      const ms = new Date(c.completed_at + 'Z').getTime() - new Date(c.started_at + 'Z').getTime();
-      if (Number.isFinite(ms) && ms > 0) return Math.round(ms / 1000);
-    }
-    return 0;
-  };
+  const scope = 'c.app_id = ? AND c.company_id = ?';
+  const scopeArgs = [appId, req.companyId];
+
+  const totals = db.prepare(`
+    SELECT COUNT(*) AS total FROM completions c WHERE ${scope}
+  `).get(...scopeArgs);
+
+  const agg = db.prepare(`
+    SELECT
+      COUNT(*)                                                  AS total_runs,
+      AVG(${DURATION_SQL})                                      AS avg_duration,
+      MIN(CASE WHEN ${DURATION_SQL} > 0 THEN ${DURATION_SQL} END) AS best_time,
+      SUM(CASE WHEN ${HAS_FAIL} THEN 1 ELSE 0 END)              AS fail_count,
+      SUM(CASE WHEN ${HAS_FAIL} THEN 0 WHEN ${HAS_PASS} THEN 1 ELSE 0 END) AS pass_count
+    FROM completions c
+    WHERE ${scope} AND c.status = 'completed'
+  `).get(...scopeArgs);
+
+  const stepRows = db.prepare(`
+    SELECT CAST(je.key AS INTEGER) AS idx,
+           AVG(CAST(je.value AS REAL)) AS avg_seconds,
+           COUNT(*) AS n
+    FROM completions c, json_each(c.step_times) je
+    WHERE ${scope} AND c.status = 'completed' AND json_valid(c.step_times)
+    GROUP BY idx
+  `).all(...scopeArgs);
+  const stepAgg = new Map(stepRows.map(r => [r.idx, r]));
+
+  const pageRows = db.prepare(`
+    SELECT c.id, c.operator_name, c.completed_at, c.status,
+           wo.work_order_number,
+           ${DURATION_SQL} AS total_duration_seconds,
+           ${PASS_FAIL_SQL} AS pass_fail
+      FROM completions c
+      LEFT JOIN work_orders wo ON wo.id = c.work_order_id
+     WHERE ${scope}
+     ORDER BY c.started_at DESC
+     LIMIT ? OFFSET ?
+  `).all(...scopeArgs, limit, (page - 1) * limit);
 
   let steps = [];
   try { steps = JSON.parse(app.steps) || []; } catch { steps = []; }
 
-  // Per-step rollups over completed runs (step_times keys are step indexes).
-  const stepAgg = steps.map(() => ({ sum: 0, n: 0 }));
-  let totalRuns = 0, durSum = 0, best = 0, passCount = 0, failCount = 0;
-
-  const completionsOut = [];
-  for (const c of rows) {
-    let stepTimes = {}; let data = {};
-    try { stepTimes = JSON.parse(c.step_times) || {}; } catch { /* keep {} */ }
-    try { data = JSON.parse(c.data) || {}; } catch { /* keep {} */ }
-    const duration = durationOf(c, stepTimes);
-    const vals = Object.values(data);
-    const passFail = vals.some(v => v === 'Fail') ? 'fail' : vals.some(v => v === 'Pass') ? 'pass' : null;
-
-    if (c.status === 'completed') {
-      totalRuns++;
-      durSum += duration;
-      if (duration > 0 && (best === 0 || duration < best)) best = duration;
-      if (passFail === 'pass') passCount++;
-      if (passFail === 'fail') failCount++;
-      for (const [k, v] of Object.entries(stepTimes)) {
-        const idx = Number(k);
-        if (Number.isInteger(idx) && stepAgg[idx]) { stepAgg[idx].sum += Number(v) || 0; stepAgg[idx].n++; }
-      }
-    }
-
-    completionsOut.push({
-      id: c.id,
-      operator_name: c.operator_name,
-      completed_at: c.completed_at,
-      total_duration_seconds: duration,
-      status: c.status,
-      work_order_number: c.work_order_number || null,
-      pass_fail: passFail,
-    });
-  }
-
-  const qcTotal = passCount + failCount;
+  const totalRuns = agg?.total_runs || 0;
+  const qcTotal = (agg?.pass_count || 0) + (agg?.fail_count || 0);
   res.json({
     app_id: app.id,
     app_name: app.name,
     total_runs: totalRuns,
-    avg_duration: totalRuns > 0 ? Math.round(durSum / totalRuns) : 0,
-    best_time: best,
-    pass_rate: qcTotal > 0 ? Math.round((passCount / qcTotal) * 100) : 0,
+    avg_duration: totalRuns > 0 ? Math.round(agg.avg_duration || 0) : 0,
+    best_time: agg?.best_time || 0,
+    pass_rate: qcTotal > 0 ? Math.round((agg.pass_count / qcTotal) * 100) : 0,
     step_averages: steps.map((s, i) => ({
       step_id: s.id,
       step_name: s.name,
       step_order: i,
-      avg_duration_seconds: stepAgg[i].n > 0 ? Math.round(stepAgg[i].sum / stepAgg[i].n) : 0,
-      takt_seconds: s.takt_time_seconds || 0,
-      completion_count: stepAgg[i].n,
+      avg_duration_seconds: stepAgg.has(i) ? Math.round(stepAgg.get(i).avg_seconds || 0) : 0,
+      // Legacy v1 blobs store step takt as `takt_time`, v2 as `takt_time_seconds`.
+      takt_seconds: Number(s.takt_time_seconds ?? s.takt_time) || 0,
+      completion_count: stepAgg.has(i) ? stepAgg.get(i).n : 0,
     })),
-    completions: completionsOut.slice((page - 1) * limit, page * limit),
-    total: completionsOut.length,
+    completions: pageRows.map(r => ({
+      id: r.id,
+      operator_name: r.operator_name,
+      completed_at: r.completed_at,
+      total_duration_seconds: r.total_duration_seconds || 0,
+      status: r.status,
+      work_order_number: r.work_order_number || null,
+      pass_fail: r.pass_fail || null,
+    })),
+    total: totals.total,
   });
 });
 

@@ -18,6 +18,7 @@ const EVENTS = {
   'workorder.overdue':        'Work order marked overdue',
   'workorder.schedule_changed': 'Work order schedule changed',
   'station.down':             'Station marked down',
+  'andon.alert':              'A team or department was alerted for help (Andon)',
 };
 
 function smtpConfigured() {
@@ -34,6 +35,9 @@ async function sendViaResend(to, subject, body, html) {
       from: process.env.EMAIL_FROM || process.env.SMTP_FROM || 'HartMonitor <noreply@hartmonitorapp.com>',
       to: [to], subject, text: body, ...(html ? { html } : {}),
     }),
+    // A stalled provider must not pin a request open until the runtime's
+    // (much longer) default socket timeout.
+    signal: AbortSignal.timeout(10_000),
   });
   if (!res.ok) {
     const errBody = await res.text().catch(() => '');

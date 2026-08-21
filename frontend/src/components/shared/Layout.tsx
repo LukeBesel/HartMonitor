@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Outlet, NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Settings, Activity, ChevronLeft, ChevronRight,
-  LogOut, ChevronDown, Menu, X, Plus, Download,
+  LogOut, ChevronDown, Menu, X, Download,
 } from 'lucide-react';
 import { usePlan } from '../../context/PlanContext';
 import { useAuth } from '../../context/AuthContext';
@@ -12,8 +12,8 @@ import { usePermissions } from '../../context/PermissionsContext';
 import { NavItem, NavSection, useVisibleSections, findSectionForPath } from '../../config/navigation';
 import SiteSwitcher from './SiteSwitcher';
 import AlertsBell from './AlertsBell';
+import RequestHelpButton from './RequestHelpButton';
 import UpgradeModal from './UpgradeModal';
-import QuickCreateModal from './QuickCreateModal';
 import PWAUpdatePrompt from './PWAUpdatePrompt';
 import { BillingBanner } from './BillingBanner';
 import { SetupChecklist } from './SetupChecklist';
@@ -54,7 +54,6 @@ export default function Layout() {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('hm_sidebar') === 'collapsed');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   // Set to a feature label when a Free user clicks a locked Pro nav item.
   const [lockedModal, setLockedModal] = useState<string | null>(null);
   // PWA install prompt
@@ -327,6 +326,10 @@ export default function Layout() {
             </button>
           )}
 
+          {/* Request help — the same Andon mechanism the player uses, reachable
+              from anywhere in the app, next to where the alerts land */}
+          <RequestHelpButton collapsed={effectiveCollapsed} />
+
           {/* Alerts — the floating bubble is gone; the bell is the alerts home */}
           <AlertsBell collapsed={effectiveCollapsed} />
 
@@ -435,22 +438,6 @@ export default function Layout() {
           <Outlet />
         </main>
       </div>
-
-      {/* Quick-create FAB — visible for manager+ roles */}
-      {user && ['manager', 'developer', 'supervisor'].includes(user.role) && (
-        <button
-          onClick={() => setQuickCreateOpen(true)}
-          title="Quick-create work order"
-          className="fixed bottom-20 right-5 z-40 w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-95"
-          style={{ background: 'linear-gradient(135deg, #6366f1, #ec4899)' }}
-        >
-          <Plus size={22} className="text-white" strokeWidth={2.5} />
-        </button>
-      )}
-
-      {quickCreateOpen && (
-        <QuickCreateModal onClose={() => setQuickCreateOpen(false)} />
-      )}
 
       {lockedModal && (
         <UpgradeModal

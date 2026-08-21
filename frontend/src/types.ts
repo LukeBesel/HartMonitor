@@ -375,7 +375,11 @@ export interface CompanySettings {
 export interface AnalyticsOverview {
   totalCompletions: number; todayCompletions: number; inProgress: number;
   totalApps: number; publishedApps: number; activeStations: number;
-  avgCycleTime: number; passRate: number;
+  avgCycleTime: number;
+  /** null until at least one run records a Pass/Fail result. */
+  passRate: number | null;
+  /** How many completed runs the pass rate is based on. */
+  qcSampleSize?: number;
 }
 
 export interface PlantViewData {
@@ -402,7 +406,12 @@ export interface ManagerViewData {
 
 // ── Daily brief / attention ──────────────────────────────────────────────────
 
-export type AttentionType = 'wo_overdue' | 'wo_behind' | 'station_down' | 'ncr_critical' | 'stock_low' | 'po_late';
+export type AttentionType =
+  | 'wo_overdue' | 'wo_behind' | 'station_down' | 'ncr_critical' | 'stock_low' | 'po_late'
+  /** An open help request raised from the player, app shell or Andon Board. */
+  | 'andon_call'
+  /** Overflow summary row ("N more work orders behind schedule"). */
+  | 'more';
 
 export interface AttentionItem {
   type: AttentionType;
@@ -410,6 +419,129 @@ export interface AttentionItem {
   label: string;
   detail: string;
   link: string;
+  /** Present only on `andon_call` items — lets the card route, age and resolve
+   *  the help request inline without a second round trip. */
+  team?: AndonTeam;
+  team_label?: string;
+  target_type?: AndonTargetType;
+  target_label?: string;
+  department_id?: string | null;
+  call_id?: string;
+  call_status?: AndonStatus;
+  age_minutes?: number;
+  location?: string;
+}
+
+// ── Andon / help requests ─────────────────────────────────────────────────────
+// One mechanism for every "request help": the player's Request-help sheet, the
+// Request-help action in the app shell and the Andon Board all write an
+// andon_call tagged with the team or department being alerted. It notifies
+// people — it does not dial anyone.
+
+export type AndonTeam = 'quality' | 'supervisor' | 'maintenance' | 'materials';
+/** A request is aimed at a function team or at one of the company's departments. */
+export type AndonTargetType = 'team' | 'department';
+export type AndonCallType = 'help' | 'quality' | 'material' | 'maintenance' | 'safety';
+export type AndonPriority = 'low' | 'normal' | 'high' | 'critical';
+export type AndonStatus = 'open' | 'acknowledged' | 'resolved';
+
+export interface AndonCall {
+  id: string;
+  type: AndonCallType;
+  team: AndonTeam;
+  team_label: string;
+  /** Who was alerted: a function team, or one of the company's departments. */
+  target_type: AndonTargetType;
+  /** The single display string for who was alerted — department name or team. */
+  target_label: string;
+  priority: AndonPriority;
+  status: AndonStatus;
+  title: string;
+  message: string;
+  /** Run context captured when the call was raised from the player. */
+  work_order_id?: string | null;
+  work_order_number?: string | null;
+  part_name?: string | null;
+  app_id?: string | null;
+  app_name?: string | null;
+  completion_id?: string | null;
+  step_name?: string;
+  department_id?: string | null;
+  department_name?: string | null;
+  station_id?: string | null;
+  station_name?: string | null;
+  location: string;
+  created_by: string;
+  assigned_to: string;
+  resolution?: string;
+  resolved_by?: string;
+  acknowledged_at?: string | null;
+  resolved_at?: string | null;
+  created_at: string;
+  /** Server-computed so clients never have to guess the DB's timezone. */
+  age_seconds: number;
+  response_seconds: number | null;
+  resolution_seconds: number | null;
+}
+
+export interface AndonSummary {
+  open: number;
+  critical: number;
+  acknowledged: number;
+  resolved_today: number;
+  by_type: Record<string, number>;
+  by_team: Record<string, number>;
+  avg_response_seconds_today: number | null;
+  responded_today: number;
+}
+
+// ── Department membership (who receives a department's alerts) ────────────────
+// A person can sit in several departments with a different role in each. The
+// first four roles match the alert teams exactly, so routing is a direct lookup.
+
+export type DepartmentTeamRole = AndonTeam | 'lead' | 'operator';
+
+export interface DepartmentMember {
+  id: string;
+  department_id: string;
+  department_name?: string | null;
+  user_id: string;
+  display_name: string;
+  email: string;
+  role: string;
+  job_title?: string;
+  is_active: boolean;
+  team_role: DepartmentTeamRole;
+  /** Per-person delivery preferences, honoured independently. */
+  notify_email: boolean;
+  notify_in_app: boolean;
+  created_at: string;
+}
+
+export interface DepartmentMemberInput {
+  user_id: string;
+  team_role?: DepartmentTeamRole;
+  notify_email?: boolean;
+  notify_in_app?: boolean;
+}
+
+/** Payload sent when anyone requests help — from the player mid-run, from the
+ *  app shell, or from the Andon Board. Run context is optional throughout. */
+export interface AndonCallInput {
+  team?: AndonTeam;
+  target_type?: AndonTargetType;
+  type?: AndonCallType;
+  priority?: AndonPriority;
+  title?: string;
+  message?: string;
+  note?: string;
+  department_id?: string | null;
+  station_id?: string | null;
+  work_order_id?: string | null;
+  app_id?: string | null;
+  completion_id?: string | null;
+  step_name?: string;
+  operator_name?: string;
 }
 
 export interface DailyBrief {

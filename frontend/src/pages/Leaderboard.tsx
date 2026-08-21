@@ -133,7 +133,7 @@ function ChampionCard({ board }: { board: LeaderboardBoard }) {
         <span className="text-white/60">·</span>
         <span>{champ.completions} run{champ.completions === 1 ? '' : 's'}</span>
         {champ.is_record && (
-          <span className="flex items-center gap-1 text-amber-300 ml-auto"><Sparkles size={12} /> Record</span>
+          <span className="flex items-center gap-1 text-amber-600 ml-auto"><Sparkles size={12} /> Record</span>
         )}
       </div>
     </div>
@@ -147,7 +147,7 @@ const DEPT_RANK_ACCENT: Record<number, string> = {
 };
 
 function DepartmentCard({ dept, onSelect }: { dept: LeaderboardDepartment; onSelect: () => void }) {
-  const rankColor = DEPT_RANK_ACCENT[dept.rank] || 'text-gray-300';
+  const rankColor = DEPT_RANK_ACCENT[dept.rank] || 'text-gray-400';
   return (
     <button
       onClick={onSelect}
@@ -272,10 +272,13 @@ export default function Leaderboard() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-gray-900 tracking-tight">Leaderboard</h1>
+            {/* Says exactly what is being counted. Cross-department output is a
+                volume tally, not a productivity comparison — the like-for-like
+                ranking is the per-operation drill-down. */}
             <p className="text-xs text-gray-500 mt-0.5">
               {selectedDept
-                ? 'Operator rankings — fastest clean runs by operation'
-                : 'Departments ranked by output — drill in for operator rankings'}
+                ? 'Operator rankings — fastest clean runs, compared only within the same operation and part'
+                : 'Clean runs completed per department — open one to rank operators within the same operation'}
             </p>
           </div>
         </div>

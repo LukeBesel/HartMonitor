@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import {
@@ -6,11 +6,13 @@ import {
   ArrowLeft, Monitor, User, ChevronRight, Calendar, AlertTriangle
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
+import LastRefreshed from '../components/shared/LastRefreshed';
 
 interface DeptViewData {
   department: { id: string; name: string; color: string; manager_name: string; description: string; headcount: number };
   kpis: {
-    completed_today: number; active_now: number; pass_rate: number;
+    completed_today: number; active_now: number; pass_rate: number | null;
     avg_cycle_time: number; wos_on_track: number; wos_total: number;
   };
   stations: Array<{
@@ -18,7 +20,10 @@ interface DeptViewData {
     current_status: string; current_status_since: string | null;
     current_app_id: string | null; current_app_name: string | null;
     active_completion: { id: string; operator_name: string; app_name: string; started_at: string } | null;
-    oee: { availability: number; performance: number; quality: number; oee: number; completions_today: number };
+    oee: {
+      availability: number | null; performance: number | null; quality: number | null;
+      oee: number | null; completions_today: number;
+    };
   }>;
   work_orders: Array<{
     id: string; work_order_number: string; part_name: string; app_name: string | null;
@@ -85,17 +90,14 @@ export default function DepartmentView() {
       setError('');
     } catch (err: any) {
       setError(err?.message || 'Failed to load department');
+      throw err;
     } finally {
       setLoading(false);
     }
   }, [id]);
 
-  useEffect(() => {
-    setLoading(true);
-    load();
-    const interval = setInterval(load, 30000);
-    return () => clearInterval(interval);
-  }, [load]);
+  // Live department board — 30s while the tab is visible.
+  const auto = useAutoRefresh(load, 30_000);
 
   if (loading && !data) return (
     <div className="flex items-center justify-center h-64">
@@ -110,7 +112,7 @@ export default function DepartmentView() {
         <p className="font-medium text-gray-500">Couldn't load this department</p>
         <p className="text-sm text-gray-400 mt-1">{error || 'Department not found'}</p>
       </div>
-      <button className="btn-secondary" onClick={() => { setLoading(true); load(); }}>Retry</button>
+      <button className="btn-secondary" onClick={() => { setLoading(true); void auto.refresh(); }}>Retry</button>
       <Link to="/dashboard" className="text-blue-600 text-sm hover:underline">← Back to Command Center</Link>
     </div>
   );
@@ -138,16 +140,18 @@ export default function DepartmentView() {
             </p>
           </div>
         </div>
-        <button onClick={load} className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 shadow-sm">
-          <RefreshCw size={14} /> Refresh
-        </button>
+        <LastRefreshed
+          at={auto.lastRefreshed}
+          refreshing={auto.refreshing}
+          onRefresh={() => { void auto.refresh(); }}
+        />
       </div>
 
       {/* KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
         <KPICard icon={<CheckCircle2 size={18} className="text-green-600" />} bg="bg-green-50" label="Completed Today" value={kpis.completed_today} />
         <KPICard icon={<Activity size={18} className="text-blue-600" />} bg="bg-blue-50" label="Active Now" value={kpis.active_now} />
-        <KPICard icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50" label="Pass Rate (7d)" value={`${kpis.pass_rate}%`} />
+        <KPICard icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50" label="Pass Rate (7d)" value={kpis.pass_rate !== null ? `${kpis.pass_rate}%` : '—'} />
         <KPICard icon={<Clock size={18} className="text-orange-600" />} bg="bg-orange-50" label="Avg Cycle Time" value={kpis.avg_cycle_time ? `${kpis.avg_cycle_time}m` : '—'} />
         <KPICard icon={<Package size={18} className="text-indigo-600" />} bg="bg-indigo-50" label="WOs On Track" value={`${kpis.wos_on_track} / ${kpis.wos_total}`} />
       </div>
@@ -181,10 +185,10 @@ export default function DepartmentView() {
                     <div className="bg-blue-50 border border-blue-100 rounded-lg px-3 py-2 mb-3">
                       <div className="flex items-center gap-1.5 text-xs text-blue-700 font-medium">
                         <User size={11} /> {st.active_completion.operator_name}
-                        <span className="text-blue-400">running</span>
+                        <span className="text-blue-600">running</span>
                       </div>
                       <div className="text-xs text-blue-900 font-semibold truncate">{st.active_completion.app_name}</div>
-                      <div className="text-[11px] text-blue-400">{elapsedSince(st.active_completion.started_at)} elapsed</div>
+                      <div className="text-[11px] text-blue-600">{elapsedSince(st.active_completion.started_at)} elapsed</div>
                     </div>
                   ) : (
                     <div className="bg-gray-50 rounded-lg px-3 py-2 mb-3 text-xs text-gray-500">
@@ -192,7 +196,9 @@ export default function DepartmentView() {
                     </div>
                   )}
                   <div className="flex items-center justify-between text-xs text-gray-500">
-                    <span>OEE <span className={`font-bold ${st.oee.oee >= 80 ? 'text-green-600' : st.oee.oee >= 60 ? 'text-amber-600' : 'text-red-600'}`}>{st.oee.oee}%</span></span>
+                    <span>OEE {st.oee.oee === null
+                      ? <span className="font-bold text-gray-400" title="Set an ideal cycle time and record runs to measure OEE">—</span>
+                      : <span className={`font-bold ${st.oee.oee >= 80 ? 'text-green-600' : st.oee.oee >= 60 ? 'text-amber-600' : 'text-red-600'}`}>{st.oee.oee}%</span>}</span>
                     <span>{st.oee.completions_today} today</span>
                   </div>
                 </Link>

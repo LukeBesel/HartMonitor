@@ -15,10 +15,13 @@ import { MessagesProvider } from './context/MessagesContext';
 import { ToastProvider } from './context/ToastContext';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import MessageToast from './components/shared/MessageToast';
+import FirstRunLanding from './components/apps/FirstRunLanding';
+import AppTrainingCoach from './components/apps/AppTrainingCoach';
 
 // Code-split the rest of the pages so the initial load only ships the shell,
 // login, and landing dashboard. Heavy chart pages load on demand.
 const AppsLibrary      = lazy(() => import('./pages/AppsLibrary'));
+const AppDetail        = lazy(() => import('./pages/AppDetail'));
 const AppBuilder       = lazy(() => import('./pages/AppBuilder'));
 const AppPlayer        = lazy(() => import('./pages/AppPlayer'));
 const Tables           = lazy(() => import('./pages/Tables'));
@@ -34,7 +37,6 @@ const ManagerView      = lazy(() => import('./pages/ManagerView'));
 const CompletionDetail = lazy(() => import('./pages/CompletionDetail'));
 const AppHistory       = lazy(() => import('./pages/AppHistory'));
 const AppAnalytics     = lazy(() => import('./pages/AppAnalytics'));
-const StepMetrics      = lazy(() => import('./pages/StepMetrics'));
 const CapacityPlanning = lazy(() => import('./pages/CapacityPlanning'));
 const OperatorPortal   = lazy(() => import('./pages/OperatorPortal'));
 const SettingsPage     = lazy(() => import('./pages/Settings'));
@@ -128,6 +130,10 @@ export default function App() {
         <ToastProvider>
           <BrowserRouter>
             <MessageToast />
+            {/* Builder-first guided training. Self-gating: it only shows on the
+                apps surfaces, for people who can build, until it is finished
+                or dismissed. */}
+            <AppTrainingCoach />
             <Suspense fallback={<Spinner />}>
             <ErrorBoundary>
             <Routes>
@@ -148,8 +154,11 @@ export default function App() {
 
               {/* Management / report portal — operators are redirected to the floor */}
               <Route element={<ReportPortalRoute><Layout /></ReportPortalRoute>}>
-                <Route path="/dashboard" element={<Dashboard />} />
+                {/* New accounts land on Apps instead of an empty Command Center
+                    — see FirstRunLanding for the (one question, once per tab) rule. */}
+                <Route path="/dashboard" element={<FirstRunLanding><Dashboard /></FirstRunLanding>} />
                 <Route path="/apps" element={<ModuleGate module="apps"><AppsLibrary /></ModuleGate>} />
+                <Route path="/apps/:id" element={<ModuleGate module="apps"><AppDetail /></ModuleGate>} />
                 <Route path="/apps/:id/build" element={<ModuleGate module="apps"><AppBuilder /></ModuleGate>} />
                 <Route path="/apps/:id/history" element={<ModuleGate module="apps"><AppHistory /></ModuleGate>} />
                 <Route path="/apps/:id/analytics" element={<ModuleGate module="apps"><AppAnalytics /></ModuleGate>} />
@@ -166,7 +175,9 @@ export default function App() {
                 <Route path="/departments" element={<Departments />} />
                 <Route path="/departments/:id" element={<DepartmentView />} />
                 <Route path="/manager" element={<ManagerView />} />
-                <Route path="/step-metrics" element={<StepMetrics />} />
+                {/* Step metrics live inside Operation Analytics — the old
+                    standalone page had no link into it from anywhere. */}
+                <Route path="/step-metrics" element={<Navigate to="/analytics" replace />} />
                 <Route path="/capacity" element={<CapacityPlanning />} />
                 <Route path="/completions/:id" element={<CompletionDetail />} />
                 <Route path="/oee" element={<OEETracker />} />
@@ -174,6 +185,8 @@ export default function App() {
                 <Route path="/dashboards/:id" element={<ModuleGate module="apps"><DashboardView /></ModuleGate>} />
                 <Route path="/dashboards/:id/:mode" element={<ModuleGate module="apps"><DashboardView /></ModuleGate>} />
                 <Route path="/reports/:category" element={<CategoryReports />} />
+                {/* Edit mode stays on the workspace route (DashboardView reads :mode). */}
+                <Route path="/reports/:category/:mode" element={<CategoryReports />} />
                 <Route path="/inventory" element={<ModuleGate module="inventory"><Inventory /></ModuleGate>} />
                 <Route path="/inventory/boms" element={<ModuleGate module="inventory"><BOMs /></ModuleGate>} />
                 <Route path="/inventory/kitting" element={<ModuleGate module="inventory"><Kitting /></ModuleGate>} />

@@ -1,10 +1,12 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import {
   Users, Clock, CheckCircle2, AlertTriangle, Activity,
   RefreshCw, ChevronRight, Zap, Timer, Package, TrendingUp, TrendingDown
 } from 'lucide-react';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
+import LastRefreshed from '../components/shared/LastRefreshed';
 
 // ── Types matching actual API response ────────────────────────────────────────
 
@@ -105,10 +107,14 @@ function formatDate(iso: string) {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
+// Remaining-time estimate from the work order's takt time. With no takt set
+// there is nothing to project from, so it reports "—" instead of the invented
+// 15-minutes-per-unit assumption it used to fall back on.
 function calcETA(wo: WorkOrder): string {
   if (wo.quantity_completed >= wo.quantity) return 'Complete';
+  if (!wo.takt_time_minutes || wo.takt_time_minutes <= 0) return '—';
   const remaining = wo.quantity - wo.quantity_completed;
-  const etaMins = remaining * (wo.takt_time_minutes || 15);
+  const etaMins = remaining * wo.takt_time_minutes;
   if (etaMins < 60) return `~${Math.round(etaMins)}m`;
   return `~${(etaMins / 60).toFixed(1)}h`;
 }
@@ -180,10 +186,12 @@ function WorkOrderCard({ wo }: { wo: WorkOrder }) {
         <span className="text-xs text-gray-400">|</span>
         <span className="text-xs text-gray-600 flex items-center gap-1">
           <Clock size={10} className="flex-shrink-0" />
-          {wo.takt_time_minutes}m takt
+          {wo.takt_time_minutes > 0 ? `${wo.takt_time_minutes}m takt` : 'no takt set'}
         </span>
         <span className="text-xs text-gray-400">|</span>
-        <span className="text-xs text-gray-600">ETA: {calcETA(wo)}</span>
+        <span className="text-xs text-gray-600" title={wo.takt_time_minutes > 0 ? undefined : 'Set a takt time on this work order to estimate remaining time'}>
+          ETA: {calcETA(wo)}
+        </span>
       </div>
       <div className="flex items-center gap-1.5 text-xs text-gray-400">
         <ChevronRight size={10} />
@@ -224,12 +232,9 @@ export default function ManagerView() {
   const [data, setData] = useState<ManagerViewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [activeDept, setActiveDept] = useState(ALL_DEPARTMENTS);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const load = useCallback(async (showSpinner = false) => {
-    if (showSpinner) setRefreshing(true);
+  const load = useCallback(async () => {
     try {
       const mvData = await api.getManagerView();
       setData(mvData);
@@ -237,17 +242,14 @@ export default function ManagerView() {
     } catch (err: any) {
       // keep stale data if we have it; surface the error otherwise
       setError(err.message || 'Failed to load operations data');
+      throw err;
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   }, []);
 
-  useEffect(() => {
-    load(true);
-    intervalRef.current = setInterval(() => load(false), 15000);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [load]);
+  // The floor moves minute to minute — 15s while the tab is visible.
+  const auto = useAutoRefresh(load, 15_000);
 
   const workOrders: WorkOrder[] = data?.work_orders ?? [];
   const activeCompletions: ActiveCompletion[] = data?.active_completions ?? [];
@@ -274,14 +276,11 @@ export default function ManagerView() {
           </div>
           <p className="text-gray-500 text-sm mt-0.5">Live production floor view — auto-refreshes every 15s</p>
         </div>
-        <button
-          onClick={() => load(true)}
-          disabled={refreshing}
-          className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors shadow-sm disabled:opacity-60"
-        >
-          <RefreshCw size={14} className={refreshing ? 'animate-spin text-blue-500' : ''} />
-          Refresh
-        </button>
+        <LastRefreshed
+          at={auto.lastRefreshed}
+          refreshing={auto.refreshing}
+          onRefresh={() => { void auto.refresh(); }}
+        />
       </div>
 
       {loading ? (
@@ -296,7 +295,7 @@ export default function ManagerView() {
           <AlertTriangle size={32} className="text-red-400 mb-3" />
           <p className="text-gray-500 font-medium">Couldn't load operations data</p>
           <p className="text-gray-400 text-sm mt-1">{error}</p>
-          <button onClick={() => load(true)} className="btn-secondary mt-4">
+          <button onClick={() => { void auto.refresh(); }} className="btn-secondary mt-4">
             <RefreshCw size={14} /> Retry
           </button>
         </div>
@@ -407,9 +406,12 @@ export default function ManagerView() {
               <h2 className="text-base font-semibold text-gray-900 mb-3">Department Summary</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {deptStats.map(dept => {
+                  // null (not 0) when the department has no work orders — an
+                  // empty department isn't "0% on track", it has nothing to track.
                   const onTrackPct = dept.total_work_orders > 0
-                    ? Math.round((dept.on_track_count / dept.total_work_orders) * 100) : 0;
+                    ? Math.round((dept.on_track_count / dept.total_work_orders) * 100) : null;
                   const statusColor =
+                    onTrackPct === null ? 'text-gray-500 bg-gray-50 border-gray-200' :
                     onTrackPct >= 75 ? 'text-green-600 bg-green-50 border-green-200' :
                     onTrackPct >= 50 ? 'text-amber-600 bg-amber-50 border-amber-200' :
                     'text-red-600 bg-red-50 border-red-200';
@@ -445,12 +447,16 @@ export default function ManagerView() {
                         </div>
                       </div>
                       <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${onTrackPct >= 75 ? 'bg-green-500' : onTrackPct >= 50 ? 'bg-amber-500' : 'bg-red-500'}`}
-                          style={{ width: `${onTrackPct}%` }}
-                        />
+                        {onTrackPct !== null && (
+                          <div
+                            className={`h-full rounded-full ${onTrackPct >= 75 ? 'bg-green-500' : onTrackPct >= 50 ? 'bg-amber-500' : 'bg-red-500'}`}
+                            style={{ width: `${onTrackPct}%` }}
+                          />
+                        )}
                       </div>
-                      <div className="text-xs text-gray-400 mt-1 text-right">{onTrackPct}% on track</div>
+                      <div className="text-xs text-gray-400 mt-1 text-right">
+                        {onTrackPct === null ? 'No work orders assigned' : `${onTrackPct}% on track`}
+                      </div>
                       {dept.behind_count > 0 && (
                         <div className="flex items-center gap-1.5 mt-2 text-xs text-red-500">
                           <AlertTriangle size={11} />
