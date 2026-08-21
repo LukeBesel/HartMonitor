@@ -494,7 +494,7 @@ export default function AppDetail() {
             <header className="flex items-center justify-between gap-2 mb-3">
               <div>
                 <h2 className="text-sm font-semibold text-gray-900">Who has run it</h2>
-                <p className="text-xs text-gray-400 mt-0.5">Counted from completed and abandoned runs.</p>
+                <p className="text-xs text-gray-400 mt-0.5">Everyone who worked a run, including anyone who picked one up mid-job.</p>
               </div>
             </header>
             {operators.length === 0 ? (
@@ -509,7 +509,9 @@ export default function AppDetail() {
                     <span className="min-w-0 flex-1">
                       <span className="block text-[13px] text-gray-800 truncate">{op.operator_name}</span>
                       <span className="block text-[11px] text-gray-400">
-                        {pluralize(op.runs, 'run')} · last {fmtRelative(op.last_run_at)}
+                        {pluralize(op.runs, 'run')}
+                        {op.joined_runs > 0 && ` (${op.joined_runs} joined)`}
+                        {' · last '}{fmtRelative(op.last_run_at)}
                       </span>
                     </span>
                     <span className="text-[12px] text-gray-500 tabular-nums flex-shrink-0">

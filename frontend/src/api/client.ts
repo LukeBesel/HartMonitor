@@ -1147,6 +1147,8 @@ export interface AppDetailStats {
 
 export interface AppDetailOperator {
   operator_name: string; runs: number; completed: number;
+  /** Runs this person picked up mid-job rather than started. */
+  joined_runs: number;
   last_run_at: string | null; avg_duration_s: number | null;
 }
 
