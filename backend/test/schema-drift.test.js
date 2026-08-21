@@ -353,3 +353,54 @@ describe('CAPA actions', () => {
     assert.equal(alias.json.status, 'done');
   });
 });
+
+// ─── Page vocabularies against the constraints that enforce them ──────────────
+// The other half of the drift family, and the one that does not announce
+// itself. A page offering a word its own column forbids either 500s on save
+// (Kaizen "Reviewing", maintenance "normal") or — worse — writes fine under a
+// different word and then cannot find the row it just made, which is how shift
+// notes could not be started at all. Each status a screen can actually pick has
+// to round-trip.
+
+describe('statuses a screen can pick round-trip', () => {
+  it('accepts every Kaizen status the page offers, including the legacy spelling', async () => {
+    const created = await api('POST', '/api/kaizen', {
+      token, body: { title: 'Vocabulary probe', category: 'quality' },
+    });
+    assert.equal(created.status, 201, `kaizen create failed: ${JSON.stringify(created.json)}`);
+    const id = created.json.id;
+
+    // STATUS_FILTERS in frontend/src/pages/Kaizen.tsx, minus the "All" chip.
+    for (const status of ['submitted', 'under_review', 'approved', 'in_progress', 'implemented', 'rejected']) {
+      const r = await api('PUT', `/api/kaizen/${id}`, { token, body: { status } });
+      assert.equal(r.status, 200, `status "${status}" rejected: ${JSON.stringify(r.json)}`);
+      assert.equal(r.json.status, status);
+    }
+
+    // A tab left open before the rename still says "reviewing".
+    const legacy = await api('PUT', `/api/kaizen/${id}`, { token, body: { status: 'reviewing' } });
+    assert.equal(legacy.status, 200, `legacy "reviewing" rejected: ${JSON.stringify(legacy.json)}`);
+    assert.equal(legacy.json.status, 'under_review', 'legacy spelling should store as under_review');
+  });
+
+  it('accepts every Kaizen category the page offers', async () => {
+    for (const category of ['safety', 'quality', 'delivery', 'cost', 'morale', 'environment']) {
+      const r = await api('POST', '/api/kaizen', { token, body: { title: `Cat ${category}`, category } });
+      assert.equal(r.status, 201, `category "${category}" rejected: ${JSON.stringify(r.json)}`);
+    }
+  });
+
+  it('creates a shift note under the status the page actually sends', async () => {
+    // The page used to send 'draft'. The column stores 'active', so the note
+    // was created and then never matched the page's own lookup — the modal
+    // closed and nothing appeared.
+    const r = await api('POST', '/api/shifts', {
+      token, body: { shift_date: '2026-08-22', shift_name: 'day', author_name: 'Vocabulary probe' },
+    });
+    assert.equal(r.status, 201, `shift note create failed: ${JSON.stringify(r.json)}`);
+    assert.equal(r.json.status, 'active', 'a new shift note is active, which is what the page now looks for');
+
+    const submitted = await api('POST', `/api/shifts/${r.json.id}/submit`, { token });
+    if (submitted.status === 200) assert.equal(submitted.json.status, 'submitted');
+  });
+});

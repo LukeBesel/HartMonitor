@@ -103,8 +103,14 @@ router.put('/:id', (req, res) => {
   // Only the columns the client actually named are written, so blanking the
   // champion, the target date or the department clears it instead of being
   // read as "no opinion" and silently restoring the old value.
-  const { sql, params } = buildUpdate(req.body, EDITABLE_COLUMNS);
-  const status = nextValue(req.body, 'status', idea.status);
+  // The stored vocabulary is fixed by a CHECK constraint that cannot be altered
+  // in place. Older clients said 'reviewing' for what the column calls
+  // 'under_review', and sending it failed the constraint with a 500 — so moving
+  // an idea to Reviewing, using the word the page itself showed, was broken.
+  // Normalise on the way in so a stale browser tab keeps working.
+  const body = req.body?.status === 'reviewing' ? { ...req.body, status: 'under_review' } : req.body;
+  const { sql, params } = buildUpdate(body, EDITABLE_COLUMNS);
+  const status = nextValue(body, 'status', idea.status);
   const completed_at = status === 'implemented' && idea.status !== 'implemented' ? now : idea.completed_at;
 
   db.prepare(`UPDATE kaizen_ideas SET ${sql ? sql + ', ' : ''}completed_at = ?, updated_at = ? WHERE id = ?`)
