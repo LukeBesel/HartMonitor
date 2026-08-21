@@ -29,6 +29,7 @@ function startServer() {
         PORT: String(PORT),
         DATABASE_PATH: DB_PATH,
         SEED_DEMO_DATA: 'false',
+        EARLY_ACCESS: 'false',
         BACKUP_DIR: '',
         APP_URL: BASE,
         // No SMTP — isolates email side-effects

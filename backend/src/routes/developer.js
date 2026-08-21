@@ -11,6 +11,9 @@ const { logActivity } = require('../activity');
 const router = express.Router();
 
 function requireEnterprise(req, res, next) {
+  // Early access: every feature is open, including API keys and webhooks.
+  const { config } = require('../config');
+  if (config.earlyAccess) return next();
   const plan = getPlanRow(req.companyId);
   if (plan.tier !== 'enterprise') {
     return res.status(403).json({ error: 'not_available', message: 'API access and webhooks are an Enterprise feature. Upgrade your plan to enable them.' });
@@ -28,8 +31,9 @@ const WEBHOOK_EVENTS = ['*', ...Object.keys(EVENTS)];
 // ─── GET /availability — does this org have API/webhook access? ───────────────
 
 router.get('/availability', (req, res) => {
+  const { config } = require('../config');
   const plan = getPlanRow(req.companyId);
-  res.json({ available: plan.tier === 'enterprise', events: WEBHOOK_EVENTS });
+  res.json({ available: config.earlyAccess || plan.tier === 'enterprise', events: WEBHOOK_EVENTS });
 });
 
 // ─── API Keys ──────────────────────────────────────────────────────────────────

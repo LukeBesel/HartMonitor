@@ -117,7 +117,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const getToken = () => tokenRef.current;
 
-  const canAccessReportPortal = !!user && user.role !== 'operator';
+  // Operators can move freely between the shop-floor views and the management
+  // portal UNLESS the company has turned on the kiosk lock (Settings → Company),
+  // which confines operator-role accounts to the Operator Portal / App Player.
+  const kioskLock = !!(user as any)?.kiosk_lock;
+  const canAccessReportPortal = !!user && (user.role !== 'operator' || !kioskLock);
   const canAccessOperatorPortal = !!user && user.role !== 'viewer';
   const canEdit = !!user && (ROLE_LEVELS[user.role] ?? 0) >= ROLE_LEVELS.supervisor;
 
