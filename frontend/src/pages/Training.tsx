@@ -4,6 +4,7 @@ import {
   CheckCircle2, Clock, AlertTriangle, XCircle, RefreshCw, Search, ChevronDown,
   ChevronRight, User, Building2, Calendar, Download, Shield,
 } from 'lucide-react';
+import { useParams } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 
@@ -858,8 +859,26 @@ function PlansTab({
 
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
 
+type DeptCoverage = { id: string; name: string; operator_count: number; coverage_pct: number };
+
+// Defensive dedupe: the backend now merges same-named departments, but old
+// cached responses (or other clients) may still contain duplicates — keep the
+// first entry per department name so 'Assembly' never lists twice.
+function dedupeDeptCoverage(rows: DeptCoverage[] | undefined | null): DeptCoverage[] {
+  const seen = new Map<string, DeptCoverage>();
+  for (const dept of rows ?? []) {
+    const key = String(dept.name ?? '').trim().toLowerCase();
+    if (!seen.has(key)) seen.set(key, dept);
+  }
+  return [...seen.values()];
+}
+
 function OverviewTab({ summary, loading }: { summary: any; loading: boolean }) {
   const [expandedOps, setExpandedOps] = useState<Set<string>>(new Set());
+  const departmentCoverage = useMemo(
+    () => dedupeDeptCoverage(summary?.department_coverage),
+    [summary],
+  );
 
   function toggleOp(id: string) {
     setExpandedOps(prev => {
@@ -915,14 +934,14 @@ function OverviewTab({ summary, loading }: { summary: any; loading: boolean }) {
       </div>
 
       {/* Department coverage */}
-      {summary.department_coverage?.length > 0 && (
+      {departmentCoverage.length > 0 && (
         <div className="card p-5">
           <div className="flex items-center gap-2 mb-4">
             <Building2 size={15} className="text-gray-500" />
             <h3 className="text-sm font-semibold text-gray-700">Department Training Coverage</h3>
           </div>
           <div className="space-y-3">
-            {summary.department_coverage.map((dept: any) => (
+            {departmentCoverage.map((dept) => (
               <div key={dept.id}>
                 <div className="flex items-center justify-between text-sm mb-1">
                   <span className="font-medium text-gray-800">{dept.name}</span>
@@ -988,11 +1007,26 @@ function OverviewTab({ summary, loading }: { summary: any; loading: boolean }) {
 
 type Tab = 'overview' | 'matrix' | 'certifications' | 'plans';
 
+// The old /training/certs and /training/plans nav entries were collapsed into
+// the single /training item — its internal tabs are the sub-navigation. Legacy
+// deep links (/training/:tab) still land on the matching internal tab.
+function tabFromParam(param: string | undefined): Tab {
+  switch (param) {
+    case 'matrix':
+    case 'skills': return 'matrix';
+    case 'certs':
+    case 'certifications': return 'certifications';
+    case 'plans': return 'plans';
+    default: return 'overview';
+  }
+}
+
 export default function Training() {
   const { user } = useAuth();
   const canEdit = ['developer', 'manager', 'supervisor'].includes(user?.role ?? '');
+  const { tab: tabParam } = useParams<{ tab: string }>();
 
-  const [tab, setTab] = useState<Tab>('overview');
+  const [tab, setTab] = useState<Tab>(() => tabFromParam(tabParam));
   const [summary, setSummary] = useState<any>(null);
   const [matrix, setMatrix] = useState<any>(null);
   const [certs, setCerts] = useState<any[]>([]);

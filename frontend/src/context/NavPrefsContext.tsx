@@ -44,7 +44,9 @@ interface NavPrefsContextValue {
   hiddenSections: Set<string>;
   isSectionHidden: (id: SectionId) => boolean;
   toggleSection: (id: SectionId) => void;
-  // Which workspace is currently focused (also the persisted default)
+  // Persisted default-workspace preference (Settings). The LIVE focused
+  // workspace is derived from the current route in Layout (findSectionForPath),
+  // never from this value — it only survives as the Settings default selector.
   focus: Focus;
   setFocus: (f: Focus) => void;
   // Custom item ordering per section (developer-controlled). Maps sectionId →
@@ -61,9 +63,10 @@ const NavPrefsContext = createContext<NavPrefsContextValue | null>(null);
 
 export function NavPrefsProvider({ children }: { children: ReactNode }) {
   const [hiddenItems, setHiddenItems] = useState<Set<string>>(() => loadSet(HIDDEN_KEY));
-  // Planning is off by default — it stays out of the sidebar until the user
-  // explicitly enables it in Settings (then the toggle reveals it).
-  const [hiddenSections, setHiddenSections] = useState<Set<string>>(() => loadSet(HIDDEN_SECTIONS_KEY, ['planning']));
+  // All workspaces are visible by default; users can hide the ones they don't
+  // use from Settings. (The retired 'planning' section may linger in stored
+  // prefs — it no longer matches a section id, so it is simply ignored.)
+  const [hiddenSections, setHiddenSections] = useState<Set<string>>(() => loadSet(HIDDEN_SECTIONS_KEY));
   const [itemOrder, setItemOrder] = useState<Record<string, string[]>>(() => loadOrder());
   const [showProSidebar, setShowProSidebarState] = useState<boolean>(() => {
     try { return localStorage.getItem(PRO_SIDEBAR_KEY) === 'true'; } catch { return false; }
@@ -127,11 +130,11 @@ export function NavPrefsProvider({ children }: { children: ReactNode }) {
 
   const resetNavPrefs = () => {
     setHiddenItems(new Set());
-    setHiddenSections(new Set(['planning']));
+    setHiddenSections(new Set());
     setItemOrder({});
     setFocusState('production');
     saveSet(HIDDEN_KEY, new Set());
-    saveSet(HIDDEN_SECTIONS_KEY, new Set(['planning']));
+    saveSet(HIDDEN_SECTIONS_KEY, new Set());
     try {
       localStorage.setItem(FOCUS_KEY, 'production');
       localStorage.removeItem(ORDER_KEY);
