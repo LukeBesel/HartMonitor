@@ -43,7 +43,8 @@ interface CAPAAction {
   description: string;
   owner_name: string;
   due_date?: string;
-  status: 'open' | 'in_progress' | 'complete';
+  // Matches the stored vocabulary (a DB CHECK): open / in_progress / done.
+  status: 'open' | 'in_progress' | 'done';
   completed_at?: string;
   notes?: string;
 }
@@ -128,13 +129,13 @@ const TYPE_BADGE: Record<CAPA['type'], string> = {
 const ACTION_STATUS_BADGE: Record<CAPAAction['status'], string> = {
   open:        'bg-gray-100 text-gray-700',
   in_progress: 'bg-blue-50 text-blue-700 border border-blue-200',
-  complete:    'bg-emerald-50 text-emerald-700 border border-emerald-200',
+  done:        'bg-emerald-50 text-emerald-700 border border-emerald-200',
 };
 
 const ACTION_STATUS_NEXT: Record<CAPAAction['status'], CAPAAction['status']> = {
   open:        'in_progress',
-  in_progress: 'complete',
-  complete:    'open',
+  in_progress: 'done',
+  done:        'open',
 };
 
 const STATUS_STEPS: CAPA['status'][] = ['open', 'root_cause', 'action', 'verification', 'closed'];
@@ -687,7 +688,7 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
             ) : (
               <div className="space-y-2">
                 {actions.map(action => (
-                  <div key={action.id} className={`bg-gray-100 rounded-xl p-3 flex items-start gap-3 ${action.status === 'complete' ? 'opacity-60' : ''}`}>
+                  <div key={action.id} className={`bg-gray-100 rounded-xl p-3 flex items-start gap-3 ${action.status === 'done' ? 'opacity-60' : ''}`}>
                     <button
                       onClick={() => handleToggleActionStatus(action)}
                       disabled={togglingAction === action.id}
@@ -696,7 +697,7 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
                     >
                       {togglingAction === action.id ? (
                         <Loader2 size={18} className="animate-spin text-blue-700" />
-                      ) : action.status === 'complete' ? (
+                      ) : action.status === 'done' ? (
                         <CheckCircle2 size={18} className="text-emerald-700" />
                       ) : action.status === 'in_progress' ? (
                         <Circle size={18} className="text-blue-700" />
@@ -705,7 +706,7 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
                       )}
                     </button>
                     <div className="flex-1 min-w-0">
-                      <p className={`text-sm text-gray-900 ${action.status === 'complete' ? 'line-through text-gray-500' : ''}`}>
+                      <p className={`text-sm text-gray-900 ${action.status === 'done' ? 'line-through text-gray-500' : ''}`}>
                         {action.description}
                       </p>
                       <div className="flex flex-wrap items-center gap-2 mt-1">

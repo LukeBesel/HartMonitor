@@ -140,18 +140,31 @@ router.get('/work-orders', (req, res) => {
   if (asset_id) { sql += ' AND m.asset_id = ?'; params.push(asset_id); }
   if (type) { sql += ' AND m.type = ?'; params.push(type); }
   if (priority) { sql += ' AND m.priority = ?'; params.push(priority); }
-  sql += ' ORDER BY CASE m.priority WHEN \'critical\' THEN 0 WHEN \'high\' THEN 1 WHEN \'normal\' THEN 2 ELSE 3 END, m.created_at DESC';
+  sql += ' ORDER BY CASE m.priority WHEN \'critical\' THEN 0 WHEN \'high\' THEN 1 WHEN \'medium\' THEN 2 ELSE 3 END, m.created_at DESC';
   res.json(db.prepare(sql).all(...params));
 });
 
+// The stored vocabularies are fixed by CHECK constraints that cannot be altered
+// in place: priority IN ('low','medium','high','critical') and status IN
+// ('open','in_progress','on_hold','completed','cancelled'). Earlier clients say
+// 'normal' and 'complete' for the same two values, and sending either failed the
+// constraint with a 500 — so a maintenance work order could not be created with
+// the default priority, nor ever marked finished. Accept both spellings, store
+// the one the database defines.
+const normalizePriority = p => (p === 'normal' ? 'medium' : p);
+const normalizeWOStatus = s => (s === 'complete' ? 'completed' : s);
+
 router.post('/work-orders', (req, res) => {
-  const { asset_id, type = 'corrective', title, description = '', priority = 'normal', assigned_to = '', requested_by = '', department_id, due_date, scheduled_date, notes = '' } = req.body;
+  const { asset_id, type = 'corrective', title, description = '', priority = 'medium', assigned_to = '', requested_by = '', department_id, due_date, scheduled_date, notes = '' } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'title required' });
   const id = uuidv4();
   const wo_number = nextWONumber(req.companyId);
   const now = new Date().toISOString();
-  db.prepare(`INSERT INTO maintenance_work_orders (id, company_id, wo_number, asset_id, type, title, description, priority, assigned_to, requested_by, department_id, due_date, scheduled_date, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, req.companyId, wo_number, asset_id || null, type, title.trim(), description, priority, assigned_to, requested_by, department_id || null, due_date || null, scheduled_date || null, notes, now, now);
+  // `number` is the original NOT NULL column and `wo_number` the name the rest
+  // of this route family reads; both carry the same value so neither the
+  // constraint nor the reader is disappointed.
+  db.prepare(`INSERT INTO maintenance_work_orders (id, company_id, number, wo_number, asset_id, type, title, description, priority, assigned_to, requested_by, department_id, due_date, scheduled_date, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .run(id, req.companyId, wo_number, wo_number, asset_id || null, type, title.trim(), description, normalizePriority(priority), assigned_to, requested_by, department_id || null, due_date || null, scheduled_date || null, notes, now, now);
   logActivity(req.companyId, 'maintenance', id, `WO ${wo_number} created: ${title}`, req.user?.display_name);
   res.status(201).json(db.prepare('SELECT m.*, a.name as asset_name FROM maintenance_work_orders m LEFT JOIN assets a ON a.id = m.asset_id WHERE m.id = ?').get(id));
 });
@@ -159,9 +172,11 @@ router.post('/work-orders', (req, res) => {
 router.put('/work-orders/:id', (req, res) => {
   if (!ownedWO(req)) return res.status(404).json({ error: 'Not found' });
   const prev = ownedWO(req);
-  const { status, type, title, description, priority, assigned_to, due_date, actual_hours, parts_cost, labor_cost, notes, resolution } = req.body;
+  const { type, title, description, assigned_to, due_date, actual_hours, parts_cost, labor_cost, notes, resolution } = req.body;
+  const status = normalizeWOStatus(req.body.status);
+  const priority = normalizePriority(req.body.priority);
   const now = new Date().toISOString();
-  const completed_at = status === 'complete' && prev.status !== 'complete' ? now : prev.completed_at;
+  const completed_at = status === 'completed' && prev.status !== 'completed' ? now : prev.completed_at;
   const started_at = status === 'in_progress' && !prev.started_at ? now : prev.started_at;
   db.prepare(`UPDATE maintenance_work_orders SET status = COALESCE(?, status), type = COALESCE(?, type), title = COALESCE(?, title), description = COALESCE(?, description), priority = COALESCE(?, priority), assigned_to = COALESCE(?, assigned_to), due_date = COALESCE(?, due_date), actual_hours = COALESCE(?, actual_hours), parts_cost = COALESCE(?, parts_cost), labor_cost = COALESCE(?, labor_cost), notes = COALESCE(?, notes), resolution = COALESCE(?, resolution), completed_at = ?, started_at = COALESCE(?, started_at), updated_at = ? WHERE id = ?`)
     .run(status, type, title, description, priority, assigned_to, due_date, actual_hours, parts_cost, labor_cost, notes, resolution, completed_at, started_at, now, req.params.id);
@@ -178,11 +193,11 @@ router.delete('/work-orders/:id', (req, res) => {
 
 router.get('/summary', (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
-  const open_wos = db.prepare("SELECT COUNT(*) as n FROM maintenance_work_orders WHERE company_id = ? AND status NOT IN ('complete','cancelled')").get(req.companyId).n;
-  const critical_wos = db.prepare("SELECT COUNT(*) as n FROM maintenance_work_orders WHERE company_id = ? AND priority = 'critical' AND status NOT IN ('complete','cancelled')").get(req.companyId).n;
+  const open_wos = db.prepare("SELECT COUNT(*) as n FROM maintenance_work_orders WHERE company_id = ? AND status NOT IN ('completed','cancelled')").get(req.companyId).n;
+  const critical_wos = db.prepare("SELECT COUNT(*) as n FROM maintenance_work_orders WHERE company_id = ? AND priority = 'critical' AND status NOT IN ('completed','cancelled')").get(req.companyId).n;
   const overdue_pms = db.prepare('SELECT COUNT(*) as n FROM pm_schedules WHERE company_id = ? AND next_due_at <= ?').get(req.companyId, today).n;
   const assets_count = db.prepare("SELECT COUNT(*) as n FROM assets WHERE company_id = ? AND status = 'active'").get(req.companyId).n;
-  const completed_today = db.prepare("SELECT COUNT(*) as n FROM maintenance_work_orders WHERE company_id = ? AND status = 'complete' AND date(completed_at) = ?").get(req.companyId, today).n;
+  const completed_today = db.prepare("SELECT COUNT(*) as n FROM maintenance_work_orders WHERE company_id = ? AND status = 'completed' AND date(completed_at) = ?").get(req.companyId, today).n;
   res.json({ open_wos, critical_wos, overdue_pms, assets_count, completed_today });
 });
 

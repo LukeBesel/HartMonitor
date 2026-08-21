@@ -1941,6 +1941,10 @@ db.exec(`
   addShift('attendance_count', 'attendance_count INTEGER DEFAULT 0');
   addShift('safety_incidents', 'safety_incidents INTEGER DEFAULT 0');
   addShift('updated_at',       'updated_at TEXT');
+  // What the outgoing supervisor leaves for the incoming one. POST
+  // /shifts/:id/handoff wrote it without the column existing, so handing off a
+  // shift — the whole point of the screen — 500'd.
+  addShift('handoff_notes',    "handoff_notes TEXT DEFAULT ''");
 }
 
 // ─── Kaizen / CI Ideas ────────────────────────────────────────────────────────
@@ -2027,6 +2031,69 @@ if (!capaCols.includes('containment_action')) {
 }
 if (!capaCols.includes('updated_at')) {
   db.exec('UPDATE capa_items SET updated_at = created_at WHERE updated_at IS NULL');
+}
+
+// ─── CAPA actions, assets and maintenance work orders ─────────────────────────
+// The same drift, found by checking every INSERT/UPDATE column in the routes
+// against the real schema rather than waiting for the next bug report. All
+// three 500'd on a live server: adding a CAPA action ("no column named
+// owner_name"), creating an asset ("no column named description") and creating
+// a maintenance work order ("no such column: wo_number") — so the whole
+// Maintenance module could not create anything at all.
+//
+// Where a route renamed a column, the new name is added and backfilled from the
+// old one, so nothing a customer already recorded disappears from the screen.
+const capaActionCols = db.prepare('PRAGMA table_info(capa_actions)').all().map(c => c.name);
+for (const [col, decl] of [['owner_name', "TEXT DEFAULT ''"], ['notes', "TEXT DEFAULT ''"]]) {
+  if (!capaActionCols.includes(col)) db.exec(`ALTER TABLE capa_actions ADD COLUMN ${col} ${decl}`);
+}
+if (!capaActionCols.includes('owner_name')) {
+  db.exec("UPDATE capa_actions SET owner_name = COALESCE(assigned_to, '') WHERE COALESCE(owner_name, '') = ''");
+}
+
+const assetCols = db.prepare('PRAGMA table_info(assets)').all().map(c => c.name);
+const ASSET_ADDITIONS = [
+  ['description', "TEXT DEFAULT ''"],
+  ['type', "TEXT DEFAULT ''"],          // route's name for the legacy `category`
+  ['make', "TEXT DEFAULT ''"],          // route's name for the legacy `manufacturer`
+  ['install_date', 'TEXT'],             // route's name for the legacy `purchase_date`
+  ['purchase_cost', 'REAL DEFAULT 0'],
+  ['updated_at', 'TEXT'],
+];
+for (const [col, decl] of ASSET_ADDITIONS) {
+  if (!assetCols.includes(col)) db.exec(`ALTER TABLE assets ADD COLUMN ${col} ${decl}`);
+}
+if (!assetCols.includes('type')) {
+  db.exec("UPDATE assets SET type = COALESCE(category, '') WHERE COALESCE(type, '') = ''");
+}
+if (!assetCols.includes('make')) {
+  db.exec("UPDATE assets SET make = COALESCE(manufacturer, '') WHERE COALESCE(make, '') = ''");
+}
+if (!assetCols.includes('install_date')) {
+  db.exec('UPDATE assets SET install_date = purchase_date WHERE install_date IS NULL');
+}
+if (!assetCols.includes('updated_at')) {
+  db.exec('UPDATE assets SET updated_at = created_at WHERE updated_at IS NULL');
+}
+
+const mwoCols = db.prepare('PRAGMA table_info(maintenance_work_orders)').all().map(c => c.name);
+const MWO_ADDITIONS = [
+  ['wo_number', 'TEXT'],                // route's name for the legacy `number`
+  ['scheduled_date', 'TEXT'],
+  ['notes', "TEXT DEFAULT ''"],
+  ['parts_cost', 'REAL DEFAULT 0'],
+  ['labor_cost', 'REAL DEFAULT 0'],
+  ['started_at', 'TEXT'],
+  ['updated_at', 'TEXT'],
+];
+for (const [col, decl] of MWO_ADDITIONS) {
+  if (!mwoCols.includes(col)) db.exec(`ALTER TABLE maintenance_work_orders ADD COLUMN ${col} ${decl}`);
+}
+if (!mwoCols.includes('wo_number')) {
+  db.exec('UPDATE maintenance_work_orders SET wo_number = number WHERE wo_number IS NULL');
+}
+if (!mwoCols.includes('updated_at')) {
+  db.exec('UPDATE maintenance_work_orders SET updated_at = created_at WHERE updated_at IS NULL');
 }
 
 // ─── SSO OAuth State (persisted so multi-process deployments work) ─────────────
