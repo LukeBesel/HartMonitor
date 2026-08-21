@@ -44,6 +44,12 @@ export interface RunSummaryProps {
   capturedCount: number;
   kitSummary: string | null;    // e.g. "9/9 verified" — null when no kit
   savedLocally: boolean;        // completed while offline
+  /** Run context carried into the next unit (WO number / part number), or null. */
+  contextLabel?: string | null;
+  /** Non-empty = "Next unit" is disabled with this short reason (no context yet). */
+  nextUnitDisabledReason?: string;
+  /** One-tap change affordance: back to setup with the fields retained. */
+  onChangeContext?: () => void;
   onNextUnit: () => void;
   onDone: () => void;
 }
@@ -54,7 +60,8 @@ export interface RunSummaryProps {
 export default function RunSummary(props: RunSummaryProps) {
   const {
     appName, operatorName, productTypeName, steps, stepTimes, getStepTakt,
-    taktExceededSteps, capturedCount, kitSummary, savedLocally, onNextUnit, onDone,
+    taktExceededSteps, capturedCount, kitSummary, savedLocally,
+    contextLabel, nextUnitDisabledReason, onChangeContext, onNextUnit, onDone,
   } = props;
 
   const totalSeconds = Object.values(stepTimes).reduce((a, b) => a + b, 0);
@@ -151,12 +158,41 @@ export default function RunSummary(props: RunSummaryProps) {
           </div>
         </div>
 
+        {/* Next-unit run context: carried forward, one tap to change */}
+        {(contextLabel || onChangeContext) && (
+          <div className="p-well flex items-center gap-2.5 px-4 py-2.5 mb-3">
+            <span style={{ fontSize: 12, fontWeight: 550, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--p-muted)' }} className="flex-shrink-0">
+              Next unit
+            </span>
+            <span className="flex-1 truncate" style={{ fontSize: 14.5, fontWeight: 650, color: contextLabel ? 'var(--p-ink)' : 'var(--p-muted)' }}>
+              {contextLabel || 'No work order or part number'}
+            </span>
+            {onChangeContext && (
+              <button
+                onClick={onChangeContext}
+                style={{ fontSize: 14, fontWeight: 650, color: 'var(--p-accent)', minHeight: 36, padding: '0 8px' }}
+              >
+                Change
+              </button>
+            )}
+          </div>
+        )}
+
         <div className="flex gap-3">
-          <button className="p-btn p-btn-primary flex-1" style={{ minWidth: 0 }} onClick={onNextUnit}>
+          <button
+            className="p-btn p-btn-primary flex-1"
+            style={{ minWidth: 0 }}
+            onClick={onNextUnit}
+            disabled={!!nextUnitDisabledReason}
+            title={nextUnitDisabledReason || undefined}
+          >
             <RotateCw size={19} /> Next unit
           </button>
           <button className="p-btn p-btn-ghost flex-1" onClick={onDone}>Done</button>
         </div>
+        {nextUnitDisabledReason && (
+          <p className="text-center mt-2" style={{ fontSize: 13, color: 'var(--p-warn)' }}>{nextUnitDisabledReason}</p>
+        )}
       </div>
     </div>
   );

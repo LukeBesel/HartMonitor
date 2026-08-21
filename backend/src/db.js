@@ -1729,6 +1729,8 @@ db.exec(`
   if (!appCols.includes('site_id'))            db.exec('ALTER TABLE apps ADD COLUMN site_id TEXT REFERENCES sites(id) ON DELETE SET NULL');
   if (!appCols.includes('station_id'))         db.exec('ALTER TABLE apps ADD COLUMN station_id TEXT REFERENCES stations(id) ON DELETE SET NULL');
   if (!appCols.includes('show_takt_warnings')) db.exec('ALTER TABLE apps ADD COLUMN show_takt_warnings INTEGER DEFAULT 1');
+  // Nullable on purpose: absent = legacy behavior (player only enforces for v2 apps).
+  if (!appCols.includes('require_run_context')) db.exec('ALTER TABLE apps ADD COLUMN require_run_context INTEGER');
 }
 
 // ─── Public game leaderboard (no tenant scope) ────────────────────────────────
@@ -2081,6 +2083,74 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_completion_values_completion ON completion_values(completion_id);
   CREATE INDEX IF NOT EXISTS idx_completion_values_var ON completion_values(company_id, app_id, variable_name, recorded_at);
 `);
+
+// ─── App templates (additive, guarded via IF NOT EXISTS) ──────────────────────
+// Snapshots of an app's authoring blob that can be re-instantiated as new draft
+// apps. Built-in "model" templates live in code (routes/apps.js MODEL_TEMPLATES),
+// only user-saved templates are stored here.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS app_templates (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    steps TEXT NOT NULL DEFAULT '[]',
+    variables TEXT NOT NULL DEFAULT '[]',
+    step_groups TEXT NOT NULL DEFAULT '[]',
+    created_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_app_templates_company ON app_templates(company_id, created_at);
+`);
+
+// ─── Facility shifts (per-site shift builder) ─────────────────────────────────
+// Additive, guarded: CREATE IF NOT EXISTS only — no changes to existing tables.
+// starts_at/ends_at are 'HH:MM'; overnight spans (ends_at < starts_at) are valid
+// and roll into the next day. days is a JSON array of weekday numbers 0-6 (Sun-Sat).
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS site_shifts (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    starts_at TEXT NOT NULL,
+    ends_at TEXT NOT NULL,
+    days TEXT NOT NULL DEFAULT '[0,1,2,3,4,5,6]',
+    color TEXT DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_site_shifts_site ON site_shifts(company_id, site_id, sort_order);
+`);
+
+// ─── Player batch: multi-operator run sessions + NCR authorization (additive) ─
+// completion_sessions: one row per operator stint on a completion (open a row on
+// run start/resume, close it on pause-and-leave / abandon / complete). ncrs gains
+// supervisor-authorization columns for in-run quality reports. All guarded.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS completion_sessions (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    completion_id TEXT NOT NULL REFERENCES completions(id) ON DELETE CASCADE,
+    operator_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    operator_name TEXT NOT NULL DEFAULT '',
+    started_at TEXT DEFAULT (datetime('now')),
+    ended_at TEXT,
+    handoff_comment TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_completion_sessions_completion
+    ON completion_sessions(completion_id, started_at);
+  CREATE INDEX IF NOT EXISTS idx_completion_sessions_company
+    ON completion_sessions(company_id, ended_at);
+`);
+{
+  const ncrCols = db.prepare('PRAGMA table_info(ncrs)').all().map(r => r.name);
+  if (!ncrCols.includes('authorized_by'))         db.exec("ALTER TABLE ncrs ADD COLUMN authorized_by TEXT DEFAULT ''");
+  if (!ncrCols.includes('authorized_by_user_id')) db.exec('ALTER TABLE ncrs ADD COLUMN authorized_by_user_id TEXT');
+  if (!ncrCols.includes('step_name'))             db.exec("ALTER TABLE ncrs ADD COLUMN step_name TEXT DEFAULT ''");
+}
 
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;

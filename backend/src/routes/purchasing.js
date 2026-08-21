@@ -64,6 +64,8 @@ router.post('/vendors', (req, res) => {
   if (!name || !code) return res.status(400).json({ error: 'name and code required' });
   const existing = db.prepare('SELECT id FROM vendors WHERE code = ? AND company_id = ?').get(code, req.companyId);
   if (existing) return res.status(409).json({ error: 'Vendor code already exists' });
+  const dup = db.prepare('SELECT id FROM vendors WHERE company_id = ? AND LOWER(name) = LOWER(?)').get(req.companyId, name);
+  if (dup) return res.status(409).json({ error: 'duplicate_name', message: `A vendor named "${name}" already exists` });
   const id = uuidv4();
   db.prepare(`INSERT INTO vendors (id, name, code, contact_name, email, phone, address, payment_terms, lead_time_days, rating, notes, company_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, name, code, contact_name, email, phone, address, payment_terms, lead_time_days, rating, notes, req.companyId);
@@ -83,6 +85,10 @@ router.put('/vendors/:id', (req, res) => {
   const fields = ['name','code','contact_name','email','phone','address','payment_terms','lead_time_days','rating','notes','is_active'];
   const updates = {};
   for (const f of fields) if (req.body[f] !== undefined) updates[f] = req.body[f];
+  if (updates.name !== undefined && updates.name !== v.name) {
+    const dup = db.prepare('SELECT id FROM vendors WHERE company_id = ? AND LOWER(name) = LOWER(?) AND id != ?').get(req.companyId, updates.name, req.params.id);
+    if (dup) return res.status(409).json({ error: 'duplicate_name', message: `A vendor named "${updates.name}" already exists` });
+  }
   if (!Object.keys(updates).length) return res.json(v);
   const sets = Object.keys(updates).map(k => `${k} = ?`).join(', ');
   db.prepare(`UPDATE vendors SET ${sets}, updated_at = datetime('now') WHERE id = ?`).run(...Object.values(updates), req.params.id);

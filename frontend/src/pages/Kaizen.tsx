@@ -55,12 +55,26 @@ const CATEGORY_CONFIG = {
 const STATUS_CONFIG = {
   submitted:   { label: 'Submitted',   color: 'text-gray-300',   bg: 'bg-gray-700' },
   reviewing:   { label: 'Reviewing',   color: 'text-yellow-300', bg: 'bg-yellow-500/20' },
+  under_review:{ label: 'Reviewing',   color: 'text-yellow-300', bg: 'bg-yellow-500/20' }, // DB CHECK vocab alias
   approved:    { label: 'Approved',    color: 'text-blue-300',   bg: 'bg-blue-500/20' },
   in_progress: { label: 'In Progress', color: 'text-amber-300',  bg: 'bg-amber-500/20' },
   implemented: { label: 'Implemented', color: 'text-green-300',  bg: 'bg-green-500/20' },
   rejected:    { label: 'Rejected',    color: 'text-red-300',    bg: 'bg-red-500/20' },
   on_hold:     { label: 'On Hold',     color: 'text-gray-400',   bg: 'bg-gray-800' },
 } as const;
+
+// Unknown category/status values (older data, imports, seeds) must degrade to a
+// neutral chip — an unguarded lookup here once took the whole page down.
+interface CatCfg { label: string; color: string; bg: string; border: string; icon: React.ElementType }
+interface StatusCfg { label: string; color: string; bg: string }
+const FALLBACK_CAT: CatCfg = { label: 'Other', color: 'text-gray-300', bg: 'bg-gray-700', border: 'border-gray-600', icon: Lightbulb };
+const FALLBACK_STATUS: StatusCfg = { label: 'Unknown', color: 'text-gray-300', bg: 'bg-gray-700' };
+function catOf(category: string): CatCfg {
+  return (CATEGORY_CONFIG as unknown as Record<string, CatCfg>)[category] ?? FALLBACK_CAT;
+}
+function statusOf(status: string): StatusCfg {
+  return (STATUS_CONFIG as unknown as Record<string, StatusCfg>)[status] ?? FALLBACK_STATUS;
+}
 
 const STATUS_FILTERS = ['All', 'submitted', 'reviewing', 'approved', 'in_progress', 'implemented', 'rejected'] as const;
 
@@ -188,7 +202,7 @@ function SubmitIdeaModal({ departments, onClose, onSubmitted }: SubmitIdeaModalP
             <label className="text-xs font-medium text-gray-400 block mb-2">Category *</label>
             <div className="grid grid-cols-3 gap-2">
               {(Object.keys(CATEGORY_CONFIG) as KaizenIdea['category'][]).map(cat => {
-                const cfg = CATEGORY_CONFIG[cat];
+                const cfg = catOf(cat);
                 const Icon = cfg.icon;
                 const selected = category === cat;
                 return (
@@ -319,8 +333,8 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
   const [deleting, setDeleting] = useState(false);
   const [saveError, setSaveError] = useState('');
 
-  const catCfg = CATEGORY_CONFIG[idea.category];
-  const statCfg = STATUS_CONFIG[idea.status];
+  const catCfg = catOf(idea.category);
+  const statCfg = statusOf(idea.status);
   const Icon = catCfg.icon;
 
   const handleSave = async () => {
@@ -450,7 +464,7 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
                 onChange={e => setStatus(e.target.value as KaizenIdea['status'])}
               >
                 {(Object.keys(STATUS_CONFIG) as KaizenIdea['status'][]).map(s => (
-                  <option key={s} value={s}>{STATUS_CONFIG[s].label}</option>
+                  <option key={s} value={s}>{statusOf(s).label}</option>
                 ))}
               </select>
             </div>
@@ -566,8 +580,8 @@ interface IdeaListCardProps {
 }
 
 function IdeaListCard({ idea, onClick }: IdeaListCardProps) {
-  const catCfg = CATEGORY_CONFIG[idea.category];
-  const statCfg = STATUS_CONFIG[idea.status];
+  const catCfg = catOf(idea.category);
+  const statCfg = statusOf(idea.status);
   const Icon = catCfg.icon;
 
   return (
@@ -627,8 +641,8 @@ interface IdeaGridCardProps {
 }
 
 function IdeaGridCard({ idea, onClick }: IdeaGridCardProps) {
-  const catCfg = CATEGORY_CONFIG[idea.category];
-  const statCfg = STATUS_CONFIG[idea.status];
+  const catCfg = catOf(idea.category);
+  const statCfg = statusOf(idea.status);
   const Icon = catCfg.icon;
 
   return (
@@ -809,7 +823,7 @@ export default function Kaizen() {
           >
             <option value="">All Categories</option>
             {(Object.keys(CATEGORY_CONFIG) as KaizenIdea['category'][]).map(cat => (
-              <option key={cat} value={cat}>{CATEGORY_CONFIG[cat].label}</option>
+              <option key={cat} value={cat}>{catOf(cat).label}</option>
             ))}
           </select>
 
@@ -836,7 +850,7 @@ export default function Kaizen() {
         <div className="flex gap-2 overflow-x-auto pb-0.5 scrollbar-hide">
           {STATUS_FILTERS.map(s => {
             const active = statusFilter === s;
-            const label = s === 'All' ? 'All' : STATUS_CONFIG[s as KaizenIdea['status']].label;
+            const label = s === 'All' ? 'All' : statusOf(s).label;
             return (
               <button
                 key={s}

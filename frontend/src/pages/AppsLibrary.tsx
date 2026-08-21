@@ -9,18 +9,18 @@ import {
 } from 'lucide-react';
 import UpgradeModal from '../components/shared/UpgradeModal';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
+import TemplatePickerModal from '../components/shared/TemplatePickerModal';
 import { usePlan } from '../context/PlanContext';
 import { useAuth } from '../context/AuthContext';
 
 export default function AppsLibrary() {
   const [apps, setApps] = useState<App[]>([]);
   const [search, setSearch] = useState('');
-  const [showCreate, setShowCreate] = useState(false);
-  const [newApp, setNewApp] = useState({ name: '', description: '' });
+  const [showPicker, setShowPicker] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
   const [limitReason, setLimitReason] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const [loadingSample, setLoadingSample] = useState(false);
   const [sampleError, setSampleError] = useState('');
   const { refresh: refreshPlan } = usePlan();
@@ -36,24 +36,32 @@ export default function AppsLibrary() {
   };
   useEffect(() => { load(); }, []);
 
-  const handleCreate = async () => {
-    if (!newApp.name.trim() || creating) return;
-    setCreating(true);
+  const showToast = (message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(null), 3000);
+  };
+
+  const handleCreated = (app: App) => {
+    setShowPicker(false);
+    refreshPlan();
+    navigate(`/apps/${app.id}/build`);
+  };
+
+  const handleLimit = (reason: string) => {
+    setShowPicker(false);
+    setLimitReason(reason);
+  };
+
+  const handleSaveAsTemplate = async (app: App) => {
+    const name = prompt('Template name:', app.name);
+    if (name === null || !name.trim()) return;
+    const description = prompt('Template description (optional):', app.description || '');
+    if (description === null) return;
     try {
-      const app = await api.createApp(newApp);
-      setShowCreate(false);
-      setNewApp({ name: '', description: '' });
-      refreshPlan();
-      navigate(`/apps/${app.id}/build`);
+      const saved = await api.saveAppAsTemplate(app.id, { name: name.trim(), description });
+      showToast(`Template "${saved.name}" saved — find it under New App`);
     } catch (err: any) {
-      if (err.status === 402) {
-        setShowCreate(false);
-        setLimitReason(err.message);
-      } else {
-        alert(err.message || 'Failed to create app');
-      }
-    } finally {
-      setCreating(false);
+      alert(err.message || 'Failed to save template');
     }
   };
 
@@ -117,7 +125,7 @@ export default function AppsLibrary() {
           <p className="text-gray-500 text-sm mt-0.5">Build and manage manufacturing process apps</p>
         </div>
         {canEdit && (
-          <button onClick={() => setShowCreate(true)} className="btn-primary">
+          <button onClick={() => setShowPicker(true)} className="btn-primary">
             <Plus size={16} />
             New App
           </button>
@@ -165,7 +173,7 @@ export default function AppsLibrary() {
           <p className="text-sm">{search ? 'Try a different search term' : 'Create your first manufacturing app to get started'}</p>
           {!search && canEdit && (
             <div className="flex items-center justify-center gap-2 mt-4">
-              <button onClick={() => setShowCreate(true)} className="btn-primary">
+              <button onClick={() => setShowPicker(true)} className="btn-primary">
                 <Plus size={14} /> Create App
               </button>
               {isAtLeast('manager') && (
@@ -189,47 +197,19 @@ export default function AppsLibrary() {
               canEdit={canEdit}
               onDelete={handleDelete}
               onPublish={handlePublish}
+              onSaveTemplate={handleSaveAsTemplate}
             />
           ))}
         </div>
       )}
 
-      {/* Create modal */}
-      {showCreate && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
-            <h2 className="text-lg font-bold text-gray-900 mb-4">Create New App</h2>
-            <div className="space-y-3">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">App Name *</label>
-                <input
-                  className="input-field"
-                  placeholder="e.g. PCB Assembly Process"
-                  value={newApp.name}
-                  onChange={e => setNewApp(p => ({ ...p, name: e.target.value }))}
-                  onKeyDown={e => e.key === 'Enter' && handleCreate()}
-                  autoFocus
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
-                <textarea
-                  className="input-field resize-none"
-                  rows={3}
-                  placeholder="Brief description of this process..."
-                  value={newApp.description}
-                  onChange={e => setNewApp(p => ({ ...p, description: e.target.value }))}
-                />
-              </div>
-            </div>
-            <div className="flex gap-2 mt-5">
-              <button onClick={() => setShowCreate(false)} className="btn-secondary flex-1">Cancel</button>
-              <button onClick={handleCreate} disabled={!newApp.name.trim() || creating} className="btn-primary flex-1">
-                {creating ? 'Creating…' : 'Create & Edit'}
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* New-app template picker */}
+      {showPicker && (
+        <TemplatePickerModal
+          onClose={() => setShowPicker(false)}
+          onCreated={handleCreated}
+          onLimit={handleLimit}
+        />
       )}
 
       {limitReason && (
@@ -237,8 +217,15 @@ export default function AppsLibrary() {
           feature="app"
           reason={limitReason}
           onClose={() => setLimitReason(null)}
-          onPurchased={() => setShowCreate(true)}
+          onPurchased={() => setShowPicker(true)}
         />
+      )}
+
+      {/* Success toast */}
+      {toast && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-gray-900 text-white text-sm px-4 py-2.5 rounded-lg shadow-lg z-50 flex items-center gap-2">
+          <CheckCircle size={14} className="text-green-400" /> {toast}
+        </div>
       )}
     </div>
   );
@@ -249,7 +236,9 @@ function fmtUpdated(iso: string) {
   return isNaN(d.getTime()) ? '—' : d.toLocaleDateString();
 }
 
-function AppCard({ app, canEdit, onDelete, onPublish }: { app: App; canEdit: boolean; onDelete: any; onPublish: any }) {
+function AppCard({ app, canEdit, onDelete, onPublish, onSaveTemplate }: {
+  app: App; canEdit: boolean; onDelete: any; onPublish: any; onSaveTemplate: (app: App) => void;
+}) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [exporting, setExporting] = useState(false);
 
@@ -301,6 +290,14 @@ function AppCard({ app, canEdit, onDelete, onPublish }: { app: App; canEdit: boo
                   className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 w-full text-green-600"
                 >
                   <Globe size={13} /> Publish
+                </button>
+              )}
+              {canEdit && (
+                <button
+                  onClick={e => { e.preventDefault(); setMenuOpen(false); onSaveTemplate(app); }}
+                  className="flex items-center gap-2 px-3 py-2 text-sm hover:bg-gray-50 w-full text-gray-700"
+                >
+                  <Copy size={13} /> Save as template
                 </button>
               )}
               <button

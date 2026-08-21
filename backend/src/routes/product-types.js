@@ -22,6 +22,8 @@ router.post('/', (req, res) => {
   if (!app_id || !name) return res.status(400).json({ error: 'app_id and name required' });
   const app = db.prepare('SELECT id FROM apps WHERE id = ? AND company_id = ?').get(app_id, req.companyId);
   if (!app) return res.status(404).json({ error: 'App not found' });
+  const dup = db.prepare('SELECT id FROM product_types WHERE company_id = ? AND app_id = ? AND LOWER(name) = LOWER(?)').get(req.companyId, app_id, name);
+  if (dup) return res.status(409).json({ error: 'duplicate_name', message: `A product type named "${name}" already exists for this app` });
   const id = uuidv4();
   db.prepare('INSERT INTO product_types (id, app_id, name, description, takt_overrides, company_id) VALUES (?, ?, ?, ?, ?, ?)')
     .run(id, app_id, name, description, JSON.stringify(takt_overrides), req.companyId);
@@ -32,6 +34,10 @@ router.put('/:id', (req, res) => {
   const pt = db.prepare('SELECT * FROM product_types WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!pt) return res.status(404).json({ error: 'Not found' });
   const { name, description, takt_overrides } = req.body;
+  if (name !== undefined && name !== pt.name) {
+    const dup = db.prepare('SELECT id FROM product_types WHERE company_id = ? AND app_id = ? AND LOWER(name) = LOWER(?) AND id != ?').get(req.companyId, pt.app_id, name, req.params.id);
+    if (dup) return res.status(409).json({ error: 'duplicate_name', message: `A product type named "${name}" already exists for this app` });
+  }
   db.prepare(`UPDATE product_types SET name=?, description=?, takt_overrides=?, updated_at=datetime('now') WHERE id=?`)
     .run(
       name ?? pt.name,

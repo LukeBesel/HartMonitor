@@ -13,7 +13,7 @@ import { interpolate } from '../../engine';
 import { api } from '../../api/client';
 import { WidgetView, ShapeSVG, buttonAppearance, buttonVariantStyle, ImgSafe } from '../app/WidgetView';
 import PhotoSheet from './PhotoSheet';
-import { formatDur, legacyKey } from './runtime';
+import { formatDur, instructionInk, legacyKey, playerTextColor } from './runtime';
 
 /** Authors pick text colors against the builder's LIGHT canvas; the player's
  *  flow surface is DARK. Near-black desaturated inks (default #374151 /
@@ -287,13 +287,16 @@ export default function PlayerWidget(props: PlayerWidgetProps) {
 
   switch (widget.type) {
     case 'text':
+      // Contrast guard: text configured with a dark ink (authored on the light
+      // builder canvas) has no background of its own here, so it falls back to
+      // the player ink instead of vanishing on the dark shell.
       return (
         <p style={{
           fontSize: config.fontSize || 18,
           fontWeight: config.fontWeight === 'bold' ? 700 : config.fontWeight === 'semibold' ? 600 : 400,
           fontStyle: config.fontStyle || 'normal',
           textAlign: config.textAlign || 'left',
-          color: flowInkColor(config.color, 'var(--p-ink)'),
+          color: playerTextColor(config.color),
           lineHeight: 1.5,
           whiteSpace: 'pre-wrap',
         }}>
@@ -301,14 +304,18 @@ export default function PlayerWidget(props: PlayerWidgetProps) {
         </p>
       );
 
-    case 'instruction':
+    case 'instruction': {
+      // Luminance check: a light configured background (white card, builder's
+      // default #eff6ff wash…) gets dark ink; dark backgrounds keep light ink.
+      const bg = config.backgroundColor || '#1e3a5f';
       return (
-        <div className="rounded-xl p-5" style={{ backgroundColor: config.backgroundColor || '#1e3a5f', border: '1px solid var(--p-border)' }}>
-          <div style={{ fontSize: 18, lineHeight: 1.55, color: '#f1f5f9', whiteSpace: 'pre-wrap' }}>
+        <div className="rounded-xl p-5" style={{ backgroundColor: bg, border: '1px solid var(--p-border)' }}>
+          <div style={{ fontSize: 18, lineHeight: 1.55, color: instructionInk(bg), whiteSpace: 'pre-wrap' }}>
             {interpolate(config.content || '', variables, appInfo)}
           </div>
         </div>
       );
+    }
 
     case 'separator':
       return <div style={{ borderTop: '1px solid var(--p-grid)', margin: '8px 0' }} />;

@@ -220,6 +220,8 @@ router.post('/locations', (req, res) => {
   if (!name || !code) return res.status(400).json({ error: 'name and code required' });
   const existing = db.prepare('SELECT id FROM locations WHERE code = ? AND company_id = ?').get(code, req.companyId);
   if (existing) return res.status(409).json({ error: 'Location code already exists' });
+  const dup = db.prepare('SELECT id FROM locations WHERE company_id = ? AND LOWER(name) = LOWER(?)').get(req.companyId, name);
+  if (dup) return res.status(409).json({ error: 'duplicate_name', message: `A location named "${name}" already exists` });
   const id = uuidv4();
   db.prepare(`INSERT INTO locations (id, name, code, description, type, company_id, site_id) VALUES (?, ?, ?, ?, ?, ?, ?)`)
     .run(id, name, code, description, type, req.companyId, site_id || null);
@@ -232,6 +234,10 @@ router.put('/locations/:id', (req, res) => {
   const loc = db.prepare('SELECT * FROM locations WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!loc) return res.status(404).json({ error: 'Not found' });
   const { name, code, description, type, is_active } = req.body;
+  if (name !== undefined && name !== loc.name) {
+    const dup = db.prepare('SELECT id FROM locations WHERE company_id = ? AND LOWER(name) = LOWER(?) AND id != ?').get(req.companyId, name, req.params.id);
+    if (dup) return res.status(409).json({ error: 'duplicate_name', message: `A location named "${name}" already exists` });
+  }
   const site_id = req.body.site_id !== undefined ? (req.body.site_id || null) : loc.site_id;
   db.prepare(`UPDATE locations SET name=COALESCE(?,name), code=COALESCE(?,code), description=COALESCE(?,description), type=COALESCE(?,type), is_active=COALESCE(?,is_active), site_id=? WHERE id=?`)
     .run(name, code, description, type, is_active, site_id, req.params.id);

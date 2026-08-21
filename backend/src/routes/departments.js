@@ -52,6 +52,9 @@ router.post('/', (req, res) => {
 
   if (!name) return res.status(400).json({ error: 'name is required' });
 
+  const dup = db.prepare('SELECT id FROM departments WHERE company_id = ? AND LOWER(name) = LOWER(?)').get(req.companyId, name);
+  if (dup) return res.status(409).json({ error: 'duplicate_name', message: `A department named "${name}" already exists` });
+
   const id = uuidv4();
   db.prepare(`INSERT INTO departments (id, name, description, manager_name, color, headcount, site_id, company_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, name, description, manager_name, color, Math.max(0, parseInt(headcount) || 0), site_id || null, req.companyId);
@@ -65,6 +68,11 @@ router.post('/', (req, res) => {
 router.put('/:id', (req, res) => {
   const dept = db.prepare('SELECT * FROM departments WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!dept) return res.status(404).json({ error: 'Department not found' });
+
+  if (req.body.name !== undefined && req.body.name !== dept.name) {
+    const dup = db.prepare('SELECT id FROM departments WHERE company_id = ? AND LOWER(name) = LOWER(?) AND id != ?').get(req.companyId, req.body.name, req.params.id);
+    if (dup) return res.status(409).json({ error: 'duplicate_name', message: `A department named "${req.body.name}" already exists` });
+  }
 
   const updates = {
     name:         req.body.name         !== undefined ? req.body.name         : dept.name,

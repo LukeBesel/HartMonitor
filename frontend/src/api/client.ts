@@ -903,4 +903,121 @@ export const api = {
     return request<any[]>(`/admin/activity${s ? `?${s}` : ''}`);
   },
   getAdminHealth: () => request<any>('/admin/health'),
+
+  // ─── Category Reports (per-workspace Reports pages) ────────────────────────
+  getCategoryDashboard: (category: string) => request<any>(`/dashboards/category/${category}`),
+
+  // ─── App templates (app-templates slice) ───────────────────────────────────
+  getAppTemplates: () => request<AppTemplatesResponse>('/apps/templates'),
+  saveAppAsTemplate: (appId: string, data: { name?: string; description?: string }) =>
+    request<MyTemplateSummary>(`/apps/${appId}/save-as-template`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteAppTemplate: (id: string) =>
+    request<{ success: boolean }>(`/apps/templates/${id}`, { method: 'DELETE' }),
+  createAppFromTemplate: (data: { built_in_key?: string; template_id?: string; name: string }) =>
+    request<App>('/apps/from-template', { method: 'POST', body: JSON.stringify(data) }),
+
+  // ─── Facility shifts (site_shifts) — appended block, do not reorder ─────────
+  getSiteShifts: (siteId: string) => request<SiteShift[]>(`/sites/${siteId}/shifts`),
+  createSiteShift: (siteId: string, data: SiteShiftInput) =>
+    request<SiteShift>(`/sites/${siteId}/shifts`, { method: 'POST', body: JSON.stringify(data) }),
+  updateSiteShift: (siteId: string, shiftId: string, data: Partial<SiteShiftInput>) =>
+    request<SiteShift>(`/sites/${siteId}/shifts/${shiftId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteSiteShift: (siteId: string, shiftId: string) =>
+    request<{ success: boolean }>(`/sites/${siteId}/shifts/${shiftId}`, { method: 'DELETE' }),
+  // ─── end facility shifts block ──────────────────────────────────────────────
+
+  // ── Player batch: run sessions, jobs in progress, supervisor authorization ──
+  // (appended block — see CompletionSession / JobInProgress types at file end)
+  /** Supervisor sign-off for in-run actions (NCR filing). 403 = lower role or bad PIN. */
+  verifyAuthorizer: (pin: string) =>
+    request<{ user_id: string; display_name: string; role: string }>('/operators/verify-authorizer', {
+      method: 'POST', body: JSON.stringify({ pin }),
+    }),
+  /** One completion with its operator sessions attached. */
+  getCompletionWithSessions: (id: string) =>
+    request<any & { sessions: CompletionSession[] }>(`/completions/${id}`),
+  /** Open an operator stint on a run (start or resume). */
+  openCompletionSession: (completionId: string, data: { operator_name: string; operator_user_id?: string | null }) =>
+    request<CompletionSession>(`/completions/${completionId}/sessions`, {
+      method: 'POST', body: JSON.stringify(data),
+    }),
+  /** Close the run's open stint (pause-and-leave / abandon / complete). */
+  closeCompletionSession: (completionId: string, data: { handoff_comment?: string } = {}) =>
+    request<CompletionSession>(`/completions/${completionId}/sessions/close`, {
+      method: 'PUT', body: JSON.stringify(data),
+    }),
+  /** This app's in_progress runs for the setup screen's "Jobs in progress" list. */
+  getJobsInProgress: (appId: string) =>
+    request<JobInProgress[]>(`/completions?status=in_progress&app_id=${encodeURIComponent(appId)}`),
 };
+
+// ─── App templates (app-templates slice) ─────────────────────────────────────
+
+/** A built-in HartMonitor model template (defined in server code). */
+export interface BuiltInTemplateSummary {
+  key: string; name: string; description: string; step_count: number;
+}
+
+/** A template this company saved from one of its own apps. */
+export interface MyTemplateSummary {
+  id: string; name: string; description: string; step_count: number; created_at: string;
+}
+
+/** Response of GET /api/apps/templates. */
+export interface AppTemplatesResponse {
+  built_in: BuiltInTemplateSummary[];
+  mine: MyTemplateSummary[];
+}
+
+// ─── Facility shifts types (appended block) ──────────────────────────────────
+// Uses an import() type so this stays inside the appended block instead of
+// touching the import list at the top of the file.
+type SiteShift = import('../utils/shifts').SiteShift;
+
+/** Body for POST/PUT /api/sites/:siteId/shifts. days = weekday numbers 0-6. */
+export interface SiteShiftInput {
+  name: string;
+  starts_at: string;
+  ends_at: string;
+  days?: number[];
+  color?: string;
+  sort_order?: number;
+}
+
+// ── Player batch types (appended block) ──────────────────────────────────────
+
+/** One operator stint on a completion (completion_sessions row). */
+export interface CompletionSession {
+  id: string;
+  company_id: string;
+  completion_id: string;
+  operator_user_id: string | null;
+  operator_name: string;
+  started_at: string;
+  ended_at: string | null;
+  handoff_comment: string;
+  created_at: string;
+}
+
+/** An in_progress completion as returned by the jobs-in-progress listing. */
+export interface JobInProgress {
+  id: string;
+  app_id: string;
+  app_name: string;
+  operator_name: string;
+  started_at: string;
+  work_order_id: string | null;
+  product_type_id?: string | null;
+  station_id: string | null;
+  data: Record<string, unknown>;
+  step_times: Record<string, number>;
+  /** Most recent operator stint, or null when no session was ever opened. */
+  last_session: {
+    operator_name: string;
+    operator_user_id: string | null;
+    started_at: string;
+    ended_at: string | null;
+    handoff_comment: string;
+  } | null;
+
+}

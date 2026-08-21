@@ -41,6 +41,7 @@ const SettingsPage     = lazy(() => import('./pages/Settings'));
 const OEETracker       = lazy(() => import('./pages/OEETracker'));
 const Dashboards       = lazy(() => import('./pages/Dashboards'));
 const DashboardView    = lazy(() => import('./pages/DashboardView'));
+const CategoryReports  = lazy(() => import('./pages/CategoryReports'));
 const Inventory        = lazy(() => import('./pages/Inventory'));
 const Purchasing       = lazy(() => import('./pages/Purchasing'));
 const Quality          = lazy(() => import('./pages/Quality'));
@@ -172,6 +173,7 @@ export default function App() {
                 <Route path="/dashboards" element={<ModuleGate module="apps"><Dashboards /></ModuleGate>} />
                 <Route path="/dashboards/:id" element={<ModuleGate module="apps"><DashboardView /></ModuleGate>} />
                 <Route path="/dashboards/:id/:mode" element={<ModuleGate module="apps"><DashboardView /></ModuleGate>} />
+                <Route path="/reports/:category" element={<CategoryReports />} />
                 <Route path="/inventory" element={<ModuleGate module="inventory"><Inventory /></ModuleGate>} />
                 <Route path="/inventory/boms" element={<ModuleGate module="inventory"><BOMs /></ModuleGate>} />
                 <Route path="/inventory/kitting" element={<ModuleGate module="inventory"><Kitting /></ModuleGate>} />

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { Outlet, NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Settings, Activity, ChevronLeft, ChevronRight,
@@ -9,9 +9,9 @@ import { useAuth } from '../../context/AuthContext';
 import { useBranding } from '../../context/BrandingContext';
 import { useNavPrefs } from '../../context/NavPrefsContext';
 import { usePermissions } from '../../context/PermissionsContext';
-import { PINNED_ITEMS, NavItem, useVisibleSections } from '../../config/navigation';
-import AlertsBubble from './AlertsBubble';
+import { NavItem, NavSection, useVisibleSections, findSectionForPath } from '../../config/navigation';
 import SiteSwitcher from './SiteSwitcher';
+import AlertsBell from './AlertsBell';
 import UpgradeModal from './UpgradeModal';
 import QuickCreateModal from './QuickCreateModal';
 import PWAUpdatePrompt from './PWAUpdatePrompt';
@@ -50,12 +50,9 @@ function useIsDesktop() {
   return isDesktop;
 }
 
-
 export default function Layout() {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('hm_sidebar') === 'collapsed');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [wsMenuOpen, setWsMenuOpen] = useState(false);
-  const wsMenuRef = useRef<HTMLDivElement>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   // Set to a feature label when a Free user clicks a locked Pro nav item.
@@ -65,7 +62,7 @@ export default function Layout() {
   const { isFree, isEnterprise } = usePlan();
   const { user, logout } = useAuth();
   const { companyName, logoUrl } = useBranding();
-  const { isItemHidden, isSectionHidden, focus, setFocus, itemOrder, showProSidebar } = useNavPrefs();
+  const { isItemHidden, isSectionHidden, itemOrder } = useNavPrefs();
   const { canShowNavItem } = usePermissions();
   const [logoError, setLogoError] = useState(false);
   const navigate = useNavigate();
@@ -74,18 +71,6 @@ export default function Layout() {
   // On mobile the drawer is always shown expanded, regardless of the
   // desktop-only "collapsed" preference.
   const effectiveCollapsed = collapsed && isDesktop;
-
-  // Close the workspace dropdown on outside click or Escape.
-  useEffect(() => {
-    if (!wsMenuOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (wsMenuRef.current && !wsMenuRef.current.contains(e.target as Node)) setWsMenuOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setWsMenuOpen(false); };
-    document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
-  }, [wsMenuOpen]);
 
   // Apply any developer-defined custom ordering to a section's items.
   const orderItems = (sectionId: string, items: NavItem[]): NavItem[] => {
@@ -100,6 +85,11 @@ export default function Layout() {
     });
   };
 
+  // Sections filtered to this company's enabled modules, then to the user's
+  // Settings toggles for the sidebar list.
+  const moduleSections = useVisibleSections();
+  const enabledSections = moduleSections.filter(s => !isSectionHidden(s.id));
+
   const canShow = (item: NavItem) => {
     if (!canShowNavItem(item)) return false;
     if (!item.pinned && isItemHidden(item.to)) return false;
@@ -109,45 +99,88 @@ export default function Layout() {
     return true;
   };
 
-  // Sections the user has kept enabled in Settings. Planning is off by default
-  // (see NavPrefsContext) but once a user enables it, the toggle reveals it
-  // regardless of plan tier — individual Pro items inside stay gated by canShow.
-  // A section whose items ALL fall away (role/module/prefs) is dropped entirely —
-  // otherwise its switcher entry selects an empty nav and feels broken.
-  const moduleSections = useVisibleSections();
-  const enabledSections = moduleSections.filter(
-    s => !isSectionHidden(s.id) && s.items.some(canShow)
-  );
+  // LEVEL 1/2 focus is derived from the CURRENT ROUTE — never manual state —
+  // so deep links always highlight the right workspace and screen tab.
+  // Derived from moduleSections (not enabledSections) so a deep link into a
+  // workspace the user hid from the sidebar still gets its screen tabs.
+  const activeSection = findSectionForPath(location.pathname, moduleSections);
 
-  // Default to first enabled section if current focus is no longer valid
-  const effectiveFocus = enabledSections.some(s => s.id === focus)
-    ? focus
-    : (enabledSections[0]?.id ?? 'production');
+  // The focused workspace's visible screens — rendered as the level-2 tab bar.
+  const sectionScreens = (section: NavSection): NavItem[] =>
+    orderItems(section.id, section.items).filter(canShow);
 
-  // Always show only the focused section (no "all sections" view)
-  const visibleSections = enabledSections.filter(s => s.id === effectiveFocus);
+  const tabItems = activeSection ? sectionScreens(activeSection) : [];
 
-  const renderItem = (item: NavItem) => {
+  // Clicking a workspace in the sidebar navigates to its first visible screen.
+  // Prefer a screen that isn't Pro-locked and doesn't leave the shell
+  // (standalone kiosk); fall back gracefully, else open the upgrade modal.
+  const openSection = (section: NavSection) => {
+    const items = sectionScreens(section);
+    const target =
+      items.find(i => !(i.proOnly && isFree) && !i.standalone)
+      ?? items.find(i => !(i.proOnly && isFree));
+    setMobileNavOpen(false);
+    if (target) navigate(target.to);
+    else setLockedModal(section.label);
+  };
+
+  // A level-1 sidebar entry: icon + label with the accent bar when the current
+  // route lives inside this workspace.
+  const renderSection = (section: NavSection) => {
+    const items = sectionScreens(section);
+    if (items.length === 0) return null;
+    const Icon = section.icon;
+    const isActive = activeSection?.id === section.id;
+    const lockedForFree = isFree && section.proOnly && items.every(i => i.proOnly);
+    return (
+      <button
+        key={section.id}
+        onClick={() => openSection(section)}
+        title={effectiveCollapsed ? section.label : undefined}
+        aria-current={isActive ? 'page' : undefined}
+        className={`relative w-full flex items-center rounded-xl text-sm font-medium transition-all ${
+          effectiveCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
+        } ${
+          isActive
+            ? 'text-white bg-white/10'
+            : 'text-gray-400 hover:text-white hover:bg-white/8'
+        }`}
+      >
+        {/* Left accent bar marks the active workspace */}
+        {isActive && (
+          <span
+            aria-hidden
+            className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r-full"
+            style={{ backgroundColor: 'var(--accent)', boxShadow: '0 0 8px -1px var(--accent)' }}
+          />
+        )}
+        <Icon size={15} className="flex-shrink-0" />
+        {!effectiveCollapsed && (
+          <>
+            <span className="flex-1 text-left">{section.label}</span>
+            {lockedForFree && <ProBadge />}
+          </>
+        )}
+      </button>
+    );
+  };
+
+  // A level-2 tab: underline-style NavLink for the focused workspace's screens.
+  // Pro-locked screens open the upgrade modal for Free users, exactly like the
+  // sidebar used to.
+  const renderTab = (item: NavItem) => {
     const { to, icon: Icon, label, exact, proOnly } = item;
     const isLocked = proOnly && isFree;
-    // Locked Pro items open the upgrade modal (only shown when developer preview is on)
     if (isLocked) {
       return (
         <button
           key={to}
-          onClick={() => { setLockedModal(label); setMobileNavOpen(false); }}
-          title={effectiveCollapsed ? `${label} (Pro)` : undefined}
-          className={`w-full flex items-center rounded-xl text-sm font-medium transition-all text-gray-500 hover:text-gray-300 hover:bg-white/5 ${
-            effectiveCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
-          }`}
+          onClick={() => setLockedModal(label)}
+          className="flex items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors"
         >
-          <Icon size={15} className="flex-shrink-0" />
-          {!effectiveCollapsed && (
-            <>
-              <span className="flex-1 text-left">{label}</span>
-              <ProBadge />
-            </>
-          )}
+          <Icon size={14} className="flex-shrink-0" />
+          {label}
+          <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-600 leading-none">PRO</span>
         </button>
       );
     }
@@ -156,33 +189,15 @@ export default function Layout() {
         key={to}
         to={to}
         end={exact}
-        title={effectiveCollapsed ? label : undefined}
         className={({ isActive }) =>
-          `relative flex items-center rounded-xl text-sm font-medium transition-all ${
-            effectiveCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
-          } ${
-            isActive
-              ? 'text-white bg-white/10'
-              : 'text-gray-400 hover:text-white hover:bg-white/8'
+          `flex items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors ${
+            isActive ? '' : 'border-transparent text-gray-500 hover:text-gray-800'
           }`
         }
+        style={({ isActive }) => (isActive ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : undefined)}
       >
-        {({ isActive }) => (
-          <>
-            {/* Left accent bar marks the active item */}
-            {isActive && (
-              <span
-                aria-hidden
-                className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r-full"
-                style={{ backgroundColor: 'var(--accent)', boxShadow: '0 0 8px -1px var(--accent)' }}
-              />
-            )}
-            <Icon size={15} className="flex-shrink-0" />
-            {!effectiveCollapsed && (
-              <span className="flex-1">{label}</span>
-            )}
-          </>
-        )}
+        <Icon size={14} className="flex-shrink-0" />
+        {label}
       </NavLink>
     );
   };
@@ -238,6 +253,7 @@ export default function Layout() {
           <X size={18} />
         </button>
 
+        {/* Company logo/name — always navigates to the Command Center */}
         <Link
           to="/dashboard"
           className={`flex items-center border-b border-white/10 hover:bg-white/5 transition-colors flex-shrink-0 ${effectiveCollapsed ? 'justify-center p-3' : 'gap-3 p-4'}`}
@@ -269,81 +285,17 @@ export default function Layout() {
           )}
         </Link>
 
-        {/* Workspace switcher — dropdown; only when there are multiple sections */}
-        {!effectiveCollapsed && enabledSections.length > 1 && (
-          <div className="px-2 pt-2.5 relative" ref={wsMenuRef}>
-            <button
-              onClick={() => setWsMenuOpen(o => !o)}
-              aria-haspopup="listbox"
-              aria-expanded={wsMenuOpen}
-              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-black/25 hover:bg-black/35 text-left transition-colors"
-            >
-              {(() => {
-                const cur = enabledSections.find(s => s.id === effectiveFocus) ?? enabledSections[0];
-                const CurIcon = cur.icon;
-                return (
-                  <>
-                    <CurIcon size={15} className="shrink-0 text-blue-300" />
-                    <span className="flex-1 min-w-0">
-                      <span className="block text-sm font-semibold text-white truncate">{cur.label}</span>
-                      <span className="block text-[10px] text-gray-500 truncate">{cur.description}</span>
-                    </span>
-                    <ChevronDown size={14} className={`shrink-0 text-gray-400 transition-transform ${wsMenuOpen ? 'rotate-180' : ''}`} />
-                  </>
-                );
-              })()}
-            </button>
-            {wsMenuOpen && (
-              <div className="absolute left-2 right-2 top-full mt-1 z-50 rounded-xl bg-gray-900 border border-white/10 shadow-2xl shadow-black/50 overflow-hidden py-1" role="listbox">
-                {enabledSections.map(s => {
-                  const SIcon = s.icon;
-                  const active = effectiveFocus === s.id;
-                  return (
-                    <button
-                      key={s.id}
-                      role="option"
-                      aria-selected={active}
-                      onClick={() => { setFocus(s.id); setWsMenuOpen(false); }}
-                      className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${
-                        active ? 'bg-white/10 text-white' : 'text-gray-300 hover:bg-white/5 hover:text-white'
-                      }`}
-                    >
-                      <SIcon size={14} className={`shrink-0 ${active ? 'text-blue-300' : 'text-gray-500'}`} />
-                      <span className="flex-1 text-sm font-medium truncate">{s.label}</span>
-                      {active && <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        )}
-
-        <nav className="flex-1 p-2 overflow-y-auto space-y-4 mt-1">
-          {PINNED_ITEMS.filter(canShow).length > 0 && (
-            <div className="space-y-0.5">
-              {PINNED_ITEMS.filter(canShow).map(renderItem)}
+        {/* LEVEL 1 — workspace sections only. Screens live in the content
+            header's tab bar (level 2). */}
+        <nav className="flex-1 p-2 overflow-y-auto mt-1">
+          {!effectiveCollapsed && (
+            <div className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-500 select-none">
+              Workspaces
             </div>
           )}
-
-          {visibleSections.map(section => {
-            const items = orderItems(section.id, section.items).filter(canShow);
-            if (items.length === 0) return null;
-            return (
-              <div key={section.id}>
-                {/* Always show section label above items */}
-                {!effectiveCollapsed && (
-                  <div className="flex items-center gap-1.5 px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-500 select-none">
-                    <section.icon size={11} className="opacity-70" />
-                    {section.label}
-                  </div>
-                )}
-                <div className="space-y-0.5">
-                  {items.map(renderItem)}
-                </div>
-              </div>
-            );
-          })}
+          <div className="space-y-0.5">
+            {enabledSections.map(renderSection)}
+          </div>
         </nav>
 
         {/* Setup checklist — only visible when sidebar is expanded */}
@@ -374,6 +326,9 @@ export default function Layout() {
               {!effectiveCollapsed && <span>Install App</span>}
             </button>
           )}
+
+          {/* Alerts — the floating bubble is gone; the bell is the alerts home */}
+          <AlertsBell collapsed={effectiveCollapsed} />
 
           {/* Collapse toggle is a desktop-only concept — the mobile drawer is always expanded */}
           <button
@@ -462,22 +417,31 @@ export default function Layout() {
         </header>
 
         <BillingBanner />
+
+        {/* LEVEL 2 — the focused workspace's screens as underline tabs. Hidden
+            on routes that don't belong to any workspace (e.g. /settings). */}
+        {activeSection && tabItems.length > 0 && (
+          <div className="bg-white border-b border-gray-200 flex-shrink-0">
+            <nav
+              aria-label={`${activeSection.label} screens`}
+              className="flex items-center gap-1 px-3 sm:px-5 -mb-px overflow-x-auto"
+            >
+              {tabItems.map(renderTab)}
+            </nav>
+          </div>
+        )}
+
         <main className="flex-1 overflow-auto">
           <Outlet />
         </main>
       </div>
 
-      {/* Floating alerts bubble — fixed bottom-right corner */}
-      <AlertsBubble />
-
-      {/* Quick-create FAB — visible for manager+ roles. Hidden in the app
-          builder, where it would cover the docked inspector on small screens. */}
-      {user && ['manager', 'developer', 'supervisor'].includes(user.role)
-        && !/^\/apps\/[^/]+\/build/.test(location.pathname) && (
+      {/* Quick-create FAB — visible for manager+ roles */}
+      {user && ['manager', 'developer', 'supervisor'].includes(user.role) && (
         <button
           onClick={() => setQuickCreateOpen(true)}
           title="Quick-create work order"
-          className="fixed bottom-5 right-5 z-40 w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-95"
+          className="fixed bottom-20 right-5 z-40 w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-95"
           style={{ background: 'linear-gradient(135deg, #6366f1, #ec4899)' }}
         >
           <Plus size={22} className="text-white" strokeWidth={2.5} />

@@ -8,6 +8,9 @@ export interface PlayerFooterProps {
   blocked: boolean;
   blockReason: string;    // '' when navigation is free
   completing: boolean;
+  /** The step advances through its own button widget — hide footer Next/Complete
+   *  so there is exactly one way to advance, never two. */
+  hideForward?: boolean;
   onBack: () => void;
   onNext: () => void;
   onComplete: () => void;
@@ -20,7 +23,7 @@ export interface PlayerFooterProps {
 export default function PlayerFooter(props: PlayerFooterProps) {
   const {
     stepIndex, stepCount, canBack, isLast, blocked, blockReason, completing,
-    onBack, onNext, onComplete,
+    hideForward = false, onBack, onNext, onComplete,
   } = props;
 
   const showDots = stepCount <= 12;
@@ -80,8 +83,10 @@ export default function PlayerFooter(props: PlayerFooterProps) {
         )}
       </div>
 
-      {/* Next / Complete */}
-      {isLast ? (
+      {/* Next / Complete — hidden when the step's own button widget advances */}
+      {hideForward ? (
+        <div style={{ minWidth: 120 }} aria-hidden="true" />
+      ) : isLast ? (
         <button
           className="p-btn p-btn-good"
           onClick={onComplete}
