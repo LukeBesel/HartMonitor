@@ -17,7 +17,7 @@ import {
   Save, Trash2, Variable as VariableIcon, X, ZoomIn, ZoomOut, GripVertical,
 } from 'lucide-react';
 import CanvasEditor from '../components/app/CanvasEditor';
-import { defaultLayout, DEFAULT_CANVAS_H } from '../components/app/WidgetView';
+import { defaultLayout, DEFAULT_CANVAS_H, ShapeSVG } from '../components/app/WidgetView';
 import WidgetPalette, { defaultWidget, WIDGET_META } from '../components/builder/WidgetPalette';
 import StepList from '../components/builder/StepList';
 import ContextPanel, { ContextTab, Field } from '../components/builder/ContextPanel';
@@ -736,6 +736,12 @@ function WidgetPreview({ widget }: { widget: Widget }) {
       return <div className="h-7 border border-border-subtle rounded px-2 flex items-center text-xs text-muted bg-surface-1 font-mono">{config.placeholder || 'Scan code…'}</div>;
     case 'photo-capture':
       return <div className="h-8 border border-dashed border-baseline rounded flex items-center justify-center text-xs text-muted">Photo capture ×{config.maxPhotos ?? 1}</div>;
+    case 'shape':
+      return (
+        <div className="w-24" style={{ height: config.shapeKind === 'line' || config.shapeKind === 'arrow' ? 16 : 32, opacity: config.opacity ?? 1 }}>
+          <ShapeSVG config={config} />
+        </div>
+      );
     default:
       return null;
   }

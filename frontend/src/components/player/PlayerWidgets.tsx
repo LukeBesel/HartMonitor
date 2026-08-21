@@ -11,7 +11,7 @@ import { CheckCircle, ScanLine, Camera, Search } from 'lucide-react';
 import type { Widget, Step, TableField } from '../../types';
 import { interpolate } from '../../engine';
 import { api } from '../../api/client';
-import { WidgetView } from '../app/WidgetView';
+import { WidgetView, ShapeSVG, buttonAppearance, buttonVariantStyle } from '../app/WidgetView';
 import PhotoSheet from './PhotoSheet';
 import { formatDur, legacyKey } from './runtime';
 
@@ -459,19 +459,37 @@ export default function PlayerWidget(props: PlayerWidgetProps) {
       );
 
     case 'button': {
-      const sizeStyle = config.buttonSize === 'sm'
-        ? { minHeight: 48, fontSize: 15 }
-        : config.buttonSize === 'lg'
-          ? { minHeight: 72, fontSize: 21 }
-          : { minHeight: 60, fontSize: 18 };
+      const ap = buttonAppearance(config);
+      // Touch target never drops below 44px, regardless of configured size.
+      const minHeight = Math.max(44, { sm: 48, md: 60, lg: 72, xl: 84 }[ap.size]);
+      const fontSize = { sm: 15, md: 18, lg: 21, xl: 24 }[ap.size];
+      const fullWidth = config.fullWidth !== false; // absent = full width (v1 behavior)
+      const ButtonIcon = ap.icon;
       return (
         <button
           onClick={() => onButtonPress(widget)}
-          className="w-full rounded-xl transition-all active:scale-[0.99]"
-          style={{ ...sizeStyle, fontWeight: 650, color: '#fff', backgroundColor: config.buttonColor || '#4f46e5' }}
+          className={`${fullWidth ? 'flex w-full' : 'inline-flex'} items-center justify-center gap-2 transition-all active:scale-[0.99]`}
+          style={{
+            minHeight, fontSize, fontWeight: 650,
+            borderRadius: ap.radius,
+            padding: '0 24px',
+            ...buttonVariantStyle(ap.variant, config.buttonColor || '#4f46e5'),
+          }}
         >
+          {ButtonIcon && <ButtonIcon size={Math.round(fontSize * 1.15)} className="flex-shrink-0" />}
           {config.buttonText || 'Next'}
         </button>
+      );
+    }
+
+    case 'shape': {
+      // Canvas decoration — pure SVG, no capture, no events. Flow mode gives
+      // it a sensible fixed height (canvas mode sizes it via the layout box).
+      const kind = config.shapeKind ?? 'rect';
+      return (
+        <div aria-hidden="true" style={{ height: kind === 'line' || kind === 'arrow' ? 32 : 140, opacity: config.opacity ?? 1 }}>
+          <ShapeSVG config={config} />
+        </div>
       );
     }
 

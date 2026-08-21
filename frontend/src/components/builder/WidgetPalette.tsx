@@ -4,7 +4,7 @@
 
 import type { LucideIcon } from 'lucide-react';
 import {
-  Type, AlignLeft, Image, Video, Box, Minus, Variable,
+  Type, AlignLeft, Image, Video, Box, Minus, Variable, Shapes,
   TextCursor, Hash, List, CheckSquare, ScanLine, Camera, PenTool,
   MousePointer, PackageCheck, Table2, Timer, TrendingUp, CheckCheck,
 } from 'lucide-react';
@@ -23,6 +23,7 @@ export const WIDGET_META: Record<WidgetType, WidgetMeta> = {
   'model-viewer':     { icon: Box,         label: '3D Model',      group: 'Display' },
   'separator':        { icon: Minus,       label: 'Separator',     group: 'Display' },
   'variable-display': { icon: Variable,    label: 'Variable',      group: 'Display' },
+  'shape':            { icon: Shapes,      label: 'Shape',         group: 'Display' },
   // Inputs
   'text-input':       { icon: TextCursor,  label: 'Text Input',    group: 'Inputs' },
   'number-input':     { icon: Hash,        label: 'Number',        group: 'Inputs' },
@@ -55,7 +56,7 @@ export function defaultWidget(type: WidgetType): Widget {
   switch (type) {
     case 'text': return { ...base, label: '', config: { text: 'Enter text here', fontSize: 16, color: '#374151' } };
     case 'instruction': return { ...base, label: 'Instructions', config: { content: 'Step instructions go here...', backgroundColor: '#eff6ff' } };
-    case 'button': return { ...base, label: '', config: { buttonText: 'Next', buttonType: 'next', buttonColor: '#3b82f6', buttonSize: 'md' } };
+    case 'button': return { ...base, label: '', config: { buttonText: 'Next', buttonType: 'next', buttonColor: '#3b82f6', buttonSize: 'md', buttonVariant: 'solid', buttonShape: 'rounded', fullWidth: true } };
     case 'text-input': return { ...base, label: 'Text Field', config: { placeholder: 'Enter value...', required: false, variableName: `field_${Date.now()}` } };
     case 'number-input': return { ...base, label: 'Number Field', config: { placeholder: '0', required: false, variableName: `num_${Date.now()}` } };
     case 'select-input': return { ...base, label: 'Select Field', config: { options: ['Option 1', 'Option 2', 'Option 3'], variableName: `sel_${Date.now()}` } };
@@ -74,6 +75,8 @@ export function defaultWidget(type: WidgetType): Widget {
     case 'kit-checklist': return { ...base, label: 'Kit', config: { kitScope: 'all', allowShort: true, requireScan: false } };
     case 'scan-input': return { ...base, label: 'Scan Code', config: { variableName: `scan_${Date.now()}`, scanTarget: 'variable', required: false } };
     case 'photo-capture': return { ...base, label: 'Photo', config: { variableName: `photo_${Date.now()}`, maxPhotos: 1, required: false } };
+    // Canvas decoration — a soft indigo rect by default; never captured.
+    case 'shape': return { ...base, label: '', config: { shapeKind: 'rect', fill: '#e0e7ff', stroke: '#6366f1', strokeWidth: 1.5, cornerRadius: 12, opacity: 1 } };
     default: return base;
   }
 }

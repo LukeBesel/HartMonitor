@@ -20,7 +20,7 @@ import type {
   Widget, WidgetLayout,
 } from '../../types';
 import { api } from '../../api/client';
-import { defaultLayout } from '../app/WidgetView';
+import { BUTTON_ICONS, defaultLayout } from '../app/WidgetView';
 import { WIDGET_META, INPUT_WIDGET_TYPES } from './WidgetPalette';
 import { inferVariableType, VARIABLE_NAME_RE } from './VariablesPanel';
 import { eventsFor, TriggerAttachment } from './TriggerEditor';
@@ -207,11 +207,26 @@ export default function ContextPanel(props: {
 
 const UPLOAD_LIMITS_MB: Record<string, number> = { image: 15, video: 200, model: 50 };
 
-function WidgetTab({ app, widget, activeStepIdx, canEdit, onUpdateWidget, onUpdateWidgetConfig, onUpdateWidgetLayout, onRestack, onRemoveWidget, onUpdateApp, onEditTrigger }: {
+/** Compact THEN-clause labels for the button "Actions" summary. */
+const ACTION_LABELS: Record<string, string> = {
+  next_step: 'Next step',
+  prev_step: 'Previous step',
+  complete_app: 'Complete app',
+  go_to_step: 'Go to step',
+  set_variable: 'Set variable',
+  save_record: 'Save record',
+  require_photo: 'Require photo',
+  show_message: 'Show message',
+  block_with_error: 'Block with error',
+  create_ncr: 'Create NCR',
+};
+
+function WidgetTab({ app, widget, activeStepIdx, canEdit, onTab, onUpdateWidget, onUpdateWidgetConfig, onUpdateWidgetLayout, onRestack, onRemoveWidget, onUpdateApp, onEditTrigger }: {
   app: App;
   widget: Widget;
   activeStepIdx: number;
   canEdit: boolean;
+  onTab: (t: ContextTab) => void;
   onUpdateWidget: (id: string, updates: Partial<Widget>) => void;
   onUpdateWidgetConfig: (id: string, cfg: Partial<Widget['config']>) => void;
   onUpdateWidgetLayout: (id: string, l: WidgetLayout) => void;
@@ -328,7 +343,7 @@ function WidgetTab({ app, widget, activeStepIdx, canEdit, onUpdateWidget, onUpda
       )}
 
       {/* Label (for most widgets) */}
-      {!['text', 'button', 'separator', 'image'].includes(widget.type) && (
+      {!['text', 'button', 'separator', 'image', 'shape'].includes(widget.type) && (
         <Field label="Label">
           <input className="wb-input" value={widget.label} onChange={e => onUpdateWidget(widget.id, { label: e.target.value })} />
         </Field>
@@ -411,14 +426,135 @@ function WidgetTab({ app, widget, activeStepIdx, canEdit, onUpdateWidget, onUpda
               <option value="complete">Complete App</option>
             </select>
           </Field>
+          {/* Prominent Actions summary — the button's triggers inline, with a
+              jump to the Triggers tab (pre-filtered to this widget, which is
+              already the selection driving that tab). */}
+          <div className="wb-well px-2.5 py-2 space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <span className="wb-label flex items-center gap-1" style={{ fontSize: 10.5 }}>
+                <Zap size={11} className="text-warn" /> Actions
+              </span>
+              <button
+                type="button"
+                onClick={() => onTab('triggers')}
+                className="wb-btn-ghost !min-h-0 !px-1.5 py-0.5 text-accent"
+                style={{ fontSize: 11.5, fontWeight: 600 }}
+              >
+                Edit actions
+              </button>
+            </div>
+            {(() => {
+              const all = widget.triggers ?? [];
+              const labels = all.flatMap(t => t.actions.map(a => ACTION_LABELS[a.type] ?? a.type));
+              if (all.length === 0) {
+                return <p className="text-muted" style={{ fontSize: 11.5 }}>No actions yet — this button does nothing when pressed.</p>;
+              }
+              const shown = labels.slice(0, 3);
+              const more = labels.length - shown.length;
+              return (
+                <p className="text-ink-2" style={{ fontSize: 11.5 }}>
+                  <span className="tnum" style={{ fontWeight: 650 }}>{all.length} trigger{all.length !== 1 ? 's' : ''}</span>
+                  {shown.length > 0 && <> · {shown.join(' · ')}{more > 0 ? ` · +${more} more` : ''}</>}
+                </p>
+              );
+            })()}
+          </div>
           <ColorField label="Color" value={config.buttonColor} fallback="#3b82f6" onChange={v => setConfig({ buttonColor: v })} />
+          <Field label="Style">
+            <div className="seg w-full">
+              {(['solid', 'outline', 'ghost'] as const).map(v => (
+                <button key={v} className={`flex-1 capitalize ${(config.buttonVariant ?? 'solid') === v ? 'is-active' : ''}`} onClick={() => setConfig({ buttonVariant: v })}>
+                  {v}
+                </button>
+              ))}
+            </div>
+          </Field>
           <Field label="Size">
-            <select className="wb-input" value={config.buttonSize || 'md'} onChange={e => setConfig({ buttonSize: e.target.value as 'sm' | 'md' | 'lg' })}>
+            <select className="wb-input" value={config.buttonSize || 'md'} onChange={e => setConfig({ buttonSize: e.target.value as 'sm' | 'md' | 'lg' | 'xl' })}>
               <option value="sm">Small</option>
               <option value="md">Medium</option>
               <option value="lg">Large</option>
+              <option value="xl">Extra large</option>
             </select>
           </Field>
+          <Field label="Shape">
+            <div className="seg w-full">
+              {(['rounded', 'pill', 'square'] as const).map(s => (
+                <button key={s} className={`flex-1 capitalize ${(config.buttonShape ?? 'rounded') === s ? 'is-active' : ''}`} onClick={() => setConfig({ buttonShape: s })}>
+                  {s}
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Field label="Icon">
+            <div className="grid grid-cols-8 gap-1">
+              <button
+                type="button"
+                title="No icon"
+                aria-label="No icon"
+                onClick={() => setConfig({ buttonIcon: undefined })}
+                className={`h-8 rounded-ctrl border flex items-center justify-center text-muted transition-colors ${!config.buttonIcon ? 'border-accent bg-accent-tint text-accent' : 'border-baseline hover:border-accent/60'}`}
+                style={{ fontSize: 12 }}
+              >
+                —
+              </button>
+              {Object.entries(BUTTON_ICONS).map(([name, IconCmp]) => (
+                <button
+                  key={name}
+                  type="button"
+                  title={name}
+                  aria-label={`Icon ${name}`}
+                  onClick={() => setConfig({ buttonIcon: name })}
+                  className={`h-8 rounded-ctrl border flex items-center justify-center transition-colors ${config.buttonIcon === name ? 'border-accent bg-accent-tint text-accent' : 'border-baseline text-muted hover:border-accent/60 hover:text-accent'}`}
+                >
+                  <IconCmp size={14} />
+                </button>
+              ))}
+            </div>
+          </Field>
+          <Toggle
+            checked={config.fullWidth !== false}
+            onChange={v => setConfig({ fullWidth: v })}
+            label="Full width"
+            hint="Only affects stacked-flow steps — on the canvas the button fills its box."
+          />
+        </>
+      )}
+
+      {widget.type === 'shape' && (
+        <>
+          <Field label="Shape">
+            <div className="seg w-full">
+              {([['rect', 'Rect'], ['ellipse', 'Ellipse'], ['line', 'Line'], ['arrow', 'Arrow']] as const).map(([k, lbl]) => (
+                <button key={k} className={`flex-1 ${(config.shapeKind ?? 'rect') === k ? 'is-active' : ''}`} onClick={() => setConfig({ shapeKind: k })}>
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          </Field>
+          {((config.shapeKind ?? 'rect') === 'rect' || config.shapeKind === 'ellipse') && (
+            <ColorField label="Fill" value={config.fill} fallback="#e0e7ff" onChange={v => setConfig({ fill: v })} />
+          )}
+          <ColorField label="Stroke" value={config.stroke} fallback="#6366f1" onChange={v => setConfig({ stroke: v })} />
+          <Field label="Stroke width">
+            <input
+              type="number" className="wb-input tnum" min={0} step={0.5}
+              value={config.strokeWidth ?? 1.5}
+              onChange={e => setConfig({ strokeWidth: Math.max(0, parseFloat(e.target.value) || 0) })}
+            />
+          </Field>
+          {(config.shapeKind ?? 'rect') === 'rect' && (
+            <NumField label="Corner radius" value={config.cornerRadius ?? 0} onChange={v => setConfig({ cornerRadius: Math.max(0, v) })} />
+          )}
+          {!isCanvas && (
+            <div>
+              <label className="block mb-1 text-ink-2" style={{ fontSize: 12, fontWeight: 600 }}>Opacity ({Math.round((config.opacity ?? 1) * 100)}%)</label>
+              <input type="range" min={0} max={100} value={Math.round((config.opacity ?? 1) * 100)} onChange={e => setConfig({ opacity: Number(e.target.value) / 100 })} className="w-full accent-[rgb(var(--accent-rgb))]" />
+            </div>
+          )}
+          <p className="wb-well px-2.5 py-2 text-muted" style={{ fontSize: 11 }}>
+            Decoration only — shapes capture no data and never appear in completion values. Rotate on the canvas for diagonal lines and arrows.
+          </p>
         </>
       )}
 
