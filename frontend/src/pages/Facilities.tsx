@@ -3,10 +3,15 @@ import { useNavigate } from 'react-router-dom';
 import {
   Network, Building2, Layers, Monitor, ClipboardList, ChevronRight,
   ArrowLeft, MapPin, RefreshCw, AlertTriangle,
+  Clock, Plus, Pencil, Trash2, X, Check,
 } from 'lucide-react';
 import { api } from '../api/client';
+import type { SiteShiftInput } from '../api/client';
 import { usePlan } from '../context/PlanContext';
+import { useToast } from '../context/ToastContext';
 import { timeAgo } from '../utils/time';
+import { DAY_LETTERS, formatShiftRange, parseDays } from '../utils/shifts';
+import type { SiteShift } from '../utils/shifts';
 
 // Enterprise multi-level drill-down:
 //   Facility (site) → Department → Work Center (station) → Operations (completions)
@@ -161,25 +166,30 @@ export default function Facilities() {
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {sites.length === 0 && <Empty label="No facilities yet. Add sites in Settings." />}
           {sites.map(s => (
-            <button
+            <div
               key={s.id}
-              onClick={() => drill('departments', s.id, s.name)}
-              className="text-left bg-white rounded-2xl border border-gray-200 p-4 hover:border-blue-300 hover:shadow-sm transition-all"
+              className="bg-white rounded-2xl border border-gray-200 hover:border-blue-300 hover:shadow-sm transition-all flex flex-col"
             >
-              <div className="flex items-center justify-between">
-                <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center">
-                  <Building2 size={18} className="text-blue-600" />
+              <button
+                onClick={() => drill('departments', s.id, s.name)}
+                className="text-left p-4 w-full"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="w-9 h-9 rounded-xl bg-blue-50 flex items-center justify-center">
+                    <Building2 size={18} className="text-blue-600" />
+                  </div>
+                  {s.is_primary ? <span className="text-[10px] font-bold uppercase tracking-wide text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">Primary</span> : null}
                 </div>
-                {s.is_primary ? <span className="text-[10px] font-bold uppercase tracking-wide text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">Primary</span> : null}
-              </div>
-              <div className="mt-3 font-semibold text-gray-900">{s.name}</div>
-              {s.code && <div className="text-xs text-gray-400 flex items-center gap-1 mt-0.5"><MapPin size={11} />{s.code}</div>}
-              <div className="mt-3 space-y-1">
-                <StatCard icon={Layers} label="departments" value={s.department_count ?? 0} color="#7c3aed" />
-                <StatCard icon={Monitor} label="work centers" value={s.station_count ?? 0} color="#0891b2" />
-                <StatCard icon={ClipboardList} label="open work orders" value={s.work_order_count ?? 0} color="#ea580c" />
-              </div>
-            </button>
+                <div className="mt-3 font-semibold text-gray-900">{s.name}</div>
+                {s.code && <div className="text-xs text-gray-400 flex items-center gap-1 mt-0.5"><MapPin size={11} />{s.code}</div>}
+                <div className="mt-3 space-y-1">
+                  <StatCard icon={Layers} label="departments" value={s.department_count ?? 0} color="#7c3aed" />
+                  <StatCard icon={Monitor} label="work centers" value={s.station_count ?? 0} color="#0891b2" />
+                  <StatCard icon={ClipboardList} label="open work orders" value={s.work_order_count ?? 0} color="#ea580c" />
+                </div>
+              </button>
+              <ShiftsSection siteId={s.id} />
+            </div>
           ))}
         </div>
       )}
@@ -270,6 +280,274 @@ export default function Facilities() {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ─── Facility shifts (site_shifts) ───────────────────────────────────────────
+
+const SHIFT_COLORS = ['#3b82f6', '#8b5cf6', '#f59e0b', '#10b981', '#ef4444', '#64748b'];
+
+function DayDots({ days, color }: { days: SiteShift['days']; color?: string | null }) {
+  const active = parseDays(days);
+  return (
+    <span className="inline-flex items-center gap-0.5" title={`Active days: ${active.length}`}>
+      {DAY_LETTERS.map((letter, i) => (
+        <span
+          key={i}
+          className={`w-3.5 h-3.5 rounded-full text-[8px] font-bold flex items-center justify-center ${
+            active.includes(i) ? 'text-white' : 'bg-gray-100 text-gray-300'
+          }`}
+          style={active.includes(i) ? { backgroundColor: color || '#3b82f6' } : undefined}
+        >
+          {letter}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+interface ShiftFormState {
+  name: string;
+  starts_at: string;
+  ends_at: string;
+  days: number[];
+  color: string;
+}
+
+function ShiftForm({ initial, saving, onSave, onCancel }: {
+  initial: ShiftFormState;
+  saving: boolean;
+  onSave: (values: ShiftFormState) => void;
+  onCancel: () => void;
+}) {
+  const [form, setForm] = useState<ShiftFormState>(initial);
+
+  const toggleDay = (d: number) => {
+    setForm(f => ({
+      ...f,
+      days: f.days.includes(d) ? f.days.filter(x => x !== d) : [...f.days, d].sort((a, b) => a - b),
+    }));
+  };
+
+  const valid = form.name.trim() !== '' && form.starts_at !== '' && form.ends_at !== ''
+    && form.starts_at !== form.ends_at && form.days.length > 0;
+
+  return (
+    <div className="bg-gray-50 rounded-xl border border-gray-200 p-3 space-y-2.5">
+      <input
+        type="text"
+        value={form.name}
+        onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+        placeholder="Shift name (e.g. Night)"
+        className="w-full bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500"
+      />
+      <div className="flex items-center gap-2">
+        <input
+          type="time"
+          value={form.starts_at}
+          onChange={e => setForm(f => ({ ...f, starts_at: e.target.value }))}
+          className="flex-1 bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <span className="text-xs text-gray-400">to</span>
+        <input
+          type="time"
+          value={form.ends_at}
+          onChange={e => setForm(f => ({ ...f, ends_at: e.target.value }))}
+          className="flex-1 bg-white border border-gray-200 rounded-lg px-2 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+      </div>
+      {form.starts_at && form.ends_at && form.ends_at < form.starts_at && (
+        <p className="text-[11px] text-amber-600">Overnight shift — ends the next day.</p>
+      )}
+      <div className="flex items-center gap-1">
+        {DAY_LETTERS.map((letter, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={() => toggleDay(i)}
+            className={`w-7 h-7 rounded-lg text-xs font-semibold transition-colors ${
+              form.days.includes(i)
+                ? 'bg-blue-600 text-white'
+                : 'bg-white border border-gray-200 text-gray-400 hover:border-blue-300'
+            }`}
+          >
+            {letter}
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-1.5">
+        {SHIFT_COLORS.map(c => (
+          <button
+            key={c}
+            type="button"
+            onClick={() => setForm(f => ({ ...f, color: c }))}
+            className={`w-5 h-5 rounded-full transition-transform ${form.color === c ? 'ring-2 ring-offset-1 ring-gray-400 scale-110' : ''}`}
+            style={{ backgroundColor: c }}
+            title={c}
+          />
+        ))}
+      </div>
+      <div className="flex items-center justify-end gap-2 pt-1">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium text-gray-500 hover:bg-gray-100"
+        >
+          <X size={12} /> Cancel
+        </button>
+        <button
+          type="button"
+          disabled={!valid || saving}
+          onClick={() => onSave({ ...form, name: form.name.trim() })}
+          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <Check size={12} /> {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const EMPTY_SHIFT_FORM: ShiftFormState = {
+  name: '', starts_at: '06:00', ends_at: '14:00', days: [1, 2, 3, 4, 5], color: SHIFT_COLORS[0],
+};
+
+function ShiftsSection({ siteId }: { siteId: string }) {
+  const { addToast } = useToast();
+  const [shifts, setShifts] = useState<SiteShift[]>([]);
+  const [adding, setAdding] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const loadShifts = () => {
+    api.getSiteShifts(siteId)
+      .then(list => setShifts(Array.isArray(list) ? list : []))
+      .catch(() => setShifts([]));
+  };
+
+  useEffect(() => { loadShifts(); /* eslint-disable-next-line */ }, [siteId]);
+
+  const toPayload = (values: ShiftFormState): SiteShiftInput => ({
+    name: values.name,
+    starts_at: values.starts_at,
+    ends_at: values.ends_at,
+    days: values.days,
+    color: values.color,
+  });
+
+  const handleCreate = async (values: ShiftFormState) => {
+    setSaving(true);
+    try {
+      await api.createSiteShift(siteId, { ...toPayload(values), sort_order: shifts.length });
+      addToast(`Shift "${values.name}" added`, 'success');
+      setAdding(false);
+      loadShifts();
+    } catch (err: any) {
+      addToast(err?.message || 'Failed to add shift', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUpdate = async (shiftId: string, values: ShiftFormState) => {
+    setSaving(true);
+    try {
+      await api.updateSiteShift(siteId, shiftId, toPayload(values));
+      addToast(`Shift "${values.name}" updated`, 'success');
+      setEditingId(null);
+      loadShifts();
+    } catch (err: any) {
+      addToast(err?.message || 'Failed to update shift', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleDelete = async (shift: SiteShift) => {
+    if (!confirm(`Delete shift "${shift.name}"? This cannot be undone.`)) return;
+    try {
+      await api.deleteSiteShift(siteId, shift.id);
+      addToast(`Shift "${shift.name}" deleted`, 'success');
+      loadShifts();
+    } catch (err: any) {
+      addToast(err?.message || 'Failed to delete shift', 'error');
+    }
+  };
+
+  return (
+    <div className="border-t border-gray-100 px-4 py-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-gray-500 uppercase tracking-wide">
+          <Clock size={12} /> Shifts
+        </div>
+        {!adding && (
+          <button
+            onClick={() => { setAdding(true); setEditingId(null); }}
+            className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-700"
+          >
+            <Plus size={12} /> Add shift
+          </button>
+        )}
+      </div>
+
+      {shifts.length === 0 && !adding && (
+        <p className="text-xs text-gray-400">No shifts defined for this facility yet.</p>
+      )}
+
+      <div className="space-y-1.5">
+        {shifts.map(shift => (
+          editingId === shift.id ? (
+            <ShiftForm
+              key={shift.id}
+              initial={{
+                name: shift.name,
+                starts_at: shift.starts_at,
+                ends_at: shift.ends_at,
+                days: parseDays(shift.days),
+                color: shift.color || SHIFT_COLORS[0],
+              }}
+              saving={saving}
+              onSave={values => handleUpdate(shift.id, values)}
+              onCancel={() => setEditingId(null)}
+            />
+          ) : (
+            <div key={shift.id} className="flex items-center gap-2 group">
+              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: shift.color || '#3b82f6' }} />
+              <span className="text-sm font-medium text-gray-800 truncate">{shift.name}</span>
+              <span className="text-[11px] font-mono text-gray-600 bg-gray-100 rounded-md px-1.5 py-0.5 whitespace-nowrap">
+                {formatShiftRange(shift)}
+              </span>
+              <span className="ml-auto flex items-center gap-2">
+                <DayDots days={shift.days} color={shift.color} />
+                <button
+                  onClick={() => { setEditingId(shift.id); setAdding(false); }}
+                  className="text-gray-300 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Edit shift"
+                >
+                  <Pencil size={13} />
+                </button>
+                <button
+                  onClick={() => handleDelete(shift)}
+                  className="text-gray-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Delete shift"
+                >
+                  <Trash2 size={13} />
+                </button>
+              </span>
+            </div>
+          )
+        ))}
+
+        {adding && (
+          <ShiftForm
+            initial={EMPTY_SHIFT_FORM}
+            saving={saving}
+            onSave={handleCreate}
+            onCancel={() => setAdding(false)}
+          />
+        )}
+      </div>
     </div>
   );
 }

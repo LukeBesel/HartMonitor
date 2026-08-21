@@ -5,6 +5,8 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { currentShiftFor, formatShiftRange, toMinutes } from '../utils/shifts';
+import type { SiteShift } from '../utils/shifts';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -50,6 +52,17 @@ function formatDatetime(iso: string): string {
 
 function parseIssues(raw: string): Issue[] {
   try { return JSON.parse(raw || '[]'); } catch { return []; }
+}
+
+// Maps a facility shift (from the site's shift builder) onto the note's
+// day/afternoon/night buckets by start time. The shift_notes schema has no
+// shift column, so the selector only prefills the note's metadata.
+function bucketForFacilityShift(shift: SiteShift): 'day' | 'afternoon' | 'night' {
+  const start = toMinutes(shift.starts_at);
+  if (!Number.isFinite(start)) return 'day';
+  if (start >= 5 * 60 && start < 12 * 60) return 'day';
+  if (start >= 12 * 60 && start < 20 * 60) return 'afternoon';
+  return 'night';
 }
 
 // ── Style helpers ─────────────────────────────────────────────────────────────
@@ -106,13 +119,19 @@ function IssueSeverityBadge({ severity }: { severity: Issue['severity'] }) {
 
 interface StartShiftModalProps {
   departments: Department[];
+  facilityShifts: SiteShift[];
   selectedDate: string;
   onClose: () => void;
   onCreate: (note: ShiftNote) => void;
 }
 
-function StartShiftModal({ departments, selectedDate, onClose, onCreate }: StartShiftModalProps) {
-  const [shiftName, setShiftName] = useState<'day' | 'afternoon' | 'night'>('day');
+function StartShiftModal({ departments, facilityShifts, selectedDate, onClose, onCreate }: StartShiftModalProps) {
+  // Preselect the facility shift that is running right now, when one matches.
+  const initialShift = facilityShifts.length > 0 ? currentShiftFor(facilityShifts) : null;
+  const [facilityShiftId, setFacilityShiftId] = useState(initialShift?.id ?? '');
+  const [shiftName, setShiftName] = useState<'day' | 'afternoon' | 'night'>(
+    initialShift ? bucketForFacilityShift(initialShift) : 'day'
+  );
   const [departmentId, setDepartmentId] = useState('');
   const [authorName, setAuthorName] = useState('');
   const [saving, setSaving] = useState(false);
@@ -165,6 +184,28 @@ function StartShiftModal({ departments, selectedDate, onClose, onCreate }: Start
             <div className="flex items-center gap-2 px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
               <AlertTriangle size={14} />
               {error}
+            </div>
+          )}
+
+          {facilityShifts.length > 0 && (
+            <div>
+              <label className="text-xs font-medium text-gray-400 block mb-1">Facility Shift</label>
+              <select
+                value={facilityShiftId}
+                onChange={e => {
+                  const id = e.target.value;
+                  setFacilityShiftId(id);
+                  const shift = facilityShifts.find(s => s.id === id);
+                  if (shift) setShiftName(bucketForFacilityShift(shift));
+                }}
+                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              >
+                <option value="">— none —</option>
+                {facilityShifts.map(s => (
+                  <option key={s.id} value={s.id}>{s.name} ({formatShiftRange(s)})</option>
+                ))}
+              </select>
+              <p className="text-[11px] text-gray-500 mt-1">Prefills the shift below from your facility's shift schedule.</p>
             </div>
           )}
 
@@ -705,6 +746,7 @@ export default function ShiftNotes() {
   const [activeNoteId, setActiveNoteId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [fetchError, setFetchError] = useState('');
+  const [facilityShifts, setFacilityShifts] = useState<SiteShift[]>([]);
 
   const fetchNotes = useCallback(async () => {
     setLoading(true);
@@ -728,6 +770,19 @@ export default function ShiftNotes() {
   useEffect(() => {
     api.getDepartments().then(data => {
       setDepartments((data as Department[]).map(d => ({ id: d.id, name: d.name })));
+    }).catch(() => {});
+  }, []);
+
+  // Fetch the current site's facility shifts (primary site, or the first one)
+  // once on mount. They power the optional shift selector in the start modal.
+  useEffect(() => {
+    api.getSites().then(sites => {
+      const list = Array.isArray(sites) ? sites : [];
+      const site = list.find((s: any) => s.is_primary) ?? list[0];
+      if (!site) return;
+      api.getSiteShifts(site.id)
+        .then(shifts => setFacilityShifts(Array.isArray(shifts) ? shifts : []))
+        .catch(() => {});
     }).catch(() => {});
   }, []);
 
@@ -871,6 +926,7 @@ export default function ShiftNotes() {
       {showStartModal && (
         <StartShiftModal
           departments={departments}
+          facilityShifts={facilityShifts}
           selectedDate={selectedDate}
           onClose={() => setShowStartModal(false)}
           onCreate={handleNoteCreated}

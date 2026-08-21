@@ -64,13 +64,15 @@ const STATUS_CONFIG = {
 
 // Unknown category/status values (older data, imports, seeds) must degrade to a
 // neutral chip — an unguarded lookup here once took the whole page down.
-const FALLBACK_CAT = { label: 'Other', color: 'text-gray-300', bg: 'bg-gray-700', border: 'border-gray-600', icon: Lightbulb } as const;
-const FALLBACK_STATUS = { label: 'Unknown', color: 'text-gray-300', bg: 'bg-gray-700' } as const;
-function catOf(category: string) {
-  return (CATEGORY_CONFIG as Record<string, typeof FALLBACK_CAT>)[category] ?? FALLBACK_CAT;
+interface CatCfg { label: string; color: string; bg: string; border: string; icon: React.ElementType }
+interface StatusCfg { label: string; color: string; bg: string }
+const FALLBACK_CAT: CatCfg = { label: 'Other', color: 'text-gray-300', bg: 'bg-gray-700', border: 'border-gray-600', icon: Lightbulb };
+const FALLBACK_STATUS: StatusCfg = { label: 'Unknown', color: 'text-gray-300', bg: 'bg-gray-700' };
+function catOf(category: string): CatCfg {
+  return (CATEGORY_CONFIG as unknown as Record<string, CatCfg>)[category] ?? FALLBACK_CAT;
 }
-function statusOf(status: string) {
-  return (STATUS_CONFIG as Record<string, typeof FALLBACK_STATUS>)[status] ?? FALLBACK_STATUS;
+function statusOf(status: string): StatusCfg {
+  return (STATUS_CONFIG as unknown as Record<string, StatusCfg>)[status] ?? FALLBACK_STATUS;
 }
 
 const STATUS_FILTERS = ['All', 'submitted', 'reviewing', 'approved', 'in_progress', 'implemented', 'rejected'] as const;

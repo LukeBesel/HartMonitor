@@ -915,6 +915,16 @@ export const api = {
     request<{ success: boolean }>(`/apps/templates/${id}`, { method: 'DELETE' }),
   createAppFromTemplate: (data: { built_in_key?: string; template_id?: string; name: string }) =>
     request<App>('/apps/from-template', { method: 'POST', body: JSON.stringify(data) }),
+
+  // ─── Facility shifts (site_shifts) — appended block, do not reorder ─────────
+  getSiteShifts: (siteId: string) => request<SiteShift[]>(`/sites/${siteId}/shifts`),
+  createSiteShift: (siteId: string, data: SiteShiftInput) =>
+    request<SiteShift>(`/sites/${siteId}/shifts`, { method: 'POST', body: JSON.stringify(data) }),
+  updateSiteShift: (siteId: string, shiftId: string, data: Partial<SiteShiftInput>) =>
+    request<SiteShift>(`/sites/${siteId}/shifts/${shiftId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteSiteShift: (siteId: string, shiftId: string) =>
+    request<{ success: boolean }>(`/sites/${siteId}/shifts/${shiftId}`, { method: 'DELETE' }),
+  // ─── end facility shifts block ──────────────────────────────────────────────
 };
 
 // ─── App templates (app-templates slice) ─────────────────────────────────────
@@ -933,4 +943,19 @@ export interface MyTemplateSummary {
 export interface AppTemplatesResponse {
   built_in: BuiltInTemplateSummary[];
   mine: MyTemplateSummary[];
+}
+
+// ─── Facility shifts types (appended block) ──────────────────────────────────
+// Uses an import() type so this stays inside the appended block instead of
+// touching the import list at the top of the file.
+type SiteShift = import('../utils/shifts').SiteShift;
+
+/** Body for POST/PUT /api/sites/:siteId/shifts. days = weekday numbers 0-6. */
+export interface SiteShiftInput {
+  name: string;
+  starts_at: string;
+  ends_at: string;
+  days?: number[];
+  color?: string;
+  sort_order?: number;
 }

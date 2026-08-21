@@ -25,6 +25,9 @@ router.post('/', (req, res) => {
   const { name, description = '', cards = [] } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
 
+  const dup = db.prepare('SELECT id FROM dashboards WHERE company_id = ? AND LOWER(name) = LOWER(?)').get(req.companyId, name);
+  if (dup) return res.status(409).json({ error: 'duplicate_name', message: `A dashboard named "${name}" already exists` });
+
   // Plan limit check — base tier limit plus purchased add-on slots
   // (skipped entirely during early access — no limits while EARLY_ACCESS is on)
   const { config: appCfg } = require('../config');
@@ -60,6 +63,10 @@ router.put('/:id', (req, res) => {
   const d = db.prepare('SELECT * FROM dashboards WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!d) return res.status(404).json({ error: 'Not found' });
   const { name, description, cards } = req.body;
+  if (name !== undefined && name !== d.name) {
+    const dup = db.prepare('SELECT id FROM dashboards WHERE company_id = ? AND LOWER(name) = LOWER(?) AND id != ?').get(req.companyId, name, req.params.id);
+    if (dup) return res.status(409).json({ error: 'duplicate_name', message: `A dashboard named "${name}" already exists` });
+  }
   db.prepare(`UPDATE dashboards SET name=?, description=?, cards=?, updated_at=datetime('now') WHERE id=?`)
     .run(
       name ?? d.name,
