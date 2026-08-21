@@ -381,15 +381,15 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
     .run(uuidv4(), orgId, poId, `${tag}-TRK-8842`);
 
   // ── Kaizen: three ideas across the funnel ───────────────────────────────────
-  const insKaizen = db.prepare(`INSERT INTO kaizen_ideas (id, company_id, number, title, description, category, status, department_id, submitted_by, assigned_to, estimated_savings, actual_savings, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?), ?)`);
+  const insKaizen = db.prepare(`INSERT INTO kaizen_ideas (id, company_id, number, idea_number, title, description, category, status, department_id, submitted_by, assigned_to, estimated_savings, actual_savings, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?), ?)`);
   // NOTE: statuses/categories must exist in BOTH the kaizen_ideas CHECK
   // constraint AND the Kaizen page's STATUS_CONFIG/CATEGORY_CONFIG maps —
   // the intersection is: submitted, approved, in_progress, implemented,
   // rejected ('under_review' crashes the page; 'reviewing' fails the CHECK).
-  insKaizen.run(uuidv4(), orgId, `${tag}-KZ-1`, 'Pre-kit bolts at receiving', 'Bag bolts into per-unit kits when they arrive so assemblers stop counting at the bench.', 'delivery', 'submitted', deptA, 'Bob Operator', '', 0, 0, '-4 days', null);
-  insKaizen.run(uuidv4(), orgId, `${tag}-KZ-2`, 'Shadow board for torque drivers', 'Outlined shadow board at Station 1 ended the morning hunt for the 15 Nm driver.', 'safety', 'implemented', deptA, 'Maria Lopez', 'Demo Visitor', 800, 1200, '-30 days',
+  insKaizen.run(uuidv4(), orgId, `${tag}-KZ-1`, `${tag}-KZ-1`, 'Pre-kit bolts at receiving', 'Bag bolts into per-unit kits when they arrive so assemblers stop counting at the bench.', 'delivery', 'submitted', deptA, 'Bob Operator', '', 0, 0, '-4 days', null);
+  insKaizen.run(uuidv4(), orgId, `${tag}-KZ-2`, `${tag}-KZ-2`, 'Shadow board for torque drivers', 'Outlined shadow board at Station 1 ended the morning hunt for the 15 Nm driver.', 'safety', 'implemented', deptA, 'Maria Lopez', 'Demo Visitor', 800, 1200, '-30 days',
     db.prepare(`SELECT datetime('now', '-10 days') AS t`).get().t);
-  insKaizen.run(uuidv4(), orgId, `${tag}-KZ-3`, 'Vacuum lifter for heavy-duty brackets', 'BRKT-200 brackets are 14 kg — a vacuum lifter at pack-out would cut strain and drops.', 'cost', 'approved', deptB, 'Priya Shah', 'Demo Visitor', 3500, 0, '-12 days', null);
+  insKaizen.run(uuidv4(), orgId, `${tag}-KZ-3`, `${tag}-KZ-3`, 'Vacuum lifter for heavy-duty brackets', 'BRKT-200 brackets are 14 kg — a vacuum lifter at pack-out would cut strain and drops.', 'cost', 'approved', deptB, 'Priya Shah', 'Demo Visitor', 3500, 0, '-12 days', null);
 
   // ── Shift handoff note (yesterday, tells the same downtime story) ───────────
   db.prepare(`INSERT INTO shift_notes (id, company_id, department_id, shift_name, shift_date, supervisor, good_count, scrap_count, downtime_minutes, notes, status, created_by) VALUES (?, ?, ?, 'Day', date('now', '-1 days'), 'Demo Visitor', 120, 3, 25, 'Pack-out conveyor squealing near the drive end — maintenance notified, keep an eye on it.', 'submitted', 'Demo Visitor')`)

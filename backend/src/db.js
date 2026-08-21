@@ -1951,6 +1951,33 @@ db.exec(`
     ON kaizen_ideas(company_id, status, created_at DESC);
 `);
 
+// ─── kaizen_ideas: columns the routes/UI have always used ─────────────────────
+// The original table shipped a narrower shape than routes/kaizen.js writes, so
+// POST /api/kaizen 500'd on every fresh database. Additive, guarded ALTERs only;
+// idea_number is backfilled from the legacy `number` column so seeded rows sort
+// and search correctly.
+const kaizenCols = db.prepare('PRAGMA table_info(kaizen_ideas)').all().map(c => c.name);
+const KAIZEN_ADDITIONS = [
+  ['idea_number', "TEXT"],
+  ['type', "TEXT DEFAULT 'improvement'"],
+  ['submitter_id', 'TEXT'],
+  ['submitter_name', "TEXT DEFAULT ''"],
+  ['champion_name', "TEXT DEFAULT ''"],
+  ['estimated_hours', 'REAL DEFAULT 0'],
+  ['actual_hours', 'REAL DEFAULT 0'],
+  ['target_date', 'TEXT'],
+  ['rejection_reason', "TEXT DEFAULT ''"],
+  ['before_description', "TEXT DEFAULT ''"],
+  ['after_description', "TEXT DEFAULT ''"],
+  ['updated_at', 'TEXT'],
+];
+for (const [col, decl] of KAIZEN_ADDITIONS) {
+  if (!kaizenCols.includes(col)) db.exec(`ALTER TABLE kaizen_ideas ADD COLUMN ${col} ${decl}`);
+}
+if (!kaizenCols.includes('idea_number')) {
+  db.exec('UPDATE kaizen_ideas SET idea_number = number WHERE idea_number IS NULL');
+}
+
 // ─── SSO OAuth State (persisted so multi-process deployments work) ─────────────
 db.exec(`
   CREATE TABLE IF NOT EXISTS sso_state (

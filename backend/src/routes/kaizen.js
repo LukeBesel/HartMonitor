@@ -7,19 +7,19 @@ const router = express.Router();
 
 function nextIdeaNumber(companyId) {
   const year = new Date().getFullYear();
-  const row = db.prepare(`SELECT idea_number FROM kaizen_ideas WHERE company_id = ? AND idea_number LIKE 'KZN-${year}-%' ORDER BY idea_number DESC LIMIT 1`).get(companyId);
+  const row = db.prepare(`SELECT COALESCE(idea_number, number) AS idea_number FROM kaizen_ideas WHERE company_id = ? AND COALESCE(idea_number, number) LIKE 'KZN-${year}-%' ORDER BY 1 DESC LIMIT 1`).get(companyId);
   if (!row) return `KZN-${year}-001`;
   const last = parseInt(row.idea_number.split('-')[2]) || 0;
   return `KZN-${year}-${String(last + 1).padStart(3, '0')}`;
 }
 
 function ownedIdea(req) {
-  return db.prepare('SELECT * FROM kaizen_ideas WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId) || null;
+  return db.prepare('SELECT *, COALESCE(idea_number, number) AS idea_number FROM kaizen_ideas WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId) || null;
 }
 
 function ideaWithDept(id, companyId) {
   return db.prepare(`
-    SELECT k.*, d.name as department_name
+    SELECT k.*, COALESCE(k.idea_number, k.number) AS idea_number, d.name as department_name
     FROM kaizen_ideas k
     LEFT JOIN departments d ON d.id = k.department_id
     WHERE k.id = ? AND k.company_id = ?
@@ -31,7 +31,7 @@ function ideaWithDept(id, companyId) {
 router.get('/', (req, res) => {
   const { status, category, department_id, search } = req.query;
   let sql = `
-    SELECT k.*, d.name as department_name
+    SELECT k.*, COALESCE(k.idea_number, k.number) AS idea_number, d.name as department_name
     FROM kaizen_ideas k
     LEFT JOIN departments d ON d.id = k.department_id
     WHERE k.company_id = ?
@@ -74,9 +74,9 @@ router.post('/', (req, res) => {
   const idea_number = nextIdeaNumber(req.companyId);
   const now = new Date().toISOString();
   db.prepare(`
-    INSERT INTO kaizen_ideas (id, company_id, idea_number, title, description, category, type, department_id, submitter_id, submitter_name, estimated_savings, estimated_hours, target_date, before_description, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, req.companyId, idea_number, title.trim(), description, category, type, department_id || null, req.user?.id || null, submitter_name || req.user?.display_name || '', estimated_savings, estimated_hours, target_date || null, before_description, now, now);
+    INSERT INTO kaizen_ideas (id, company_id, number, idea_number, title, description, category, type, department_id, submitter_id, submitter_name, estimated_savings, estimated_hours, target_date, before_description, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, req.companyId, idea_number, idea_number, title.trim(), description, category, type, department_id || null, req.user?.id || null, submitter_name || req.user?.display_name || '', estimated_savings, estimated_hours, target_date || null, before_description, now, now);
   logActivity(req.companyId, 'kaizen', id, `Idea ${idea_number} submitted: ${title}`, req.user?.display_name);
   res.status(201).json(ideaWithDept(id, req.companyId));
 });
