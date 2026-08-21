@@ -114,9 +114,11 @@ const SCHEDULE_STATUS_CLASSES: Record<string, string> = {
 };
 const PRIORITY_CLASSES: Record<string, string> = {
   critical: 'bg-red-600 text-white',
-  high:     'bg-orange-500 text-white',
+  // 600/500 shades keep white label text above 3:1 on both grounds;
+  // orange-500 (2.8:1) and gray-400 (2.3:1) did not.
+  high:     'bg-orange-600 text-white',
   medium:   'bg-blue-500 text-white',
-  low:      'bg-gray-400 text-white',
+  low:      'bg-gray-500 text-white',
 };
 const GANTT_BAR_CLASSES: Record<string, string> = {
   pending:     'bg-gray-400',
@@ -261,7 +263,7 @@ function QRCodeModal({ woNumber, partName, quantity, onClose }: {
           <button
             onClick={handlePrint}
             disabled={!dataUrl}
-            className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-slate-800 text-white text-sm font-medium rounded-xl hover:bg-slate-700 disabled:opacity-50 transition-colors"
+            className="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-slate-800 dark:bg-slate-600 text-white text-sm font-medium rounded-xl hover:bg-slate-700 dark:hover:bg-slate-500 disabled:opacity-50 transition-colors"
           >
             <Printer size={15} /> Print Label
           </button>
@@ -335,7 +337,7 @@ function WOCommentsPanel({ woId, currentUserId }: { woId: string; currentUserId?
                       onClick={() => deleteComment(c.id)}
                       className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-red-100 transition-all"
                     >
-                      <Trash size={10} className="text-red-400" />
+                      <Trash size={10} className="text-red-500" />
                     </button>
                   )}
                 </div>
@@ -1014,7 +1016,7 @@ export default function Schedule() {
         </div>
       ) : loadError ? (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm py-16 flex flex-col items-center gap-3 text-center">
-          <AlertTriangle size={28} className="text-red-400" />
+          <AlertTriangle size={28} className="text-red-500" />
           <p className="text-gray-500 font-medium">Couldn't load work orders</p>
           <p className="text-xs text-gray-400">{loadError}</p>
           <button onClick={load} className="btn-secondary">Retry</button>
@@ -1204,7 +1206,7 @@ function ListView({
                         {Boolean(kit.has_short) && <Flag size={10} className="text-amber-600" />}
                       </Link>
                     ) : (
-                      <span className="text-xs text-gray-300">—</span>
+                      <span className="text-xs text-gray-400">—</span>
                     )}
                   </td>
                   <td className="px-4 py-3">

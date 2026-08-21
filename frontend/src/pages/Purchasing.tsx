@@ -1044,7 +1044,7 @@ function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
                     <td colSpan={8} className="px-4 py-16 text-center">
                       <ShoppingCart className="w-10 h-10 text-gray-200 mx-auto mb-3" />
                       <div className="text-gray-400 font-medium">No purchase orders found</div>
-                      <div className="text-gray-300 text-xs mt-1">
+                      <div className="text-gray-500 text-xs mt-1">
                         {statusFilter !== 'All' || search
                           ? 'Try adjusting your filters or search'
                           : 'Create your first PO to get started'}
@@ -1205,7 +1205,7 @@ function VendorsTab({ onVendorsChange }: { onVendorsChange: (vendors: Vendor[]) 
         <div className="card py-20 text-center">
           <Building2 className="w-10 h-10 text-gray-200 mx-auto mb-3" />
           <div className="text-gray-400 font-medium">No vendors found</div>
-          <div className="text-gray-300 text-xs mt-1">
+          <div className="text-gray-500 text-xs mt-1">
             {search ? 'Try a different search' : 'Add your first vendor to start purchasing'}
           </div>
           {canEdit && !search && (

@@ -335,7 +335,7 @@ export default function InventoryRequirements() {
               onClick={() => setShowShortagesOnly(false)}
               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
                 !showShortagesOnly
-                  ? 'bg-gray-900 text-white shadow-sm'
+                  ? 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900 shadow-sm'
                   : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
               }`}
             >

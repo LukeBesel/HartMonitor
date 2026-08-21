@@ -44,31 +44,31 @@ interface Department {
 // ── Category & Status configs ─────────────────────────────────────────────────
 
 const CATEGORY_CONFIG = {
-  safety:      { label: 'Safety',      color: 'text-red-400',    bg: 'bg-red-500/20',    border: 'border-red-500/30',    icon: ShieldAlert },
-  quality:     { label: 'Quality',     color: 'text-purple-400', bg: 'bg-purple-500/20', border: 'border-purple-500/30', icon: CheckCircle2 },
-  delivery:    { label: 'Delivery',    color: 'text-blue-400',   bg: 'bg-blue-500/20',   border: 'border-blue-500/30',   icon: Truck },
-  cost:        { label: 'Cost',        color: 'text-green-400',  bg: 'bg-green-500/20',  border: 'border-green-500/30',  icon: DollarSign },
-  morale:      { label: 'Morale',      color: 'text-yellow-400', bg: 'bg-yellow-500/20', border: 'border-yellow-500/30', icon: Smile },
-  environment: { label: 'Environment', color: 'text-teal-400',   bg: 'bg-teal-500/20',   border: 'border-teal-500/30',   icon: Leaf },
+  safety:      { label: 'Safety',      color: 'text-red-700',    bg: 'bg-red-50',    border: 'border-red-200',    icon: ShieldAlert },
+  quality:     { label: 'Quality',     color: 'text-purple-700', bg: 'bg-purple-50', border: 'border-purple-200', icon: CheckCircle2 },
+  delivery:    { label: 'Delivery',    color: 'text-blue-700',   bg: 'bg-blue-50',   border: 'border-blue-200',   icon: Truck },
+  cost:        { label: 'Cost',        color: 'text-emerald-700',  bg: 'bg-emerald-50',  border: 'border-emerald-200',  icon: DollarSign },
+  morale:      { label: 'Morale',      color: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-200', icon: Smile },
+  environment: { label: 'Environment', color: 'text-cyan-700',   bg: 'bg-cyan-50',   border: 'border-cyan-200',   icon: Leaf },
 } as const;
 
 const STATUS_CONFIG = {
-  submitted:   { label: 'Submitted',   color: 'text-gray-300',   bg: 'bg-gray-700' },
-  reviewing:   { label: 'Reviewing',   color: 'text-yellow-300', bg: 'bg-yellow-500/20' },
-  under_review:{ label: 'Reviewing',   color: 'text-yellow-300', bg: 'bg-yellow-500/20' }, // DB CHECK vocab alias
-  approved:    { label: 'Approved',    color: 'text-blue-300',   bg: 'bg-blue-500/20' },
-  in_progress: { label: 'In Progress', color: 'text-amber-300',  bg: 'bg-amber-500/20' },
-  implemented: { label: 'Implemented', color: 'text-green-300',  bg: 'bg-green-500/20' },
-  rejected:    { label: 'Rejected',    color: 'text-red-300',    bg: 'bg-red-500/20' },
-  on_hold:     { label: 'On Hold',     color: 'text-gray-400',   bg: 'bg-gray-800' },
+  submitted:   { label: 'Submitted',   color: 'text-gray-700',   bg: 'bg-gray-100' },
+  reviewing:   { label: 'Reviewing',   color: 'text-amber-700', bg: 'bg-amber-50' },
+  under_review:{ label: 'Reviewing',   color: 'text-amber-700', bg: 'bg-amber-50' }, // DB CHECK vocab alias
+  approved:    { label: 'Approved',    color: 'text-blue-700',   bg: 'bg-blue-50' },
+  in_progress: { label: 'In Progress', color: 'text-amber-700',  bg: 'bg-amber-50' },
+  implemented: { label: 'Implemented', color: 'text-emerald-700',  bg: 'bg-emerald-50' },
+  rejected:    { label: 'Rejected',    color: 'text-red-700',    bg: 'bg-red-50' },
+  on_hold:     { label: 'On Hold',     color: 'text-gray-500',   bg: 'bg-gray-100' },
 } as const;
 
 // Unknown category/status values (older data, imports, seeds) must degrade to a
 // neutral chip — an unguarded lookup here once took the whole page down.
 interface CatCfg { label: string; color: string; bg: string; border: string; icon: React.ElementType }
 interface StatusCfg { label: string; color: string; bg: string }
-const FALLBACK_CAT: CatCfg = { label: 'Other', color: 'text-gray-300', bg: 'bg-gray-700', border: 'border-gray-600', icon: Lightbulb };
-const FALLBACK_STATUS: StatusCfg = { label: 'Unknown', color: 'text-gray-300', bg: 'bg-gray-700' };
+const FALLBACK_CAT: CatCfg = { label: 'Other', color: 'text-gray-700', bg: 'bg-gray-100', border: 'border-gray-300', icon: Lightbulb };
+const FALLBACK_STATUS: StatusCfg = { label: 'Unknown', color: 'text-gray-700', bg: 'bg-gray-100' };
 function catOf(category: string): CatCfg {
   return (CATEGORY_CONFIG as unknown as Record<string, CatCfg>)[category] ?? FALLBACK_CAT;
 }
@@ -154,14 +154,14 @@ function SubmitIdeaModal({ departments, onClose, onSubmitted }: SubmitIdeaModalP
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-gray-900 rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-800 shrink-0">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
           <div className="flex items-center gap-2">
-            <Lightbulb className="w-5 h-5 text-yellow-400" />
-            <h2 className="text-white font-semibold text-lg">Submit Kaizen Idea</h2>
+            <Lightbulb className="w-5 h-5 text-amber-700" />
+            <h2 className="text-gray-900 font-semibold text-lg">Submit Kaizen Idea</h2>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-900 transition-colors">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -169,16 +169,16 @@ function SubmitIdeaModal({ departments, onClose, onSubmitted }: SubmitIdeaModalP
         {/* Body */}
         <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
           {error && (
-            <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-red-400 text-sm">
+            <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-red-700 text-sm">
               {error}
             </div>
           )}
 
           {/* Title */}
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-1">Title *</label>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Title *</label>
             <input
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               placeholder="Brief title for the idea"
               value={title}
               onChange={e => setTitle(e.target.value)}
@@ -187,10 +187,10 @@ function SubmitIdeaModal({ departments, onClose, onSubmitted }: SubmitIdeaModalP
 
           {/* Description */}
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-1">Description *</label>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Description *</label>
             <textarea
               rows={3}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
               placeholder="Describe the idea in detail"
               value={description}
               onChange={e => setDescription(e.target.value)}
@@ -199,7 +199,7 @@ function SubmitIdeaModal({ departments, onClose, onSubmitted }: SubmitIdeaModalP
 
           {/* Category Grid */}
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-2">Category *</label>
+            <label className="text-xs font-medium text-gray-500 block mb-2">Category *</label>
             <div className="grid grid-cols-3 gap-2">
               {(Object.keys(CATEGORY_CONFIG) as KaizenIdea['category'][]).map(cat => {
                 const cfg = catOf(cat);
@@ -213,7 +213,7 @@ function SubmitIdeaModal({ departments, onClose, onSubmitted }: SubmitIdeaModalP
                     className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 transition-all text-sm font-medium ${
                       selected
                         ? `${cfg.bg} ${cfg.border} ${cfg.color}`
-                        : 'bg-gray-800 border-gray-700 text-gray-400 hover:border-gray-600'
+                        : 'bg-gray-100 border-gray-300 text-gray-500 hover:border-gray-300'
                     }`}
                   >
                     <Icon className="w-5 h-5" />
@@ -227,9 +227,9 @@ function SubmitIdeaModal({ departments, onClose, onSubmitted }: SubmitIdeaModalP
           {/* Type & Department row */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Type</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Type</label>
               <select
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                 value={type}
                 onChange={e => setType(e.target.value as KaizenIdea['type'])}
               >
@@ -239,9 +239,9 @@ function SubmitIdeaModal({ departments, onClose, onSubmitted }: SubmitIdeaModalP
               </select>
             </div>
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Department</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Department</label>
               <select
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                 value={departmentId}
                 onChange={e => setDepartmentId(e.target.value)}
               >
@@ -255,9 +255,9 @@ function SubmitIdeaModal({ departments, onClose, onSubmitted }: SubmitIdeaModalP
 
           {/* Submitter Name */}
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-1">Your Name *</label>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Your Name *</label>
             <input
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               placeholder="Enter your name"
               value={submitterName}
               onChange={e => setSubmitterName(e.target.value)}
@@ -266,10 +266,10 @@ function SubmitIdeaModal({ departments, onClose, onSubmitted }: SubmitIdeaModalP
 
           {/* Before Description */}
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-1">Current Situation (optional)</label>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Current Situation (optional)</label>
             <textarea
               rows={2}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
               placeholder="What's the current situation or problem?"
               value={beforeDescription}
               onChange={e => setBeforeDescription(e.target.value)}
@@ -278,11 +278,11 @@ function SubmitIdeaModal({ departments, onClose, onSubmitted }: SubmitIdeaModalP
 
           {/* Estimated Savings */}
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-1">Estimated Savings ($, optional)</label>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Estimated Savings ($, optional)</label>
             <input
               type="number"
               min="0"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               placeholder="0"
               value={estimatedSavings}
               onChange={e => setEstimatedSavings(e.target.value)}
@@ -291,10 +291,10 @@ function SubmitIdeaModal({ departments, onClose, onSubmitted }: SubmitIdeaModalP
         </div>
 
         {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-800 flex items-center justify-end gap-3 shrink-0">
+        <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-end gap-3 shrink-0">
           <button
             onClick={onClose}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-gray-800 text-gray-200 border border-gray-700 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors"
           >
             Cancel
           </button>
@@ -376,9 +376,9 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
       <div className="fixed inset-0 z-40 bg-black/40" onClick={onClose} />
 
       {/* Panel */}
-      <div className="fixed inset-y-0 right-0 w-full sm:w-[480px] bg-gray-900 border-l border-gray-800 shadow-2xl z-50 flex flex-col overflow-hidden">
+      <div className="fixed inset-y-0 right-0 w-full sm:w-[480px] bg-white border-l border-gray-200 shadow-2xl z-50 flex flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex items-start justify-between px-5 py-4 border-b border-gray-800 shrink-0">
+        <div className="flex items-start justify-between px-5 py-4 border-b border-gray-200 shrink-0">
           <div className="flex-1 min-w-0 pr-3">
             <div className="flex items-center gap-2 mb-1 flex-wrap">
               <span className="text-xs font-mono text-gray-500">{idea.idea_number}</span>
@@ -390,9 +390,9 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
                 {statCfg.label}
               </span>
             </div>
-            <h2 className="text-white font-semibold text-base leading-snug">{idea.title}</h2>
+            <h2 className="text-gray-900 font-semibold text-base leading-snug">{idea.title}</h2>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors shrink-0 mt-0.5">
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-900 transition-colors shrink-0 mt-0.5">
             <X className="w-5 h-5" />
           </button>
         </div>
@@ -401,15 +401,15 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
           {/* Description */}
           <div>
-            <p className="text-xs font-medium text-gray-400 mb-1">Description</p>
-            <p className="text-gray-300 text-sm leading-relaxed">{idea.description}</p>
+            <p className="text-xs font-medium text-gray-500 mb-1">Description</p>
+            <p className="text-gray-700 text-sm leading-relaxed">{idea.description}</p>
           </div>
 
           {/* Meta */}
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
               <p className="text-xs text-gray-500 mb-0.5">Submitter</p>
-              <p className="text-gray-300 flex items-center gap-1">
+              <p className="text-gray-700 flex items-center gap-1">
                 <Users className="w-3.5 h-3.5 text-gray-500" />
                 {idea.submitter_name}
               </p>
@@ -417,38 +417,38 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
             {idea.department_name && (
               <div>
                 <p className="text-xs text-gray-500 mb-0.5">Department</p>
-                <p className="text-gray-300">{idea.department_name}</p>
+                <p className="text-gray-700">{idea.department_name}</p>
               </div>
             )}
             <div>
               <p className="text-xs text-gray-500 mb-0.5">Type</p>
-              <p className="text-gray-300 capitalize">{idea.type}</p>
+              <p className="text-gray-700 capitalize">{idea.type}</p>
             </div>
             <div>
               <p className="text-xs text-gray-500 mb-0.5">Submitted</p>
-              <p className="text-gray-300">{formatDate(idea.created_at)}</p>
+              <p className="text-gray-700">{formatDate(idea.created_at)}</p>
             </div>
             {idea.estimated_savings > 0 && (
               <div>
                 <p className="text-xs text-gray-500 mb-0.5">Est. Savings</p>
-                <p className="text-green-400 font-medium">{formatCurrency(idea.estimated_savings)}</p>
+                <p className="text-emerald-700 font-medium">{formatCurrency(idea.estimated_savings)}</p>
               </div>
             )}
           </div>
 
-          <hr className="border-gray-800" />
+          <hr className="border-gray-200" />
 
           {/* Editable fields */}
           <div className="space-y-3">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1.5">
               <Edit3 className="w-3.5 h-3.5" /> Edit Details
             </p>
 
             {/* Champion Name */}
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Champion Name</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Champion Name</label>
               <input
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                 placeholder="Who is leading this?"
                 value={championName}
                 onChange={e => setChampionName(e.target.value)}
@@ -457,9 +457,9 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
 
             {/* Status */}
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Status</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Status</label>
               <select
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                 value={status}
                 onChange={e => setStatus(e.target.value as KaizenIdea['status'])}
               >
@@ -471,10 +471,10 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
 
             {/* Target Date */}
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Target Date</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Target Date</label>
               <input
                 type="date"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                 value={targetDate}
                 onChange={e => setTargetDate(e.target.value)}
               />
@@ -482,11 +482,11 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
 
             {/* Actual Savings */}
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Actual Savings ($)</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Actual Savings ($)</label>
               <input
                 type="number"
                 min="0"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
                 placeholder="0"
                 value={actualSavings}
                 onChange={e => setActualSavings(e.target.value)}
@@ -495,10 +495,10 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
 
             {/* Before Description */}
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Before (Current Situation)</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Before (Current Situation)</label>
               <textarea
                 rows={2}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
                 placeholder="Describe the current/before state"
                 value={beforeDesc}
                 onChange={e => setBeforeDesc(e.target.value)}
@@ -507,10 +507,10 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
 
             {/* After Description */}
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">After (Improved State)</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">After (Improved State)</label>
               <textarea
                 rows={2}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
                 placeholder="Describe the improved/after state"
                 value={afterDesc}
                 onChange={e => setAfterDesc(e.target.value)}
@@ -518,7 +518,7 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
             </div>
 
             {saveError && (
-              <div className="text-red-400 text-xs">{saveError}</div>
+              <div className="text-red-700 text-xs">{saveError}</div>
             )}
 
             <button
@@ -530,21 +530,21 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
             </button>
           </div>
 
-          <hr className="border-gray-800" />
+          <hr className="border-gray-200" />
 
           {/* Delete section */}
           <div>
             {!confirmDelete ? (
               <button
                 onClick={() => setConfirmDelete(true)}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-gray-800 text-red-400 border border-gray-700 rounded-lg text-sm font-medium hover:bg-red-500/10 hover:border-red-500/30 transition-colors"
+                className="inline-flex items-center gap-2 px-4 py-2 bg-gray-100 text-red-700 border border-gray-300 rounded-lg text-sm font-medium hover:bg-red-100 hover:border-red-200 transition-colors"
               >
                 <Trash2 className="w-4 h-4" />
                 Delete Idea
               </button>
             ) : (
-              <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-3 space-y-2">
-                <p className="text-red-400 text-sm font-medium">Delete this idea permanently?</p>
+              <div className="bg-red-50 border border-red-200 rounded-xl p-3 space-y-2">
+                <p className="text-red-700 text-sm font-medium">Delete this idea permanently?</p>
                 <div className="flex gap-2">
                   <button
                     onClick={handleDelete}
@@ -556,7 +556,7 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
                   </button>
                   <button
                     onClick={() => setConfirmDelete(false)}
-                    className="inline-flex items-center gap-2 px-3 py-1.5 bg-gray-800 text-gray-200 border border-gray-700 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
+                    className="inline-flex items-center gap-2 px-3 py-1.5 bg-white text-gray-700 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors"
                   >
                     Cancel
                   </button>
@@ -587,7 +587,7 @@ function IdeaListCard({ idea, onClick }: IdeaListCardProps) {
   return (
     <div
       onClick={onClick}
-      className="bg-gray-900 border border-gray-800 rounded-xl p-4 cursor-pointer hover:border-gray-700 transition-colors flex items-start gap-4"
+      className="bg-white border border-gray-200 rounded-xl p-4 cursor-pointer hover:border-gray-300 transition-colors flex items-start gap-4"
     >
       {/* Left: icon + idea number */}
       <div className="shrink-0 flex flex-col items-center gap-1.5">
@@ -599,8 +599,8 @@ function IdeaListCard({ idea, onClick }: IdeaListCardProps) {
 
       {/* Center */}
       <div className="flex-1 min-w-0">
-        <p className="text-white font-semibold text-sm leading-snug mb-1">{idea.title}</p>
-        <p className="text-gray-400 text-xs leading-relaxed line-clamp-2 mb-2">{idea.description}</p>
+        <p className="text-gray-900 font-semibold text-sm leading-snug mb-1">{idea.title}</p>
+        <p className="text-gray-500 text-xs leading-relaxed line-clamp-2 mb-2">{idea.description}</p>
         <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap">
           <span className="flex items-center gap-1">
             <Users className="w-3 h-3" />
@@ -619,7 +619,7 @@ function IdeaListCard({ idea, onClick }: IdeaListCardProps) {
           {statCfg.label}
         </span>
         {idea.estimated_savings > 0 && (
-          <span className="text-green-400 text-xs font-medium flex items-center gap-0.5">
+          <span className="text-emerald-700 text-xs font-medium flex items-center gap-0.5">
             <Target className="w-3 h-3" />
             {formatCurrency(idea.estimated_savings)}
           </span>
@@ -627,7 +627,7 @@ function IdeaListCard({ idea, onClick }: IdeaListCardProps) {
         {idea.target_date && (
           <span className="text-gray-500 text-xs">{formatDate(idea.target_date)}</span>
         )}
-        <ChevronRight className="w-4 h-4 text-gray-600" />
+        <ChevronRight className="w-4 h-4 text-gray-400" />
       </div>
     </div>
   );
@@ -648,7 +648,7 @@ function IdeaGridCard({ idea, onClick }: IdeaGridCardProps) {
   return (
     <div
       onClick={onClick}
-      className="bg-gray-900 border border-gray-800 rounded-xl p-4 cursor-pointer hover:border-gray-700 transition-colors flex flex-col gap-3"
+      className="bg-white border border-gray-200 rounded-xl p-4 cursor-pointer hover:border-gray-300 transition-colors flex flex-col gap-3"
     >
       <div className="flex items-start justify-between gap-2">
         <div className={`w-9 h-9 rounded-full flex items-center justify-center ${catCfg.bg} border ${catCfg.border}`}>
@@ -657,7 +657,7 @@ function IdeaGridCard({ idea, onClick }: IdeaGridCardProps) {
         <span className="text-xs font-mono text-gray-500 mt-1">{idea.idea_number}</span>
       </div>
       <div>
-        <p className="text-white font-semibold text-sm leading-snug line-clamp-2 mb-1">{idea.title}</p>
+        <p className="text-gray-900 font-semibold text-sm leading-snug line-clamp-2 mb-1">{idea.title}</p>
         <div className="flex items-center gap-2 flex-wrap">
           <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${catCfg.bg} ${catCfg.color} border ${catCfg.border}`}>
             {catCfg.label}
@@ -670,7 +670,7 @@ function IdeaGridCard({ idea, onClick }: IdeaGridCardProps) {
       <div className="mt-auto text-xs text-gray-500">
         <p>{idea.submitter_name}</p>
         {idea.estimated_savings > 0 && (
-          <p className="text-green-400 font-medium">{formatCurrency(idea.estimated_savings)}</p>
+          <p className="text-emerald-700 font-medium">{formatCurrency(idea.estimated_savings)}</p>
         )}
       </div>
     </div>
@@ -686,12 +686,12 @@ interface SummaryCardProps {
   icon?: React.ReactNode;
 }
 
-function SummaryCard({ label, value, color = 'text-white', icon }: SummaryCardProps) {
+function SummaryCard({ label, value, color = 'text-gray-900', icon }: SummaryCardProps) {
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-center gap-3">
+    <div className="bg-white border border-gray-200 rounded-xl p-4 flex items-center gap-3">
       {icon && <div className="shrink-0">{icon}</div>}
       <div>
-        <p className="text-xs text-gray-400 mb-0.5">{label}</p>
+        <p className="text-xs text-gray-500 mb-0.5">{label}</p>
         <p className={`text-2xl font-bold ${color}`}>{value}</p>
       </div>
     </div>
@@ -755,16 +755,16 @@ export default function Kaizen() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 p-6">
+    <div className="min-h-screen bg-gray-50 p-6">
       {/* Header */}
       <div className="flex items-center justify-between mb-6 gap-4 flex-wrap">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-yellow-500/20 border border-yellow-500/30 rounded-xl flex items-center justify-center">
-            <Lightbulb className="w-5 h-5 text-yellow-400" />
+          <div className="w-10 h-10 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-center">
+            <Lightbulb className="w-5 h-5 text-amber-700" />
           </div>
           <div>
-            <h1 className="text-white font-bold text-xl">Kaizen / CI Ideas</h1>
-            <p className="text-gray-400 text-xs">Continuous improvement ideas tracker</p>
+            <h1 className="text-gray-900 font-bold text-xl">Kaizen / CI Ideas</h1>
+            <p className="text-gray-500 text-xs">Continuous improvement ideas tracker</p>
           </div>
         </div>
         <button
@@ -781,43 +781,43 @@ export default function Kaizen() {
         <SummaryCard
           label="Total Ideas"
           value={summary?.total ?? '—'}
-          icon={<Lightbulb className="w-5 h-5 text-yellow-400" />}
+          icon={<Lightbulb className="w-5 h-5 text-amber-700" />}
         />
         <SummaryCard
           label="Implemented"
           value={summary?.implemented ?? '—'}
-          color="text-green-400"
-          icon={<CheckCircle2 className="w-5 h-5 text-green-400" />}
+          color="text-emerald-700"
+          icon={<CheckCircle2 className="w-5 h-5 text-emerald-700" />}
         />
         <SummaryCard
           label="Total Savings"
           value={summary?.total_savings ? formatCurrency(summary.total_savings) : '$0'}
-          color="text-green-400"
-          icon={<DollarSign className="w-5 h-5 text-green-400" />}
+          color="text-emerald-700"
+          icon={<DollarSign className="w-5 h-5 text-emerald-700" />}
         />
         <SummaryCard
           label="In Progress"
           value={summary?.in_progress ?? '—'}
-          color="text-amber-400"
-          icon={<Target className="w-5 h-5 text-amber-400" />}
+          color="text-amber-700"
+          icon={<Target className="w-5 h-5 text-amber-700" />}
         />
       </div>
 
       {/* Filter row */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-4 space-y-3">
+      <div className="bg-white border border-gray-200 rounded-xl p-4 mb-4 space-y-3">
         {/* Search + category */}
         <div className="flex gap-3 flex-wrap">
           <div className="relative flex-1 min-w-48">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
             <input
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg pl-9 pr-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="w-full bg-white border border-gray-300 rounded-lg pl-9 pr-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               placeholder="Search ideas…"
               value={search}
               onChange={e => setSearch(e.target.value)}
             />
           </div>
           <select
-            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             value={categoryFilter}
             onChange={e => setCategoryFilter(e.target.value)}
           >
@@ -828,18 +828,18 @@ export default function Kaizen() {
           </select>
 
           {/* View toggle */}
-          <div className="flex items-center gap-1 bg-gray-800 border border-gray-700 rounded-lg p-1">
+          <div className="flex items-center gap-1 bg-gray-100 border border-gray-300 rounded-lg p-1">
             <button
               onClick={() => setViewMode('list')}
               title="List view"
-              className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-gray-700 text-white' : 'text-gray-500 hover:text-gray-300'}`}
+              className={`p-1.5 rounded-md transition-colors ${viewMode === 'list' ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
             >
               <LayoutList className="w-4 h-4" />
             </button>
             <button
               onClick={() => setViewMode('grid')}
               title="Grid view"
-              className={`p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-gray-700 text-white' : 'text-gray-500 hover:text-gray-300'}`}
+              className={`p-1.5 rounded-md transition-colors ${viewMode === 'grid' ? 'bg-gray-100 text-gray-900' : 'text-gray-500 hover:text-gray-700'}`}
             >
               <LayoutGrid className="w-4 h-4" />
             </button>
@@ -858,7 +858,7 @@ export default function Kaizen() {
                 className={`shrink-0 px-3 py-1 rounded-full text-xs font-medium transition-colors ${
                   active
                     ? 'bg-blue-600 text-white'
-                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200'
+                    : 'bg-gray-100 text-gray-500 hover:bg-gray-100 hover:text-gray-700'
                 }`}
               >
                 {label}
@@ -876,11 +876,11 @@ export default function Kaizen() {
       ) : ideas.length === 0 ? (
         /* Empty state */
         <div className="flex flex-col items-center justify-center py-24 text-center">
-          <div className="w-20 h-20 bg-yellow-500/10 border border-yellow-500/20 rounded-full flex items-center justify-center mb-4">
-            <Lightbulb className="w-10 h-10 text-yellow-400" />
+          <div className="w-20 h-20 bg-amber-50 border border-amber-200 rounded-full flex items-center justify-center mb-4">
+            <Lightbulb className="w-10 h-10 text-amber-700" />
           </div>
-          <h3 className="text-white font-semibold text-lg mb-1">No ideas yet</h3>
-          <p className="text-gray-400 text-sm mb-6 max-w-xs">
+          <h3 className="text-gray-900 font-semibold text-lg mb-1">No ideas yet</h3>
+          <p className="text-gray-500 text-sm mb-6 max-w-xs">
             Be the first to submit a continuous improvement idea
           </p>
           <button

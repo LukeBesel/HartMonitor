@@ -133,7 +133,7 @@ function ChampionCard({ board }: { board: LeaderboardBoard }) {
         <span className="text-white/60">·</span>
         <span>{champ.completions} run{champ.completions === 1 ? '' : 's'}</span>
         {champ.is_record && (
-          <span className="flex items-center gap-1 text-amber-300 ml-auto"><Sparkles size={12} /> Record</span>
+          <span className="flex items-center gap-1 text-amber-600 ml-auto"><Sparkles size={12} /> Record</span>
         )}
       </div>
     </div>
@@ -147,7 +147,7 @@ const DEPT_RANK_ACCENT: Record<number, string> = {
 };
 
 function DepartmentCard({ dept, onSelect }: { dept: LeaderboardDepartment; onSelect: () => void }) {
-  const rankColor = DEPT_RANK_ACCENT[dept.rank] || 'text-gray-300';
+  const rankColor = DEPT_RANK_ACCENT[dept.rank] || 'text-gray-400';
   return (
     <button
       onClick={onSelect}

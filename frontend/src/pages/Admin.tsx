@@ -75,15 +75,15 @@ interface StatCardProps {
   color?: string;
 }
 
-function StatCard({ icon: Icon, value, label, sub, color = 'text-blue-400' }: StatCardProps) {
+function StatCard({ icon: Icon, value, label, sub, color = 'text-blue-700' }: StatCardProps) {
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 flex items-start gap-4">
-      <div className={`mt-0.5 p-2 rounded-lg bg-gray-800 ${color}`}>
+    <div className="bg-white border border-gray-200 rounded-xl p-4 flex items-start gap-4">
+      <div className={`mt-0.5 p-2 rounded-lg bg-gray-100 ${color}`}>
         <Icon size={18} />
       </div>
       <div className="min-w-0">
-        <div className="text-2xl font-bold text-white">{value}</div>
-        <div className="text-sm text-gray-400">{label}</div>
+        <div className="text-2xl font-bold text-gray-900">{value}</div>
+        <div className="text-sm text-gray-500">{label}</div>
         {sub && <div className="text-xs text-gray-500 mt-0.5">{sub}</div>}
       </div>
     </div>
@@ -98,14 +98,14 @@ interface PlanBadgeProps {
 function PlanBadge({ plan, status }: PlanBadgeProps) {
   if (status === 'past_due') {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-900/40 text-red-400 border border-red-800">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700 border border-red-200">
         Past Due
       </span>
     );
   }
   if (status === 'trialing') {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-yellow-900/40 text-yellow-400 border border-yellow-800">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-50 text-amber-700 border border-amber-200">
         Trial
       </span>
     );
@@ -113,9 +113,9 @@ function PlanBadge({ plan, status }: PlanBadgeProps) {
 
   const tier = plan?.toLowerCase() ?? 'free';
   const styles: Record<string, string> = {
-    enterprise: 'bg-purple-900/40 text-purple-400 border-purple-800',
-    pro:        'bg-blue-900/40 text-blue-400 border-blue-800',
-    free:       'bg-gray-800 text-gray-400 border-gray-700',
+    enterprise: 'bg-purple-50 text-purple-700 border-purple-200',
+    pro:        'bg-blue-50 text-blue-700 border-blue-200',
+    free:       'bg-gray-100 text-gray-500 border-gray-300',
   };
   const label: Record<string, string> = {
     enterprise: 'Enterprise',
@@ -136,11 +136,11 @@ interface RoleBadgeProps {
 
 function RoleBadge({ role }: RoleBadgeProps) {
   const styles: Record<string, string> = {
-    developer:  'bg-purple-900/40 text-purple-400',
-    manager:    'bg-blue-900/40 text-blue-400',
-    supervisor: 'bg-cyan-900/40 text-cyan-400',
-    operator:   'bg-green-900/40 text-green-400',
-    viewer:     'bg-gray-800 text-gray-400',
+    developer:  'bg-purple-50 text-purple-700',
+    manager:    'bg-blue-50 text-blue-700',
+    supervisor: 'bg-cyan-50 text-cyan-700',
+    operator:   'bg-emerald-50 text-emerald-700',
+    viewer:     'bg-gray-100 text-gray-500',
   };
   return (
     <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${styles[role] ?? styles.viewer}`}>
@@ -192,10 +192,10 @@ function OverviewTab({ stats, loading, error, onRetry }: OverviewTabProps) {
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard icon={Building2}    value={stats.total_companies}     label="Total Companies"    color="text-blue-400" />
-        <StatCard icon={Users}        value={stats.total_users}         label="Total Users"        color="text-green-400" />
-        <StatCard icon={CheckCircle2} value={stats.total_completions}   label="Completions"        color="text-cyan-400" />
-        <StatCard icon={Package}      value={stats.total_work_orders}   label="Work Orders"        color="text-purple-400" />
+        <StatCard icon={Building2}    value={stats.total_companies}     label="Total Companies"    color="text-blue-700" />
+        <StatCard icon={Users}        value={stats.total_users}         label="Total Users"        color="text-emerald-700" />
+        <StatCard icon={CheckCircle2} value={stats.total_completions}   label="Completions"        color="text-cyan-700" />
+        <StatCard icon={Package}      value={stats.total_work_orders}   label="Work Orders"        color="text-purple-700" />
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -204,26 +204,26 @@ function OverviewTab({ stats, loading, error, onRetry }: OverviewTabProps) {
           value={stats.companies_this_month}
           label="New Companies"
           sub="This month"
-          color="text-emerald-400"
+          color="text-emerald-700"
         />
         <StatCard
           icon={Users}
           value={stats.users_this_month}
           label="New Users"
           sub="This month"
-          color="text-sky-400"
+          color="text-blue-700"
         />
         <StatCard
           icon={Clock}
           value={stats.active_trials}
           label="Active Trials"
-          color="text-yellow-400"
+          color="text-amber-700"
         />
         <StatCard
           icon={AlertCircle}
           value={stats.past_due_count}
           label="Past Due"
-          color={stats.past_due_count > 0 ? 'text-red-400' : 'text-gray-500'}
+          color={stats.past_due_count > 0 ? 'text-red-700' : 'text-gray-500'}
         />
       </div>
     </div>
@@ -254,14 +254,14 @@ function CompanyTable({
         <div className="relative flex-1 min-w-48">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
           <input
-            className="w-full pl-9 pr-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+            className="w-full pl-9 pr-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500"
             placeholder="Search companies..."
             value={search}
             onChange={e => onSearchChange(e.target.value)}
           />
         </div>
         <select
-          className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+          className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:border-blue-500"
           value={planFilter}
           onChange={e => onPlanChange(e.target.value)}
         >
@@ -277,10 +277,10 @@ function CompanyTable({
       ) : error ? (
         <ErrorState message={error} onRetry={onRetry} />
       ) : (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-800 text-gray-400">
+              <tr className="border-b border-gray-200 text-gray-500">
                 <th className="text-left px-4 py-3 font-medium">Company</th>
                 <th className="text-left px-4 py-3 font-medium">Plan</th>
                 <th className="text-center px-4 py-3 font-medium">Users</th>
@@ -296,9 +296,9 @@ function CompanyTable({
                 </tr>
               ) : (
                 companies.map(c => (
-                  <tr key={c.id} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
+                  <tr key={c.id} className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3">
-                      <div className="font-medium text-white">{c.name}</div>
+                      <div className="font-medium text-gray-900">{c.name}</div>
                       {c.owner_email && (
                         <div className="text-xs text-gray-500 mt-0.5">{c.owner_email}</div>
                       )}
@@ -306,13 +306,13 @@ function CompanyTable({
                     <td className="px-4 py-3">
                       <PlanBadge plan={c.plan} status={c.subscription_status} />
                     </td>
-                    <td className="px-4 py-3 text-center text-gray-300">{c.user_count}</td>
-                    <td className="px-4 py-3 text-center text-gray-300">{c.monthly_completions}</td>
-                    <td className="px-4 py-3 text-gray-400">{formatDate(c.created_at)}</td>
+                    <td className="px-4 py-3 text-center text-gray-700">{c.user_count}</td>
+                    <td className="px-4 py-3 text-center text-gray-700">{c.monthly_completions}</td>
+                    <td className="px-4 py-3 text-gray-500">{formatDate(c.created_at)}</td>
                     <td className="px-4 py-3 text-right">
                       <button
                         onClick={() => onChangePlan(c)}
-                        className="text-xs text-blue-400 hover:text-blue-300 flex items-center gap-1 ml-auto"
+                        className="text-xs text-blue-700 hover:text-blue-800 flex items-center gap-1 ml-auto"
                       >
                         Change plan <ChevronRight size={12} />
                       </button>
@@ -351,14 +351,14 @@ function UserTable({
         <div className="relative flex-1 min-w-48">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
           <input
-            className="w-full pl-9 pr-3 py-2 bg-gray-900 border border-gray-700 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+            className="w-full pl-9 pr-3 py-2 bg-white border border-gray-300 rounded-lg text-sm text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500"
             placeholder="Search users..."
             value={search}
             onChange={e => onSearchChange(e.target.value)}
           />
         </div>
         <select
-          className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+          className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-sm text-gray-900 focus:outline-none focus:border-blue-500"
           value={roleFilter}
           onChange={e => onRoleChange(e.target.value)}
         >
@@ -376,10 +376,10 @@ function UserTable({
       ) : error ? (
         <ErrorState message={error} onRetry={onRetry} />
       ) : (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+        <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-gray-800 text-gray-400">
+              <tr className="border-b border-gray-200 text-gray-500">
                 <th className="text-left px-4 py-3 font-medium">Name</th>
                 <th className="text-left px-4 py-3 font-medium">Email</th>
                 <th className="text-left px-4 py-3 font-medium">Role</th>
@@ -395,17 +395,17 @@ function UserTable({
                 </tr>
               ) : (
                 users.map(u => (
-                  <tr key={u.id} className="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
+                  <tr key={u.id} className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
                     <td className="px-4 py-3">
-                      <div className="font-medium text-white">{u.display_name}</div>
+                      <div className="font-medium text-gray-900">{u.display_name}</div>
                       {!u.is_active && (
-                        <span className="text-xs text-red-400">Inactive</span>
+                        <span className="text-xs text-red-700">Inactive</span>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-gray-400">{u.email}</td>
+                    <td className="px-4 py-3 text-gray-500">{u.email}</td>
                     <td className="px-4 py-3"><RoleBadge role={u.role} /></td>
-                    <td className="px-4 py-3 text-gray-400">{u.company_name ?? '—'}</td>
-                    <td className="px-4 py-3 text-gray-400">{formatDate(u.created_at)}</td>
+                    <td className="px-4 py-3 text-gray-500">{u.company_name ?? '—'}</td>
+                    <td className="px-4 py-3 text-gray-500">{formatDate(u.created_at)}</td>
                     <td className="px-4 py-3 text-gray-500">
                       {u.last_login ? formatRelative(u.last_login) : '—'}
                     </td>
@@ -434,7 +434,7 @@ function ActivityFeed({ activity, loading, error, onRetry }: ActivityFeedProps) 
     return (
       <div className="space-y-2">
         {Array.from({ length: 8 }, (_, i) => (
-          <div key={i} className="h-14 bg-gray-900 border border-gray-800 rounded-lg animate-pulse" />
+          <div key={i} className="h-14 bg-white border border-gray-200 rounded-lg animate-pulse" />
         ))}
       </div>
     );
@@ -442,19 +442,19 @@ function ActivityFeed({ activity, loading, error, onRetry }: ActivityFeedProps) 
   if (error) return <ErrorState message={error} onRetry={onRetry} />;
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
       {activity.length === 0 ? (
         <div className="text-center py-10 text-gray-500">No activity yet</div>
       ) : (
-        <div className="divide-y divide-gray-800">
+        <div className="divide-y divide-gray-100">
           {activity.map(a => (
-            <div key={a.id} className="flex items-start gap-3 px-4 py-3 hover:bg-gray-800/30 transition-colors">
+            <div key={a.id} className="flex items-start gap-3 px-4 py-3 hover:bg-gray-50 transition-colors">
               <Activity size={14} className="mt-1 text-gray-500 shrink-0" />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-white text-sm">{a.action}</span>
+                  <span className="text-gray-900 text-sm">{a.action}</span>
                   {a.company_name && (
-                    <span className="text-xs bg-gray-800 border border-gray-700 text-gray-400 px-1.5 py-0.5 rounded">
+                    <span className="text-xs bg-gray-100 border border-gray-300 text-gray-500 px-1.5 py-0.5 rounded">
                       {a.company_name}
                     </span>
                   )}
@@ -527,37 +527,37 @@ function PendingResetsPanel() {
   };
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+    <div className="bg-white border border-gray-200 rounded-xl p-4">
       <div className="flex items-center justify-between mb-3">
         <div>
-          <h3 className="text-sm font-semibold text-white">Pending Password Resets</h3>
-          <p className="text-xs text-gray-400 mt-0.5">
+          <h3 className="text-sm font-semibold text-gray-900">Pending Password Resets</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
             These links are shown here because email is not configured. Share them securely with the user.
           </p>
         </div>
         <button
           onClick={loadResets}
           disabled={loadingResets}
-          className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 disabled:opacity-40 transition-colors"
+          className="p-1.5 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 disabled:opacity-40 transition-colors"
         >
           <RefreshCw size={13} className={loadingResets ? 'animate-spin' : ''} />
         </button>
       </div>
-      {resetsError && <p className="text-xs text-red-400 mb-3">{resetsError}</p>}
+      {resetsError && <p className="text-xs text-red-700 mb-3">{resetsError}</p>}
       {loadingResets && (
         <div className="py-4 text-center text-xs text-gray-500">Loading…</div>
       )}
       {!loadingResets && !resetsError && resets.length === 0 && (
-        <div className="py-4 text-center text-xs text-gray-500 border border-dashed border-gray-800 rounded-lg">
+        <div className="py-4 text-center text-xs text-gray-500 border border-dashed border-gray-200 rounded-lg">
           <CheckCircle2 size={16} className="mx-auto mb-1 text-green-500" />
           No pending resets
         </div>
       )}
       {!loadingResets && resets.map(r => (
-        <div key={r.id} className="mb-2 bg-gray-800 rounded-lg p-3 flex items-start gap-3">
+        <div key={r.id} className="mb-2 bg-gray-100 rounded-lg p-3 flex items-start gap-3">
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-white truncate">{r.user_email}</div>
-            <div className="text-xs text-gray-400 mt-0.5">
+            <div className="text-sm font-medium text-gray-900 truncate">{r.user_email}</div>
+            <div className="text-xs text-gray-500 mt-0.5">
               Expires: {new Date(r.expires_at + (r.expires_at.endsWith('Z') ? '' : 'Z')).toLocaleString()}
             </div>
             <div className="font-mono text-xs text-gray-500 mt-1 break-all">{r.reset_url}</div>
@@ -566,8 +566,8 @@ function PendingResetsPanel() {
             onClick={() => handleCopy(r)}
             className={`flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
               copiedId === r.id
-                ? 'bg-green-900/40 text-green-400'
-                : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                ? 'bg-emerald-50 text-emerald-700'
+                : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
             }`}
           >
             {copiedId === r.id ? (<><Check size={11} />Copied</>) : (<><Copy size={11} />Copy</>)}
@@ -592,7 +592,7 @@ function SystemHealth({ health, loading, error, onRetry }: SystemHealthProps) {
     return (
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {Array.from({ length: 4 }, (_, i) => (
-          <div key={i} className="h-28 bg-gray-900 border border-gray-800 rounded-xl animate-pulse" />
+          <div key={i} className="h-28 bg-white border border-gray-200 rounded-xl animate-pulse" />
         ))}
       </div>
     );
@@ -601,29 +601,29 @@ function SystemHealth({ health, loading, error, onRetry }: SystemHealthProps) {
   if (!health) return null;
 
   const cards = [
-    { icon: Clock,    label: 'Uptime',       value: formatUptime(health.uptime_seconds), color: 'text-green-400' },
-    { icon: Cpu,      label: 'Memory',       value: `${health.memory_mb} MB`,             color: 'text-blue-400' },
-    { icon: Database, label: 'DB Size',      value: `${health.db_size_mb} MB`,            color: 'text-purple-400' },
-    { icon: Server,   label: 'Node Version', value: health.node_version,                  color: 'text-cyan-400' },
+    { icon: Clock,    label: 'Uptime',       value: formatUptime(health.uptime_seconds), color: 'text-emerald-700' },
+    { icon: Cpu,      label: 'Memory',       value: `${health.memory_mb} MB`,             color: 'text-blue-700' },
+    { icon: Database, label: 'DB Size',      value: `${health.db_size_mb} MB`,            color: 'text-purple-700' },
+    { icon: Server,   label: 'Node Version', value: health.node_version,                  color: 'text-cyan-700' },
   ];
 
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {cards.map(c => (
-          <div key={c.label} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <div key={c.label} className="bg-white border border-gray-200 rounded-xl p-4">
             <div className={`mb-3 ${c.color}`}><c.icon size={20} /></div>
-            <div className="text-xl font-bold text-white">{c.value}</div>
-            <div className="text-sm text-gray-400 mt-0.5">{c.label}</div>
+            <div className="text-xl font-bold text-gray-900">{c.value}</div>
+            <div className="text-sm text-gray-500 mt-0.5">{c.label}</div>
           </div>
         ))}
       </div>
 
-      <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+      <div className="bg-white border border-gray-200 rounded-xl p-4">
         <div className="text-xs text-gray-500">Last checked: {new Date(health.timestamp).toLocaleString()}</div>
         <div className="mt-3 flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-          <span className="text-sm text-green-400">All systems operational</span>
+          <span className="text-sm text-emerald-700">All systems operational</span>
         </div>
       </div>
 
@@ -636,12 +636,12 @@ function SystemHealth({ health, loading, error, onRetry }: SystemHealthProps) {
 
 function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
-    <div className="bg-gray-900 border border-red-900/50 rounded-xl p-6 flex flex-col items-center gap-3 text-center">
-      <AlertCircle size={24} className="text-red-400" />
-      <p className="text-red-400 text-sm">{message}</p>
+    <div className="bg-white border border-red-200 rounded-xl p-6 flex flex-col items-center gap-3 text-center">
+      <AlertCircle size={24} className="text-red-700" />
+      <p className="text-red-700 text-sm">{message}</p>
       <button
         onClick={onRetry}
-        className="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white text-sm rounded-lg transition-colors"
+        className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-100 text-gray-900 text-sm rounded-lg transition-colors"
       >
         <RefreshCw size={14} /> Retry
       </button>
@@ -678,13 +678,13 @@ function PlanModal({ company, onClose, onSave }: PlanModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl p-6 w-full max-w-md shadow-2xl">
-        <h2 className="text-lg font-semibold text-white mb-1">Change Plan</h2>
-        <p className="text-sm text-gray-400 mb-5">{company.name}</p>
+      <div className="bg-white border border-gray-200 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">Change Plan</h2>
+        <p className="text-sm text-gray-500 mb-5">{company.name}</p>
 
-        <label className="block text-sm text-gray-300 mb-1.5">Plan tier</label>
+        <label className="block text-sm text-gray-700 mb-1.5">Plan tier</label>
         <select
-          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm mb-4 focus:outline-none focus:border-blue-500"
+          className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 text-sm mb-4 focus:outline-none focus:border-blue-500"
           value={tier}
           onChange={e => setTier(e.target.value)}
         >
@@ -693,20 +693,20 @@ function PlanModal({ company, onClose, onSave }: PlanModalProps) {
           <option value="enterprise">Enterprise</option>
         </select>
 
-        <label className="block text-sm text-gray-300 mb-1.5">Note (optional)</label>
+        <label className="block text-sm text-gray-700 mb-1.5">Note (optional)</label>
         <input
-          className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white text-sm mb-5 focus:outline-none focus:border-blue-500 placeholder-gray-600"
+          className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 text-sm mb-5 focus:outline-none focus:border-blue-500 placeholder-gray-400"
           placeholder="Reason for change..."
           value={note}
           onChange={e => setNote(e.target.value)}
         />
 
-        {error && <p className="text-sm text-red-400 mb-4">{error}</p>}
+        {error && <p className="text-sm text-red-700 mb-4">{error}</p>}
 
         <div className="flex justify-end gap-3">
           <button
             onClick={onClose}
-            className="px-4 py-2 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm transition-colors"
+            className="px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-100 text-gray-700 text-sm transition-colors"
           >
             Cancel
           </button>
@@ -851,20 +851,20 @@ export default function Admin() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 p-6">
+    <div className="min-h-screen bg-gray-50 p-6">
       {/* Header */}
       <div className="flex items-center gap-3 mb-6">
-        <div className="p-2 bg-purple-900/30 border border-purple-800 rounded-xl">
-          <ShieldCheck size={22} className="text-purple-400" />
+        <div className="p-2 bg-purple-50 border border-purple-200 rounded-xl">
+          <ShieldCheck size={22} className="text-purple-700" />
         </div>
         <div>
-          <h1 className="text-xl font-bold text-white">Admin Dashboard</h1>
+          <h1 className="text-xl font-bold text-gray-900">Admin Dashboard</h1>
           <p className="text-sm text-gray-500">Platform management — developer only</p>
         </div>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 mb-6 bg-gray-900 border border-gray-800 rounded-xl p-1 w-fit">
+      <div className="flex gap-1 mb-6 bg-white border border-gray-200 rounded-xl p-1 w-fit">
         {TABS.map(t => {
           const Icon = t.icon;
           const active = tab === t.id;
@@ -874,8 +874,8 @@ export default function Admin() {
               onClick={() => setTab(t.id)}
               className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                 active
-                  ? 'bg-gray-800 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
+                  ? 'bg-gray-100 text-gray-900'
+                  : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
               }`}
             >
               <Icon size={14} />
