@@ -21,7 +21,26 @@ const EVENTS = {
 };
 
 function smtpConfigured() {
-  return !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+  // Resend (HTTP API) counts as configured email — it takes priority over SMTP.
+  return !!process.env.RESEND_API_KEY || !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS);
+}
+
+// Send via the Resend HTTP API. Returns true when accepted.
+async function sendViaResend(to, subject, body, html) {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: { 'Authorization': `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      from: process.env.EMAIL_FROM || process.env.SMTP_FROM || 'HartMonitor <noreply@hartmonitorapp.com>',
+      to: [to], subject, text: body, ...(html ? { html } : {}),
+    }),
+  });
+  if (!res.ok) {
+    const errBody = await res.text().catch(() => '');
+    console.error(`[notifications] Resend rejected (${res.status}):`, errBody.slice(0, 300));
+    return false;
+  }
+  return true;
 }
 
 function twilioConfigured() {
@@ -80,6 +99,16 @@ function logNotification(companyId, channel, event, recipient, subject, body, st
 
 async function sendEmail(companyId, event, to, subject, body) {
   let status = 'simulated';
+  if (process.env.RESEND_API_KEY) {
+    try {
+      status = (await sendViaResend(to, subject, body)) ? 'sent' : 'failed';
+    } catch (e) {
+      console.error('[notifications] email send failed:', e.message);
+      status = 'failed';
+    }
+    logNotification(companyId, 'email', event, to, subject, body, status);
+    return;
+  }
   const t = getTransporter();
   if (t) {
     try {
@@ -119,9 +148,12 @@ async function sendSMS(companyId, event, to, body) {
 // notification preferences. Returns { sent } so the caller can fall back to a
 // dev link when SMTP isn't configured. Never throws.
 async function sendRawEmail(to, subject, body) {
-  const t = getTransporter();
-  if (!t) return { sent: false };
   try {
+    if (process.env.RESEND_API_KEY) {
+      return { sent: await sendViaResend(to, subject, body) };
+    }
+    const t = getTransporter();
+    if (!t) return { sent: false };
     await t.sendMail({ from: process.env.SMTP_FROM || process.env.SMTP_USER, to, subject, text: body });
     return { sent: true };
   } catch (e) {

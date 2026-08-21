@@ -211,7 +211,7 @@ router.post('/forgot-password', async (req, res) => {
     .run(uuidv4(), user.id, sha256(raw), expiresAt, resetUrl);
 
   // In demo mode (no SMTP) sendPasswordResetEmail just logs — return dev link.
-  const isDemoMode = !process.env.SMTP_HOST || !process.env.SMTP_USER;
+  const isDemoMode = !process.env.RESEND_API_KEY && (!process.env.SMTP_HOST || !process.env.SMTP_USER);
   await sendPasswordResetEmail({ to: user.email, resetUrl });
 
   if (isDemoMode) {

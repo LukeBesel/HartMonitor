@@ -1,11 +1,16 @@
 'use strict';
 const nodemailer = require('nodemailer');
 
-// In dev/test or when SMTP not configured: log emails to console
-const isDemoMode = !process.env.SMTP_HOST || !process.env.SMTP_USER;
+// Delivery backends, in priority order:
+//   1. Resend HTTP API — set RESEND_API_KEY (simplest; no SMTP setup)
+//   2. Any SMTP provider — set SMTP_HOST / SMTP_USER / SMTP_PASS
+//   3. Demo mode — logs to console (dev, tests, or nothing configured)
+const RESEND_KEY = process.env.RESEND_API_KEY || '';
+const hasSmtp = !!(process.env.SMTP_HOST && process.env.SMTP_USER);
+const isDemoMode = !RESEND_KEY && !hasSmtp;
 
 let transporter;
-if (!isDemoMode) {
+if (!RESEND_KEY && hasSmtp) {
   transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: parseInt(process.env.SMTP_PORT || '587'),
@@ -17,7 +22,7 @@ if (!isDemoMode) {
   });
 }
 
-const FROM = process.env.SMTP_FROM || 'HartMonitor <noreply@hartmonitor.io>';
+const FROM = process.env.EMAIL_FROM || process.env.SMTP_FROM || 'HartMonitor <noreply@hartmonitorapp.com>';
 const APP_URL = process.env.APP_URL || 'http://localhost:3000';
 const APP_NAME = 'HartMonitor';
 
@@ -27,6 +32,18 @@ async function sendEmail({ to, subject, html, text }) {
     return;
   }
   try {
+    if (RESEND_KEY) {
+      const res = await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: FROM, to: [to], subject, html, text }),
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        console.error(`[email] Resend rejected (${res.status}):`, body.slice(0, 300));
+      }
+      return;
+    }
     await transporter.sendMail({ from: FROM, to, subject, html, text });
   } catch (err) {
     console.error('[email] Send failed:', err.message);

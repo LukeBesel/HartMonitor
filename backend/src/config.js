@@ -48,6 +48,7 @@ const config = {
   // (logs/simulates) to live.
   stripe:  { configured: !!(process.env.STRIPE_SECRET_KEY && process.env.STRIPE_WEBHOOK_SECRET) },
   smtp:    { configured: !!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) },
+  resend:  { configured: !!process.env.RESEND_API_KEY },
   twilio:  { configured: !!(process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN && process.env.TWILIO_FROM_NUMBER) },
   google:  { configured: !!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) },
   microsoft:{ configured: !!(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET) },
@@ -126,7 +127,7 @@ function banner() {
     `  ├─ demo seeding  : ${SEED_DEMO_DATA ? 'ON (development data + sample accounts)' : 'off'}`,
     `  ├─ backups       : ${config.backup.dir ? `every ${config.backup.intervalHours}h → ${config.backup.dir}` : 'disabled'}`,
     `  ├─ payments      : ${mode(config.stripe.configured)} (Stripe)`,
-    `  ├─ email alerts  : ${mode(config.smtp.configured)} (SMTP)`,
+    `  ├─ email alerts  : ${config.resend.configured ? 'LIVE (Resend)' : `${mode(config.smtp.configured)} (SMTP)`}`,
     `  ├─ sms alerts    : ${mode(config.twilio.configured)} (Twilio)`,
     `  └─ SSO           : Google ${mode(config.google.configured)}, Microsoft ${mode(config.microsoft.configured)}`,
     '',

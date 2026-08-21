@@ -8,7 +8,7 @@ const router = express.Router();
 
 // Helper: detect whether SMTP / transactional email is configured.
 function smtpConfigured() {
-  return !!(process.env.SMTP_HOST && process.env.SMTP_USER);
+  return !!process.env.RESEND_API_KEY || !!(process.env.SMTP_HOST && process.env.SMTP_USER);
 }
 
 // ─── GET /pending-resets ──────────────────────────────────────────────────────
