@@ -1,0 +1,340 @@
+/* ─── Operator Player — dark, high-contrast tablet runtime (spec §1.4 / §5) ───
+   Self-contained token set scoped to [data-player], set on <html> for the
+   player's lifetime. Values are the spec §1.1 dark palette. Components in
+   src/components/player/ consume these vars via the .p-* classes below, so the
+   player renders correctly regardless of the app-wide token rollout. */
+
+[data-player] {
+  --page:            #12161d;
+  --p-surface-1:     #1b212b;
+  --p-surface-2:     #262e3a;
+  --p-border:        #333c49;
+  --p-grid:          #2b3441;
+  --p-baseline:      #3d4756;
+  --p-ink:           #edf1f6;
+  --p-ink-2:         #c0c9d5;
+  --p-muted:         #8b95a4;
+  --p-accent-rgb:    129 140 248;   /* indigo-400 — brighter on dark */
+  --p-accent:        rgb(129 140 248);
+  --p-accent-hover:  #a5b4fc;
+  --p-accent-tint:   rgba(129, 140, 248, 0.16);
+  --p-on-accent:     #10132b;
+  --p-gold:          #f5c24a;
+  --p-gold-wash:     rgba(245, 194, 74, 0.14);
+  --p-good:          #4ade80;
+  --p-good-wash:     rgba(74, 222, 128, 0.14);
+  --p-bad:           #f87171;
+  --p-bad-strong:    #c92a2a;
+  --p-warn:          #fbbf24;
+  --p-warn-ink:      #fde68a;
+  --p-warn-wash:     rgba(251, 191, 36, 0.14);
+  --p-live:          #e03131;
+  --p-r-card:        14px;
+  --p-r-ctrl:        8px;
+  --p-shadow-pop:    0 12px 34px rgba(11, 11, 11, 0.45);
+  --p-focus-ring:    0 0 0 3px rgb(var(--p-accent-rgb) / 0.25);
+}
+
+/* ── Typography helpers ─────────────────────────────────────────────────── */
+
+.tnum { font-variant-numeric: tabular-nums; }
+
+.p-mono {
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+/* ── Shell ──────────────────────────────────────────────────────────────── */
+
+.p-root {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--page);
+  color: var(--p-ink);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.p-card {
+  background: var(--p-surface-1);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-r-card);
+}
+
+.p-well {
+  background: var(--p-surface-2);
+  border: 1px solid var(--p-border);
+  border-radius: var(--p-r-ctrl);
+}
+
+/* ── Chips & pills ──────────────────────────────────────────────────────── */
+
+.p-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 550;
+  background: var(--p-surface-2);
+  border: 1px solid var(--p-border);
+  color: var(--p-ink-2);
+  white-space: nowrap;
+}
+
+.p-chip-gold {
+  background: var(--p-gold-wash);
+  border-color: rgba(245, 194, 74, 0.4);
+  color: var(--p-warn-ink);
+}
+
+.p-chip-warn {
+  background: var(--p-warn-wash);
+  border-color: rgba(251, 191, 36, 0.4);
+  color: var(--p-warn);
+}
+
+.p-chip-good {
+  background: var(--p-good-wash);
+  border-color: rgba(74, 222, 128, 0.35);
+  color: var(--p-good);
+}
+
+/* ── Buttons — big touch targets (56–64px) ───────────────────────────────── */
+
+.p-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 56px;
+  padding: 0 22px;
+  border-radius: 12px;
+  font-size: 18px;
+  font-weight: 650;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background-color 0.15s, opacity 0.15s, transform 0.1s;
+  touch-action: manipulation;
+  user-select: none;
+}
+.p-btn:active { transform: scale(0.985); }
+.p-btn:focus-visible { outline: none; box-shadow: var(--p-focus-ring); }
+.p-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+.p-btn-primary {
+  background: var(--p-accent);
+  color: var(--p-on-accent);
+  min-height: 64px;
+  min-width: 200px;
+}
+.p-btn-primary:hover:not(:disabled) { background: var(--p-accent-hover); }
+
+.p-btn-good {
+  background: var(--p-good);
+  color: #052e13;
+  min-height: 64px;
+  min-width: 200px;
+}
+.p-btn-good:hover:not(:disabled) { filter: brightness(1.08); }
+
+.p-btn-ghost {
+  background: transparent;
+  color: var(--p-ink-2);
+  border-color: var(--p-border);
+}
+.p-btn-ghost:hover:not(:disabled) { background: var(--p-surface-2); color: var(--p-ink); }
+
+/* ── Inputs ─────────────────────────────────────────────────────────────── */
+
+.p-input {
+  width: 100%;
+  min-height: 56px;
+  padding: 12px 16px;
+  border-radius: var(--p-r-ctrl);
+  background: var(--p-surface-2);
+  border: 1px solid var(--p-baseline);
+  color: var(--p-ink);
+  font-size: 18px;
+}
+.p-input::placeholder { color: var(--p-muted); }
+.p-input:focus { outline: none; border-color: var(--p-accent); box-shadow: var(--p-focus-ring); }
+.p-input-invalid { border-color: var(--p-bad) !important; box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.2) !important; }
+
+.p-label {
+  display: block;
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--p-ink-2);
+  margin-bottom: 8px;
+}
+
+.p-field-error {
+  margin-top: 6px;
+  font-size: 13.5px;
+  font-weight: 550;
+  color: var(--p-bad);
+}
+
+/* ── Takt states ────────────────────────────────────────────────────────── */
+
+.p-takt-normal { color: var(--p-ink); }
+.p-takt-warn   { color: var(--p-warn); }
+.p-takt-over   { color: var(--p-live); animation: p-takt-flash 1.2s steps(2, jump-none) infinite; }
+
+@keyframes p-takt-flash {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.45; }
+}
+
+.p-live-dot {
+  width: 8px; height: 8px; border-radius: 999px;
+  background: var(--p-live);
+  animation: p-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes p-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.8); }
+}
+
+/* ── Kit verification micro-animations (harthome check-pop) ─────────────── */
+
+.p-check-pop { animation: p-check-pop 0.3s cubic-bezier(0.2, 1.4, 0.4, 1); }
+
+@keyframes p-check-pop {
+  0%   { transform: scale(0); }
+  60%  { transform: scale(1.4); }
+  100% { transform: scale(1); }
+}
+
+.p-row-flash-good { animation: p-row-flash-good 0.7s ease-out; }
+
+@keyframes p-row-flash-good {
+  0%   { background-color: rgba(74, 222, 128, 0.35); }
+  100% { background-color: transparent; }
+}
+
+/* ── Block banner ───────────────────────────────────────────────────────── */
+
+.p-block-banner {
+  background: var(--p-bad-strong);
+  color: #ffffff;
+  font-size: 16px;
+  font-weight: 650;
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  animation: p-banner-in 0.2s ease-out;
+}
+
+@keyframes p-banner-in {
+  from { transform: translateY(-100%); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+
+/* ── Toasts ─────────────────────────────────────────────────────────────── */
+
+.p-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 16px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 550;
+  box-shadow: var(--p-shadow-pop);
+  animation: p-toast-in 0.2s ease-out;
+  max-width: 420px;
+}
+.p-toast-info    { background: var(--p-surface-2); border: 1px solid var(--p-border); color: var(--p-ink); }
+.p-toast-warning { background: #3a2f10; border: 1px solid rgba(251, 191, 36, 0.5); color: var(--p-warn-ink); }
+.p-toast-error   { background: #3b1216; border: 1px solid rgba(248, 113, 113, 0.5); color: #fecaca; }
+
+@keyframes p-toast-in {
+  from { transform: translateY(8px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+
+/* ── Bottom sheet (kit tap-to-verify) ───────────────────────────────────── */
+
+.p-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 60;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.p-sheet {
+  width: 100%;
+  max-width: 640px;
+  background: var(--p-surface-1);
+  border: 1px solid var(--p-border);
+  border-bottom: none;
+  border-radius: var(--p-r-card) var(--p-r-card) 0 0;
+  box-shadow: var(--p-shadow-pop);
+  padding: 20px 20px calc(20px + env(safe-area-inset-bottom));
+  animation: p-sheet-in 0.22s ease-out;
+}
+
+@keyframes p-sheet-in {
+  from { transform: translateY(40%); opacity: 0.4; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+
+/* ── Confetti burst (harthome palette) — completion celebration ─────────── */
+
+.p-confetti {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 10px;
+  height: 14px;
+  border-radius: 2px;
+  opacity: 0;
+  animation: p-confetti-fall 1.4s ease-out forwards;
+}
+
+@keyframes p-confetti-fall {
+  0%   { opacity: 1; transform: translate(0, 0) rotate(0deg); }
+  100% { opacity: 0; transform: translate(var(--cx, 0px), var(--cy, 220px)) rotate(var(--cr, 360deg)); }
+}
+
+/* ── Preview debug drawer ───────────────────────────────────────────────── */
+
+.p-debug-drawer {
+  position: fixed;
+  right: 12px;
+  bottom: 88px;
+  width: 340px;
+  max-height: 40vh;
+  overflow-y: auto;
+  z-index: 70;
+  background: var(--p-surface-1);
+  border: 1px solid var(--p-gold);
+  border-radius: var(--p-r-card);
+  box-shadow: var(--p-shadow-pop);
+  font-size: 12.5px;
+}
+
+/* ── Reduced motion: kill all celebratory/pulsing animation ─────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .p-check-pop,
+  .p-row-flash-good,
+  .p-confetti,
+  .p-takt-over,
+  .p-live-dot,
+  .p-block-banner,
+  .p-toast,
+  .p-sheet { animation: none !important; }
+  .p-confetti { display: none; }
+  .p-btn:active { transform: none; }
+}
