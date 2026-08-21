@@ -16,6 +16,8 @@ interface AuthContextValue {
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   signup: (companyName: string, displayName: string, email: string, password: string) => Promise<void>;
+  /** Turn the CURRENT demo sandbox into a real free account, keeping its data. */
+  claimSandbox: (companyName: string, displayName: string, email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   isAtLeast: (role: 'developer' | 'manager' | 'supervisor' | 'operator' | 'viewer') => boolean;
   canAccessReportPortal: boolean;
@@ -121,6 +123,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('hm_user', JSON.stringify(full));
   };
 
+  // The demo banner's "Keep my work" promise: the sandbox ORGANISATION is
+  // promoted in place, so nothing the visitor built is lost. Same session
+  // bookkeeping as signup — the server swaps the cookie for the new owner.
+  const claimSandbox = async (companyName: string, displayName: string, email: string, password: string) => {
+    const data = await api.claimSandbox(companyName, displayName, email, password);
+    if (data.token) {
+      tokenRef.current = data.token;
+      await saveToken(data.token);
+    }
+    localStorage.setItem('hm_user', JSON.stringify(data.user));
+    setUser(data.user);
+    const full = await api.getMe().catch(() => data.user);
+    setUser(full);
+    localStorage.setItem('hm_user', JSON.stringify(full));
+  };
+
   const logout = async () => {
     await api.logout().catch(() => {});
     tokenRef.current = null;
@@ -147,7 +165,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   return (
     <AuthContext.Provider value={{
-      user, loading, login, signup, logout, isAtLeast,
+      user, loading, login, signup, claimSandbox, logout, isAtLeast,
       canAccessReportPortal, canAccessOperatorPortal, canEdit, getToken,
     }}>
       {children}

@@ -36,7 +36,7 @@ import PlayerWidget from '../components/player/PlayerWidgets';
 import {
   collectStepTriggers, evaluateKitScan, formatDur, getStepBlocks, kitProgress,
   kitWidgetFor, legacyKey, runContextGate, runContextRequired, stepHidesFooterNav,
-  stepShowsKit, summarizeBlocks, taktBarState, valueInputFor,
+  stepShowsKit, stepTaktSeconds as taktOfStep, summarizeBlocks, taktBarState, valueInputFor,
 } from '../components/player/runtime';
 import type { BlockItem } from '../components/player/runtime';
 import '../player.css';
@@ -47,9 +47,10 @@ interface WorkOrderExt extends WorkOrder {
 }
 
 // App field written by the builder's run-context toggle (contract:
-// app.require_run_context boolean; absent → enforce only for schema_version ≥ 2).
+// app.require_run_context; absent → enforce only for schema_version ≥ 2).
+// The backend column is a nullable SQLite INTEGER, so the wire value is 0 / 1.
 interface AppExt extends App {
-  require_run_context?: boolean;
+  require_run_context?: boolean | number | null;
 }
 
 type RunStatus = 'setup' | 'running' | 'completed' | 'abandoned';
@@ -269,7 +270,7 @@ export default function AppPlayer() {
       if (pt.takt_overrides[idx] !== undefined) return Number(pt.takt_overrides[idx]);
       if (pt.takt_overrides[String(idx)] !== undefined) return Number(pt.takt_overrides[String(idx)]);
     }
-    return step.takt_time_seconds ?? 0;
+    return taktOfStep(step);
   }, [productTypes, selectedProductTypeId]);
 
   const buildAppInfo = useCallback((): Record<string, string | number> => {
@@ -330,7 +331,14 @@ export default function AppPlayer() {
     }
     if (!cid) return;
     if (!dirtyRef.current && valuesBufferRef.current.size === 0) return;
-    const values = [...valuesBufferRef.current.values()].filter((v): v is NonNullable<typeof v> => v !== null);
+    // Snapshot exactly what this request carries. The operator keeps working
+    // while the PUT is in flight, and bufferValue writes a NEW object into the
+    // live map for every edit — so on success we retire only the entries whose
+    // object identity is still the one we sent. Clearing the whole map here
+    // used to silently drop any value captured mid-flight, and unless the
+    // operator touched that field again it never reached completion_values.
+    const sent = new Map(valuesBufferRef.current);
+    const values = [...sent.values()].filter((v): v is NonNullable<typeof v> => v !== null);
     const body: CompletionFlushPayload = {
       data: { ...formDataRef.current },
       step_times: { ...stepTimesRef.current },
@@ -339,8 +347,10 @@ export default function AppPlayer() {
     };
     api.flushCompletion(cid, body)
       .then(() => {
-        valuesBufferRef.current.clear();
-        dirtyRef.current = false;
+        for (const [widgetId, input] of sent) {
+          if (valuesBufferRef.current.get(widgetId) === input) valuesBufferRef.current.delete(widgetId);
+        }
+        dirtyRef.current = valuesBufferRef.current.size > 0;
         removeQueuedFlush(`completion:${cid}`);
       })
       .catch(() => {
@@ -440,10 +450,19 @@ export default function AppPlayer() {
 
   // ── Navigation pipeline (spec §5.2) ────────────────────────────────────────
 
+  // Step time ACCUMULATES across every stint on that step. Assigning would
+  // erase whatever was already banked, which happens in two ordinary flows:
+  // a job resumed after a handoff (the previous operator's minutes on the
+  // step in progress) and any back-navigation that revisits a step. Both
+  // silently understated cycle time and takt history. The stint clock is reset
+  // here so a double call can never double-count.
   const recordStepTime = useCallback((idx: number) => {
     const elapsed = Math.round((Date.now() - stepStartTimeRef.current) / 1000);
-    stepTimesRef.current = { ...stepTimesRef.current, [idx]: elapsed };
+    const banked = Number(stepTimesRef.current[idx]) || 0;
+    stepTimesRef.current = { ...stepTimesRef.current, [idx]: banked + Math.max(0, elapsed) };
     setStepTimes(stepTimesRef.current);
+    stepStartTimeRef.current = Date.now();
+    stepElapsedRef.current = 0;
   }, []);
 
   const captureStepExitValues = useCallback((step: Step | undefined) => {
@@ -1686,7 +1705,7 @@ export default function AppPlayer() {
               setReportOpen(false);
               return null;
             }
-            let auth: { user_id: string; display_name: string; role: string };
+            let auth: { authorization_id: string; user_id: string; display_name: string; role: string };
             try {
               auth = await api.verifyAuthorizer(pin);
             } catch (err) {
@@ -1699,8 +1718,10 @@ export default function AppPlayer() {
               completion_id: completionIdRef.current,
               work_order_id: selectedWorkOrderId || null,
               operator_name: operatorName,
-              authorized_by: auth.display_name,
-              authorized_by_user_id: auth.user_id,
+              // Single-use proof the PIN was verified server-side. The server
+              // stamps authorized_by / authorized_by_user_id from this grant —
+              // sending those fields directly would be rejected.
+              authorization_id: auth.authorization_id,
               step_name: appRef.current?.steps[stepIdxRef.current]?.name ?? '',
             };
             try {

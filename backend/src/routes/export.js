@@ -5,13 +5,8 @@ const XLSX = require('xlsx');
 const router = express.Router();
 
 // ─── CSV helpers ──────────────────────────────────────────────────────────────
-
-function escapeCSV(val) {
-  if (val === null || val === undefined) return '';
-  const s = String(val);
-  if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
+// escapeCSV also neutralizes spreadsheet formulas — see ../csv.js.
+const { escapeCSV } = require('../csv');
 
 function toCSV(rows, columns) {
   if (!rows.length) return columns.join(',') + '\n';

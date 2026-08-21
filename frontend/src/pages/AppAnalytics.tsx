@@ -11,6 +11,7 @@ import {
   ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis,
   Tooltip, CartesianGrid, PieChart, Pie, Cell,
 } from 'recharts';
+import { stepTaktSeconds } from '../components/player/runtime';
 
 // ── Formatting helpers (same conventions as AppHistory) ───────────────────────
 
@@ -106,11 +107,18 @@ export default function AppAnalytics() {
   }, [appId, filterParams]);
 
   // App takt (sum of per-step takt) for the "avg cycle vs takt" comparison.
+  // stepTaktSeconds also reads the legacy `takt_time` key — apps built before
+  // the v2 builder (including the demo sandbox's seeded app) store it that way,
+  // and reading only `takt_time_seconds` reported a takt of zero for all of
+  // them, hiding the comparison on every legacy app.
   useEffect(() => {
     if (!appId) return;
     api.getApp(appId)
       .then(app => {
-        const total = (app.steps ?? []).reduce((s: number, st: any) => s + (Number(st?.takt_time_seconds) || 0), 0);
+        const total = (app.steps ?? []).reduce(
+          (s: number, st: { takt_time_seconds?: number | null; takt_time?: number | null }) => s + stepTaktSeconds(st),
+          0,
+        );
         setTaktTotalS(total);
       })
       .catch(() => setTaktTotalS(0));

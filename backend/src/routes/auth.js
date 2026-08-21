@@ -6,6 +6,7 @@ const { config } = require('../config');
 const { hashPassword, verifyPassword, generateToken, requireAuth } = require('../middleware/auth');
 const { PROVIDERS, isConfigured } = require('../sso');
 const { sendWelcomeEmail, sendPasswordResetEmail } = require('../email');
+const { logActivity } = require('../activity');
 
 const router = express.Router();
 
@@ -144,6 +145,108 @@ router.post('/demo', (req, res) => {
   });
 
   res.status(201).json({ token: rawToken, user, sandbox: true, sandbox_email: email });
+});
+
+// ─── POST /claim-sandbox — turn THIS sandbox into a real free account ─────────
+//
+// The demo banner offers "Keep my work — create a free account". That button
+// used to link to plain signup, which creates an empty new organization: every
+// app the visitor built, every run they made and every setting they changed was
+// silently thrown away 24 hours later. The button lied.
+//
+// This endpoint makes it true. The sandbox ORGANISATION is promoted in place —
+// same company_id, so every row already written stays exactly where it is —
+// and the anonymous demo identity is replaced by a real owner account:
+//   • is_sandbox is cleared, so the 24-hour sweeper will never touch it again,
+//   • the org and its company_name setting take the name the visitor gives,
+//   • the plan drops to the free tier (the CTA promises a free account),
+//   • the throwaway visitor user and all of its sessions are deleted, so the
+//     old demo cookie stops working the moment the account becomes real.
+//
+// Only a live sandbox session can call this, and the same brute-force limiter
+// as login/signup guards the mount.
+router.post('/claim-sandbox', requireAuth, (req, res) => {
+  const org = db.prepare('SELECT id, is_sandbox FROM organizations WHERE id = ?').get(req.companyId);
+  if (!org || !org.is_sandbox) {
+    return res.status(400).json({
+      error: 'not_a_sandbox',
+      message: 'This workspace is already a real account.',
+    });
+  }
+
+  const { company_name, email, password, display_name } = req.body || {};
+  if (!company_name || !email || !password || !display_name) {
+    return res.status(400).json({ error: 'company_name, email, password, and display_name required' });
+  }
+  if (password.length < MIN_PASSWORD_LEN) {
+    return res.status(400).json({ error: `Password must be at least ${MIN_PASSWORD_LEN} characters` });
+  }
+  const normalizedEmail = String(email).toLowerCase().trim();
+  if (!/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(normalizedEmail)) {
+    return res.status(400).json({ error: 'Enter a valid email address' });
+  }
+  if (db.prepare('SELECT id FROM users WHERE email = ?').get(normalizedEmail)) {
+    return res.status(409).json({ error: 'A user with that email already exists' });
+  }
+
+  const sandboxUserId = req.user.id;
+  const userId = uuidv4();
+  const raw = generateToken();
+  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+  const name = String(company_name).trim();
+
+  let slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'org';
+  if (db.prepare('SELECT id FROM organizations WHERE slug = ? AND id != ?').get(slug, org.id)) {
+    slug = `${slug}-${org.id.slice(0, 8)}`;
+  }
+
+  const claim = db.transaction(() => {
+    db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role, company_id) VALUES (?, ?, ?, ?, 'developer', ?)`)
+      .run(userId, normalizedEmail, String(display_name).trim(), hashPassword(password), org.id);
+
+    db.prepare(`UPDATE organizations SET is_sandbox = 0, name = ?, slug = ? WHERE id = ?`)
+      .run(name, slug, org.id);
+    db.prepare(`INSERT INTO org_settings (company_id, key, value, updated_at) VALUES (?, 'company_name', ?, datetime('now'))
+                ON CONFLICT(company_id, key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`)
+      .run(org.id, name);
+
+    // "Create a FREE account" — the demo ran on Pro so every module was
+    // visible; the claimed account starts on the same free tier as signup.
+    db.prepare(`UPDATE plan SET tier = 'free', app_limit = 5, dashboard_limit = 2, updated_at = datetime('now') WHERE company_id = ?`)
+      .run(org.id);
+
+    // Retire the anonymous visitor identity. Work it created keeps its
+    // operator_name strings; only the login stops existing.
+    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(sandboxUserId);
+    db.prepare('UPDATE completion_sessions SET operator_user_id = NULL WHERE operator_user_id = ?').run(sandboxUserId);
+    db.prepare('UPDATE completions SET operator_user_id = NULL WHERE operator_user_id = ?').run(sandboxUserId);
+    db.prepare('DELETE FROM users WHERE id = ?').run(sandboxUserId);
+
+    db.prepare(`INSERT INTO sessions (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)`)
+      .run(uuidv4(), userId, raw, expiresAt);
+    db.prepare(`UPDATE users SET last_login = datetime('now'), updated_at = datetime('now') WHERE id = ?`).run(userId);
+  });
+  claim();
+
+  logActivity(org.id, 'settings', org.id, `Demo workspace claimed as "${name}"`, String(display_name).trim());
+
+  res.cookie('hm_token', raw, {
+    httpOnly: true,
+    secure: config.isProd,
+    sameSite: 'lax',
+    maxAge: 30 * 24 * 60 * 60 * 1000,
+    path: '/',
+  });
+
+  sendWelcomeEmail({
+    to: normalizedEmail,
+    name: String(display_name).trim() || normalizedEmail.split('@')[0],
+    companyName: name,
+    trialDays: 14,
+  }).catch(err => console.error('[email] welcome email failed:', err.message));
+
+  const user = db.prepare('SELECT id, email, display_name, role FROM users WHERE id = ?').get(userId);
+  res.status(201).json({ token: raw, user, claimed: true });
 });
 
 // ─── POST /logout ─────────────────────────────────────────────────────────────

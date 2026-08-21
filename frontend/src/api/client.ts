@@ -580,6 +580,13 @@ export const api = {
       if (!res.ok) throw Object.assign(new Error(data.error || 'Signup failed'), { status: res.status });
       return data;
     }),
+  /** Promote the CURRENT demo sandbox into a real free account, keeping every
+   *  row already in the workspace (same company_id). Sandbox session only. */
+  claimSandbox: (company_name: string, display_name: string, email: string, password: string) =>
+    request<{ token: string; user: any; claimed: true }>('/auth/claim-sandbox', {
+      method: 'POST',
+      body: JSON.stringify({ company_name, display_name, email, password }),
+    }),
   logout: () => request<any>('/auth/logout', { method: 'POST' }),
   getMe: () => request<any>('/auth/me'),
   changePassword: (current_password: string, new_password: string) =>
@@ -944,9 +951,12 @@ export const api = {
 
   // ── Player batch: run sessions, jobs in progress, supervisor authorization ──
   // (appended block — see CompletionSession / JobInProgress types at file end)
-  /** Supervisor sign-off for in-run actions (NCR filing). 403 = lower role or bad PIN. */
+  /** Supervisor sign-off for in-run actions (NCR filing). 403 = lower role or bad PIN.
+   *  `authorization_id` is a single-use, server-issued proof that the PIN was
+   *  verified — the authorized action must send it back or the server rejects
+   *  the claimed sign-off. */
   verifyAuthorizer: (pin: string) =>
-    request<{ user_id: string; display_name: string; role: string }>('/operators/verify-authorizer', {
+    request<{ authorization_id: string; user_id: string; display_name: string; role: string }>('/operators/verify-authorizer', {
       method: 'POST', body: JSON.stringify({ pin }),
     }),
   /** One completion with its operator sessions attached. */

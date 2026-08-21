@@ -9,8 +9,9 @@
 //   • tenant isolation on sessions and the jobs-in-progress listing,
 //   • POST /api/operators/verify-authorizer: supervisor PIN ok, operator PIN
 //     403, wrong PIN 403,
-//   • POST /api/quality/ncrs storing authorized_by / authorized_by_user_id /
-//     step_name for in-run quality reports.
+//   • POST /api/quality/ncrs binding authorized_by / authorized_by_user_id to a
+//     single-use, company-scoped grant redeemed from verify-authorizer — a
+//     client-supplied authorizer is refused, never trusted.
 // Run with: npm test — uses only Node built-ins (node:test + global fetch).
 
 const { test, before, after } = require('node:test');
@@ -267,6 +268,8 @@ test('verify-authorizer accepts a supervisor PIN', async () => {
   assert.equal(ok.json.user_id, supervisorId);
   assert.equal(ok.json.display_name, 'Sam Supervisor');
   assert.equal(ok.json.role, 'supervisor');
+  assert.equal(typeof ok.json.authorization_id, 'string');
+  assert.ok(ok.json.authorization_id.length >= 32, 'grant id is unguessable');
 });
 
 test('verify-authorizer rejects an operator PIN with 403 and a clear message', async () => {
@@ -296,9 +299,16 @@ test('verify-authorizer rejects a wrong PIN with 403 and requires a pin', async 
 
 // ─── In-run NCR with authorization + auto-links ───────────────────────────────
 
-test('POST /api/quality/ncrs stores authorized_by, authorized_by_user_id and step_name', async () => {
+// The authorizer identity is taken from a redeemed grant, NEVER from the
+// request body — otherwise any authenticated client could POST straight to
+// /quality/ncrs, skip the PIN prompt, and stamp a colleague's name on the
+// record (Codex PR #23 P1).
+test('POST /api/quality/ncrs records the authorizer from a redeemed PIN grant', async () => {
   // Quality module needs the pro tier.
   assert.equal((await api('PUT', '/api/config/plan', { token: tokenA, body: { tier: 'pro' } })).status, 200);
+
+  const grant = await api('POST', '/api/operators/verify-authorizer', { token: tokenA, body: { pin: '8765' } });
+  assert.equal(grant.status, 200);
 
   const created = await api('POST', '/api/quality/ncrs', {
     token: tokenA,
@@ -309,8 +319,7 @@ test('POST /api/quality/ncrs stores authorized_by, authorized_by_user_id and ste
       app_id: appId,
       completion_id: completionId,
       operator_name: 'Ana Operator',
-      authorized_by: 'Sam Supervisor',
-      authorized_by_user_id: supervisorId,
+      authorization_id: grant.json.authorization_id,
       step_name: 'Final inspection',
     },
   });
@@ -321,22 +330,58 @@ test('POST /api/quality/ncrs stores authorized_by, authorized_by_user_id and ste
   assert.equal(created.json.completion_id, completionId);
   assert.equal(created.json.app_id, appId);
 
-  // A cross-tenant authorizer id is silently dropped.
-  const supB = await api('POST', '/api/quality/ncrs', {
-    token: tokenB,
-    body: { title: 'B ncr', authorized_by: 'Nope', authorized_by_user_id: supervisorId },
+  // Single use: the same grant cannot authorize a second NCR.
+  const replay = await api('POST', '/api/quality/ncrs', {
+    token: tokenA,
+    body: { title: 'Replayed', authorization_id: grant.json.authorization_id },
   });
-  // B is on the free tier — pro gate may reject; upgrade then retry.
-  if (supB.status === 402 || supB.status === 403) {
-    assert.equal((await api('PUT', '/api/config/plan', { token: tokenB, body: { tier: 'pro' } })).status, 200);
-    const retry = await api('POST', '/api/quality/ncrs', {
-      token: tokenB,
-      body: { title: 'B ncr', authorized_by: 'Nope', authorized_by_user_id: supervisorId },
-    });
-    assert.equal(retry.status, 201);
-    assert.equal(retry.json.authorized_by_user_id, null, 'foreign authorizer dropped');
-  } else {
-    assert.equal(supB.status, 201);
-    assert.equal(supB.json.authorized_by_user_id, null, 'foreign authorizer dropped');
-  }
+  assert.equal(replay.status, 403);
+  assert.equal(replay.json.error, 'authorization_invalid');
+});
+
+test('an NCR cannot claim a supervisor sign-off without a grant', async () => {
+  // Naming an authorizer with no proof is refused outright…
+  const forged = await api('POST', '/api/quality/ncrs', {
+    token: tokenA,
+    body: { title: 'Forged sign-off', authorized_by: 'Sam Supervisor', authorized_by_user_id: supervisorId },
+  });
+  assert.equal(forged.status, 400);
+  assert.equal(forged.json.error, 'authorization_required');
+
+  // …and an invented grant id is refused too.
+  const madeUp = await api('POST', '/api/quality/ncrs', {
+    token: tokenA,
+    body: { title: 'Invented grant', authorization_id: 'a'.repeat(48) },
+  });
+  assert.equal(madeUp.status, 403);
+  assert.equal(madeUp.json.error, 'authorization_invalid');
+
+  // An unauthorized NCR (the ordinary Quality-page path) still works and
+  // carries no sign-off.
+  const plain = await api('POST', '/api/quality/ncrs', { token: tokenA, body: { title: 'Plain NCR' } });
+  assert.equal(plain.status, 201);
+  assert.equal(plain.json.authorized_by, '');
+  assert.equal(plain.json.authorized_by_user_id, null);
+});
+
+test('a grant issued in one company cannot authorize an NCR in another', async () => {
+  assert.equal((await api('PUT', '/api/config/plan', { token: tokenB, body: { tier: 'pro' } })).status, 200);
+  const grant = await api('POST', '/api/operators/verify-authorizer', { token: tokenA, body: { pin: '8765' } });
+  assert.equal(grant.status, 200);
+
+  const cross = await api('POST', '/api/quality/ncrs', {
+    token: tokenB,
+    body: { title: 'Cross-tenant sign-off', authorization_id: grant.json.authorization_id },
+  });
+  assert.equal(cross.status, 403);
+  assert.equal(cross.json.error, 'authorization_invalid');
+
+  // The grant is untouched by the failed cross-tenant attempt — company A can
+  // still redeem it.
+  const ok = await api('POST', '/api/quality/ncrs', {
+    token: tokenA,
+    body: { title: 'Owner redeems', authorization_id: grant.json.authorization_id },
+  });
+  assert.equal(ok.status, 201);
+  assert.equal(ok.json.authorized_by_user_id, supervisorId);
 });

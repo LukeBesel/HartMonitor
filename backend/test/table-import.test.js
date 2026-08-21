@@ -269,17 +269,33 @@ test('accepts exactly 5000 rows (cap is inclusive)', async () => {
 });
 
 test('rejects oversized files', async () => {
-  // ~10.7 MB decoded. The route caps decoded size at 10 MB (400); bodies this
-  // large can also be refused earlier by the JSON body-size limit (413) —
-  // either way the import must be clearly rejected, never partially applied.
-  const big = 'A'.repeat(Math.ceil(10.7 * 1024 * 1024 / 4) * 4); // valid base64 charset, multiple of 4
+  // The route caps DECODED size at 10 MiB. Base64 inflates by ~4/3, so this
+  // string decodes to ~10.7 MiB — genuinely over the cap, and the route (not
+  // the body parser) must be the thing that says so, with its own message.
+  // /api/tables/import gets a dedicated 16 MiB JSON parser precisely so this
+  // request reaches the handler instead of dying at the global 10 MiB limit.
+  const decodedBytes = Math.ceil(10.7 * 1024 * 1024);
+  const big = Buffer.alloc(decodedBytes, 0x41).toString('base64');
   const res = await api('POST', '/api/tables/import', {
     token: tokenA,
     body: { name: 'Huge', data: big, filename: 'huge.csv' },
   });
-  assert.ok([400, 413].includes(res.status), `expected 400/413, got ${res.status}`);
+  assert.equal(res.status, 400, `expected the route's own 400, got ${res.status}`);
+  assert.match(res.json.error, /too large/i, 'route explains the limit');
   const list = await api('GET', '/api/tables', { token: tokenA });
   assert.ok(!list.json.some(t => t.name === 'Huge'));
+});
+
+test('a body beyond even the raised parser limit is still refused', async () => {
+  // Belt and braces: the dedicated parser is 16 MiB, not unlimited.
+  const huge = Buffer.alloc(20 * 1024 * 1024, 0x41).toString('base64');
+  const res = await api('POST', '/api/tables/import', {
+    token: tokenA,
+    body: { name: 'Absurd', data: huge, filename: 'absurd.csv' },
+  });
+  assert.ok([400, 413].includes(res.status), `expected 400/413, got ${res.status}`);
+  const list = await api('GET', '/api/tables', { token: tokenA });
+  assert.ok(!list.json.some(t => t.name === 'Absurd'));
 });
 
 test('rejects missing data and unparseable files', async () => {
