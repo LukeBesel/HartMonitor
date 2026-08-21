@@ -15,10 +15,13 @@ import { MessagesProvider } from './context/MessagesContext';
 import { ToastProvider } from './context/ToastContext';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import MessageToast from './components/shared/MessageToast';
+import FirstRunLanding from './components/apps/FirstRunLanding';
+import AppTrainingCoach from './components/apps/AppTrainingCoach';
 
 // Code-split the rest of the pages so the initial load only ships the shell,
 // login, and landing dashboard. Heavy chart pages load on demand.
 const AppsLibrary      = lazy(() => import('./pages/AppsLibrary'));
+const AppDetail        = lazy(() => import('./pages/AppDetail'));
 const AppBuilder       = lazy(() => import('./pages/AppBuilder'));
 const AppPlayer        = lazy(() => import('./pages/AppPlayer'));
 const Tables           = lazy(() => import('./pages/Tables'));
@@ -128,6 +131,10 @@ export default function App() {
         <ToastProvider>
           <BrowserRouter>
             <MessageToast />
+            {/* Builder-first guided training. Self-gating: it only shows on the
+                apps surfaces, for people who can build, until it is finished
+                or dismissed. */}
+            <AppTrainingCoach />
             <Suspense fallback={<Spinner />}>
             <ErrorBoundary>
             <Routes>
@@ -148,8 +155,11 @@ export default function App() {
 
               {/* Management / report portal — operators are redirected to the floor */}
               <Route element={<ReportPortalRoute><Layout /></ReportPortalRoute>}>
-                <Route path="/dashboard" element={<Dashboard />} />
+                {/* New accounts land on Apps instead of an empty Command Center
+                    — see FirstRunLanding for the (one question, once per tab) rule. */}
+                <Route path="/dashboard" element={<FirstRunLanding><Dashboard /></FirstRunLanding>} />
                 <Route path="/apps" element={<ModuleGate module="apps"><AppsLibrary /></ModuleGate>} />
+                <Route path="/apps/:id" element={<ModuleGate module="apps"><AppDetail /></ModuleGate>} />
                 <Route path="/apps/:id/build" element={<ModuleGate module="apps"><AppBuilder /></ModuleGate>} />
                 <Route path="/apps/:id/history" element={<ModuleGate module="apps"><AppHistory /></ModuleGate>} />
                 <Route path="/apps/:id/analytics" element={<ModuleGate module="apps"><AppAnalytics /></ModuleGate>} />

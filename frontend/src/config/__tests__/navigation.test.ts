@@ -16,7 +16,8 @@ describe('findSectionForPath (route → workspace derivation)', () => {
 
   it('maps deep links (sub-routes) to the owning workspace', () => {
     expect(findSectionForPath('/quality/ncr-123')?.id).toBe('quality_ops');
-    expect(findSectionForPath('/apps/abc/build')?.id).toBe('production');
+    expect(findSectionForPath('/apps/abc/build')?.id).toBe('apps');
+    expect(findSectionForPath('/apps/abc')?.id).toBe('apps');
     expect(findSectionForPath('/departments/dept-1')?.id).toBe('production');
     expect(findSectionForPath('/maintenance/assets')?.id).toBe('maintenance_ops');
     expect(findSectionForPath('/dashboards/d1/edit')?.id).toBe('reporting');
@@ -68,6 +69,15 @@ describe('findSectionForPath (route → workspace derivation)', () => {
 });
 
 describe('SECTIONS shape', () => {
+  it('puts Apps first — it is the product\'s front door', () => {
+    expect(SECTIONS[0].id).toBe('apps');
+    expect(SECTIONS[0].items.map(i => i.to)).toEqual(['/apps', '/tables', '/operator']);
+    // The App Library must not also live in another workspace, or the tab bar
+    // would light up two places for the same screen.
+    const appsEntries = SECTIONS.flatMap(s => s.items).filter(i => i.to === '/apps');
+    expect(appsEntries).toHaveLength(1);
+  });
+
   it('has a Reports item LAST in each workspace with its fixed path', () => {
     const expected: Record<string, string> = {
       production: '/reports/production',

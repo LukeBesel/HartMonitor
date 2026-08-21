@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import {
   ArrowLeft, Play, CheckCircle2, XCircle, Clock, User, TrendingUp,
-  ChevronLeft, ChevronRight, BarChart2, Activity, Calendar, Package
+  ChevronLeft, ChevronRight, BarChart2, Activity, Calendar, Package, Info
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -206,6 +206,9 @@ export default function AppHistory() {
           </div>
         </div>
         <div className="flex items-center gap-2">
+          <Link to={`/apps/${appId}`} className="btn-secondary">
+            <Info size={14} /> App details
+          </Link>
           <Link to={`/apps/${appId}/analytics`} className="btn-secondary">
             <BarChart2 size={14} /> Analytics
           </Link>
@@ -309,9 +312,15 @@ export default function AppHistory() {
         </div>
 
         {completions.length === 0 ? (
-          <div className="py-16 text-center text-gray-400 text-sm">
+          <div className="py-16 text-center">
             <Activity size={28} className="mx-auto mb-3 text-gray-300" />
-            No completions yet
+            <p className="font-medium text-gray-600">Nobody has run this app yet</p>
+            <p className="text-sm text-gray-400 mt-1">
+              Open it in the player and complete a run — every value captured lands here.
+            </p>
+            <Link to={`/play/${appId}`} className="btn-primary inline-flex mt-4">
+              <Play size={14} /> Run it now
+            </Link>
           </div>
         ) : (
           <div className="overflow-x-auto">
