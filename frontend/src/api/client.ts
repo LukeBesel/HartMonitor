@@ -837,4 +837,7 @@ export const api = {
     return request<any[]>(`/admin/activity${s ? `?${s}` : ''}`);
   },
   getAdminHealth: () => request<any>('/admin/health'),
+
+  // ─── Category Reports (per-workspace Reports pages) ────────────────────────
+  getCategoryDashboard: (category: string) => request<any>(`/dashboards/category/${category}`),
 };

@@ -5,6 +5,15 @@ const { logActivity } = require('../activity');
 
 const router = express.Router();
 
+// ─── Migration: per-category report dashboards ────────────────────────────────
+// Additive, guarded column. A dashboard tagged with a category is the company's
+// "Reports" page for that workspace (production, quality, …); untagged rows are
+// ordinary custom dashboards and behave exactly as before.
+{
+  const cols = db.prepare('PRAGMA table_info(dashboards)').all().map(r => r.name);
+  if (!cols.includes('category')) db.exec('ALTER TABLE dashboards ADD COLUMN category TEXT');
+}
+
 // ─── CRUD ─────────────────────────────────────────────────────────────────────
 
 router.get('/', (req, res) => {
@@ -117,6 +126,26 @@ function computeCardData(card, companyId) {
         }
         case 'period_completions':
           return { value: db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed' AND completed_at >= date('now','-'||?||' days')${appFilter}`).get(companyId, days, ...appParams).c };
+        // Workspace-report metrics (seeded by the /category/:category endpoint)
+        case 'low_stock_items':
+          return { value: db.prepare(`
+            SELECT COUNT(*) as c FROM items i
+            WHERE i.company_id = ? AND i.is_active = 1 AND i.reorder_point > 0
+              AND COALESCE((SELECT SUM(sl.quantity) FROM stock_levels sl WHERE sl.item_id = i.id), 0) <= i.reorder_point
+          `).get(companyId).c };
+        case 'open_ncrs':
+          return { value: db.prepare(`SELECT COUNT(*) as c FROM ncrs WHERE company_id = ? AND status NOT IN ('resolved','closed')`).get(companyId).c };
+        case 'open_maintenance_wos':
+          return { value: db.prepare(`SELECT COUNT(*) as c FROM maintenance_work_orders WHERE company_id = ? AND status IN ('open','in_progress','on_hold')`).get(companyId).c };
+        case 'pm_due':
+          return { value: db.prepare(`SELECT COUNT(*) as c FROM pm_schedules WHERE company_id = ? AND next_due_at IS NOT NULL AND date(next_due_at) <= date('now','+7 days')`).get(companyId).c };
+        case 'training_coverage': {
+          const row = db.prepare(`
+            SELECT COUNT(*) as total, COALESCE(SUM(CASE WHEN status = 'certified' THEN 1 ELSE 0 END), 0) as certified
+            FROM training_records WHERE company_id = ?
+          `).get(companyId);
+          return { value: row.total > 0 ? Math.round((row.certified / row.total) * 100) : 0, suffix: '%' };
+        }
         default:
           return { value: 0 };
       }
@@ -161,6 +190,24 @@ function computeCardData(card, companyId) {
           .map(([date, v]) => ({ date, value: v.total > 0 ? Math.round((v.pass/v.total)*100) : 100 }));
         return { series: [{ name: 'Pass Rate %', data }] };
       }
+      // Workspace-report series (seeded by the /category/:category endpoint)
+      if (metric === 'ncr_trend') {
+        const rows = db.prepare(`
+          SELECT date(created_at) as date, COUNT(*) as value
+          FROM ncrs WHERE company_id = ? AND created_at >= date('now','-'||?||' days')
+          GROUP BY date(created_at) ORDER BY date ASC
+        `).all(companyId, days);
+        return { series: [{ name: 'NCRs Opened', data: rows }] };
+      }
+      if (metric === 'stock_movements') {
+        const rows = db.prepare(`
+          SELECT date(m.created_at) as date, COUNT(*) as value
+          FROM stock_movements m JOIN items i ON i.id = m.item_id
+          WHERE i.company_id = ? AND m.created_at >= date('now','-'||?||' days')
+          GROUP BY date(m.created_at) ORDER BY date ASC
+        `).all(companyId, days);
+        return { series: [{ name: 'Stock Movements', data: rows }] };
+      }
       return { series: [] };
     }
 
@@ -198,6 +245,29 @@ function computeCardData(card, companyId) {
           WHERE c.company_id = ? AND c.status='completed'${appFilterC}
           GROUP BY d.name ORDER BY value DESC
         `).all(companyId, ...appParams);
+        return { data: rows };
+      }
+      // Workspace-report groupings (seeded by the /category/:category endpoint)
+      if (groupBy === 'station_status') {
+        const rows = db.prepare(`
+          SELECT COALESCE(NULLIF(current_status, ''), 'idle') as label, COUNT(*) as value
+          FROM stations WHERE company_id = ?
+          GROUP BY label ORDER BY value DESC
+        `).all(companyId);
+        return { data: rows };
+      }
+      if (groupBy === 'kaizen_status') {
+        const rows = db.prepare(`
+          SELECT status as label, COUNT(*) as value FROM kaizen_ideas
+          WHERE company_id = ? GROUP BY status ORDER BY value DESC
+        `).all(companyId);
+        return { data: rows };
+      }
+      if (groupBy === 'training_status') {
+        const rows = db.prepare(`
+          SELECT status as label, COUNT(*) as value FROM training_records
+          WHERE company_id = ? GROUP BY status ORDER BY value DESC
+        `).all(companyId);
         return { data: rows };
       }
       return { data: [] };
@@ -254,5 +324,87 @@ function computeCardData(card, companyId) {
       return null;
   }
 }
+
+// ─── Per-category Reports dashboards ──────────────────────────────────────────
+// Each workspace (production, inventory, …) gets exactly one editable Reports
+// dashboard per company, auto-created on first access with sensible defaults.
+// All seeded cards use card types/configs the engine above already handles, so
+// they render and stay editable through the normal dashboard editor.
+
+const REPORT_CATEGORIES = {
+  production: {
+    name: 'Production Reports',
+    description: 'Throughput, cycle time and station status for the Production workspace.',
+    defaultCards: () => [
+      { id: uuidv4(), type: 'metric',       title: "Today's Completions", metric_key: 'today_completions', size: 'sm', color: '#3b82f6' },
+      { id: uuidv4(), type: 'metric',       title: 'Avg Cycle Time',      metric_key: 'avg_cycle', size: 'sm', color: '#8b5cf6' },
+      { id: uuidv4(), type: 'time_series',  title: 'Daily Throughput',    series: 'throughput', period_days: 30, size: 'md' },
+      { id: uuidv4(), type: 'time_series',  title: 'Cycle Time Trend',    series: 'cycle_time', period_days: 30, size: 'md' },
+      { id: uuidv4(), type: 'distribution', title: 'Station Status',      group_by: 'station_status', size: 'md' },
+    ],
+  },
+  inventory: {
+    name: 'Inventory Reports',
+    description: 'Low stock alerts and recent movements for the Inventory workspace.',
+    defaultCards: () => [
+      { id: uuidv4(), type: 'metric',      title: 'Low Stock Items',      metric_key: 'low_stock_items', size: 'sm', color: '#ef4444' },
+      { id: uuidv4(), type: 'time_series', title: 'Recent Stock Movements', series: 'stock_movements', period_days: 30, size: 'lg' },
+    ],
+  },
+  quality: {
+    name: 'Quality Reports',
+    description: 'NCR trend and pass rate for the Quality workspace.',
+    defaultCards: () => [
+      { id: uuidv4(), type: 'metric',       title: 'Pass Rate',    metric_key: 'pass_rate', size: 'sm', color: '#10b981' },
+      { id: uuidv4(), type: 'metric',       title: 'Open NCRs',    metric_key: 'open_ncrs', size: 'sm', color: '#ef4444' },
+      { id: uuidv4(), type: 'time_series',  title: 'NCR Trend',    series: 'ncr_trend', period_days: 30, size: 'md' },
+      { id: uuidv4(), type: 'distribution', title: 'Pass vs Fail', group_by: 'quality', size: 'md' },
+    ],
+  },
+  kaizen: {
+    name: 'Kaizen Reports',
+    description: 'Improvement ideas by status for the Kaizen workspace.',
+    defaultCards: () => [
+      { id: uuidv4(), type: 'distribution', title: 'Ideas by Status', group_by: 'kaizen_status', size: 'lg' },
+    ],
+  },
+  maintenance: {
+    name: 'Maintenance Reports',
+    description: 'Open maintenance work orders and upcoming PMs for the Maintenance workspace.',
+    defaultCards: () => [
+      { id: uuidv4(), type: 'metric', title: 'Open Maintenance WOs', metric_key: 'open_maintenance_wos', size: 'sm', color: '#f59e0b' },
+      { id: uuidv4(), type: 'metric', title: 'PM Due (next 7 days)', metric_key: 'pm_due', size: 'sm', color: '#3b82f6' },
+    ],
+  },
+  people: {
+    name: 'People Reports',
+    description: 'Training coverage for the People workspace.',
+    defaultCards: () => [
+      { id: uuidv4(), type: 'metric',       title: 'Training Coverage',  metric_key: 'training_coverage', size: 'sm', color: '#14b8a6' },
+      { id: uuidv4(), type: 'distribution', title: 'Training by Status', group_by: 'training_status', size: 'md' },
+    ],
+  },
+};
+
+// GET /api/dashboards/category/:category — fetch (auto-creating once per
+// company) the workspace's Reports dashboard. Idempotent and tenant-scoped;
+// system-managed, so it does not count against the custom-dashboard plan limit.
+router.get('/category/:category', (req, res) => {
+  const { category } = req.params;
+  const spec = REPORT_CATEGORIES[category];
+  if (!spec) {
+    return res.status(400).json({ error: `invalid category — must be one of: ${Object.keys(REPORT_CATEGORIES).join(', ')}` });
+  }
+
+  const existing = db.prepare('SELECT * FROM dashboards WHERE company_id = ? AND category = ?').get(req.companyId, category);
+  if (existing) return res.json({ ...existing, cards: JSON.parse(existing.cards || '[]') });
+
+  const id = uuidv4();
+  db.prepare(`INSERT INTO dashboards (id, name, description, cards, company_id, category) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run(id, spec.name, spec.description, JSON.stringify(spec.defaultCards()), req.companyId, category);
+  logActivity(req.companyId, 'dashboard', id, `Dashboard "${spec.name}" created`, req.user?.display_name);
+  const d = db.prepare('SELECT * FROM dashboards WHERE id = ?').get(id);
+  res.json({ ...d, cards: JSON.parse(d.cards) });
+});
 
 module.exports = router;
