@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router-dom';
 import { api, AppAnalyticsResponse, AppAnalyticsField, AppAnalyticsParams } from '../api/client';
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
@@ -82,10 +82,17 @@ export default function AppAnalytics() {
   // Leave the floating training coach a lane instead of covering a chart.
   const coachDocked = useCoachDocked();
 
-  const [days, setDays] = useState(30);
-  const [operator, setOperator] = useState('');
-  const [workOrderId, setWorkOrderId] = useState('');
-  const [productTypeId, setProductTypeId] = useState('');
+  // Openable at a slice: the Apps Dashboard hands this page the filters the
+  // supervisor was already looking at, so "Full analytics" continues the view
+  // instead of resetting it. Same parameter names the API takes.
+  const [searchParams] = useSearchParams();
+  const [days, setDays] = useState(() => {
+    const parsed = parseInt(searchParams.get('days') ?? '', 10);
+    return DAY_PRESETS.includes(parsed) ? parsed : 30;
+  });
+  const [operator, setOperator] = useState(() => searchParams.get('operator') ?? '');
+  const [workOrderId, setWorkOrderId] = useState(() => searchParams.get('work_order_id') ?? '');
+  const [productTypeId, setProductTypeId] = useState(() => searchParams.get('product_type_id') ?? '');
 
   const [data, setData] = useState<AppAnalyticsResponse | null>(null);
   const [loading, setLoading] = useState(true);
