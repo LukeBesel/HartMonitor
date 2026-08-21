@@ -55,6 +55,7 @@ const CATEGORY_CONFIG = {
 const STATUS_CONFIG = {
   submitted:   { label: 'Submitted',   color: 'text-gray-300',   bg: 'bg-gray-700' },
   reviewing:   { label: 'Reviewing',   color: 'text-yellow-300', bg: 'bg-yellow-500/20' },
+  under_review:{ label: 'Reviewing',   color: 'text-yellow-300', bg: 'bg-yellow-500/20' }, // DB CHECK vocab alias
   approved:    { label: 'Approved',    color: 'text-blue-300',   bg: 'bg-blue-500/20' },
   in_progress: { label: 'In Progress', color: 'text-amber-300',  bg: 'bg-amber-500/20' },
   implemented: { label: 'Implemented', color: 'text-green-300',  bg: 'bg-green-500/20' },

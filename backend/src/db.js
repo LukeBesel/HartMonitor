@@ -2084,7 +2084,6 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_completion_values_var ON completion_values(company_id, app_id, variable_name, recorded_at);
 `);
 
-<<<<<<< HEAD
 // ─── App templates (additive, guarded via IF NOT EXISTS) ──────────────────────
 // Snapshots of an app's authoring blob that can be re-instantiated as new draft
 // apps. Built-in "model" templates live in code (routes/apps.js MODEL_TEMPLATES),
@@ -2102,7 +2101,8 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_app_templates_company ON app_templates(company_id, created_at);
-=======
+`);
+
 // ─── Facility shifts (per-site shift builder) ─────────────────────────────────
 // Additive, guarded: CREATE IF NOT EXISTS only — no changes to existing tables.
 // starts_at/ends_at are 'HH:MM'; overnight spans (ends_at < starts_at) are valid
@@ -2122,7 +2122,6 @@ db.exec(`
     created_at TEXT DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_site_shifts_site ON site_shifts(company_id, site_id, sort_order);
->>>>>>> worktree-agent-a6a36c6c9f2817d6e
 `);
 
 module.exports = db;

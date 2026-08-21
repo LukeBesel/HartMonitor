@@ -148,30 +148,11 @@ router.post('/', (req, res) => {
   const { name, description = '', department_id, site_id, station_id, show_takt_warnings } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
 
-<<<<<<< HEAD
-  const limitErr = appLimitError(req.companyId);
-  if (limitErr) return res.status(402).json(limitErr);
-=======
   const dup = db.prepare('SELECT id FROM apps WHERE company_id = ? AND LOWER(name) = LOWER(?)').get(req.companyId, name);
   if (dup) return res.status(409).json({ error: 'duplicate_name', message: `An app named "${name}" already exists` });
 
-  // Plan limit check — base tier limit plus purchased add-on slots
-  // (skipped entirely during early access — no limits while EARLY_ACCESS is on)
-  const { config: appCfg } = require('../config');
-  const { getPlanRow } = require('./config');
-  const plan = getPlanRow(req.companyId);
-  if (!appCfg.earlyAccess && plan && plan.app_limit >= 0) {
-    const effectiveLimit = plan.app_limit + (plan.extra_app_slots || 0);
-    const appCount = db.prepare('SELECT COUNT(*) as c FROM apps WHERE company_id = ?').get(req.companyId).c;
-    if (appCount >= effectiveLimit) {
-      return res.status(402).json({
-        error: 'plan_limit',
-        message: `Your plan is limited to ${effectiveLimit} apps. Upgrade to Pro for unlimited apps, or purchase an extra app slot.`,
-        limit: effectiveLimit, current: appCount,
-      });
-    }
-  }
->>>>>>> worktree-agent-a6a36c6c9f2817d6e
+  const limitErr = appLimitError(req.companyId);
+  if (limitErr) return res.status(402).json(limitErr);
 
   const id = uuidv4();
   const defaultStep = [{ id: uuidv4(), name: 'Step 1', order: 0, widgets: [] }];
