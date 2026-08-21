@@ -18,7 +18,9 @@ interface ShiftNote {
   shift_name: 'day' | 'afternoon' | 'night' | 'custom';
   shift_label?: string;
   author_name: string;
-  status: 'draft' | 'submitted' | 'handed_off';
+  // 'active' is the stored word (a DB CHECK); the page used to say 'draft',
+  // so a note it had just created never matched and the shift never opened.
+  status: 'active' | 'submitted' | 'handed_off';
   good_count: number;
   scrap_count: number;
   downtime_minutes: number;
@@ -75,7 +77,7 @@ const SHIFT_BADGE: Record<string, string> = {
 };
 
 const STATUS_BADGE: Record<string, string> = {
-  draft:      'bg-gray-100 text-gray-700',
+  active:     'bg-gray-100 text-gray-700',
   submitted:  'bg-blue-50 text-blue-700',
   handed_off: 'bg-emerald-50 text-emerald-700',
 };
@@ -96,7 +98,7 @@ function ShiftBadge({ shift, label }: { shift: string; label?: string }) {
 
 function StatusBadge({ status }: { status: ShiftNote['status'] }) {
   const labels: Record<ShiftNote['status'], string> = {
-    draft: 'Draft',
+    active: 'In progress',
     submitted: 'Submitted',
     handed_off: 'Handed Off',
   };
@@ -148,7 +150,7 @@ function StartShiftModal({ departments, facilityShifts, selectedDate, onClose, o
         shift_name: shiftName,
         department_id: departmentId || undefined,
         author_name: authorName.trim(),
-        status: 'draft',
+        status: 'active',
         good_count: 0,
         scrap_count: 0,
         downtime_minutes: 0,
@@ -395,7 +397,7 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
     }
   }
 
-  const isDraft = note.status === 'draft';
+  const isOpen = note.status === 'active';
   const isSubmitted = note.status === 'submitted';
 
   return (
@@ -575,8 +577,8 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
           </div>
         </div>
 
-        {/* Submit Button (draft only) */}
-        {isDraft && (
+        {/* Submit Button (only while the shift is still open) */}
+        {isOpen && (
           <div className="flex items-center justify-end pt-2 border-t border-gray-200">
             <button
               onClick={handleSubmit}
@@ -756,8 +758,8 @@ export default function ShiftNotes() {
       if (selectedDept) params.department_id = selectedDept;
       const notes = await api.getShiftNotes(params) as ShiftNote[];
       setShiftNotes(notes);
-      // Determine active note: first draft or submitted
-      const active = notes.find(n => n.status === 'draft' || n.status === 'submitted');
+      // The shift being written now: the first open or submitted note.
+      const active = notes.find(n => n.status === 'active' || n.status === 'submitted');
       setActiveNoteId(active?.id ?? null);
     } catch (err: unknown) {
       setFetchError(err instanceof Error ? err.message : 'Failed to load shift notes.');

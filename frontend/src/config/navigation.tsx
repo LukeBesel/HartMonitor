@@ -26,16 +26,17 @@ export type NavItem = {
   module?: string;
 };
 
+// Listed in sidebar order: the five primary workspaces, then the four that sit
+// under "More".
 export type SectionId =
-  | 'apps'
   | 'production'
-  | 'planning'
   | 'apps'
-  | 'inventory'
   | 'quality_ops'
-  | 'kaizen'
   | 'maintenance_ops'
   | 'people'
+  | 'planning'
+  | 'inventory'
+  | 'kaizen'
   | 'reporting';
 
 export type NavSection = {
@@ -47,6 +48,10 @@ export type NavSection = {
   /** Whole section is part of the paid plan — hidden for Free accounts until they
    *  need it (hit a plan limit) or upgrade. Keeps the default nav lean. */
   proOnly?: boolean;
+  /** Lives under "More" in the sidebar rather than in the always-visible list.
+   *  Five workspaces is what someone scans without reading; the rest are real,
+   *  one click away, and can be switched off outright in Settings → Modules. */
+  secondary?: boolean;
 };
 
 // Nothing is permanently pinned anymore — the Command Center lives in Production.
@@ -57,21 +62,6 @@ export const PINNED_ITEMS: NavItem[] = [];
 // Multi-tab pages (Training, Maintenance/CMMS, Purchasing) get exactly ONE nav
 // item each — their page-internal tabs are the sub-navigation.
 export const SECTIONS: NavSection[] = [
-  // Apps comes FIRST on purpose: the no-code builder and the operator player
-  // are what HartMonitor is for. New accounts land here (see FirstRunLanding),
-  // the guided training teaches this workspace before anything else, and the
-  // rest of the MES plugs into the runs these apps produce.
-  {
-    id: 'apps',
-    label: 'Apps',
-    icon: AppWindow,
-    description: 'Build guided procedures, run them on the floor',
-    items: [
-      { to: '/apps',     icon: AppWindow, label: 'App Library',     module: 'apps' },
-      { to: '/tables',   icon: Database,  label: 'Tables',          minRole: 'supervisor', proOnly: true, module: 'apps' },
-      { to: '/operator', icon: Tablet,    label: 'Operator Portal', standalone: true, module: 'production' },
-    ],
-  },
   {
     id: 'production',
     label: 'Production',
@@ -85,33 +75,19 @@ export const SECTIONS: NavSection[] = [
       { to: '/reports/production', icon: BarChart3, label: 'Reports',   module: 'production' },
     ],
   },
+  // Apps sits directly under Production: Production is where a manager starts
+  // the day, and Apps is what produces everything Production reports on. New
+  // accounts still LAND here (see FirstRunLanding) and the guided training
+  // teaches this workspace before anything else.
   {
-    id: 'planning',
-    label: 'Planning',
-    icon: CalendarRange,
-    description: 'Schedule work and resources',
+    id: 'apps',
+    label: 'Apps',
+    icon: AppWindow,
+    description: 'Build guided procedures, run them on the floor',
     items: [
-      { to: '/schedule',    icon: Calendar,      label: 'Schedule',      module: 'production' },
-      { to: '/routings',    icon: GitBranch,     label: 'Routings',      proOnly: true, minRole: 'supervisor', module: 'production' },
-      { to: '/manager',     icon: ClipboardList, label: 'Manager View',  minRole: 'manager', module: 'production' },
-      { to: '/capacity',    icon: Users,         label: 'Capacity Plan', minRole: 'manager', module: 'analytics' },
-    ],
-  },
-  {
-    id: 'inventory',
-    label: 'Inventory',
-    icon: Boxes,
-    description: 'Track stock and purchasing',
-    items: [
-      // exact — so the Tracker link doesn't also light up on /inventory/boms & /inventory/kitting
-      { to: '/inventory',     icon: Package,       label: 'Inventory Tracker', exact: true, proOnly: true, module: 'inventory' },
-      { to: '/inventory/boms',    icon: Layers,       label: 'BOMs',           minRole: 'supervisor', module: 'inventory' },
-      { to: '/inventory/kitting', icon: PackageOpen,  label: 'Kitting',        module: 'inventory' },
-      { to: '/receiving',     icon: PackageCheck,  label: 'Receiving',         proOnly: false, module: 'inventory' },
-      { to: '/requirements',  icon: ListChecks,    label: 'Materials Required', proOnly: true, minRole: 'supervisor', module: 'inventory' },
-      { to: '/shipments',     icon: Truck,         label: 'Shipments',          proOnly: true, module: 'inventory' },
-      { to: '/purchasing',    icon: ShoppingCart,  label: 'Purchasing',         proOnly: true, minRole: 'supervisor', module: 'inventory' },
-      { to: '/reports/inventory', icon: BarChart3, label: 'Reports',            module: 'inventory' },
+      { to: '/apps',           icon: AppWindow,       label: 'App Library',     module: 'apps' },
+      { to: '/apps/dashboard', icon: LayoutDashboard, label: 'Dashboard',       module: 'apps' },
+      { to: '/operator',       icon: Tablet,          label: 'Operator Portal', standalone: true, module: 'production' },
     ],
   },
   {
@@ -123,16 +99,6 @@ export const SECTIONS: NavSection[] = [
       { to: '/quality',  icon: ShieldCheck,   label: 'NCR / Quality',    proOnly: true, module: 'quality' },
       { to: '/capa',     icon: ClipboardCheck,label: 'CAPA Tracker',     proOnly: true, module: 'quality' },
       { to: '/reports/quality', icon: BarChart3, label: 'Reports',       module: 'quality' },
-    ],
-  },
-  {
-    id: 'kaizen',
-    label: 'Kaizen / CI',
-    icon: Lightbulb,
-    description: 'Continuous improvement ideas',
-    items: [
-      { to: '/kaizen',         icon: Lightbulb, label: 'Kaizen / CI Ideas', module: 'kaizen' },
-      { to: '/reports/kaizen', icon: BarChart3, label: 'Reports',           module: 'kaizen' },
     ],
   },
   {
@@ -160,12 +126,60 @@ export const SECTIONS: NavSection[] = [
     ],
   },
   {
+    id: 'planning',
+    secondary: true,
+    label: 'Planning',
+    icon: CalendarRange,
+    description: 'Schedule work and resources',
+    items: [
+      { to: '/schedule',    icon: Calendar,      label: 'Schedule',      module: 'production' },
+      { to: '/routings',    icon: GitBranch,     label: 'Routings',      proOnly: true, minRole: 'supervisor', module: 'production' },
+      { to: '/manager',     icon: ClipboardList, label: 'Manager View',  minRole: 'manager', module: 'production' },
+      { to: '/capacity',    icon: Users,         label: 'Capacity Plan', minRole: 'manager', module: 'analytics' },
+    ],
+  },
+  {
+    id: 'inventory',
+    secondary: true,
+    label: 'Inventory',
+    icon: Boxes,
+    description: 'Track stock and purchasing',
+    items: [
+      // exact — so the Tracker link doesn't also light up on /inventory/boms & /inventory/kitting
+      { to: '/inventory',     icon: Package,       label: 'Inventory Tracker', exact: true, proOnly: true, module: 'inventory' },
+      { to: '/inventory/boms',    icon: Layers,       label: 'BOMs',           minRole: 'supervisor', module: 'inventory' },
+      { to: '/inventory/kitting', icon: PackageOpen,  label: 'Kitting',        module: 'inventory' },
+      { to: '/receiving',     icon: PackageCheck,  label: 'Receiving',         proOnly: false, module: 'inventory' },
+      { to: '/requirements',  icon: ListChecks,    label: 'Materials Required', proOnly: true, minRole: 'supervisor', module: 'inventory' },
+      { to: '/shipments',     icon: Truck,         label: 'Shipments',          proOnly: true, module: 'inventory' },
+      { to: '/purchasing',    icon: ShoppingCart,  label: 'Purchasing',         proOnly: true, minRole: 'supervisor', module: 'inventory' },
+      { to: '/reports/inventory', icon: BarChart3, label: 'Reports',            module: 'inventory' },
+    ],
+  },
+  {
+    id: 'kaizen',
+    secondary: true,
+    label: 'Kaizen / CI',
+    icon: Lightbulb,
+    description: 'Continuous improvement ideas',
+    items: [
+      { to: '/kaizen',         icon: Lightbulb, label: 'Kaizen / CI Ideas', module: 'kaizen' },
+      { to: '/reports/kaizen', icon: BarChart3, label: 'Reports',           module: 'kaizen' },
+    ],
+  },
+  {
     id: 'reporting',
+    secondary: true,
     label: 'Reporting',
     icon: BarChart3,
     description: 'Analyze results and quality',
     items: [
       { to: '/dashboards',       icon: LayoutGrid,  label: 'Dashboards',       module: 'apps' },
+      // Tables are the lookup data an app READS (part specs, torque windows)
+      // and where a "save a record" trigger WRITES. They sat in the Apps tab
+      // row looking like a spreadsheet feature nobody asked for; they belong
+      // next to Dashboards, with the rest of the build-it-yourself data tools.
+      { to: '/tables',           icon: Database,    label: 'Tables',           minRole: 'supervisor', proOnly: true, module: 'apps' },
       { to: '/leaderboard',      icon: Trophy,      label: 'Leaderboard',      module: 'analytics' },
       { to: '/oee',              icon: Cpu,         label: 'OEE Tracker',      minRole: 'supervisor', proOnly: true, module: 'production' },
       { to: '/analytics',        icon: BarChart3,   label: 'Operation Analytics', module: 'analytics' },

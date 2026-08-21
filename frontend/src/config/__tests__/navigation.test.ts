@@ -69,13 +69,25 @@ describe('findSectionForPath (route → workspace derivation)', () => {
 });
 
 describe('SECTIONS shape', () => {
-  it('puts Apps first — it is the product\'s front door', () => {
-    expect(SECTIONS[0].id).toBe('apps');
-    expect(SECTIONS[0].items.map(i => i.to)).toEqual(['/apps', '/tables', '/operator']);
+  it('opens with Production then Apps, and five primary workspaces', () => {
+    // Production is where a manager starts the day; Apps is what produces
+    // everything Production reports on. The remaining four sit under "More".
+    expect(SECTIONS.map(s => s.id).slice(0, 5))
+      .toEqual(['production', 'apps', 'quality_ops', 'maintenance_ops', 'people']);
+    expect(SECTIONS.filter(s => !s.secondary)).toHaveLength(5);
+    expect(SECTIONS.filter(s => s.secondary).map(s => s.id))
+      .toEqual(['planning', 'inventory', 'kaizen', 'reporting']);
+  });
+
+  it('gives Apps its library, its dashboard and the operator portal', () => {
+    const apps = SECTIONS.find(s => s.id === 'apps')!;
+    expect(apps.items.map(i => i.to)).toEqual(['/apps', '/apps/dashboard', '/operator']);
     // The App Library must not also live in another workspace, or the tab bar
     // would light up two places for the same screen.
-    const appsEntries = SECTIONS.flatMap(s => s.items).filter(i => i.to === '/apps');
-    expect(appsEntries).toHaveLength(1);
+    expect(SECTIONS.flatMap(s => s.items).filter(i => i.to === '/apps')).toHaveLength(1);
+    // Tables moved out of the Apps row and in beside Dashboards; it must still
+    // be reachable exactly once, since the builder's lookup widget needs it.
+    expect(SECTIONS.flatMap(s => s.items).filter(i => i.to === '/tables')).toHaveLength(1);
   });
 
   it('has a Reports item LAST in each workspace with its fixed path', () => {

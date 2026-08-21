@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Outlet, NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Settings, Activity, ChevronLeft, ChevronRight,
-  LogOut, ChevronDown, Menu, X, Download,
+  LogOut, ChevronDown, Menu, X, Download, MoreHorizontal,
 } from 'lucide-react';
 import { usePlan } from '../../context/PlanContext';
 import { useAuth } from '../../context/AuthContext';
@@ -52,6 +52,7 @@ function useIsDesktop() {
 
 export default function Layout() {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('hm_sidebar') === 'collapsed');
+  const [moreOpen, setMoreOpen] = useState(false);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // Set to a feature label when a Free user clicks a locked Pro nav item.
@@ -88,6 +89,13 @@ export default function Layout() {
   // Settings toggles for the sidebar list.
   const moduleSections = useVisibleSections();
   const enabledSections = moduleSections.filter(s => !isSectionHidden(s.id));
+  // Five workspaces up front, the rest under "More". Nine top-level choices is
+  // more than anyone scans; these four are the ones a plant manager reaches for
+  // occasionally rather than daily, and Settings → Modules can remove them
+  // entirely. "More" springs open on its own when you are inside one of them,
+  // so a deep link never lands you somewhere the sidebar seems not to have.
+  const primarySections = enabledSections.filter(s => !s.secondary);
+  const secondarySections = enabledSections.filter(s => s.secondary);
 
   const canShow = (item: NavItem) => {
     if (!canShowNavItem(item)) return false;
@@ -103,6 +111,12 @@ export default function Layout() {
   // Derived from moduleSections (not enabledSections) so a deep link into a
   // workspace the user hid from the sidebar still gets its screen tabs.
   const activeSection = findSectionForPath(location.pathname, moduleSections);
+
+  // Land on a secondary workspace by deep link and "More" is already open, so
+  // the sidebar never looks like it is missing the page you are standing on.
+  useEffect(() => {
+    if (activeSection?.secondary) setMoreOpen(true);
+  }, [activeSection?.id, activeSection?.secondary]);
 
   // The focused workspace's visible screens — rendered as the level-2 tab bar.
   const sectionScreens = (section: NavSection): NavItem[] =>
@@ -293,7 +307,29 @@ export default function Layout() {
             </div>
           )}
           <div className="space-y-0.5">
-            {enabledSections.map(renderSection)}
+            {primarySections.map(renderSection)}
+
+            {secondarySections.length > 0 && (
+              <>
+                <button
+                  onClick={() => setMoreOpen(o => !o)}
+                  title={effectiveCollapsed ? 'More workspaces' : undefined}
+                  aria-expanded={moreOpen}
+                  className={`w-full flex items-center rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-white/8 transition-all ${
+                    effectiveCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
+                  }`}
+                >
+                  <MoreHorizontal size={15} className="flex-shrink-0" />
+                  {!effectiveCollapsed && (
+                    <>
+                      <span className="flex-1 text-left">More</span>
+                      <ChevronDown size={13} className={`transition-transform ${moreOpen ? 'rotate-180' : ''}`} />
+                    </>
+                  )}
+                </button>
+                {moreOpen && secondarySections.map(renderSection)}
+              </>
+            )}
           </div>
 
           {/* The setup checklist scrolls WITH the workspaces rather than sitting

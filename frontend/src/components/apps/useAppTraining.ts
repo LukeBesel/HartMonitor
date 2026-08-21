@@ -14,8 +14,14 @@ import { api } from '../../api/client';
 import type { App } from '../../types';
 import { appShape } from './appModel';
 
+// Deliberately six steps, not seven. 'Set one trigger' used to sit between
+// widgets and publish, and it asked someone who had been using the product for
+// four minutes to reason about no-code conditional logic. Triggers are worth
+// learning — but after you have watched an app you built run on the floor, not
+// before. The Triggers tab is still right there in the builder for whoever
+// goes looking.
 export type TrainingStepId =
-  | 'create' | 'steps' | 'widgets' | 'trigger' | 'publish' | 'run' | 'data';
+  | 'create' | 'steps' | 'widgets' | 'publish' | 'run' | 'data';
 
 export interface TrainingStepDef {
   id: TrainingStepId;
@@ -44,12 +50,6 @@ export const TRAINING_STEPS: TrainingStepDef[] = [
     title: 'Add widgets to a step',
     body: 'Widgets are what an operator sees and fills in — instructions, photos, pass/fail checks, numbers, scans. Drop a couple onto the canvas from the palette above it.',
     cta: 'Add widgets',
-  },
-  {
-    id: 'trigger',
-    title: 'Set one trigger',
-    body: 'Triggers are the no-code logic: When this happens → If this is true → Then do that. Open the Triggers tab in the right-hand panel and add one, e.g. "when the check fails, block with an error".',
-    cta: 'Open Triggers',
   },
   {
     id: 'publish',
@@ -203,14 +203,12 @@ export function useAppTraining(
   const hasApp = apps.length > 0;
   const hasSteps = shapes.some(s => s.stepCount >= 2);
   const hasWidgets = shapes.some(s => s.widgetCount >= 1);
-  const hasTrigger = shapes.some(s => s.triggerCount >= 1);
   const hasPublished = apps.some(a => a.status === 'published');
 
   const doneById: Record<TrainingStepId, boolean> = {
     create: hasApp,
     steps: hasSteps,
     widgets: hasWidgets,
-    trigger: hasTrigger,
     publish: hasPublished,
     run: hasCompletions,
     // Only truthful once there is data to have looked at.

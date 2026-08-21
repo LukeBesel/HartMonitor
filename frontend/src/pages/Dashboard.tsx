@@ -7,7 +7,7 @@ import {
   TrendingUp, Activity, CheckCircle,
   RefreshCw, CalendarCheck,
   BarChart2, Clock, Package,
-  AlertTriangle, CheckCircle2, ChevronRight, ChevronDown, Lock, SlidersHorizontal, RotateCcw,
+  AlertTriangle, CheckCircle2, ChevronRight, ChevronDown, ChevronUp, Lock, SlidersHorizontal, RotateCcw,
   Pin, Building2,
 } from 'lucide-react';
 import {
@@ -190,6 +190,7 @@ export default function Dashboard() {
   // Help-request routing: filter the attention list to one team's queue, and
   // acknowledge / resolve a request without leaving the Command Center.
   const [attentionTeam, setAttentionTeam] = useState<AndonTeam | 'all'>('all');
+  const [attentionExpanded, setAttentionExpanded] = useState(false);
   const [callActionId, setCallActionId] = useState<string | null>(null);
   const [callError, setCallError] = useState('');
 
@@ -279,6 +280,12 @@ export default function Dashboard() {
   const attention = attentionTeam === 'all'
     ? allAttention
     : allAttention.filter(i => i.type !== 'andon_call' || i.team === attentionTeam);
+
+  // Two at a time. A wall of eight rows reads as noise and buries whichever one
+  // actually matters; the rest are one click away.
+  const ATTENTION_PREVIEW = 2;
+  const attentionShown = attentionExpanded ? attention : attention.slice(0, ATTENTION_PREVIEW);
+  const attentionHidden = attention.length - attentionShown.length;
   const openCallCount = allAttention.filter(i => i.type === 'andon_call').length;
 
   // A brand-new workspace: nothing has ever been scheduled, run, or flagged.
@@ -476,12 +483,12 @@ export default function Dashboard() {
           <EmptyState
             compact
             icon={CheckCircle2}
-            title="Nothing needs your attention right now"
-            description="Work orders are on schedule, no critical issues open."
+            title="All good right now"
+            description="Nothing is behind, down, short or overdue. Check back when something changes."
           />
         ) : (
           <div className="space-y-2">
-            {attention.map((item, i) => {
+            {attentionShown.map((item, i) => {
               // A help request is answerable right here: who is needed, where,
               // how long they have waited, and the two actions that end the wait.
               if (item.type === 'andon_call' && item.call_id) {
@@ -560,6 +567,18 @@ export default function Dashboard() {
                 </Link>
               );
             })}
+
+            {(attentionHidden > 0 || attentionExpanded) && (
+              <button
+                type="button"
+                onClick={() => setAttentionExpanded(x => !x)}
+                className="w-full flex items-center justify-center gap-1.5 py-2 text-xs font-medium text-gray-500 hover:text-gray-800 hover:bg-gray-50 rounded-lg transition-colors"
+              >
+                {attentionExpanded
+                  ? <>Show less <ChevronUp size={13} /></>
+                  : <>{attentionHidden} more {attentionHidden === 1 ? 'item' : 'items'} <ChevronDown size={13} /></>}
+              </button>
+            )}
           </div>
         )}
       </div>

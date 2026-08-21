@@ -78,8 +78,10 @@ export default function Tables() {
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Tables</h1>
           <p className="text-gray-500 text-sm mt-0.5 max-w-xl">
-            Build your own simple spreadsheets to track anything the built-in features don’t cover —
-            tooling logs, calibration records, supplier lists, custom checklists. Define the columns once, then add rows.
+            Reference data your apps read and write. Import a spreadsheet of part specs or torque
+            windows, then a step can look up the right row by part number and show the operator only
+            what applies — or write a record back when they finish. Useful on its own for tooling
+            logs and calibration records, but the point is what your apps do with it.
           </p>
         </div>
         {canEdit && (
@@ -111,7 +113,9 @@ export default function Tables() {
         <div className="text-center py-16 text-gray-400">
           <Database size={40} className="mx-auto mb-3 opacity-30" />
           <p className="font-medium">No tables yet</p>
-          <p className="text-sm">Create a table to store manufacturing data</p>
+          <p className="text-sm">
+            Add one when an app needs to look something up — part specs, torque windows, a supplier list.
+          </p>
           {canEdit && (
             <button onClick={() => setShowCreate(true)} className="btn-primary mt-4">
               <Plus size={14} /> Create Table
