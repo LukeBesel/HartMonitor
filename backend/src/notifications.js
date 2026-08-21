@@ -18,6 +18,7 @@ const EVENTS = {
   'workorder.overdue':        'Work order marked overdue',
   'workorder.schedule_changed': 'Work order schedule changed',
   'station.down':             'Station marked down',
+  'andon.alert':              'A team or department was alerted for help (Andon)',
 };
 
 function smtpConfigured() {

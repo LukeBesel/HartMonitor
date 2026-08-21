@@ -16,6 +16,7 @@ import type { CompletionFlushPayload, CompletionSession, JobInProgress, KitLineU
 import type {
   App, Step, Widget, WorkOrder, ProductType, Station,
   Kit, KitLine, KitStatus, BOM, BOMLine, NCRSeverity,
+  AndonCall, Department,
 } from '../types';
 import { normalizeApp, runTriggers } from '../engine';
 import type { TriggerEffect, TriggerRuntimeState } from '../engine';
@@ -33,6 +34,11 @@ import BlockBanner from '../components/player/BlockBanner';
 import KitPanel, { KitSummaryBar } from '../components/player/KitPanel';
 import RunSummary from '../components/player/RunSummary';
 import PlayerWidget from '../components/player/PlayerWidgets';
+import RequestHelpSheet from '../components/player/RequestHelpSheet';
+import AlertBanner from '../components/player/AlertBanner';
+import { targetLabel, targetPayload } from '../config/andonTeams';
+import type { AlertTarget } from '../config/andonTeams';
+import { subscribeRealtime, isAndonEvent } from '../utils/realtime';
 import {
   collectStepTriggers, evaluateKitScan, formatDur, getStepBlocks, kitProgress,
   kitWidgetFor, legacyKey, runContextGate, runContextRequired, stepHidesFooterNav,
@@ -129,6 +135,17 @@ export default function AppPlayer() {
   const [showPartsOverlay, setShowPartsOverlay] = useState(false);
   const [scannerTarget, setScannerTarget] = useState<{ widget: Widget | null } | null>(null);
   const [reportOpen, setReportOpen] = useState(false);
+  // ── Help requests (Andon): alert a team without leaving the run ────────────
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [helpSubmitting, setHelpSubmitting] = useState(false);
+  const [helpError, setHelpError] = useState('');
+  const [departments, setDepartments] = useState<Department[]>([]);
+  /** Requests raised from THIS run that are still open — an operator can
+   *  legitimately need two teams at once, so each gets its own banner. */
+  const [activeCalls, setActiveCalls] = useState<AndonCall[]>([]);
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  const [cancellingCallId, setCancellingCallId] = useState<string | null>(null);
+  const callRaisedAtRef = useRef<Record<string, number>>({});
   const [outboxDepth, setOutboxDepth] = useState(() => pendingCount());
   const [isOffline, setIsOffline] = useState(() => typeof navigator !== 'undefined' && !navigator.onLine);
   const [debugLog, setDebugLog] = useState<DebugEntry[]>([]);
@@ -224,6 +241,12 @@ export default function AppPlayer() {
   }, [id]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // Departments are offered as help-request targets alongside the four function
+  // teams. Best-effort: a company with none simply sees the four teams.
+  useEffect(() => {
+    api.getDepartments().then(setDepartments).catch(() => setDepartments([]));
+  }, []);
 
   // "Jobs in progress" for the setup screen — this app's in_progress runs, any
   // operator can pick one up at its saved position. Refreshed whenever the
@@ -890,6 +913,10 @@ export default function AppPlayer() {
     pausedAtRef.current = null;
     setSavedLocally(false);
     setShowPartsOverlay(false);
+    // A new run starts with a clean slate — requests raised during the previous
+    // one stay on the Andon Board, they just stop banner-ing here.
+    setActiveCalls([]);
+    callRaisedAtRef.current = {};
     stepStartTimeRef.current = Date.now();
     stepElapsedRef.current = 0;
     setStepElapsed(0);
@@ -976,6 +1003,100 @@ export default function AppPlayer() {
   }, [id, starting, previewMode, operatorName, operatorUserId, selectedWorkOrderId, selectedProductTypeId,
     selectedStationId, requireContext, manualPartNumber, resetRunState, loadKitForWO, setKitState,
     applyEffects, buildState, debug]);
+
+  // ── Request help (Andon alerts) ────────────────────────────────────────────
+  // One andon_call carries the whole run context, so the responder knows where
+  // to go and what is running before they walk over. The run is never paused.
+
+  const callContext = useMemo(() => {
+    const st = stations.find(s => s.id === selectedStationId);
+    return [
+      st?.name,
+      selectedWO?.work_order_number ? `WO ${selectedWO.work_order_number}` : (manualPartNumber.trim() || undefined),
+      app?.name,
+      currentStep?.name,
+      operatorName || undefined,
+    ].filter(Boolean).join(' · ');
+  }, [stations, selectedStationId, selectedWO, manualPartNumber, app?.name, currentStep?.name, operatorName]);
+
+  const raiseCall = useCallback(async (target: AlertTarget, note: string) => {
+    if (helpSubmitting) return;
+    const station = stations.find(s => s.id === selectedStationId);
+    const who = targetLabel(target);
+    if (previewMode) {
+      debug(`andon alert: ${who}${note ? ` — ${note}` : ''} (suppressed)`);
+      pushToast('info', `${who} would be notified — preview mode writes nothing`);
+      setHelpOpen(false);
+      return;
+    }
+    setHelpSubmitting(true);
+    setHelpError('');
+    try {
+      const call = await api.createAndonCall({
+        ...targetPayload(target),
+        note,
+        app_id: id ?? null,
+        completion_id: completionIdRef.current,
+        work_order_id: selectedWorkOrderId || null,
+        station_id: selectedStationId || null,
+        // A team alert inherits the station's department as its location; a
+        // department alert already carries the department it is aimed at.
+        ...(target.kind === 'team' ? { department_id: station?.department_id || null } : {}),
+        step_name: appRef.current?.steps[stepIdxRef.current]?.name ?? '',
+        operator_name: operatorName || 'Operator',
+      });
+      callRaisedAtRef.current[call.id] = Date.now() - (call.age_seconds ?? 0) * 1000;
+      setActiveCalls(prev => [...prev.filter(c => c.id !== call.id), call]);
+      setNowTick(Date.now());
+      setHelpOpen(false);
+      pushToast('info', `${who} has been notified — keep working`);
+    } catch (err) {
+      setHelpError(err instanceof Error ? err.message : 'Could not send the request. Try again.');
+    } finally {
+      setHelpSubmitting(false);
+    }
+  }, [helpSubmitting, previewMode, stations, selectedStationId, selectedWorkOrderId, id, operatorName, debug, pushToast]);
+
+  const cancelCall = useCallback(async (call: AndonCall) => {
+    if (cancellingCallId) return;
+    setCancellingCallId(call.id);
+    try {
+      await api.cancelAndonCall(call.id);
+      setActiveCalls(prev => prev.filter(c => c.id !== call.id));
+      pushToast('info', `${call.target_label || call.team_label || 'Request'} stood down`);
+    } catch {
+      pushToast('warning', 'Could not stand the request down — it is still open on the board');
+    } finally {
+      setCancellingCallId(null);
+    }
+  }, [cancellingCallId, pushToast]);
+
+  // Banner ages tick locally so they move every second without re-fetching.
+  useEffect(() => {
+    if (activeCalls.length === 0) return;
+    const t = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [activeCalls.length]);
+
+  // A responder acknowledging or resolving on the board updates these banners
+  // live over the same WebSocket the dashboards use.
+  useEffect(() => {
+    if (activeCalls.length === 0) return;
+    return subscribeRealtime(evt => {
+      if (!isAndonEvent(evt) || !evt.call?.id) return;
+      const known = activeCalls.find(c => c.id === evt.call.id);
+      if (!known) return;
+      if (evt.action === 'resolved' || evt.action === 'cancelled' || evt.action === 'deleted') {
+        setActiveCalls(prev => prev.filter(c => c.id !== evt.call.id));
+        pushToast('info', `${known.target_label || known.team_label || 'Request'} closed`);
+        return;
+      }
+      setActiveCalls(prev => prev.map(c => (c.id === evt.call.id ? evt.call : c)));
+      if (evt.action === 'acknowledged') {
+        pushToast('info', `${evt.call.assigned_to || evt.call.target_label || evt.call.team_label} is on the way`);
+      }
+    });
+  }, [activeCalls, pushToast]);
 
   const abandonRun = useCallback(() => {
     const cid = completionIdRef.current;
@@ -1527,6 +1648,8 @@ export default function AppPlayer() {
             onAbandon={() => { if (window.confirm('Stop this process?')) abandonRun(); }}
             onShowParts={() => setShowPartsOverlay(o => !o)}
             onReportProblem={() => setReportOpen(true)}
+            onRequestHelp={() => { setHelpError(''); setHelpOpen(true); }}
+            helpRequested={activeCalls.length > 0}
             onLeaveJob={previewMode ? undefined : () => setLeaveOpen(true)}
           />
         }
@@ -1543,6 +1666,17 @@ export default function AppPlayer() {
                 />
               </div>
             )}
+            {/* A team has been called and hasn't closed it out yet. The run
+                underneath keeps going — this is status, not a blocker. */}
+            {activeCalls.map(call => (
+              <AlertBanner
+                key={call.id}
+                call={call}
+                ageSeconds={Math.max(0, Math.round((nowTick - (callRaisedAtRef.current[call.id] ?? nowTick)) / 1000))}
+                cancelling={cancellingCallId === call.id}
+                onCancel={() => void cancelCall(call)}
+              />
+            ))}
             {handoffNote && (
               <div
                 className="flex items-center gap-2.5 px-4 py-2.5 flex-shrink-0"
@@ -1692,6 +1826,21 @@ export default function AppPlayer() {
 
       {/* One-time full-screen red flash at takt zero (player batch A3) */}
       {taktFlash && <div className="p-takt-flash-overlay" aria-hidden="true" />}
+
+      {/* Request help (M6): pick who you need, add a note, keep running. The
+          alert is an andon_call carrying this run's full context. */}
+      {helpOpen && (
+        <RequestHelpSheet
+          context={callContext}
+          departments={departments}
+          submitting={helpSubmitting}
+          error={helpError}
+          alertedTeams={activeCalls.filter(c => c.target_type !== 'department').map(c => c.team)}
+          alertedDepartments={activeCalls.filter(c => c.target_type === 'department' && c.department_id).map(c => c.department_id as string)}
+          onClose={() => setHelpOpen(false)}
+          onRequest={(target, note) => void raiseCall(target, note)}
+        />
+      )}
 
       {/* In-run quality issue (player batch C1): NCR filing mid-run without
           losing progress — requires supervisor PIN authorization server-side. */}

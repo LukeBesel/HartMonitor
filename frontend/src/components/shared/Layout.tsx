@@ -12,6 +12,7 @@ import { usePermissions } from '../../context/PermissionsContext';
 import { NavItem, NavSection, useVisibleSections, findSectionForPath } from '../../config/navigation';
 import SiteSwitcher from './SiteSwitcher';
 import AlertsBell from './AlertsBell';
+import RequestHelpButton from './RequestHelpButton';
 import UpgradeModal from './UpgradeModal';
 import PWAUpdatePrompt from './PWAUpdatePrompt';
 import { BillingBanner } from './BillingBanner';
@@ -324,6 +325,10 @@ export default function Layout() {
               {!effectiveCollapsed && <span>Install App</span>}
             </button>
           )}
+
+          {/* Request help — the same Andon mechanism the player uses, reachable
+              from anywhere in the app, next to where the alerts land */}
+          <RequestHelpButton collapsed={effectiveCollapsed} />
 
           {/* Alerts — the floating bubble is gone; the bell is the alerts home */}
           <AlertsBell collapsed={effectiveCollapsed} />

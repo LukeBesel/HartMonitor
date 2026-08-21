@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   MoreVertical, Package, X, Pause, Play, AlertTriangle, WifiOff, Tag, ShieldCheck, LogOut,
+  LifeBuoy,
 } from 'lucide-react';
 import { formatDur } from './runtime';
 
@@ -25,6 +26,13 @@ export interface PlayerHeaderProps {
   onAbandon: () => void;
   onShowParts: () => void;
   onReportProblem: () => void;
+  /** Open the Request-help sheet (Quality / Supervisor / Maintenance /
+   *  Materials, plus the company's departments). Present in every mode —
+   *  preview just suppresses the write. */
+  onRequestHelp: () => void;
+  /** True while a request raised from this run is still open — the button
+   *  becomes a live indicator rather than a way to notify the same team twice. */
+  helpRequested: boolean;
   /** Pause-and-leave: save progress, close the operator's session (with an
    *  optional handoff comment) and return to setup so another operator can
    *  resume. Absent in preview mode (nothing to hand off). */
@@ -74,7 +82,8 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
     appName, workOrderNumber, partName, productTypeName, operatorName, operatorVerified,
     stepIndex, stepCount, taktSeconds, stepElapsed, isOverTakt, paused,
     offlinePending, isOffline, preview, hasPartsList,
-    onTogglePause, onAbandon, onShowParts, onReportProblem, onLeaveJob,
+    onTogglePause, onAbandon, onShowParts, onReportProblem, onRequestHelp, onLeaveJob,
+    helpRequested,
   } = props;
 
   const [menuOpen, setMenuOpen] = useState(false);
@@ -155,6 +164,27 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
           {operatorVerified && <ShieldCheck size={14} style={{ color: 'var(--p-good)' }} />}
         </span>
 
+        {/* Request help — the one action an operator must never have to hunt
+            for. Always visible in the shell, 56px tall, and it turns into a
+            live indicator while a request from this run is still open. */}
+        <button
+          onClick={onRequestHelp}
+          className="flex items-center gap-2 rounded-xl transition-colors flex-shrink-0"
+          aria-label={helpRequested ? 'Help is on the way — open the request' : 'Request help'}
+          style={{
+            minHeight: 56, padding: '0 16px', fontSize: 15, fontWeight: 700,
+            background: helpRequested ? 'var(--p-live)' : 'rgba(224, 49, 49, 0.14)',
+            color: helpRequested ? '#fff' : '#ffb3b3',
+            border: `1px solid ${helpRequested ? 'var(--p-live)' : 'rgba(224, 49, 49, 0.55)'}`,
+            touchAction: 'manipulation',
+          }}
+        >
+          {helpRequested
+            ? <span className="p-live-dot" style={{ background: '#fff' }} aria-hidden="true" />
+            : <LifeBuoy size={19} />}
+          <span className="hidden sm:inline">{helpRequested ? 'Help requested' : 'Request help'}</span>
+        </button>
+
         {/* ⋯ menu */}
         <div className="relative" ref={menuRef}>
           <button
@@ -182,6 +212,13 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
                   <Package size={17} /> Parts &amp; materials
                 </button>
               )}
+              <button
+                className={menuItem}
+                style={{ color: '#ffb3b3' }}
+                onClick={() => { setMenuOpen(false); onRequestHelp(); }}
+              >
+                <LifeBuoy size={17} /> {helpRequested ? 'Help requested — view' : 'Request help'}
+              </button>
               <button className={menuItem} onClick={() => { setMenuOpen(false); onReportProblem(); }}>
                 <AlertTriangle size={17} /> Report quality issue
               </button>

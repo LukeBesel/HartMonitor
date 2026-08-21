@@ -2204,5 +2204,59 @@ db.exec(`
     ON authorization_grants(company_id, expires_at);
 `);
 
+// ─── Help requests on Andon (additive) ────────────────────────────────────────
+// One mechanism for "request help": the player (or anyone in the app) raises an
+// andon_call tagged with the TEAM or DEPARTMENT being alerted plus whatever run
+// context it came from, so the Andon Board and Command Center can route and
+// resolve it. All guarded PRAGMA-checked ALTERs — never DROP/RENAME.
+// `title`/`message`/`created_by`/`assigned_to` back the existing /api/andon
+// contract (the table shipped with description/raised_by/acknowledged_by only);
+// legacy rows keep working because reads coalesce.
+{
+  const andonCols = db.prepare('PRAGMA table_info(andon_calls)').all().map(r => r.name);
+  const addAndon = (name, ddl) => { if (!andonCols.includes(name)) db.exec(`ALTER TABLE andon_calls ADD COLUMN ${ddl}`); };
+  addAndon('title',                   "title TEXT DEFAULT ''");
+  // 'team' (one of the four function teams) or 'department' (a row in departments).
+  addAndon('target_type',             "target_type TEXT DEFAULT 'team'");
+  addAndon('message',                 "message TEXT DEFAULT ''");
+  addAndon('created_by',              "created_by TEXT DEFAULT ''");
+  addAndon('assigned_to',             "assigned_to TEXT DEFAULT ''");
+  addAndon('team',                    "team TEXT DEFAULT ''");
+  addAndon('work_order_id',           'work_order_id TEXT');
+  addAndon('app_id',                  'app_id TEXT');
+  addAndon('step_name',               "step_name TEXT DEFAULT ''");
+  addAndon('completion_id',           'completion_id TEXT');
+  addAndon('created_by_user_id',      'created_by_user_id TEXT');
+  addAndon('acknowledged_by_user_id', 'acknowledged_by_user_id TEXT');
+  addAndon('resolved_by_user_id',     'resolved_by_user_id TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_andon_calls_team ON andon_calls(company_id, team, status, created_at DESC)');
+}
+
+// ─── Department membership (who gets an Andon alert) ─────────────────────────
+// A person can sit in several departments with a different role in each — the
+// quality lead on Assembly may also be a plain operator on Packaging. That is
+// why membership is its own table rather than a second column on users
+// (users.department_id stays the person's PRIMARY department).
+// `team_role` deliberately shares its vocabulary with the alert teams
+// (quality / supervisor / maintenance / materials, plus lead / operator), so
+// routing an alert is a direct lookup rather than a mapping table.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS department_members (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    department_id TEXT NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    team_role TEXT NOT NULL DEFAULT 'operator',
+    notify_email INTEGER NOT NULL DEFAULT 1,
+    notify_in_app INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(company_id, department_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_department_members_role
+    ON department_members(company_id, team_role);
+  CREATE INDEX IF NOT EXISTS idx_department_members_dept
+    ON department_members(company_id, department_id);
+`);
+
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;
