@@ -1,14 +1,17 @@
 import { useEffect, useState, useCallback, useRef, Fragment } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api/client';
+import type { Kit } from '../types';
 import { useHighlight } from '../hooks/useHighlight';
 import { useSite } from '../context/SiteContext';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
 import ActivityLog from '../components/shared/ActivityLog';
 import SavedViewsBar from '../components/shared/SavedViewsBar';
 import {
   Plus, Search, Filter, List, BarChart2, Edit2, Trash2, CheckSquare,
   X, ChevronDown, AlertTriangle, Calendar, Package, Building2, Clock, History,
-  MessageSquare, Send, QrCode, Printer, Trash,
+  MessageSquare, Send, QrCode, Printer, Trash, PackageOpen, Flag, ExternalLink,
 } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import QRCodeLib from 'qrcode';
@@ -22,16 +25,18 @@ interface WorkOrder {
   part_name: string;
   app_id: string;
   app_name: string;
-  department: string;
-  quantity_total: number;
+  department_id: string | null;
+  department_name?: string | null;
+  quantity: number;
   quantity_completed: number;
   priority: 'critical' | 'high' | 'medium' | 'low';
   status: 'pending' | 'in_progress' | 'completed' | 'overdue';
   schedule_status: 'on_track' | 'at_risk' | 'behind' | 'not_started';
   scheduled_start: string;
   scheduled_end: string;
-  takt_time: number;
+  takt_time_minutes: number;
   notes: string;
+  product_type_id?: string | null;
 }
 
 interface App {
@@ -45,18 +50,37 @@ interface Department {
   name: string;
 }
 
+interface ProductTypeOption {
+  id: string;
+  app_id: string;
+  name: string;
+}
+
+interface LocationOption {
+  id: string;
+  name: string;
+  code: string;
+}
+
+/** Kit list row — the server adds pick-progress rollups beyond the shared type. */
+interface KitRow extends Kit {
+  n_picked?: number;
+  n_short?: number;
+}
+
 interface WOFormData {
   work_order_number: string;
   part_number: string;
   part_name: string;
   app_id: string;
-  department: string;
-  quantity_total: number;
+  department_id: string;
+  product_type_id: string;
+  quantity: number;
   priority: 'critical' | 'high' | 'medium' | 'low';
   status: 'pending' | 'in_progress' | 'completed' | 'overdue';
   scheduled_start: string;
   scheduled_end: string;
-  takt_time: number;
+  takt_time_minutes: number;
   notes: string;
 }
 
@@ -100,6 +124,13 @@ const GANTT_BAR_CLASSES: Record<string, string> = {
   completed:   'bg-green-500',
   overdue:     'bg-red-500',
 };
+const KIT_STATUS_CLASSES: Record<string, string> = {
+  open:      'bg-gray-100 text-gray-600',
+  picking:   'bg-blue-100 text-blue-700',
+  complete:  'bg-green-100 text-green-700',
+  short:     'bg-amber-100 text-amber-700',
+  cancelled: 'bg-gray-50 text-gray-400',
+};
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -132,14 +163,24 @@ function defaultForm(): WOFormData {
     part_number: '',
     part_name: '',
     app_id: '',
-    department: '',
-    quantity_total: 100,
+    department_id: '',
+    product_type_id: '',
+    quantity: 100,
     priority: 'medium',
     status: 'pending',
     scheduled_start: toDatetimeLocal(now.toISOString()),
     scheduled_end: toDatetimeLocal(end.toISOString()),
-    takt_time: 5,
+    takt_time_minutes: 5,
     notes: '',
+  };
+}
+
+/** API payload from the form — product_type_id/department_id empty string → null. */
+function toPayload(form: WOFormData) {
+  return {
+    ...form,
+    department_id: form.department_id || null,
+    product_type_id: form.product_type_id || null,
   };
 }
 
@@ -339,6 +380,10 @@ function WOModal({
   onClose,
   entityId,
   currentUserId,
+  kit,
+  locations,
+  generatingKit,
+  onGenerateKit,
 }: {
   title: string;
   form: WOFormData;
@@ -350,8 +395,25 @@ function WOModal({
   onClose: () => void;
   entityId?: string;
   currentUserId?: string;
+  /** Existing (non-cancelled) kit for this WO, when editing. */
+  kit?: KitRow | null;
+  locations?: LocationOption[];
+  generatingKit?: boolean;
+  onGenerateKit?: (locationId: string) => void;
 }) {
   const [showQR, setShowQR] = useState(false);
+  const [kitLocationId, setKitLocationId] = useState('');
+
+  // Product types for the selected app — drives BOM resolution at kit generation.
+  const [productTypes, setProductTypes] = useState<ProductTypeOption[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    if (!form.app_id) { setProductTypes([]); return; }
+    api.getProductTypes(form.app_id)
+      .then((rows: ProductTypeOption[]) => { if (!cancelled) setProductTypes(rows); })
+      .catch(() => { if (!cancelled) setProductTypes([]); });
+    return () => { cancelled = true; };
+  }, [form.app_id]);
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
@@ -377,7 +439,7 @@ function WOModal({
           <QRCodeModal
             woNumber={form.work_order_number}
             partName={form.part_name}
-            quantity={form.quantity_total}
+            quantity={form.quantity}
             onClose={() => setShowQR(false)}
           />
         )}
@@ -420,7 +482,7 @@ function WOModal({
                 <select
                   className="input-field appearance-none pr-8"
                   value={form.app_id}
-                  onChange={e => onChange('app_id', e.target.value)}
+                  onChange={e => { onChange('app_id', e.target.value); onChange('product_type_id', ''); }}
                 >
                   <option value="">— Select App —</option>
                   {apps.filter(a => a.status === 'published').map(a => (
@@ -435,20 +497,44 @@ function WOModal({
               <div className="relative">
                 <select
                   className="input-field appearance-none pr-8"
-                  value={form.department}
-                  onChange={e => onChange('department', e.target.value)}
+                  value={form.department_id}
+                  onChange={e => onChange('department_id', e.target.value)}
                 >
                   <option value="">— Select Department —</option>
                   {departments.map(d => (
-                    <option key={d.id} value={d.name}>{d.name}</option>
+                    <option key={d.id} value={d.id}>{d.name}</option>
                   ))}
-                  {departments.length === 0 && (
-                    <option value="Assembly">Assembly</option>
-                  )}
                 </select>
                 <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
               </div>
             </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Product Type</label>
+            <div className="relative">
+              <select
+                className="input-field appearance-none pr-8"
+                value={form.product_type_id}
+                onChange={e => onChange('product_type_id', e.target.value)}
+                disabled={!form.app_id || productTypes.length === 0}
+              >
+                <option value="">
+                  {!form.app_id
+                    ? '— Select an app first —'
+                    : productTypes.length === 0
+                      ? '— No product types on this app —'
+                      : '— No product type —'}
+                </option>
+                {productTypes.map(pt => (
+                  <option key={pt.id} value={pt.id}>{pt.name}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1">
+              The product type resolves the active BOM for kit generation and locks the operator's selection at run start.
+            </p>
           </div>
 
           <div className="grid grid-cols-3 gap-4">
@@ -458,8 +544,8 @@ function WOModal({
                 type="number"
                 min={1}
                 className="input-field"
-                value={form.quantity_total}
-                onChange={e => onChange('quantity_total', Number(e.target.value))}
+                value={form.quantity}
+                onChange={e => onChange('quantity', Number(e.target.value))}
               />
             </div>
             <div>
@@ -522,8 +608,8 @@ function WOModal({
               min={0.1}
               step={0.1}
               className="input-field"
-              value={form.takt_time}
-              onChange={e => onChange('takt_time', Number(e.target.value))}
+              value={form.takt_time_minutes}
+              onChange={e => onChange('takt_time_minutes', Number(e.target.value))}
             />
           </div>
 
@@ -537,6 +623,67 @@ function WOModal({
               onChange={e => onChange('notes', e.target.value)}
             />
           </div>
+
+          {/* ── Material kit (BOM-driven) ── */}
+          {entityId && onGenerateKit && (
+            <div className="pt-3 border-t border-gray-100">
+              <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                <PackageOpen size={12} />
+                Material Kit
+              </div>
+              {kit ? (
+                <div className="flex items-center gap-2 flex-wrap text-sm">
+                  <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${KIT_STATUS_CLASSES[kit.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                    Kit {kit.status}
+                  </span>
+                  {kit.n_total !== undefined && (
+                    <span className="text-xs text-gray-500 [font-variant-numeric:tabular-nums]">
+                      {(kit.n_verified ?? 0) + (kit.n_picked ?? 0)}/{kit.n_total} picked
+                    </span>
+                  )}
+                  {Boolean(kit.has_short) && (
+                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-600">
+                      <Flag size={11} /> short
+                    </span>
+                  )}
+                  <Link
+                    to={`/inventory/kitting/${kit.id}`}
+                    className="inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-700"
+                  >
+                    Open in Kitting <ExternalLink size={11} />
+                  </Link>
+                </div>
+              ) : (
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="relative">
+                    <select
+                      className="input-field appearance-none pr-8 text-xs py-1.5 h-auto"
+                      value={kitLocationId}
+                      onChange={e => setKitLocationId(e.target.value)}
+                    >
+                      <option value="">Pick-from location (optional)</option>
+                      {(locations ?? []).map(l => (
+                        <option key={l.id} value={l.id}>{l.name}{l.code ? ` (${l.code})` : ''}</option>
+                      ))}
+                    </select>
+                    <ChevronDown size={12} className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                  </div>
+                  <button
+                    onClick={() => onGenerateKit(kitLocationId)}
+                    disabled={generatingKit || !form.product_type_id}
+                    title={!form.product_type_id ? 'Assign a product type (with an active BOM) first' : 'Generate a kit from the active BOM'}
+                    className="btn-secondary text-xs !py-1.5"
+                  >
+                    <PackageOpen size={13} />
+                    {generatingKit ? 'Generating…' : 'Generate Kit'}
+                  </button>
+                  {!form.product_type_id && (
+                    <span className="text-[11px] text-gray-400">Requires a product type with an active BOM</span>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {entityId && (
             <div className="pt-2 border-t border-gray-100">
@@ -569,10 +716,14 @@ type ViewMode = 'list' | 'gantt';
 export default function Schedule() {
   const { selectedSiteId } = useSite();
   const { canEdit, user } = useAuth();
+  const { addToast } = useToast();
   const { highlightId, isHighlighted, highlightRef } = useHighlight();
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [apps, setApps] = useState<App[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [kitsByWo, setKitsByWo] = useState<Record<string, KitRow>>({});
+  const [locations, setLocations] = useState<LocationOption[]>([]);
+  const [generatingKit, setGeneratingKit] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -601,14 +752,22 @@ export default function Schedule() {
     setLoadError(null);
     try {
       const siteParams = { site_id: selectedSiteId || undefined };
-      const [wos, appList, deptList] = await Promise.all([
+      const [wos, appList, deptList, kitList, locList] = await Promise.all([
         api.getWorkOrders(siteParams),
         api.getApps(),
         api.getDepartments(siteParams).catch(() => []),
+        api.getKits().catch(() => [] as KitRow[]),
+        api.getLocations().catch(() => []),
       ]);
       setWorkOrders(Array.isArray(wos) ? wos : []);
       setApps(Array.isArray(appList) ? appList : []);
       setDepartments(Array.isArray(deptList) ? deptList : []);
+      const byWo: Record<string, KitRow> = {};
+      for (const k of (Array.isArray(kitList) ? kitList as KitRow[] : [])) {
+        if (k.status !== 'cancelled') byWo[k.work_order_id] = k;
+      }
+      setKitsByWo(byWo);
+      setLocations(Array.isArray(locList) ? (locList as LocationOption[]) : []);
     } catch (e: any) {
       setWorkOrders([]);
       setLoadError(e?.message || 'Failed to load work orders');
@@ -634,13 +793,14 @@ export default function Schedule() {
       part_number: wo.part_number,
       part_name: wo.part_name,
       app_id: wo.app_id,
-      department: wo.department,
-      quantity_total: wo.quantity_total,
+      department_id: wo.department_id ?? '',
+      product_type_id: wo.product_type_id ?? '',
+      quantity: wo.quantity,
       priority: wo.priority,
       status: wo.status,
       scheduled_start: toDatetimeLocal(wo.scheduled_start),
       scheduled_end: toDatetimeLocal(wo.scheduled_end),
-      takt_time: wo.takt_time,
+      takt_time_minutes: wo.takt_time_minutes,
       notes: wo.notes,
     });
     setEditTarget(wo);
@@ -649,7 +809,7 @@ export default function Schedule() {
   const handleSaveCreate = async () => {
     setSaving(true);
     try {
-      await api.createWorkOrder(form);
+      await api.createWorkOrder(toPayload(form));
       setShowCreate(false);
       await load();
     } catch (e: any) {
@@ -663,13 +823,43 @@ export default function Schedule() {
     if (!editTarget) return;
     setSaving(true);
     try {
-      await api.updateWorkOrder(editTarget.id, form);
+      await api.updateWorkOrder(editTarget.id, toPayload(form));
       setEditTarget(null);
       await load();
     } catch (e: any) {
       alert(e.message ?? 'Failed to update work order');
     } finally {
       setSaving(false);
+    }
+  };
+
+  // Generate a material kit from the WO's product type's active BOM. Saves the
+  // form first so a just-picked product type is on the WO before resolution.
+  const handleGenerateKit = async (locationId: string) => {
+    if (!editTarget) return;
+    setGeneratingKit(true);
+    try {
+      await api.updateWorkOrder(editTarget.id, toPayload(form));
+      const kit = await api.generateKit({
+        work_order_id: editTarget.id,
+        ...(locationId ? { location_id: locationId } : {}),
+      });
+      setKitsByWo(prev => ({ ...prev, [editTarget.id]: kit as KitRow }));
+      addToast(`Kit generated for ${editTarget.work_order_number} (BOM v${kit.bom_version})`, 'success');
+      // Refresh rollups in the background — the modal stays open on this WO.
+      api.getKits().then(list => {
+        const byWo: Record<string, KitRow> = {};
+        for (const k of list as KitRow[]) if (k.status !== 'cancelled') byWo[k.work_order_id] = k;
+        setKitsByWo(byWo);
+      }).catch(() => {});
+    } catch (e: any) {
+      const code = e?.data?.code;
+      if (code === 'KIT_EXISTS') addToast('A kit already exists for this work order', 'warning');
+      else if (code === 'NO_PRODUCT_TYPE') addToast('Assign a product type to this work order first', 'warning');
+      else if (code === 'NO_ACTIVE_BOM') addToast('No active BOM for this product type — activate one under Inventory → BOMs', 'warning');
+      else addToast(e?.message ?? 'Failed to generate kit', 'error');
+    } finally {
+      setGeneratingKit(false);
     }
   };
 
@@ -697,11 +887,11 @@ export default function Schedule() {
   };
 
   // Filtering
-  const deptOptions = ['All', ...Array.from(new Set(workOrders.map(w => w.department).filter(Boolean)))];
+  const deptOptions = ['All', ...Array.from(new Set(workOrders.map(w => w.department_name).filter((n): n is string => Boolean(n))))];
   const filtered = workOrders.filter(wo => {
     if (statusFilter !== 'All' && wo.status !== statusFilter) return false;
     if (priorityFilter !== 'All' && wo.priority !== priorityFilter) return false;
-    if (deptFilter !== 'All' && wo.department !== deptFilter) return false;
+    if (deptFilter !== 'All' && wo.department_name !== deptFilter) return false;
     if (search) {
       const q = search.toLowerCase();
       if (
@@ -721,7 +911,7 @@ export default function Schedule() {
   const minDate = ganttDates.length > 0 ? new Date(Math.min(...ganttDates.map(d => d.getTime()))) : new Date();
   const maxDate = ganttDates.length > 0 ? new Date(Math.max(...ganttDates.map(d => d.getTime()))) : new Date(Date.now() + 7 * 86400000);
   const ganttByDept = filtered.reduce<Record<string, WorkOrder[]>>((acc, wo) => {
-    const dept = wo.department || 'Unassigned';
+    const dept = wo.department_name || 'Unassigned';
     if (!acc[dept]) acc[dept] = [];
     acc[dept].push(wo);
     return acc;
@@ -832,6 +1022,7 @@ export default function Schedule() {
       ) : viewMode === 'list' ? (
         <ListView
           workOrders={filtered}
+          kitsByWo={kitsByWo}
           onEdit={openEdit}
           onDelete={setDeleteTarget}
           onComplete={handleMarkComplete}
@@ -877,6 +1068,10 @@ export default function Schedule() {
           onClose={() => setEditTarget(null)}
           entityId={editTarget.id}
           currentUserId={user?.id}
+          kit={kitsByWo[editTarget.id] ?? null}
+          locations={locations}
+          generatingKit={generatingKit}
+          onGenerateKit={canEdit ? handleGenerateKit : undefined}
         />
       )}
 
@@ -910,6 +1105,7 @@ export default function Schedule() {
 
 function ListView({
   workOrders,
+  kitsByWo,
   onEdit,
   onDelete,
   onComplete,
@@ -920,6 +1116,7 @@ function ListView({
   onCreate,
 }: {
   workOrders: WorkOrder[];
+  kitsByWo: Record<string, KitRow>;
   onEdit: (wo: WorkOrder) => void;
   onDelete: (wo: WorkOrder) => void;
   onComplete: (wo: WorkOrder) => void;
@@ -957,14 +1154,15 @@ function ListView({
         <table className="w-full text-sm whitespace-nowrap">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
-              {['WO #', 'Part', 'Department', 'Quantity', 'Priority', 'Scheduled', 'Status', 'Actions'].map(h => (
+              {['WO #', 'Part', 'Department', 'Quantity', 'Kit', 'Priority', 'Scheduled', 'Status', 'Actions'].map(h => (
                 <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide px-4 py-3">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {workOrders.map(wo => {
-              const pct = wo.quantity_total > 0 ? Math.round((wo.quantity_completed / wo.quantity_total) * 100) : 0;
+              const pct = wo.quantity > 0 ? Math.round((wo.quantity_completed / wo.quantity) * 100) : 0;
+              const kit = kitsByWo[wo.id];
               return (
                 <tr
                   key={wo.id}
@@ -981,17 +1179,33 @@ function ListView({
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5 text-xs text-gray-600">
                       <Building2 size={11} />
-                      {wo.department || '—'}
+                      {wo.department_name || '—'}
                     </div>
                   </td>
                   <td className="px-4 py-3 min-w-[120px]">
-                    <div className="text-xs text-gray-700 mb-1">{wo.quantity_completed} / {wo.quantity_total}</div>
+                    <div className="text-xs text-gray-700 mb-1 [font-variant-numeric:tabular-nums]">{wo.quantity_completed} / {wo.quantity}</div>
                     <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden w-20">
                       <div
                         className={`h-full rounded-full ${GANTT_BAR_CLASSES[wo.status] ?? 'bg-gray-400'}`}
                         style={{ width: `${pct}%` }}
                       />
                     </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    {kit ? (
+                      <Link
+                        to={`/inventory/kitting/${kit.id}`}
+                        onClick={e => e.stopPropagation()}
+                        title={`Kit ${kit.status} — ${(kit.n_verified ?? 0) + (kit.n_picked ?? 0)}/${kit.n_total ?? 0} picked`}
+                        className={`inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-semibold hover:opacity-80 transition-opacity ${KIT_STATUS_CLASSES[kit.status] ?? 'bg-gray-100 text-gray-600'}`}
+                      >
+                        <PackageOpen size={11} />
+                        {kit.status}
+                        {Boolean(kit.has_short) && <Flag size={10} className="text-amber-600" />}
+                      </Link>
+                    ) : (
+                      <span className="text-xs text-gray-300">—</span>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${PRIORITY_CLASSES[wo.priority] ?? 'bg-gray-100 text-gray-600'}`}>

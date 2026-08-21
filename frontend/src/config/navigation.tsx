@@ -5,7 +5,7 @@ import {
   Users, Cpu, LayoutGrid,
   Package, ShoppingCart, ShieldCheck, Building2,
   Factory, CalendarRange, Layers, History, Tablet, Network, GitBranch,
-  HeartPulse, Boxes, PackageCheck, Truck, ListChecks,
+  HeartPulse, Boxes, PackageCheck, PackageOpen, Truck, ListChecks,
   GraduationCap, Award,
   Bell, AlertTriangle, Wrench, ClipboardCheck, Lightbulb, BookOpen,
 } from 'lucide-react';
@@ -79,7 +79,10 @@ export const SECTIONS: NavSection[] = [
     icon: Boxes,
     description: 'Track stock and purchasing',
     items: [
-      { to: '/inventory',     icon: Package,       label: 'Inventory Tracker', proOnly: true, module: 'inventory' },
+      // exact — so the Tracker link doesn't also light up on /inventory/boms & /inventory/kitting
+      { to: '/inventory',     icon: Package,       label: 'Inventory Tracker', exact: true, proOnly: true, module: 'inventory' },
+      { to: '/inventory/boms',    icon: Layers,       label: 'BOMs',           minRole: 'supervisor', module: 'inventory' },
+      { to: '/inventory/kitting', icon: PackageOpen,  label: 'Kitting',        module: 'inventory' },
       { to: '/receiving',     icon: PackageCheck,  label: 'Receiving',         proOnly: false, module: 'inventory' },
       { to: '/requirements',  icon: ListChecks,    label: 'Materials Required', proOnly: true, minRole: 'supervisor', module: 'inventory' },
       { to: '/shipments',     icon: Truck,         label: 'Shipments',          proOnly: true, module: 'inventory' },
