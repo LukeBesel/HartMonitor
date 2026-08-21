@@ -122,14 +122,25 @@ function computeCardData(card, companyId) {
         case 'active_runs':
           return { value: db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='in_progress'${appFilter}`).get(companyId, ...appParams).c };
         case 'pass_rate': {
-          const rows = db.prepare(`SELECT data FROM completions WHERE company_id = ? AND status='completed'${appFilter} LIMIT 500`).all(companyId, ...appParams);
+          // Only runs that actually recorded a Pass/Fail count — runs with no QC
+          // step are not silently scored as passes, and no QC data at all reports
+          // "no data" rather than a flattering 100%.
+          const rows = db.prepare(`SELECT data FROM completions WHERE company_id = ? AND status='completed'${appFilter}`).all(companyId, ...appParams);
           let pass = 0, total = 0;
-          for (const r of rows) { const v = Object.values(JSON.parse(r.data||'{}')); total++; if (!v.some(x => x==='Fail')) pass++; }
-          return { value: total > 0 ? Math.round((pass/total)*100) : 100, suffix: '%' };
+          for (const r of rows) {
+            const v = Object.values(JSON.parse(r.data || '{}'));
+            if (v.some(x => x === 'Fail')) total++;
+            else if (v.some(x => x === 'Pass')) { total++; pass++; }
+          }
+          return total > 0
+            ? { value: Math.round((pass / total) * 100), suffix: '%', sample_size: total }
+            : { value: null, empty_reason: 'No pass/fail results recorded yet' };
         }
         case 'avg_cycle': {
           const row = db.prepare(`SELECT AVG((julianday(completed_at)-julianday(started_at))*24*60) as v FROM completions WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL${appFilter}`).get(companyId, ...appParams);
-          return { value: row?.v ? Math.round(row.v * 10) / 10 : 0, suffix: 'm' };
+          return row?.v
+            ? { value: Math.round(row.v * 10) / 10, suffix: 'm' }
+            : { value: null, empty_reason: 'No completed runs yet' };
         }
         case 'period_completions':
           return { value: db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed' AND completed_at >= date('now','-'||?||' days')${appFilter}`).get(companyId, days, ...appParams).c };
@@ -151,10 +162,13 @@ function computeCardData(card, companyId) {
             SELECT COUNT(*) as total, COALESCE(SUM(CASE WHEN status = 'certified' THEN 1 ELSE 0 END), 0) as certified
             FROM training_records WHERE company_id = ?
           `).get(companyId);
-          return { value: row.total > 0 ? Math.round((row.certified / row.total) * 100) : 0, suffix: '%' };
+          return row.total > 0
+            ? { value: Math.round((row.certified / row.total) * 100), suffix: '%', sample_size: row.total }
+            : { value: null, empty_reason: 'No training records yet' };
         }
         default:
-          return { value: 0 };
+          // An unknown metric key is a configuration problem, not a zero.
+          return { value: null, empty_reason: `Unknown metric "${card.metric_key}"` };
       }
     }
 
@@ -186,15 +200,20 @@ function computeCardData(card, companyId) {
             AND completed_at >= date('now','-'||?||' days')${appFilter}
           ORDER BY completed_at ASC
         `).all(companyId, days, ...appParams);
+        // Days are plotted only from runs that recorded a Pass/Fail — a day of
+        // runs with no QC step is absent rather than charted as a 100% day.
         const byDate = {};
         for (const r of rows) {
+          const vals = Object.values(JSON.parse(r.data||'{}'));
+          const failed = vals.some(v => v === 'Fail');
+          const passed = !failed && vals.some(v => v === 'Pass');
+          if (!failed && !passed) continue;
           const d = r.date; if (!byDate[d]) byDate[d] = { pass: 0, total: 0 };
           byDate[d].total++;
-          const vals = Object.values(JSON.parse(r.data||'{}'));
-          if (!vals.some(v=>v==='Fail')) byDate[d].pass++;
+          if (passed) byDate[d].pass++;
         }
         const data = Object.entries(byDate).sort(([a],[b])=>a.localeCompare(b))
-          .map(([date, v]) => ({ date, value: v.total > 0 ? Math.round((v.pass/v.total)*100) : 100 }));
+          .map(([date, v]) => ({ date, value: Math.round((v.pass/v.total)*100) }));
         return { series: [{ name: 'Pass Rate %', data }] };
       }
       // Workspace-report series (seeded by the /category/:category endpoint)
@@ -237,10 +256,16 @@ function computeCardData(card, companyId) {
         return { data: rows };
       }
       if (groupBy === 'quality') {
-        const rows = db.prepare(`SELECT data FROM completions WHERE company_id = ? AND status='completed'${appFilter} LIMIT 500`).all(companyId, ...appParams);
+        // Counts explicit QC results only — runs without a pass/fail step are
+        // not counted as passes.
+        const rows = db.prepare(`SELECT data FROM completions WHERE company_id = ? AND status='completed'${appFilter}`).all(companyId, ...appParams);
         let pass = 0, fail = 0;
-        for (const r of rows) { const vals = Object.values(JSON.parse(r.data||'{}')); if (vals.some(v=>v==='Fail')) fail++; else pass++; }
-        return { data: [{ label: 'Pass', value: pass }, { label: 'Fail', value: fail }] };
+        for (const r of rows) {
+          const vals = Object.values(JSON.parse(r.data||'{}'));
+          if (vals.some(v => v === 'Fail')) fail++;
+          else if (vals.some(v => v === 'Pass')) pass++;
+        }
+        return { data: pass + fail > 0 ? [{ label: 'Pass', value: pass }, { label: 'Fail', value: fail }] : [] };
       }
       if (groupBy === 'department') {
         const appFilterC = card.app_id ? ' AND c.app_id = ?' : '';
@@ -345,8 +370,12 @@ const REPORT_CATEGORIES = {
     defaultCards: () => [
       { id: uuidv4(), type: 'metric',       title: "Today's Completions", metric_key: 'today_completions', size: 'sm', color: '#3b82f6' },
       { id: uuidv4(), type: 'metric',       title: 'Avg Cycle Time',      metric_key: 'avg_cycle', size: 'sm', color: '#8b5cf6' },
+      // The question a production report has to answer first: where do the work
+      // orders stand? Throughput and cycle time explain the "why" underneath.
+      { id: uuidv4(), type: 'wo_status',    title: 'Work Orders by Status', size: 'md' },
       { id: uuidv4(), type: 'time_series',  title: 'Daily Throughput',    series: 'throughput', period_days: 30, size: 'md' },
       { id: uuidv4(), type: 'time_series',  title: 'Cycle Time Trend',    series: 'cycle_time', period_days: 30, size: 'md' },
+      { id: uuidv4(), type: 'distribution', title: 'Output by Department', group_by: 'department', size: 'md' },
       { id: uuidv4(), type: 'distribution', title: 'Station Status',      group_by: 'station_status', size: 'md' },
     ],
   },

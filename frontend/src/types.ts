@@ -375,7 +375,11 @@ export interface CompanySettings {
 export interface AnalyticsOverview {
   totalCompletions: number; todayCompletions: number; inProgress: number;
   totalApps: number; publishedApps: number; activeStations: number;
-  avgCycleTime: number; passRate: number;
+  avgCycleTime: number;
+  /** null until at least one run records a Pass/Fail result. */
+  passRate: number | null;
+  /** How many completed runs the pass rate is based on. */
+  qcSampleSize?: number;
 }
 
 export interface PlantViewData {
@@ -402,7 +406,10 @@ export interface ManagerViewData {
 
 // ── Daily brief / attention ──────────────────────────────────────────────────
 
-export type AttentionType = 'wo_overdue' | 'wo_behind' | 'station_down' | 'ncr_critical' | 'stock_low' | 'po_late';
+export type AttentionType =
+  | 'wo_overdue' | 'wo_behind' | 'station_down' | 'ncr_critical' | 'stock_low' | 'po_late'
+  /** Overflow summary row ("N more work orders behind schedule"). */
+  | 'more';
 
 export interface AttentionItem {
   type: AttentionType;

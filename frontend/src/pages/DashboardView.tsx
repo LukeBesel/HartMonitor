@@ -66,14 +66,27 @@ function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
 
   switch (card.type) {
     case 'metric': {
-      const val = data.value ?? 0;
+      const val = data.value;
       const color = card.color || 'var(--accent)';
+      // A metric with nothing behind it shows "—" and says why — never a 0 or a
+      // 100% that the underlying data doesn't support.
+      if (val === null || val === undefined) {
+        return (
+          <div className="flex flex-col items-center justify-center py-6 gap-1.5">
+            <div className="text-5xl font-bold text-gray-300">—</div>
+            <div className="text-xs text-gray-400 text-center px-2">{data.empty_reason || 'No data yet'}</div>
+          </div>
+        );
+      }
       return (
         <div className="flex flex-col items-center justify-center py-6 gap-1">
           <div className="text-5xl font-bold" style={{ color }}>
             {typeof val === 'number' && !Number.isInteger(val) ? val.toFixed(1) : val}
             {data.suffix && <span className="text-2xl ml-1 font-medium opacity-70">{data.suffix}</span>}
           </div>
+          {typeof data.sample_size === 'number' && (
+            <div className="text-[11px] text-gray-400">from {data.sample_size} recorded result{data.sample_size === 1 ? '' : 's'}</div>
+          )}
         </div>
       );
     }
@@ -338,11 +351,20 @@ function CardConfigForm({ card, apps, onSave, onCancel }: {
 
 const SIZE_COLS: Record<string, string> = { sm: 'col-span-1', md: 'col-span-2', lg: 'col-span-3', xl: 'col-span-full' };
 
-export default function DashboardView() {
-  const { id, mode } = useParams<{ id: string; mode?: string }>();
+/** `dashboardId` lets a host route (the per-workspace Reports pages) render this
+ *  view in place without navigating to /dashboards/:id — which would swap the
+ *  user out of their current workspace and its tab bar. */
+export default function DashboardView({ dashboardId }: { dashboardId?: string } = {}) {
+  const params = useParams<{ id: string; mode?: string }>();
+  const id = dashboardId ?? params.id;
+  const mode = dashboardId ? undefined : params.mode;
   const navigate = useNavigate();
   const { canEdit } = useAuth();
-  const isEditMode = mode === 'edit' && canEdit;
+  const embedded = !!dashboardId;
+  // Embedded (workspace Reports) edits toggle in place — routing to
+  // /dashboards/:id/edit would drop the user out of their workspace.
+  const [embeddedEdit, setEmbeddedEdit] = useState(false);
+  const isEditMode = canEdit && (embedded ? embeddedEdit : mode === 'edit');
 
   const [dashboard, setDashboard] = useState<Dashboard | null>(null);
   const [cardData, setCardData] = useState<Record<string, any>>({});
@@ -488,9 +510,11 @@ export default function DashboardView() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
-          <Link to="/dashboards" className="p-1.5 hover:bg-gray-200 rounded-lg text-gray-400 hover:text-gray-600 transition-colors">
-            <ChevronLeft size={18} />
-          </Link>
+          {!embedded && (
+            <Link to="/dashboards" className="p-1.5 hover:bg-gray-200 rounded-lg text-gray-400 hover:text-gray-600 transition-colors">
+              <ChevronLeft size={18} />
+            </Link>
+          )}
           {isEditMode ? (
             <div className="flex items-center gap-2">
               <input
@@ -514,7 +538,16 @@ export default function DashboardView() {
             <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
             Refresh
           </button>
-          {isEditMode ? (
+          {embedded ? (
+            canEdit && (
+              <button
+                onClick={() => setEmbeddedEdit(e => !e)}
+                className={`text-xs py-1.5 px-3 ${isEditMode ? 'btn-primary' : 'btn-secondary'}`}
+              >
+                {isEditMode ? 'Done Editing' : <><Edit size={13} /> Edit</>}
+              </button>
+            )
+          ) : isEditMode ? (
             <Link to={`/dashboards/${id}`} className="btn-primary text-xs py-1.5 px-3">
               Done Editing
             </Link>
@@ -571,11 +604,15 @@ export default function DashboardView() {
           <BarChart3 size={40} className="mx-auto mb-3 text-gray-200" />
           <div className="text-gray-500 font-medium">No cards yet</div>
           <p className="text-gray-400 text-sm mt-1">Add KPI, chart and table widgets to bring this dashboard to life.</p>
-          {canEdit && (
+          {canEdit && (embedded ? (
+            <button onClick={() => setEmbeddedEdit(true)} className="btn-primary mt-4 mx-auto text-sm">
+              <Settings size={14} /> Configure Dashboard
+            </button>
+          ) : (
             <Link to={`/dashboards/${id}/edit`} className="btn-primary mt-4 mx-auto text-sm">
               <Settings size={14} /> Configure Dashboard
             </Link>
-          )}
+          ))}
         </div>
       ) : (
         <div className="grid grid-cols-4 gap-4">

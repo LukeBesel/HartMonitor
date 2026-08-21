@@ -4,7 +4,7 @@ import { api } from '../api/client';
 import { useSite } from '../context/SiteContext';
 import {
   Building2, RefreshCw, Activity, CheckCircle2, Clock, Calendar,
-  ChevronRight, Tv, AlertTriangle
+  ChevronRight, Tv, AlertTriangle, BarChart2, Cpu
 } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 
@@ -166,15 +166,36 @@ export default function Departments() {
             ))}
           </select>
           {selectedDeptId && (
-            <Link
-              to={`/departments/${selectedDeptId}/tv`}
-              className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 shadow-sm"
-              title="Open full-screen TV mode for this department"
-            >
-              <Tv size={14} />
-              <span>TV Mode</span>
-            </Link>
+            <>
+              {/* The full drill-down (stations, OEE, hourly output, QC) lives at
+                  /departments/:id — it used to be reachable only by clicking a
+                  running job, so it gets an explicit entry point here. */}
+              <Link
+                to={`/departments/${selectedDeptId}`}
+                className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 shadow-sm"
+                title="Stations, live OEE, hourly output and quality for this department"
+              >
+                <BarChart2 size={14} />
+                <span>Full department view</span>
+              </Link>
+              <Link
+                to={`/departments/${selectedDeptId}/tv`}
+                className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 shadow-sm"
+                title="Open full-screen TV mode for this department"
+              >
+                <Tv size={14} />
+                <span>TV Mode</span>
+              </Link>
+            </>
           )}
+          <Link
+            to="/stations"
+            className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg text-sm font-medium hover:bg-gray-50 shadow-sm"
+            title="Create and configure workstations"
+          >
+            <Cpu size={14} />
+            <span>Stations</span>
+          </Link>
           <button
             onClick={() => loadWorkOrders(true)}
             className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 shadow-sm"
@@ -221,21 +242,23 @@ export default function Departments() {
                 <Activity size={18} className="text-blue-600" />
               </div>
               <div className="text-2xl font-bold text-gray-900">{inProgress.length}</div>
-              <div className="text-xs text-gray-500 mt-0.5">In Progress</div>
+              <div className="text-xs text-gray-500 mt-0.5">Work Orders In Progress</div>
             </div>
             <div className="card p-5">
               <div className="w-9 h-9 bg-green-50 rounded-lg flex items-center justify-center mb-3">
                 <CheckCircle2 size={18} className="text-green-600" />
               </div>
+              {/* Work orders finished today — NOT the run count, which the
+                  Command Center and the full department view report. */}
               <div className="text-2xl font-bold text-gray-900">{completedToday}</div>
-              <div className="text-xs text-gray-500 mt-0.5">Completed Today</div>
+              <div className="text-xs text-gray-500 mt-0.5">Work Orders Finished Today</div>
             </div>
             <div className="card p-5">
               <div className="w-9 h-9 bg-amber-50 rounded-lg flex items-center justify-center mb-3">
                 <Calendar size={18} className="text-amber-600" />
               </div>
               <div className="text-2xl font-bold text-gray-900">{upcoming.length}</div>
-              <div className="text-xs text-gray-500 mt-0.5">Upcoming</div>
+              <div className="text-xs text-gray-500 mt-0.5">Work Orders Not Started</div>
             </div>
           </div>
 
@@ -272,10 +295,14 @@ export default function Departments() {
                     <div className="font-semibold text-gray-900 text-sm truncate">{wo.work_order_number}</div>
                     {wo.part_name && <div className="text-xs text-gray-500 truncate mt-0.5">{wo.part_name}</div>}
                     <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
-                      <span className="flex items-center gap-1">
-                        <Clock size={11} />
-                        {formatElapsed(wo.started_at)}
-                      </span>
+                      {/* Only render elapsed time when the work order actually
+                          carries a start timestamp — an empty clock reads broken. */}
+                      {wo.started_at ? (
+                        <span className="flex items-center gap-1">
+                          <Clock size={11} />
+                          {formatElapsed(wo.started_at)}
+                        </span>
+                      ) : <span />}
                       {wo.operator_name && <span>{wo.operator_name}</span>}
                     </div>
                     <div className="mt-2">

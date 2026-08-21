@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react';
-import { useParams, Navigate, Link } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { AlertTriangle } from 'lucide-react';
+import DashboardView from './DashboardView';
 
 // Per-workspace Reports pages (/reports/:category). Each category resolves to
 // the company's dedicated report dashboard — auto-created server-side on first
-// visit with sensible defaults — then hands off to the existing DashboardView
-// experience (grid, card editor, persistence) rather than forking it.
+// visit with sensible defaults — then renders the existing DashboardView
+// experience (grid, card editor, persistence) IN PLACE rather than forking it.
+// Rendering in place (instead of redirecting to /dashboards/:id) is what keeps
+// the URL — and therefore the sidebar workspace and its screen tabs — on the
+// workspace whose Reports tab the user clicked.
 
 const CATEGORY_LABELS: Record<string, string> = {
   production: 'Production Reports',
@@ -80,5 +84,5 @@ export default function CategoryReports() {
     );
   }
 
-  return <Navigate to={`/dashboards/${dashboardId}`} replace />;
+  return <DashboardView dashboardId={dashboardId} />;
 }

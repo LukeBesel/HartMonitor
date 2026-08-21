@@ -7,7 +7,7 @@ import { useMessages } from '../../context/MessagesContext';
 import { useAuth } from '../../context/AuthContext';
 import { timeAgo } from '../../utils/time';
 import type { AttentionItem, MessageSeverity } from '../../types';
-import { ATTENTION_ICONS, ATTENTION_TYPE_LABELS } from '../../config/attention';
+import { attentionIcon, attentionLabel } from '../../config/attention';
 
 const SEVERITY_DOT: Record<MessageSeverity, string> = {
   info: 'bg-blue-400',
@@ -244,10 +244,10 @@ export default function AlertsBell({ collapsed }: { collapsed: boolean }) {
                   className="w-full flex items-start gap-2.5 px-3 py-2.5 text-sm text-left hover:bg-gray-50 transition-colors border-b border-gray-50 last:border-0"
                 >
                   <span className={`flex-shrink-0 mt-0.5 ${row.item.severity === 'red' ? 'text-red-500' : 'text-amber-500'}`}>
-                    {ATTENTION_ICONS[row.item.type]}
+                    {attentionIcon(row.item.type)}
                   </span>
                   <div className="min-w-0">
-                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{ATTENTION_TYPE_LABELS[row.item.type]}</div>
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{attentionLabel(row.item.type)}</div>
                     <div className="text-xs font-medium text-gray-800 truncate">{row.item.label}</div>
                     {row.item.detail && <div className="text-[11px] text-gray-400 truncate">{row.item.detail}</div>}
                   </div>

@@ -10,7 +10,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 interface DeptViewData {
   department: { id: string; name: string; color: string; manager_name: string; description: string; headcount: number };
   kpis: {
-    completed_today: number; active_now: number; pass_rate: number;
+    completed_today: number; active_now: number; pass_rate: number | null;
     avg_cycle_time: number; wos_on_track: number; wos_total: number;
   };
   stations: Array<{
@@ -18,7 +18,10 @@ interface DeptViewData {
     current_status: string; current_status_since: string | null;
     current_app_id: string | null; current_app_name: string | null;
     active_completion: { id: string; operator_name: string; app_name: string; started_at: string } | null;
-    oee: { availability: number; performance: number; quality: number; oee: number; completions_today: number };
+    oee: {
+      availability: number | null; performance: number | null; quality: number | null;
+      oee: number | null; completions_today: number;
+    };
   }>;
   work_orders: Array<{
     id: string; work_order_number: string; part_name: string; app_name: string | null;
@@ -147,7 +150,7 @@ export default function DepartmentView() {
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
         <KPICard icon={<CheckCircle2 size={18} className="text-green-600" />} bg="bg-green-50" label="Completed Today" value={kpis.completed_today} />
         <KPICard icon={<Activity size={18} className="text-blue-600" />} bg="bg-blue-50" label="Active Now" value={kpis.active_now} />
-        <KPICard icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50" label="Pass Rate (7d)" value={`${kpis.pass_rate}%`} />
+        <KPICard icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50" label="Pass Rate (7d)" value={kpis.pass_rate !== null ? `${kpis.pass_rate}%` : '—'} />
         <KPICard icon={<Clock size={18} className="text-orange-600" />} bg="bg-orange-50" label="Avg Cycle Time" value={kpis.avg_cycle_time ? `${kpis.avg_cycle_time}m` : '—'} />
         <KPICard icon={<Package size={18} className="text-indigo-600" />} bg="bg-indigo-50" label="WOs On Track" value={`${kpis.wos_on_track} / ${kpis.wos_total}`} />
       </div>
@@ -192,7 +195,9 @@ export default function DepartmentView() {
                     </div>
                   )}
                   <div className="flex items-center justify-between text-xs text-gray-500">
-                    <span>OEE <span className={`font-bold ${st.oee.oee >= 80 ? 'text-green-600' : st.oee.oee >= 60 ? 'text-amber-600' : 'text-red-600'}`}>{st.oee.oee}%</span></span>
+                    <span>OEE {st.oee.oee === null
+                      ? <span className="font-bold text-gray-400" title="Set an ideal cycle time and record runs to measure OEE">—</span>
+                      : <span className={`font-bold ${st.oee.oee >= 80 ? 'text-green-600' : st.oee.oee >= 60 ? 'text-amber-600' : 'text-red-600'}`}>{st.oee.oee}%</span>}</span>
                     <span>{st.oee.completions_today} today</span>
                   </div>
                 </Link>

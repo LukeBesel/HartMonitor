@@ -32,7 +32,10 @@ function deptCounts(deptId) {
 router.get('/', (req, res) => {
   let sql = 'SELECT * FROM departments WHERE company_id = ?';
   const params = [req.companyId];
-  if (req.query.site_id) { sql += ' AND site_id = ?'; params.push(req.query.site_id); }
+  // Unassigned records (site_id IS NULL) belong to the whole company, so they
+  // stay visible under every site — otherwise picking a site empties the page
+  // for the (very common) company that never assigned its departments to one.
+  if (req.query.site_id) { sql += ' AND (site_id = ? OR site_id IS NULL)'; params.push(req.query.site_id); }
   sql += ' ORDER BY name';
   const depts = db.prepare(sql).all(...params);
   res.json(depts.map(dept => ({ ...dept, ...deptCounts(dept.id) })));

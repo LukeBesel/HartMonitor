@@ -183,8 +183,11 @@ export default function Facilities() {
                 <div className="mt-3 font-semibold text-gray-900">{s.name}</div>
                 {s.code && <div className="text-xs text-gray-400 flex items-center gap-1 mt-0.5"><MapPin size={11} />{s.code}</div>}
                 <div className="mt-3 space-y-1">
-                  <StatCard icon={Layers} label="departments" value={s.department_count ?? 0} color="#7c3aed" />
-                  <StatCard icon={Monitor} label="work centers" value={s.station_count ?? 0} color="#0891b2" />
+                  {/* "assigned" matters: departments and stations can exist
+                      company-wide without being tied to a facility, so a 0 here
+                      means "none assigned to this site", not "none exist". */}
+                  <StatCard icon={Layers} label="departments assigned" value={s.department_count ?? 0} color="#7c3aed" />
+                  <StatCard icon={Monitor} label="work centers assigned" value={s.station_count ?? 0} color="#0891b2" />
                   <StatCard icon={ClipboardList} label="open work orders" value={s.work_order_count ?? 0} color="#ea580c" />
                 </div>
               </button>

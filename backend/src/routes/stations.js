@@ -30,7 +30,9 @@ function ownedOrNull(table, id, companyId) {
 router.get('/', (req, res) => {
   let sql = STATION_SELECT + ' WHERE s.company_id = ?';
   const params = [req.companyId];
-  if (req.query.site_id) { sql += ' AND s.site_id = ?'; params.push(req.query.site_id); }
+  // Stations with no site assigned belong to the whole company — keep them
+  // visible under every site instead of blanking the page (see departments.js).
+  if (req.query.site_id) { sql += ' AND (s.site_id = ? OR s.site_id IS NULL)'; params.push(req.query.site_id); }
   if (req.query.department_id) { sql += ' AND s.department_id = ?'; params.push(req.query.department_id); }
   sql += ' ORDER BY s.name';
   const stations = db.prepare(sql).all(...params);

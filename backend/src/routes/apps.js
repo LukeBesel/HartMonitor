@@ -115,7 +115,8 @@ router.get('/', (req, res) => {
   const params = [req.companyId];
 
   if (department_id) { conditions.push('department_id = ?'); params.push(department_id); }
-  if (site_id)       { conditions.push('site_id = ?');       params.push(site_id); }
+  // Apps with no site assigned belong to the whole company (see departments.js).
+  if (site_id)       { conditions.push('(site_id = ? OR site_id IS NULL)'); params.push(site_id); }
 
   const apps = db.prepare(
     `SELECT * FROM apps WHERE ${conditions.join(' AND ')} ORDER BY updated_at DESC`

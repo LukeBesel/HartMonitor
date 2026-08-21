@@ -272,10 +272,13 @@ export default function Leaderboard() {
           </div>
           <div>
             <h1 className="text-xl font-bold text-gray-900 tracking-tight">Leaderboard</h1>
+            {/* Says exactly what is being counted. Cross-department output is a
+                volume tally, not a productivity comparison — the like-for-like
+                ranking is the per-operation drill-down. */}
             <p className="text-xs text-gray-500 mt-0.5">
               {selectedDept
-                ? 'Operator rankings — fastest clean runs by operation'
-                : 'Departments ranked by output — drill in for operator rankings'}
+                ? 'Operator rankings — fastest clean runs, compared only within the same operation and part'
+                : 'Clean runs completed per department — open one to rank operators within the same operation'}
             </p>
           </div>
         </div>

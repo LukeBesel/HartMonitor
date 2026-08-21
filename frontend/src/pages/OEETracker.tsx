@@ -6,11 +6,15 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 
+// Every factor is nullable: the backend reports `null` for anything it cannot
+// measure (no ideal cycle time configured, no runs today) instead of guessing.
 interface OEEData {
-  availability: number;
-  performance: number;
-  quality: number;
-  oee: number;
+  availability: number | null;
+  performance: number | null;
+  quality: number | null;
+  oee: number | null;
+  measurable: boolean;
+  missing: string[];
   uptime_minutes: number;
   downtime_minutes: number;
   planned_minutes: number;
@@ -66,19 +70,24 @@ function elapsedSince(iso: string | null): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
-function MiniBar({ label, value, color }: { label: string; value: number; color: string }) {
-  const safe = Number.isFinite(value) ? value : 0;
+function MiniBar({ label, value, color, hint }: { label: string; value: number | null; color: string; hint?: string }) {
+  const known = value !== null && Number.isFinite(value);
+  const safe = known ? (value as number) : 0;
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-[10px]">
         <span className="text-gray-400 font-medium">{label}</span>
-        <span className="text-gray-300 font-semibold">{safe.toFixed(1)}%</span>
+        {known
+          ? <span className="text-gray-300 font-semibold">{safe.toFixed(1)}%</span>
+          : <span className="text-gray-500 font-semibold" title={hint}>not measured</span>}
       </div>
       <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
-        <div
-          className={`h-full rounded-full transition-all ${color}`}
-          style={{ width: `${Math.min(safe, 100)}%` }}
-        />
+        {known && (
+          <div
+            className={`h-full rounded-full transition-all ${color}`}
+            style={{ width: `${Math.min(safe, 100)}%` }}
+          />
+        )}
       </div>
     </div>
   );
@@ -100,9 +109,13 @@ function MachineCard({
 
   const statusCfg = STATUS_CONFIG[machine.current_status] ?? STATUS_CONFIG.idle;
   const oee: OEEData = machine.oee ?? {
-    availability: 0, performance: 0, quality: 0, oee: 0,
+    availability: null, performance: null, quality: null, oee: null,
+    measurable: false, missing: [],
     uptime_minutes: 0, downtime_minutes: 0, planned_minutes: 0, completions_today: 0,
   };
+  const missingHint = oee.missing?.length
+    ? `Needs ${oee.missing.join(' and ')} to measure OEE`
+    : 'Not enough data to measure OEE yet';
 
   const handleSave = async () => {
     setSaving(true);
@@ -137,20 +150,29 @@ function MachineCard({
           </div>
         </div>
 
-        {/* OEE big number */}
+        {/* OEE big number — "—" when a factor can't be measured, never a guess */}
         <div className="flex items-end gap-2">
-          <div className={`text-3xl font-bold tabular-nums leading-none ${oeeColor(oee.oee)}`}>
-            {oee.oee.toFixed(1)}
-            <span className="text-base font-medium">%</span>
-          </div>
+          {oee.oee !== null ? (
+            <div className={`text-3xl font-bold tabular-nums leading-none ${oeeColor(oee.oee)}`}>
+              {oee.oee.toFixed(1)}
+              <span className="text-base font-medium">%</span>
+            </div>
+          ) : (
+            <div className="text-3xl font-bold leading-none text-gray-500">—</div>
+          )}
           <div className="text-xs text-gray-500 mb-1">OEE</div>
         </div>
+        {oee.oee === null && (
+          <div className="text-[10px] text-amber-400/90 leading-snug">{missingHint}</div>
+        )}
 
         {/* Progress bars */}
         <div className="space-y-1.5">
           <MiniBar label="Availability" value={oee.availability} color="bg-green-500" />
-          <MiniBar label="Performance"  value={oee.performance}  color="bg-blue-500" />
-          <MiniBar label="Quality"      value={oee.quality}      color="bg-purple-500" />
+          <MiniBar label="Performance"  value={oee.performance}  color="bg-blue-500"
+            hint="Set an ideal cycle time for this station to measure performance" />
+          <MiniBar label="Quality"      value={oee.quality}      color="bg-purple-500"
+            hint="Quality is measured from today's completed runs" />
         </div>
 
         {/* Footer row */}
@@ -269,9 +291,12 @@ export default function OEETracker() {
   const totalMachines = machines.length;
   const runningNow = machines.filter(m => m.current_status === 'running').length;
   const downNow = machines.filter(m => m.current_status === 'down').length;
-  const plantOEE = totalMachines > 0
-    ? machines.reduce((sum, m) => sum + (m.oee?.oee ?? 0), 0) / totalMachines
-    : 0;
+  // Plant-wide OEE averages ONLY the machines whose OEE is actually measurable —
+  // folding un-measurable machines in as zeros would understate the whole plant.
+  const measured = machines.filter(m => typeof m.oee?.oee === 'number');
+  const plantOEE = measured.length > 0
+    ? measured.reduce((sum, m) => sum + (m.oee.oee as number), 0) / measured.length
+    : null;
 
   const formattedLastUpdated = lastUpdated
     ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
@@ -289,7 +314,10 @@ export default function OEETracker() {
               Live
             </span>
           </div>
-          <p className="text-sm text-gray-500 mt-0.5">Overall Equipment Effectiveness — auto-refresh every 30s</p>
+          <p className="text-sm text-gray-500 mt-0.5">
+            Overall Equipment Effectiveness for today, measured against each station's planned
+            hours and ideal cycle time — auto-refresh every 30s
+          </p>
         </div>
         <div className="flex items-center gap-3">
           {formattedLastUpdated && (
@@ -335,8 +363,11 @@ export default function OEETracker() {
           icon={<TrendingUp size={18} className="text-purple-600" />}
           iconBg="bg-purple-50"
           label="Plant-wide OEE"
-          value={`${plantOEE.toFixed(1)}%`}
-          valueClass={oeeColor(plantOEE).replace('text-', 'text-')}
+          value={plantOEE === null ? '—' : `${plantOEE.toFixed(1)}%`}
+          sub={plantOEE === null
+            ? 'No machine has enough data yet'
+            : `averaged over ${measured.length} of ${totalMachines} machines`}
+          valueClass={plantOEE === null ? 'text-gray-400' : oeeColor(plantOEE)}
         />
       </div>
 

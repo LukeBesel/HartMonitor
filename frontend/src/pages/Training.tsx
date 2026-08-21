@@ -375,7 +375,7 @@ function PlanModal({
 
 // ─── Matrix Tab ───────────────────────────────────────────────────────────────
 
-function MatrixTab({ matrix, loading, onRefresh }: { matrix: any; loading: boolean; onRefresh: () => void }) {
+function MatrixTab({ matrix, loading, error, onRefresh }: { matrix: any; loading: boolean; error?: string | null; onRefresh: () => void }) {
   const [search, setSearch] = useState('');
   const [deptFilter, setDeptFilter] = useState('');
   const [editCell, setEditCell] = useState<{ userId: string; appId: string } | null>(null);
@@ -420,12 +420,25 @@ function MatrixTab({ matrix, loading, onRefresh }: { matrix: any; loading: boole
     );
   }
 
+  if (error) {
+    return (
+      <div className="card p-12 text-center">
+        <AlertTriangle size={36} className="mx-auto text-red-400 mb-3" />
+        <p className="text-gray-500 font-medium">Couldn't load the skills matrix</p>
+        <p className="text-sm text-gray-400 mt-1">{error}</p>
+        <button onClick={onRefresh} className="btn-secondary mt-4 mx-auto">
+          <RefreshCw size={14} /> Retry
+        </button>
+      </div>
+    );
+  }
+
   if (!matrix || apps.length === 0) {
     return (
       <div className="card p-12 text-center">
         <GraduationCap size={40} className="mx-auto text-gray-200 mb-3" />
-        <p className="text-gray-500 font-medium">No apps to show</p>
-        <p className="text-sm text-gray-400">Create work instruction apps to track training against them.</p>
+        <p className="text-gray-500 font-medium">No published apps to train against</p>
+        <p className="text-sm text-gray-400">Publish a work instruction app and it will appear as a skill column here.</p>
       </div>
     );
   }
@@ -945,10 +958,16 @@ function OverviewTab({ summary, loading }: { summary: any; loading: boolean }) {
               <div key={dept.id}>
                 <div className="flex items-center justify-between text-sm mb-1">
                   <span className="font-medium text-gray-800">{dept.name}</span>
-                  <span className={`font-semibold text-xs ${dept.coverage_pct >= 80 ? 'text-emerald-600' : dept.coverage_pct >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
-                    {Math.round(dept.coverage_pct)}%
-                    <span className="text-gray-400 font-normal ml-1">({dept.operator_count} operators)</span>
-                  </span>
+                  {/* A department with nobody in it has no coverage to report —
+                      showing a red 0% reads as "untrained", which isn't true. */}
+                  {dept.operator_count > 0 ? (
+                    <span className={`font-semibold text-xs ${dept.coverage_pct >= 80 ? 'text-emerald-600' : dept.coverage_pct >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
+                      {Math.round(dept.coverage_pct)}%
+                      <span className="text-gray-400 font-normal ml-1">({dept.operator_count} operator{dept.operator_count === 1 ? '' : 's'})</span>
+                    </span>
+                  ) : (
+                    <span className="text-xs text-gray-400 font-normal">No operators assigned</span>
+                  )}
                 </div>
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                   <div
@@ -1029,6 +1048,7 @@ export default function Training() {
   const [tab, setTab] = useState<Tab>(() => tabFromParam(tabParam));
   const [summary, setSummary] = useState<any>(null);
   const [matrix, setMatrix] = useState<any>(null);
+  const [matrixError, setMatrixError] = useState<string | null>(null);
   const [certs, setCerts] = useState<any[]>([]);
   const [plans, setPlans] = useState<any[]>([]);
   const [operators, setOperators] = useState<any[]>([]);
@@ -1047,8 +1067,12 @@ export default function Training() {
 
   async function loadMatrix() {
     setLoad('matrix', true);
+    setMatrixError(null);
+    // A failed load must surface — swallowing it made a broken endpoint look
+    // like "you have no apps yet".
     try { setMatrix(await api.getTrainingMatrix()); }
-    catch {} finally { setLoad('matrix', false); }
+    catch (err: any) { setMatrixError(err?.message || 'Failed to load the skills matrix'); }
+    finally { setLoad('matrix', false); }
   }
 
   async function loadCerts() {
@@ -1159,6 +1183,7 @@ export default function Training() {
         <MatrixTab
           matrix={matrix}
           loading={loading.matrix}
+          error={matrixError}
           onRefresh={() => { loadMatrix(); loadSummary(); }}
         />
       )}

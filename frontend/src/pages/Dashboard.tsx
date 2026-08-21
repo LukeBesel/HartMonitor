@@ -16,7 +16,7 @@ import {
   BarChart, Bar, PieChart, Pie, Cell,
 } from 'recharts';
 import type { DailyBrief } from '../types';
-import { ATTENTION_ICONS, ATTENTION_TYPE_LABELS } from '../config/attention';
+import { attentionIcon, attentionLabel } from '../config/attention';
 import { useDashboardPrefs, DASHBOARD_SECTIONS, DashboardSectionId } from '../hooks/useDashboardPrefs';
 import Toggle from '../components/shared/Toggle';
 import OnboardingWizard from '../components/shared/OnboardingWizard';
@@ -35,9 +35,11 @@ interface PlantViewData {
   kpis: {
     total_completed_today: number;
     active_now: number;
-    pass_rate: number;
+    /** null when no run has recorded a QC result. */
+    pass_rate: number | null;
     avg_cycle_time: number;
-    schedule_adherence: number;
+    /** % of open work orders on track — null when there are none. */
+    schedule_adherence: number | null;
     work_orders_on_track: number;
     work_orders_total: number;
   };
@@ -50,7 +52,7 @@ interface PlantViewData {
     takt_time: number;
     on_track_count: number;
     total_count: number;
-    status: 'on_track' | 'at_risk' | 'behind';
+    status: 'on_track' | 'at_risk' | 'behind' | 'idle';
   }>;
   hourly_throughput: Array<{ hour: string; count: number }>;
   work_order_summary: { on_track: number; at_risk: number; behind: number; not_started: number };
@@ -83,6 +85,7 @@ function fmtAgo(iso: string) {
 function deptBorderColor(status: string) {
   if (status === 'on_track') return 'border-l-green-500';
   if (status === 'at_risk') return 'border-l-amber-500';
+  if (status === 'idle') return 'border-l-gray-300';
   return 'border-l-red-500';
 }
 
@@ -91,6 +94,8 @@ function StatusPill({ status }: { status: string }) {
     on_track: { label: 'On Track', cls: 'bg-green-100 text-green-700' },
     at_risk: { label: 'At Risk', cls: 'bg-amber-100 text-amber-700' },
     behind: { label: 'Behind', cls: 'bg-red-100 text-red-700' },
+    // No work orders assigned — neither good nor bad news.
+    idle: { label: 'No work', cls: 'bg-gray-100 text-gray-600' },
   };
   const s = map[status] ?? { label: status, cls: 'bg-gray-100 text-gray-600' };
   return <span className={`text-xs font-semibold px-2 py-1 rounded-full ${s.cls}`}>{s.label}</span>;
@@ -402,12 +407,12 @@ export default function Dashboard() {
                 }`}
               >
                 <span className={`flex-shrink-0 ${item.severity === 'red' ? 'text-red-500' : 'text-amber-500'}`}>
-                  {ATTENTION_ICONS[item.type]}
+                  {attentionIcon(item.type)}
                 </span>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className={`text-[11px] font-semibold uppercase tracking-wide ${item.severity === 'red' ? 'text-red-600' : 'text-amber-600'}`}>
-                      {ATTENTION_TYPE_LABELS[item.type]}
+                      {attentionLabel(item.type)}
                     </span>
                     <span className="text-sm font-medium text-gray-900 truncate">{item.label}</span>
                   </div>
@@ -435,16 +440,20 @@ export default function Dashboard() {
               deltaLabel="vs 7-day avg"
               icon={<CheckCircle size={18} />} iconBg="bg-green-50" iconColor="text-green-600"
             />
+            {/* Not "schedule adherence" (an on-time-delivery measure) — this is
+                exactly what it says: how many OPEN work orders are on track today. */}
             <StatCard
-              label="Schedule Adherence"
-              value={kpis?.schedule_adherence !== null ? `${kpis?.schedule_adherence}%` : '—'}
-              deltaLabel={`${kpis?.work_orders_on_track ?? 0} of ${kpis?.work_orders_total ?? 0} WOs on track`}
+              label="Open WOs On Track"
+              value={kpis?.schedule_adherence != null ? `${kpis.schedule_adherence}%` : '—'}
+              deltaLabel={(kpis?.work_orders_total ?? 0) > 0
+                ? `${kpis?.work_orders_on_track ?? 0} of ${kpis?.work_orders_total} open work orders`
+                : 'No open work orders'}
               icon={<CalendarCheck size={18} />} iconBg="bg-teal-50" iconColor="text-teal-600"
             />
             <StatCard
               label="Pass Rate (7 days)"
-              value={kpis?.pass_rate_7d !== null ? `${kpis?.pass_rate_7d}%` : '—'}
-              deltaLabel="from QC results"
+              value={kpis?.pass_rate_7d != null ? `${kpis.pass_rate_7d}%` : '—'}
+              deltaLabel={kpis?.pass_rate_7d != null ? 'from QC results' : 'No QC results recorded yet'}
               icon={<TrendingUp size={18} />} iconBg="bg-purple-50" iconColor="text-purple-600"
             />
             <StatCard
@@ -593,15 +602,27 @@ export default function Dashboard() {
               />
             ) : (
               <>
-                {/* KPI row */}
-                <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
+                {/* KPI row — deliberately only the numbers the KPI cards above
+                    DON'T already show, so the page never states the same figure twice. */}
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {[
-                    { label: 'Done Today', value: plantData.kpis.total_completed_today, icon: <CheckCircle size={15} className="text-green-600" />, bg: 'bg-green-50' },
-                    { label: 'Active Now', value: plantData.kpis.active_now, icon: <Activity size={15} className="text-blue-600" />, bg: 'bg-blue-50' },
-                    { label: 'Pass Rate', value: `${plantData.kpis.pass_rate}%`, icon: <TrendingUp size={15} className="text-purple-600" />, bg: 'bg-purple-50' },
-                    { label: 'Avg Cycle', value: fmtDuration(plantData.kpis.avg_cycle_time), icon: <Clock size={15} className="text-orange-600" />, bg: 'bg-orange-50' },
-                    { label: 'Schedule', value: `${plantData.kpis.schedule_adherence}%`, icon: <CalendarCheck size={15} className="text-teal-600" />, bg: 'bg-teal-50' },
-                    { label: 'WOs On Track', value: `${plantData.kpis.work_orders_on_track}/${plantData.kpis.work_orders_total}`, icon: <Package size={15} className="text-indigo-600" />, bg: 'bg-indigo-50' },
+                    {
+                      label: 'Avg Cycle (all runs)',
+                      value: plantData.kpis.avg_cycle_time > 0 ? fmtDuration(plantData.kpis.avg_cycle_time) : '—',
+                      icon: <Clock size={15} className="text-orange-600" />, bg: 'bg-orange-50',
+                    },
+                    {
+                      label: 'Work Orders On Track',
+                      value: plantData.kpis.work_orders_total > 0
+                        ? `${plantData.kpis.work_orders_on_track}/${plantData.kpis.work_orders_total}`
+                        : '—',
+                      icon: <Package size={15} className="text-indigo-600" />, bg: 'bg-indigo-50',
+                    },
+                    {
+                      label: 'Behind or Overdue',
+                      value: plantData.active_alerts.length,
+                      icon: <AlertTriangle size={15} className="text-red-500" />, bg: 'bg-red-50',
+                    },
                   ].map(k => (
                     <div key={k.label} className="bg-gray-50 rounded-xl p-3 flex items-center gap-2.5">
                       <div className={`w-8 h-8 ${k.bg} rounded-lg flex items-center justify-center flex-shrink-0`}>{k.icon}</div>
@@ -631,7 +652,7 @@ export default function Dashboard() {
                         ...plantData.department_performance.filter(d => !pinnedStations.includes(d.id || d.department)),
                       ].slice(0, 6).map(dept => {
                         const isPinned = pinnedStations.includes(dept.id || dept.department);
-                        const onTrackPct = dept.total_count > 0 ? Math.round((dept.on_track_count / dept.total_count) * 100) : 0;
+                        const onTrackPct = dept.total_count > 0 ? Math.round((dept.on_track_count / dept.total_count) * 100) : null;
                         const barColor = dept.status === 'on_track' ? 'bg-green-500' : dept.status === 'at_risk' ? 'bg-amber-500' : 'bg-red-500';
                         return (
                           <div key={dept.id || dept.department} className={`bg-white rounded-xl border border-gray-200 p-3 border-l-4 ${deptBorderColor(dept.status)} ${isPinned ? 'ring-2 ring-blue-300' : ''}`}>
@@ -659,8 +680,8 @@ export default function Dashboard() {
                                 <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.min(100, dept.takt_time > 0 ? (dept.avg_cycle_time / dept.takt_time) * 100 : 0)}%` }} />
                               </div>
                               <div className="flex justify-between text-[11px] text-gray-400">
-                                <span>{onTrackPct}% on track</span>
-                                <span>{dept.avg_cycle_time.toFixed(1)}m avg</span>
+                                <span>{onTrackPct === null ? 'No work orders' : `${onTrackPct}% on track`}</span>
+                                <span>{dept.avg_cycle_time > 0 ? `${dept.avg_cycle_time.toFixed(1)}m avg` : 'no runs yet'}</span>
                               </div>
                             </div>
                           </div>
@@ -671,8 +692,8 @@ export default function Dashboard() {
                           compact
                           className="col-span-2"
                           icon={BarChart2}
-                          title="No department data"
-                          description="Department performance appears once completions are recorded today."
+                          title="No departments set up yet"
+                          description="Create departments to see per-area output and schedule status here."
                         />
                       )}
                     </div>
