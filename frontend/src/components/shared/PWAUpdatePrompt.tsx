@@ -44,7 +44,10 @@ export default function PWAUpdatePrompt() {
   if (!needsUpdate || dismissed) return null;
 
   return (
-    <div className="fixed bottom-24 right-4 z-50 max-w-sm w-full animate-slide-up">
+    // bottom-56 keeps this banner above the transient toast band (bottom-40),
+    // the alerts edge tab (bottom-24) and the quick-create FAB (bottom-5).
+    // z-40 keeps it *below* modal dialogs (z-50), so it never covers a form.
+    <div className="fixed bottom-56 right-4 z-40 max-w-sm w-full animate-slide-up">
       <div className="bg-gray-900 text-white rounded-2xl shadow-2xl border border-white/10 px-4 py-3 flex items-center gap-3">
         <div className="w-8 h-8 rounded-full bg-indigo-500/20 flex items-center justify-center flex-shrink-0">
           <RefreshCw size={15} className="text-indigo-400" />

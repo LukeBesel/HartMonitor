@@ -364,7 +364,10 @@ export default function Landing() {
               <button
                 onClick={async () => {
                   try {
-                    await api.startDemo();
+                    const res = await api.startDemo();
+                    // Persist the sandbox user so AuthContext restores the session
+                    // after the hard redirect (the auth cookie alone isn't enough).
+                    if (res?.user) localStorage.setItem('hm_user', JSON.stringify(res.user));
                     window.location.href = '/dashboard';
                   } catch {
                     window.location.href = '/login?mode=signup';

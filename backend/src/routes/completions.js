@@ -33,6 +33,96 @@ router.get('/', (req, res) => {
   res.json(completions.map(c => ({ ...c, data: JSON.parse(c.data), step_times: JSON.parse(c.step_times) })));
 });
 
+// ── App run history (feeds the AppHistory page) ──────────────────────────────
+// GET /api/completions/app/:appId/history?page=1&limit=25
+// Aggregates per-app run stats + per-step averages, and returns one page of
+// runs newest-first. Tenant-scoped like every other completions query.
+router.get('/app/:appId/history', (req, res) => {
+  const { appId } = req.params;
+  const app = db.prepare('SELECT id, name, steps FROM apps WHERE id = ? AND company_id = ?').get(appId, req.companyId);
+  if (!app) return res.status(404).json({ error: 'App not found' });
+
+  const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 25, 1), 100);
+
+  const rows = db.prepare(
+    `SELECT c.*, wo.work_order_number
+       FROM completions c
+       LEFT JOIN work_orders wo ON wo.id = c.work_order_id
+      WHERE c.app_id = ? AND c.company_id = ?
+      ORDER BY c.started_at DESC`
+  ).all(appId, req.companyId);
+
+  const durationOf = (c, stepTimes) => {
+    const summed = Object.values(stepTimes).reduce((a, b) => a + (Number(b) || 0), 0);
+    if (summed > 0) return summed;
+    if (c.completed_at && c.started_at) {
+      const ms = new Date(c.completed_at + 'Z').getTime() - new Date(c.started_at + 'Z').getTime();
+      if (Number.isFinite(ms) && ms > 0) return Math.round(ms / 1000);
+    }
+    return 0;
+  };
+
+  let steps = [];
+  try { steps = JSON.parse(app.steps) || []; } catch { steps = []; }
+
+  // Per-step rollups over completed runs (step_times keys are step indexes).
+  const stepAgg = steps.map(() => ({ sum: 0, n: 0 }));
+  let totalRuns = 0, durSum = 0, best = 0, passCount = 0, failCount = 0;
+
+  const completionsOut = [];
+  for (const c of rows) {
+    let stepTimes = {}; let data = {};
+    try { stepTimes = JSON.parse(c.step_times) || {}; } catch { /* keep {} */ }
+    try { data = JSON.parse(c.data) || {}; } catch { /* keep {} */ }
+    const duration = durationOf(c, stepTimes);
+    const vals = Object.values(data);
+    const passFail = vals.some(v => v === 'Fail') ? 'fail' : vals.some(v => v === 'Pass') ? 'pass' : null;
+
+    if (c.status === 'completed') {
+      totalRuns++;
+      durSum += duration;
+      if (duration > 0 && (best === 0 || duration < best)) best = duration;
+      if (passFail === 'pass') passCount++;
+      if (passFail === 'fail') failCount++;
+      for (const [k, v] of Object.entries(stepTimes)) {
+        const idx = Number(k);
+        if (Number.isInteger(idx) && stepAgg[idx]) { stepAgg[idx].sum += Number(v) || 0; stepAgg[idx].n++; }
+      }
+    }
+
+    completionsOut.push({
+      id: c.id,
+      operator_name: c.operator_name,
+      completed_at: c.completed_at,
+      total_duration_seconds: duration,
+      status: c.status,
+      work_order_number: c.work_order_number || null,
+      pass_fail: passFail,
+    });
+  }
+
+  const qcTotal = passCount + failCount;
+  res.json({
+    app_id: app.id,
+    app_name: app.name,
+    total_runs: totalRuns,
+    avg_duration: totalRuns > 0 ? Math.round(durSum / totalRuns) : 0,
+    best_time: best,
+    pass_rate: qcTotal > 0 ? Math.round((passCount / qcTotal) * 100) : 0,
+    step_averages: steps.map((s, i) => ({
+      step_id: s.id,
+      step_name: s.name,
+      step_order: i,
+      avg_duration_seconds: stepAgg[i].n > 0 ? Math.round(stepAgg[i].sum / stepAgg[i].n) : 0,
+      takt_seconds: s.takt_time_seconds || 0,
+      completion_count: stepAgg[i].n,
+    })),
+    completions: completionsOut.slice((page - 1) * limit, page * limit),
+    total: completionsOut.length,
+  });
+});
+
 router.post('/', (req, res) => {
   const { app_id, station_id, operator_name = 'Unknown', work_order_id, product_type_id, operator_user_id } = req.body;
   if (!app_id) return res.status(400).json({ error: 'app_id required' });
