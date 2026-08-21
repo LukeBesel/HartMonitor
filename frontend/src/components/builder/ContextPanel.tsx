@@ -11,23 +11,59 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   AlertTriangle, AlignCenter, AlignLeft as AlignLeftIcon, AlignRight,
-  Box, ChevronDown, ChevronRight, ExternalLink, Image, LayoutGrid, Loader2,
+  Box, ChevronDown, ChevronRight, ChevronsLeft, ChevronsRight, ExternalLink,
+  Image, LayoutGrid, Loader2,
   MousePointerClick, MoveDown, MoveUp, Package, Plus, PlusCircle, Rows3,
   Settings, Tag, Trash2, Upload, Video, X, Zap,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import type {
   App, AppVariable, Department, ProductType, Station, Step, Trigger,
   Widget, WidgetLayout,
 } from '../../types';
 import { api } from '../../api/client';
 import TableImportModal from '../shared/TableImportModal';
-import { BUTTON_ICONS, defaultLayout, ImgSafe, WidgetView } from '../app/WidgetView';
+import { BUTTON_ICONS, defaultLayout } from '../app/WidgetView';
 import { WIDGET_META, INPUT_WIDGET_TYPES } from './WidgetPalette';
 import { inferVariableType, VARIABLE_NAME_RE } from './VariablesPanel';
 import { eventsFor, TriggerAttachment } from './TriggerEditor';
 import { v4 as uuidv4 } from '../../utils/uuid';
 
 export type ContextTab = 'widget' | 'step' | 'app' | 'triggers';
+
+// ── Run requirements (app-level require_run_context) ──────────────────────────
+// Player contract: app.require_run_context, boolean, absent = legacy behavior.
+// Not yet a typed App field (the backend column belongs to another slice), so
+// reads/writes go through these narrowing helpers.
+
+export type AppWithRunContext = App & { require_run_context?: boolean | number };
+
+/** The explicit stored value, or undefined when the app has never set one.
+ *  Accepts SQLite-style 0/1 as well as booleans. */
+export function requireRunContextValue(app: App): boolean | undefined {
+  const v = (app as AppWithRunContext).require_run_context;
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v !== 0;
+  return undefined;
+}
+
+/** Effective state: explicit value if present; otherwise ON for v2 apps
+ *  (schema_version >= 2) and OFF (legacy behavior) for v1 blobs. */
+export function effectiveRequireRunContext(app: App): boolean {
+  const explicit = requireRunContextValue(app);
+  if (explicit !== undefined) return explicit;
+  return (app.schema_version ?? 1) >= 2;
+}
+
+// ── Collapsed-panel preference ────────────────────────────────────────────────
+
+/** localStorage key for the collapsed-panel preference ('1' = collapsed). */
+export const PANEL_COLLAPSE_STORAGE_KEY = 'hm.builder.contextCollapsed';
+
+function loadPanelCollapsed(): boolean {
+  try { return localStorage.getItem(PANEL_COLLAPSE_STORAGE_KEY) === '1'; }
+  catch { return false; }
+}
 
 // ── Shared field chrome ───────────────────────────────────────────────────────
 
@@ -55,7 +91,7 @@ function Toggle({ checked, onChange, label, hint }: { checked: boolean; onChange
   return (
     <label className="flex items-start gap-2.5 cursor-pointer select-none">
       <button
-        type="button" role="switch" aria-checked={checked}
+        type="button" role="switch" aria-checked={checked} aria-label={label}
         onClick={() => onChange(!checked)}
         className={`wb-toggle mt-0.5 ${checked ? 'is-on' : ''}`}
       />
@@ -164,18 +200,54 @@ export default function ContextPanel(props: {
 }) {
   const { tab, onTab, app, activeStepIdx, selectedWidget } = props;
   const step = app.steps[activeStepIdx];
+  const [collapsed, setCollapsed] = useState<boolean>(loadPanelCollapsed);
 
-  const TABS: { id: ContextTab; label: string }[] = [
-    { id: 'widget', label: 'Widget' },
-    { id: 'step', label: 'Step' },
-    { id: 'app', label: 'App' },
-    { id: 'triggers', label: 'Triggers' },
+  const setCollapsedPersist = (v: boolean) => {
+    setCollapsed(v);
+    try { localStorage.setItem(PANEL_COLLAPSE_STORAGE_KEY, v ? '1' : '0'); } catch { /* noop */ }
+  };
+
+  const TABS: { id: ContextTab; label: string; icon: LucideIcon }[] = [
+    { id: 'widget', label: 'Widget', icon: MousePointerClick },
+    { id: 'step', label: 'Step', icon: Rows3 },
+    { id: 'app', label: 'App', icon: Settings },
+    { id: 'triggers', label: 'Triggers', icon: Zap },
   ];
 
+  // ── Collapsed: slim icon rail — the canvas reclaims the width ──
+  if (collapsed) {
+    return (
+      <div className="flex flex-col items-center h-full w-11 flex-shrink-0 bg-surface-1 border-l border-border-subtle py-2 gap-1">
+        <button
+          onClick={() => setCollapsedPersist(false)}
+          aria-label="Expand panel"
+          title="Expand panel"
+          className="wb-btn-ghost !min-h-0 p-1.5"
+        >
+          <ChevronsLeft size={15} />
+        </button>
+        <div className="w-5 border-t border-grid my-1" />
+        {TABS.map(t => {
+          const Icon = t.icon;
+          return (
+            <button
+              key={t.id}
+              aria-label={t.label}
+              title={t.label}
+              onClick={() => { setCollapsedPersist(false); onTab(t.id); }}
+              className={`p-2 rounded-ctrl transition-colors ${tab === t.id ? 'bg-gold-wash text-ink' : 'text-muted hover:text-ink hover:bg-surface-2'}`}
+            >
+              <Icon size={15} />
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
-    // Below lg the inspector docks under the canvas at a capped height.
-    <div className="flex flex-col w-full max-h-[45vh] border-t lg:h-full lg:w-[320px] lg:max-h-none lg:border-t-0 lg:border-l flex-shrink-0 bg-surface-1 border-border-subtle">
-      <div className="flex border-b border-grid flex-shrink-0">
+    <div className="flex flex-col h-full w-[320px] flex-shrink-0 bg-surface-1 border-l border-border-subtle">
+      <div className="flex items-stretch border-b border-grid flex-shrink-0">
         {TABS.map(t => (
           <button
             key={t.id}
@@ -186,6 +258,14 @@ export default function ContextPanel(props: {
             {t.label}
           </button>
         ))}
+        <button
+          onClick={() => setCollapsedPersist(true)}
+          aria-label="Collapse panel"
+          title="Collapse panel"
+          className="wb-btn-ghost !min-h-0 px-1.5 self-center mr-1"
+        >
+          <ChevronsRight size={14} />
+        </button>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">
@@ -638,7 +718,7 @@ function WidgetTab({ app, widget, activeStepIdx, canEdit, onTab, onUpdateWidget,
             {uploadStatus}
             {config.imageUrl && (
               <div className="mt-1.5">
-                <ImgSafe src={config.imageUrl} alt={config.imageAlt || 'Preview'} className="max-h-16 h-14 rounded-ctrl border border-border-subtle object-contain" />
+                <img src={config.imageUrl} alt="" className="max-h-16 rounded-ctrl border border-border-subtle object-contain" />
               </div>
             )}
           </Field>
@@ -696,14 +776,6 @@ function WidgetTab({ app, widget, activeStepIdx, canEdit, onTab, onUpdateWidget,
           )}
           <Toggle checked={!!config.videoControls} onChange={v => setConfig({ videoControls: v })} label="Show controls" />
           <Toggle checked={!!config.videoAutoplay} onChange={v => setConfig({ videoAutoplay: v })} label="Autoplay" />
-          {config.videoUrl && (
-            <Field label="Preview">
-              {/* Live, playable embed — confirms the link resolves before publish. */}
-              <div className="rounded-ctrl overflow-hidden border border-border-subtle bg-black" style={{ aspectRatio: '16 / 9' }}>
-                <WidgetView widget={widget} />
-              </div>
-            </Field>
-          )}
         </>
       )}
 
@@ -1109,6 +1181,32 @@ function StepTab({ app, step, canEdit, onUpdateStep, onSetMode }: {
 
 // ─── App tab ──────────────────────────────────────────────────────────────────
 
+/** Accordion section chrome for the long App-tab forms. */
+function Section({ title, icon: Icon, defaultOpen = true, children }: {
+  title: string;
+  icon?: LucideIcon;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+  return (
+    <div className="pt-3.5 border-t border-grid">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        aria-expanded={open}
+        className="w-full flex items-center gap-1.5 text-left"
+      >
+        {open ? <ChevronDown size={12} className="text-muted" /> : <ChevronRight size={12} className="text-muted" />}
+        <span className="wb-label flex items-center gap-1" style={{ fontSize: 10.5 }}>
+          {Icon && <Icon size={11} />} {title}
+        </span>
+      </button>
+      {open && <div className="mt-3 space-y-3">{children}</div>}
+    </div>
+  );
+}
+
 function AppTab({ app, canEdit, departments, stations, productTypes, onUpdateApp, onUpdateProductTypes }: {
   app: App;
   canEdit: boolean;
@@ -1119,6 +1217,8 @@ function AppTab({ app, canEdit, departments, stations, productTypes, onUpdateApp
   onUpdateProductTypes: (pts: ProductType[]) => void;
 }) {
   const showTakt = app.show_takt_warnings === undefined ? true : !!app.show_takt_warnings;
+  const explicitRunCtx = requireRunContextValue(app);
+  const effectiveRunCtx = effectiveRequireRunContext(app);
   const availableStations = app.department_id
     ? stations.filter(s => s.department_id === app.department_id)
     : stations;
@@ -1140,9 +1240,26 @@ function AppTab({ app, canEdit, departments, stations, productTypes, onUpdateApp
         hint="Operators see a flashing alert when a step exceeds its takt time."
       />
 
+      {/* Run requirements (app.require_run_context — player contract) */}
+      <div className="space-y-2.5 pt-3.5 border-t border-grid">
+        <div className="wb-label" style={{ fontSize: 10.5 }}>Run requirements</div>
+        <Toggle
+          checked={effectiveRunCtx}
+          onChange={v => onUpdateApp(prev => {
+            const next: AppWithRunContext = { ...prev, require_run_context: v };
+            return next;
+          })}
+          label="Require a work order or part number to run"
+          hint="Operators must attach a work order or part number before the app will start."
+        />
+        <p className="wb-well px-2.5 py-1.5 text-muted" style={{ fontSize: 11 }}>
+          Effective: <span className="text-ink-2" style={{ fontWeight: 650 }}>{effectiveRunCtx ? 'required' : 'not required'}</span>
+          {explicitRunCtx === undefined && ' — default for v2 apps; saving stores it explicitly.'}
+        </p>
+      </div>
+
       {/* Publish targeting (relocated modal content) */}
-      <div className="space-y-3 pt-3.5 border-t border-grid">
-        <div className="wb-label" style={{ fontSize: 10.5 }}>Publish target</div>
+      <Section title="Publish target">
         <Field label="Department">
           <select
             className="wb-input"
@@ -1170,13 +1287,12 @@ function AppTab({ app, canEdit, departments, stations, productTypes, onUpdateApp
             <p className="mt-1 text-warn-ink" style={{ fontSize: 11 }}>No workstations in this department yet.</p>
           )}
         </Field>
-      </div>
+      </Section>
 
       {/* Product types manager (relocated modal content) */}
-      <div className="space-y-3 pt-3.5 border-t border-grid">
-        <div className="wb-label flex items-center gap-1" style={{ fontSize: 10.5 }}><Tag size={11} /> Product types</div>
+      <Section title="Product types" icon={Tag}>
         <ProductTypesManager app={app} productTypes={productTypes} onUpdate={onUpdateProductTypes} canEdit={canEdit} />
-      </div>
+      </Section>
 
       <div className="wb-well px-2.5 py-2 text-muted" style={{ fontSize: 11 }}>
         Canvas resolution is a fixed 720px logical width — steps scale uniformly to any screen.

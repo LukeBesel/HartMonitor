@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
+import type { AppSavePayload } from '../api/client';
 import {
   App, Department, ProductType, Station, Step, Trigger, Widget, WidgetLayout, WidgetType,
 } from '../types';
@@ -20,7 +21,7 @@ import CanvasEditor from '../components/app/CanvasEditor';
 import { defaultLayout, DEFAULT_CANVAS_H, ImgSafe, ShapeSVG, WidgetView } from '../components/app/WidgetView';
 import WidgetPalette, { defaultWidget, WIDGET_META } from '../components/builder/WidgetPalette';
 import StepList from '../components/builder/StepList';
-import ContextPanel, { ContextTab, Field } from '../components/builder/ContextPanel';
+import ContextPanel, { ContextTab, Field, effectiveRequireRunContext } from '../components/builder/ContextPanel';
 import TriggerEditor, { TriggerAttachment } from '../components/builder/TriggerEditor';
 import VariablesPanel, { autoRegisterVariables } from '../components/builder/VariablesPanel';
 import {
@@ -98,7 +99,10 @@ export default function AppBuilder() {
     setSaving(true);
     setSaveError('');
     try {
-      await api.saveApp(id, {
+      // require_run_context rides the same whole-blob PUT as the other
+      // app-level fields (player contract: app.require_run_context, boolean,
+      // absent = legacy). Sent explicitly so the saved app is self-describing.
+      const payload: AppSavePayload & { require_run_context: boolean } = {
         name: appData.name,
         description: appData.description,
         steps: appData.steps,
@@ -108,7 +112,9 @@ export default function AppBuilder() {
         department_id: appData.department_id ?? null,
         station_id: appData.station_id ?? null,
         show_takt_warnings: appData.show_takt_warnings ? 1 : 0,
-      });
+        require_run_context: effectiveRequireRunContext(appData),
+      };
+      await api.saveApp(id, payload);
       setDirty(false);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -464,7 +470,8 @@ export default function AppBuilder() {
                 <>
                   {activeStep.widgets.length === 0 && (
                     <div className="mb-3 text-center text-muted" style={{ fontSize: 12 }}>
-                      Add widgets from the toolbar, then drag, resize, and rotate them anywhere on the canvas.
+                      Add widgets from the toolbar above, then drag, resize, and rotate them anywhere on the canvas.
+                      Add more steps with &ldquo;+ New step&rdquo; in the left panel.
                     </div>
                   )}
                   <CanvasEditor
@@ -485,6 +492,7 @@ export default function AppBuilder() {
                     <div className="flex flex-col items-center justify-center py-12 text-baseline">
                       <Plus size={32} className="mb-2" />
                       <p className="text-sm text-muted">Click widgets in the toolbar above to add them</p>
+                      <p className="mt-1 text-muted" style={{ fontSize: 12 }}>Add more steps with &ldquo;+ New step&rdquo; in the left panel</p>
                     </div>
                   )}
                   <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleWidgetDragEnd}>
