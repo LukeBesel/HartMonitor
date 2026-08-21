@@ -320,38 +320,45 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   // (= corrective actions in work) is this app's "in progress" state, and
   // action rows stay within {open, in_progress}, the page ∩ CHECK intersection.
   const capa1 = uuidv4(), capa2 = uuidv4();
-  const insCapa = db.prepare(`INSERT INTO capa_items (id, company_id, number, title, source, type, priority, status, department_id, assigned_to, due_date, description, containment, root_cause, corrective_action, preventive_action, created_by, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Demo Visitor', datetime('now', ?))`);
-  insCapa.run(capa1, orgId, `${tag}-CAPA-001`, 'Eliminate solder bridging on Rev C boards', 'ncr', 'corrective', 'high', 'action', deptA, 'Demo Visitor',
-    db.prepare(`SELECT date('now', '+7 days') AS d`).get().d,
-    'Recurring solder bridges near U3 on Rev C control boards (see ' + tag + '-NCR-101).',
-    'Quarantine current board lot; 100% visual on U3 until closed',
-    'Stencil aperture oversized for the U3 pad redesign', 'Order corrected stencil; requalify reflow profile', 'Add stencil review to the ECO checklist', '-5 days');
-  insCapa.run(capa2, orgId, `${tag}-CAPA-002`, 'Prevent conveyor drive jams at pack-out', 'andon', 'preventive', 'medium', 'open', deptB, 'Demo Visitor',
+  // Both spellings of the three renamed columns are written: the page reads the
+  // newer names, and filling only the older ones left every demo CAPA showing a
+  // blank owner, containment and root cause.
+  const insCapa = db.prepare(`INSERT INTO capa_items (id, company_id, number, title, source, type, priority, status, department_id, assigned_to, owner_name, due_date, description, containment, containment_action, root_cause, root_cause_analysis, corrective_action, preventive_action, created_by, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Demo Visitor', datetime('now', ?), datetime('now', ?))`);
+  {
+    const contain = 'Quarantine current board lot; 100% visual on U3 until closed';
+    const cause = 'Stencil aperture oversized for the U3 pad redesign';
+    insCapa.run(capa1, orgId, `${tag}-CAPA-001`, 'Eliminate solder bridging on Rev C boards', 'ncr', 'corrective', 'high', 'action', deptA, 'Demo Visitor', 'Demo Visitor',
+      db.prepare(`SELECT date('now', '+7 days') AS d`).get().d,
+      'Recurring solder bridges near U3 on Rev C control boards (see ' + tag + '-NCR-101).',
+      contain, contain, cause, cause,
+      'Order corrected stencil; requalify reflow profile', 'Add stencil review to the ECO checklist', '-5 days', '-5 days');
+  }
+  insCapa.run(capa2, orgId, `${tag}-CAPA-002`, 'Prevent conveyor drive jams at pack-out', 'andon', 'preventive', 'medium', 'open', deptB, 'Demo Visitor', 'Demo Visitor',
     db.prepare(`SELECT date('now', '+14 days') AS d`).get().d,
-    'Station 2 conveyor jammed twice this quarter; PM interval may be too long.', '', '', '', 'Shorten belt inspection PM from monthly to biweekly', '-40 minutes');
+    'Station 2 conveyor jammed twice this quarter; PM interval may be too long.', '', '', '', '', '', 'Shorten belt inspection PM from monthly to biweekly', '-40 minutes', '-40 minutes');
 
-  const insCapaAction = db.prepare(`INSERT INTO capa_actions (id, capa_id, description, assigned_to, due_date, status, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now', ?), ?)`);
-  insCapaAction.run(uuidv4(), capa1, 'Corrected stencil ordered from supplier — awaiting delivery', 'Demo Visitor',
+  const insCapaAction = db.prepare(`INSERT INTO capa_actions (id, capa_id, description, assigned_to, owner_name, due_date, status, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', ?), ?)`);
+  insCapaAction.run(uuidv4(), capa1, 'Corrected stencil ordered from supplier — awaiting delivery', 'Demo Visitor', 'Demo Visitor',
     db.prepare(`SELECT date('now', '+2 days') AS d`).get().d, 'in_progress', '-5 days', null);
-  insCapaAction.run(uuidv4(), capa1, 'Requalify reflow profile with new stencil', 'Maria Lopez',
+  insCapaAction.run(uuidv4(), capa1, 'Requalify reflow profile with new stencil', 'Maria Lopez', 'Maria Lopez',
     db.prepare(`SELECT date('now', '+4 days') AS d`).get().d, 'open', '-3 days', null);
-  insCapaAction.run(uuidv4(), capa2, 'Draft biweekly belt inspection checklist', 'Priya Shah',
+  insCapaAction.run(uuidv4(), capa2, 'Draft biweekly belt inspection checklist', 'Priya Shah', 'Priya Shah',
     db.prepare(`SELECT date('now', '+10 days') AS d`).get().d, 'open', '-40 minutes', null);
 
   // ── Maintenance: assets, PM schedules (one due soon), open MWO ──────────────
   const asset1 = uuidv4(), asset2 = uuidv4();
-  const insAsset = db.prepare(`INSERT INTO assets (id, company_id, name, asset_number, category, manufacturer, model, department_id, location, status, purchase_date, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
-  insAsset.run(asset1, orgId, 'Torque Driver — Station 1', `${tag}-AST-01`, 'Tooling', 'Atlas Copco', 'ETV ST61', deptA, 'Line A', 'active', '2023-06-12', 'Calibrated quarterly');
-  insAsset.run(asset2, orgId, 'Pack-out Conveyor', `${tag}-AST-02`, 'Conveyance', 'Dorner', '2200 Series', deptB, 'Line A', 'maintenance', '2021-03-02', 'Drive jam — see open work order');
+  const insAsset = db.prepare(`INSERT INTO assets (id, company_id, name, asset_number, category, type, manufacturer, make, model, department_id, location, status, purchase_date, install_date, notes, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`);
+  insAsset.run(asset1, orgId, 'Torque Driver — Station 1', `${tag}-AST-01`, 'Tooling', 'Tooling', 'Atlas Copco', 'Atlas Copco', 'ETV ST61', deptA, 'Line A', 'active', '2023-06-12', '2023-06-12', 'Calibrated quarterly');
+  insAsset.run(asset2, orgId, 'Pack-out Conveyor', `${tag}-AST-02`, 'Conveyance', 'Conveyance', 'Dorner', 'Dorner', '2200 Series', deptB, 'Line A', 'maintenance', '2021-03-02', '2021-03-02', 'Drive jam — see open work order');
 
   const insPm = db.prepare(`INSERT INTO pm_schedules (id, company_id, asset_id, title, description, frequency_value, frequency_type, last_completed_at, next_due_at, assigned_to, estimated_hours) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', ?), datetime('now', ?), ?, ?)`);
   insPm.run(uuidv4(), orgId, asset1, 'Torque driver calibration', 'Verify against reference transducer; record as-found/as-left.', 1, 'months', '-28 days', '+2 days', 'Demo Visitor', 1);
   insPm.run(uuidv4(), orgId, asset2, 'Belt & roller inspection', 'Check belt tracking, tension and roller bearings.', 1, 'months', '-9 days', '+21 days', 'Priya Shah', 1.5);
 
-  db.prepare(`INSERT INTO maintenance_work_orders (id, company_id, number, title, type, priority, status, asset_id, department_id, assigned_to, description, estimated_hours, requested_by, due_date, created_at)
-              VALUES (?, ?, ?, 'Conveyor drive jam — Station 2 stopped', 'emergency', 'critical', 'open', ?, ?, 'Demo Visitor', 'Pack-out conveyor jammed mid-cycle; Station 2 down until the drive belt is replaced.', 2, 'Priya Shah', date('now', '+1 days'), datetime('now', '-40 minutes'))`)
-    .run(uuidv4(), orgId, `${tag}-MWO-100`, asset2, deptB);
+  db.prepare(`INSERT INTO maintenance_work_orders (id, company_id, number, wo_number, title, type, priority, status, asset_id, department_id, assigned_to, description, estimated_hours, requested_by, due_date, created_at, updated_at)
+              VALUES (?, ?, ?, ?, 'Conveyor drive jam — Station 2 stopped', 'emergency', 'critical', 'open', ?, ?, 'Demo Visitor', 'Pack-out conveyor jammed mid-cycle; Station 2 down until the drive belt is replaced.', 2, 'Priya Shah', date('now', '+1 days'), datetime('now', '-40 minutes'), datetime('now', '-40 minutes'))`)
+    .run(uuidv4(), orgId, `${tag}-MWO-100`, `${tag}-MWO-100`, asset2, deptB);
 
   // ── Andon: resolved call, consistent with Station 2's downtime ──────────────
   db.prepare(`INSERT INTO andon_calls (id, company_id, department_id, station_id, type, priority, status, description, raised_by, acknowledged_by, acknowledged_at, resolved_by, resolved_at, resolution, created_at)
