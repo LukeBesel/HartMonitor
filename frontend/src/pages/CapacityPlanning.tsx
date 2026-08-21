@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
+import DepartmentFilter from '../components/shared/DepartmentFilter';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine, Legend
 } from 'recharts';
 import {
   Users, Clock, Package, AlertTriangle, RefreshCw, TrendingUp, Calendar,
-  CheckCircle2, ChevronDown, ChevronUp, Pencil, Check, X
+  CheckCircle2, ChevronDown, ChevronUp, Pencil, Check, X, Building2
 } from 'lucide-react';
 
 interface WOCapacity {
@@ -72,6 +74,12 @@ const PRIORITY_COLORS: Record<string, string> = {
 
 export default function CapacityPlanning() {
   const { canEdit } = useAuth();
+  // GET /analytics/capacity takes no parameters and always returns the whole
+  // company, so the narrowing happens here — over the work orders, the
+  // department cards, the demand chart AND the four headline numbers, because
+  // a plant-wide "Peak Utilization" sitting above one department's cards is
+  // not a filter, it's a wrong answer.
+  const deptFilter = useDepartmentFilter('capacity');
   const [data, setData] = useState<CapacityData | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -89,15 +97,52 @@ export default function CapacityPlanning() {
 
   useEffect(() => { load(); }, []);
 
-  const sortedWOs = [...(data?.work_orders ?? [])].sort((a, b) => {
+  // Capacity rows carry department_name (no id) — the shared predicate falls
+  // back to matching on name, which is what the backend JOIN produces here.
+  const matches = deptFilter.matches;
+  const visibleWOs = useMemo(
+    () => (data?.work_orders ?? []).filter(w => matches(w)),
+    [data, matches],
+  );
+  const depts = useMemo(
+    () => (data?.summary.departments ?? []).filter(d => matches({ department_name: d.name })),
+    [data, matches],
+  );
+
+  // Every headline number recomputed over the departments still on screen.
+  // Unfiltered this reproduces the server's own totals — it sums the same
+  // per-department rows the server summed.
+  const totals = useMemo(() => {
+    const headcount = depts.reduce((s, d) => s + d.headcount, 0);
+    const availablePerDay = headcount * 8;
+    const byDay = new Map<string, number>();
+    for (const d of depts) {
+      for (const point of d.demand_by_day) byDay.set(point.date, (byDay.get(point.date) ?? 0) + point.hours);
+    }
+    const peakDayHours = Math.round(Math.max(0, ...Array.from(byDay.values())) * 10) / 10;
+    return {
+      headcount,
+      availablePerDay,
+      peakDayHours,
+      peakUtilizationPct: availablePerDay > 0 ? Math.round((peakDayHours / availablePerDay) * 100) : null,
+      hoursRequired: Math.round(visibleWOs.reduce((s, w) => s + w.hours_required, 0) * 10) / 10,
+      dueThisWeek: visibleWOs.filter(w => w.days_remaining !== null && w.days_remaining <= 7).length,
+    };
+  }, [depts, visibleWOs]);
+
+  const sortedWOs = [...visibleWOs].sort((a, b) => {
     if (sortBy === 'hours') return b.hours_required - a.hours_required;
     if (sortBy === 'operators') return b.operators_needed_8h - a.operators_needed_8h;
     return (a.days_remaining ?? 999) - (b.days_remaining ?? 999);
   });
 
-  const depts = data?.summary.departments ?? [];
   const overDepts = depts.filter(d => d.status === 'over');
   const tightDepts = depts.filter(d => d.status === 'tight');
+
+  const scopeName = deptFilter.selected?.name ?? null;
+  // A department the manager can pick but that has neither work nor headcount
+  // recorded: green "all clear" would be a claim about nothing.
+  const scopeIsEmpty = deptFilter.active && depts.length === 0 && visibleWOs.length === 0;
 
   return (
     <div className="min-h-screen bg-[#f8fafc] p-6 space-y-6">
@@ -110,14 +155,21 @@ export default function CapacityPlanning() {
           </div>
           <p className="text-gray-500 text-sm mt-0.5">Do you have enough people to finish the work on time?</p>
         </div>
-        <button
-          onClick={load}
-          disabled={loading}
-          className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 shadow-sm"
-        >
-          <RefreshCw size={14} className={loading ? 'animate-spin text-blue-500' : ''} />
-          Refresh
-        </button>
+        <div className="flex flex-wrap items-center gap-3">
+          <DepartmentFilter
+            filter={deptFilter}
+            matchCount={visibleWOs.length}
+            matchNoun={visibleWOs.length === 1 ? 'work order' : 'work orders'}
+          />
+          <button
+            onClick={load}
+            disabled={loading}
+            className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 shadow-sm"
+          >
+            <RefreshCw size={14} className={loading ? 'animate-spin text-blue-500' : ''} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {loading ? (
@@ -139,8 +191,21 @@ export default function CapacityPlanning() {
         </div>
       ) : (
         <>
-          {/* Verdict banner */}
-          {overDepts.length > 0 ? (
+          {/* Verdict banner — reads only the departments still on screen */}
+          {scopeIsEmpty ? (
+            <div className="flex items-start gap-3 bg-gray-50 border border-gray-200 rounded-xl p-4">
+              <Building2 size={20} className="text-gray-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <div className="font-semibold text-gray-700">Nothing to plan for {scopeName}</div>
+                <div className="text-sm text-gray-500 mt-0.5">
+                  No active work orders are assigned to this department, and it has no headcount recorded.{' '}
+                  <button onClick={deptFilter.clear} className="underline font-medium hover:text-gray-700">
+                    Show all departments
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : overDepts.length > 0 ? (
             <div className="flex items-start gap-3 bg-red-50 border border-red-200 rounded-xl p-4">
               <AlertTriangle size={20} className="text-red-500 flex-shrink-0 mt-0.5" />
               <div>
@@ -168,9 +233,11 @@ export default function CapacityPlanning() {
             <div className="flex items-start gap-3 bg-green-50 border border-green-200 rounded-xl p-4">
               <CheckCircle2 size={20} className="text-green-500 flex-shrink-0 mt-0.5" />
               <div>
-                <div className="font-semibold text-green-800">Current staffing covers all scheduled work for the next {data.summary.horizon_days} days</div>
+                <div className="font-semibold text-green-800">
+                  Current staffing covers all scheduled work{scopeName ? ` in ${scopeName}` : ''} for the next {data.summary.horizon_days} days
+                </div>
                 <div className="text-sm text-green-600 mt-0.5">
-                  Plant peak load is {data.summary.plant_peak_utilization_pct ?? 0}% of available hours ({data.summary.plant_peak_day_hours}h of {data.summary.total_available_hours_per_day}h).
+                  {scopeName ?? 'Plant'} peak load is {totals.peakUtilizationPct ?? 0}% of available hours ({totals.peakDayHours}h of {totals.availablePerDay}h).
                 </div>
               </div>
             </div>
@@ -183,16 +250,18 @@ export default function CapacityPlanning() {
                 <Clock size={16} className="text-blue-500" />
                 <span className="text-xs text-gray-500 font-medium">Work Remaining</span>
               </div>
-              <div className="text-3xl font-bold text-gray-900">{data.summary.total_hours_required}h</div>
-              <div className="text-xs text-gray-400 mt-1">across all active work orders</div>
+              <div className="text-3xl font-bold text-gray-900">{totals.hoursRequired}h</div>
+              <div className="text-xs text-gray-400 mt-1">
+                across {scopeName ? `active work orders in ${scopeName}` : 'all active work orders'}
+              </div>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
               <div className="flex items-center gap-2 mb-2">
                 <Users size={16} className="text-green-500" />
                 <span className="text-xs text-gray-500 font-medium">Operators On Staff</span>
               </div>
-              <div className="text-3xl font-bold text-gray-900">{data.summary.total_headcount}</div>
-              <div className="text-xs text-gray-400 mt-1">{data.summary.total_available_hours_per_day}h available per day</div>
+              <div className="text-3xl font-bold text-gray-900">{totals.headcount}</div>
+              <div className="text-xs text-gray-400 mt-1">{totals.availablePerDay}h available per day</div>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
               <div className="flex items-center gap-2 mb-2">
@@ -200,10 +269,10 @@ export default function CapacityPlanning() {
                 <span className="text-xs text-gray-500 font-medium">Peak Utilization</span>
               </div>
               <div className={`text-3xl font-bold ${
-                (data.summary.plant_peak_utilization_pct ?? 0) > 100 ? 'text-red-600' :
-                (data.summary.plant_peak_utilization_pct ?? 0) >= 85 ? 'text-amber-600' : 'text-gray-900'
+                (totals.peakUtilizationPct ?? 0) > 100 ? 'text-red-600' :
+                (totals.peakUtilizationPct ?? 0) >= 85 ? 'text-amber-600' : 'text-gray-900'
               }`}>
-                {data.summary.plant_peak_utilization_pct ?? '—'}%
+                {totals.peakUtilizationPct ?? '—'}%
               </div>
               <div className="text-xs text-gray-400 mt-1">busiest day vs available hours</div>
             </div>
@@ -212,21 +281,31 @@ export default function CapacityPlanning() {
                 <AlertTriangle size={16} className="text-amber-500" />
                 <span className="text-xs text-gray-500 font-medium">Due This Week</span>
               </div>
-              <div className="text-3xl font-bold text-amber-600">
-                {(data.work_orders ?? []).filter(w => w.days_remaining !== null && w.days_remaining <= 7).length}
-              </div>
+              <div className="text-3xl font-bold text-amber-600">{totals.dueThisWeek}</div>
               <div className="text-xs text-gray-400 mt-1">work orders</div>
             </div>
           </div>
 
           {/* Department capacity cards */}
           <div>
-            <h2 className="text-sm font-semibold text-gray-900 mb-3">Capacity by Department</h2>
+            <h2 className="text-sm font-semibold text-gray-900 mb-3">
+              {scopeName ? `Capacity — ${scopeName}` : 'Capacity by Department'}
+            </h2>
             {depts.length === 0 ? (
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm py-10 text-center">
                 <Users size={28} className="mx-auto mb-2 text-gray-300" />
-                <p className="text-gray-500 font-medium text-sm">No departments yet</p>
-                <p className="text-gray-400 text-xs mt-1">Add departments with headcount to see per-department capacity.</p>
+                {deptFilter.active ? (
+                  <>
+                    <p className="text-gray-500 font-medium text-sm">No capacity recorded for {scopeName}</p>
+                    <p className="text-gray-400 text-xs mt-1">This department has no headcount and no active work orders.</p>
+                    <button onClick={deptFilter.clear} className="btn-secondary mt-4"><X size={14} /> Show all departments</button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-gray-500 font-medium text-sm">No departments yet</p>
+                    <p className="text-gray-400 text-xs mt-1">Add departments with headcount to see per-department capacity.</p>
+                  </>
+                )}
               </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
@@ -238,8 +317,12 @@ export default function CapacityPlanning() {
           {/* Load timeline */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
             <div className="flex items-center justify-between mb-1">
-              <div className="text-sm font-semibold text-gray-900">Daily Workload — Next {data.summary.horizon_days} Days</div>
-              <span className="text-xs text-gray-400">dashed line = total available hours/day</span>
+              <div className="text-sm font-semibold text-gray-900">
+                Daily Workload{scopeName ? ` — ${scopeName}` : ''} — Next {data.summary.horizon_days} Days
+              </div>
+              <span className="text-xs text-gray-400">
+                dashed line = {scopeName ? `${scopeName}'s` : 'total'} available hours/day
+              </span>
             </div>
             <p className="text-xs text-gray-400 mb-4">Each work order's remaining hours spread across the days until it's due. Bars above the line mean you can't finish everything on time with current staff.</p>
             <ResponsiveContainer width="100%" height={240}>
@@ -255,12 +338,12 @@ export default function CapacityPlanning() {
                 {depts.filter(d => d.work_order_count > 0).map(d => (
                   <Bar key={d.name} dataKey={d.name} stackId="demand" fill={d.color || '#3b82f6'} radius={[0, 0, 0, 0]} />
                 ))}
-                {data.summary.total_available_hours_per_day > 0 && (
+                {totals.availablePerDay > 0 && (
                   <ReferenceLine
-                    y={data.summary.total_available_hours_per_day}
+                    y={totals.availablePerDay}
                     stroke="#dc2626"
                     strokeDasharray="6 4"
-                    label={{ value: `${data.summary.total_available_hours_per_day}h available`, position: 'insideTopRight', style: { fontSize: 10, fill: '#dc2626' } }}
+                    label={{ value: `${totals.availablePerDay}h available`, position: 'insideTopRight', style: { fontSize: 10, fill: '#dc2626' } }}
                   />
                 )}
               </BarChart>
@@ -379,7 +462,16 @@ export default function CapacityPlanning() {
                       {sortedWOs.length === 0 && (
                         <tr>
                           <td colSpan={8} className="px-4 py-12 text-center text-gray-400 text-sm">
-                            No active work orders requiring capacity planning
+                            {deptFilter.active ? (
+                              <>
+                                No active work orders in {scopeName}.{' '}
+                                <button onClick={deptFilter.clear} className="underline font-medium hover:text-gray-600">
+                                  Show all departments
+                                </button>
+                              </>
+                            ) : (
+                              'No active work orders requiring capacity planning'
+                            )}
                           </td>
                         </tr>
                       )}

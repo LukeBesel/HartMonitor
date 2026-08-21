@@ -1,9 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { Station, App, Department } from '../types';
-import { Plus, Trash2, Monitor, Edit3, X, Check, Play, MapPin, Activity, AlertTriangle, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, Monitor, Edit3, X, Check, Play, MapPin, Activity, AlertTriangle, RefreshCw, Building2 } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
+import DepartmentFilter from '../components/shared/DepartmentFilter';
+import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
 import { useSite } from '../context/SiteContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -20,6 +22,10 @@ function Skeleton({ className }: { className?: string }) {
 export default function Stations() {
   const { selectedSiteId } = useSite();
   const { canEdit } = useAuth();
+  // Narrows the whole page — cards AND the status tally above them — to one
+  // department. Stations rows carry department_id, so the filter is applied to
+  // the already-loaded list rather than re-fetching.
+  const deptFilter = useDepartmentFilter('stations');
   const [stations, setStations] = useState<Station[]>([]);
   const [apps, setApps] = useState<App[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -46,6 +52,9 @@ export default function Stations() {
   };
 
   useEffect(() => { setLoading(true); load(); }, [selectedSiteId]);
+
+  const matches = deptFilter.matches;
+  const visibleStations = useMemo(() => stations.filter(s => matches(s)), [stations, matches]);
 
   const handleCreate = async () => {
     if (!form.name.trim() || saving) return;
@@ -107,18 +116,31 @@ export default function Stations() {
           <h1 className="text-2xl font-bold text-gray-900">Stations</h1>
           <p className="text-gray-500 text-sm mt-0.5">Physical workstations and kiosks running apps</p>
         </div>
-        {canEdit && (
-          <button onClick={() => setShowCreate(true)} className="btn-primary">
-            <Plus size={16} /> New Station
-          </button>
-        )}
+        <div className="flex flex-wrap items-center gap-3">
+          <DepartmentFilter
+            filter={deptFilter}
+            matchCount={visibleStations.length}
+            matchNoun={visibleStations.length === 1 ? 'station' : 'stations'}
+          />
+          {canEdit && (
+            <button onClick={() => setShowCreate(true)} className="btn-primary">
+              <Plus size={16} /> New Station
+            </button>
+          )}
+        </div>
       </div>
 
-      {/* Summary */}
-      <div className="flex flex-wrap gap-4 text-sm">
-        <span className="flex items-center gap-1.5 text-green-600"><Activity size={13} />{stations.filter(s => s.status === 'active').length} active</span>
-        <span className="text-gray-400">{stations.filter(s => s.status === 'inactive').length} inactive</span>
-        <span className="text-yellow-600">{stations.filter(s => s.status === 'maintenance').length} maintenance</span>
+      {/* Summary — counted over the same set the cards below show, so the tally
+          never claims stations the department filter has hidden. */}
+      <div className="flex flex-wrap items-center gap-4 text-sm">
+        <span className="flex items-center gap-1.5 text-green-600"><Activity size={13} />{visibleStations.filter(s => s.status === 'active').length} active</span>
+        <span className="text-gray-400">{visibleStations.filter(s => s.status === 'inactive').length} inactive</span>
+        <span className="text-yellow-600">{visibleStations.filter(s => s.status === 'maintenance').length} maintenance</span>
+        {deptFilter.active && deptFilter.selected && (
+          <span className="flex items-center gap-1.5 text-gray-400">
+            <Building2 size={13} /> in {deptFilter.selected.name}
+          </span>
+        )}
       </div>
 
       {loading ? (
@@ -143,9 +165,18 @@ export default function Stations() {
             <button onClick={() => setShowCreate(true)} className="btn-primary mt-4"><Plus size={14} /> Add Station</button>
           )}
         </div>
+      ) : visibleStations.length === 0 ? (
+        // There ARE stations — just none in the department being looked at.
+        // Saying "No stations yet" here would read as "you have no stations".
+        <div className="text-center py-16 text-gray-400">
+          <Building2 size={40} className="mx-auto mb-3 opacity-30" />
+          <p className="font-medium text-gray-500">No stations in {deptFilter.selected?.name ?? 'this department'}</p>
+          <p className="text-sm">{stations.length} station{stations.length === 1 ? ' is' : 's are'} hidden by the department filter.</p>
+          <button onClick={deptFilter.clear} className="btn-secondary mt-4"><X size={14} /> Show all departments</button>
+        </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {stations.map(station => {
+          {visibleStations.map(station => {
             const assignedApp = apps.find(a => a.id === station.current_app_id);
             const isEditing = editingId === station.id;
 
