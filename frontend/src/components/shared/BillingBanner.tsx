@@ -15,7 +15,7 @@ export function BillingBanner() {
   // Throwaway sandbox workspace — steer visitors toward keeping their work.
   if (user.email?.endsWith('@sandbox.hartmonitor.local')) {
     return (
-      <div className="flex items-center gap-3 px-4 py-2 bg-amber-500/15 border-b border-amber-500/30 text-amber-200 text-sm">
+      <div className="flex items-center gap-3 px-4 py-2 bg-amber-50 dark:bg-amber-500/15 border-b border-amber-300 dark:border-amber-500/30 text-amber-900 dark:text-amber-200 text-sm">
         <Zap size={15} className="shrink-0 text-amber-400" />
         <span className="flex-1">
           You're in a <strong>demo workspace</strong> — explore everything freely. It resets after 24 hours.
