@@ -15,8 +15,10 @@ import {
   CartesianGrid, ReferenceLine,
   BarChart, Bar, PieChart, Pie, Cell,
 } from 'recharts';
-import type { DailyBrief } from '../types';
-import { ATTENTION_ICONS, ATTENTION_TYPE_LABELS } from '../config/attention';
+import type { AndonTeam, AttentionItem, DailyBrief } from '../types';
+import { attentionIcon, attentionLabel } from '../config/attention';
+import { ANDON_TEAMS, ANDON_TEAM_ORDER, teamConfig } from '../config/andonTeams';
+import { subscribeRealtime, isAndonEvent } from '../utils/realtime';
 import { useDashboardPrefs, DASHBOARD_SECTIONS, DashboardSectionId } from '../hooks/useDashboardPrefs';
 import Toggle from '../components/shared/Toggle';
 import OnboardingWizard from '../components/shared/OnboardingWizard';
@@ -179,6 +181,12 @@ export default function Dashboard() {
   const [loadingSample, setLoadingSample] = useState(false);
   const [sampleError, setSampleError] = useState('');
 
+  // Help-request routing: filter the attention list to one team's queue, and
+  // acknowledge / resolve a request without leaving the Command Center.
+  const [attentionTeam, setAttentionTeam] = useState<AndonTeam | 'all'>('all');
+  const [callActionId, setCallActionId] = useState<string | null>(null);
+  const [callError, setCallError] = useState('');
+
   // Plant view data integrated into the Command Center
   const [plantData, setPlantData] = useState<PlantViewData | null>(null);
   const [plantLoading, setPlantLoading] = useState(true);
@@ -224,6 +232,27 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [loadData]);
 
+  // A request raised on any tablet appears here at once — the 60s poll above
+  // is only the backstop for a dropped socket.
+  useEffect(() => subscribeRealtime(evt => {
+    if (isAndonEvent(evt)) void loadData();
+  }), [loadData]);
+
+  const respondToCall = useCallback(async (item: AttentionItem, action: 'ack' | 'resolve') => {
+    if (!item.call_id || callActionId) return;
+    setCallActionId(item.call_id);
+    setCallError('');
+    try {
+      if (action === 'ack') await api.acknowledgeAndonCall(item.call_id);
+      else await api.resolveAndonCall(item.call_id);
+      await loadData();
+    } catch (err) {
+      setCallError(err instanceof Error ? err.message : 'Could not update the request.');
+    } finally {
+      setCallActionId(null);
+    }
+  }, [callActionId, loadData]);
+
   useEffect(() => {
     loadPlantData();
     const interval = setInterval(() => loadPlantData(), 30000);
@@ -240,7 +269,17 @@ export default function Dashboard() {
   }, [showCustomize]);
 
   const kpis = brief?.kpis;
-  const attention = brief?.attention ?? [];
+  const allAttention = brief?.attention ?? [];
+
+  // Help requests can be filtered to one team — a maintenance lead wants their
+  // queue, not everyone's. Other items are never hidden by a team filter.
+  const callTeams = Array.from(new Set(
+    allAttention.filter(i => i.type === 'andon_call' && i.team).map(i => i.team as AndonTeam),
+  ));
+  const attention = attentionTeam === 'all'
+    ? allAttention
+    : allAttention.filter(i => i.type !== 'andon_call' || i.team === attentionTeam);
+  const openCallCount = allAttention.filter(i => i.type === 'andon_call').length;
 
   // A brand-new workspace: nothing has ever been scheduled, run, or flagged.
   // The CTA disappears the moment sample data (which creates work orders) loads.
@@ -369,7 +408,7 @@ export default function Dashboard() {
       {/* Needs attention */}
       {!isHidden('attention') && (
       <div className="card p-5">
-        <div className="flex items-center gap-2 mb-4">
+        <div className="flex items-center gap-2 mb-4 flex-wrap">
           <AlertTriangle size={16} className={attention.length > 0 ? 'text-red-500' : 'text-gray-300'} />
           <h2 className="font-semibold text-gray-900">Needs Attention</h2>
           {attention.length > 0 && (
@@ -377,7 +416,54 @@ export default function Dashboard() {
               {attention.length}
             </span>
           )}
+          {openCallCount > 0 && (
+            <Link
+              to="/andon"
+              className="ml-auto text-xs font-semibold text-red-600 hover:text-red-700 inline-flex items-center gap-1"
+            >
+              {openCallCount} help request{openCallCount === 1 ? '' : 's'} waiting
+              <ChevronRight size={13} />
+            </Link>
+          )}
         </div>
+
+        {/* Route by team — a maintenance lead sees their queue, not everyone's. */}
+        {callTeams.length > 1 && (
+          <div className="flex flex-wrap items-center gap-1.5 mb-3">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 mr-1">Team:</span>
+            <button
+              onClick={() => setAttentionTeam('all')}
+              className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors ${
+                attentionTeam === 'all' ? 'bg-gray-900 border-gray-900 text-white' : 'bg-white border-gray-200 text-gray-500 hover:bg-gray-50'
+              }`}
+            >
+              All
+            </button>
+            {ANDON_TEAM_ORDER.filter(t => callTeams.includes(t)).map(team => {
+              const cfg = ANDON_TEAMS[team];
+              const Icon = cfg.icon;
+              const n = allAttention.filter(i => i.type === 'andon_call' && i.team === team).length;
+              return (
+                <button
+                  key={team}
+                  onClick={() => setAttentionTeam(team)}
+                  className={`px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors inline-flex items-center gap-1.5 ${
+                    attentionTeam === team ? 'bg-gray-900 border-gray-900 text-white' : `${cfg.chip} hover:brightness-95`
+                  }`}
+                >
+                  <Icon size={12} />
+                  {cfg.label}
+                  <span className="opacity-70">{n}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {callError && (
+          <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{callError}</p>
+        )}
+
         {loading ? (
           <div className="space-y-2">
             {[1, 2, 3].map(i => <SkeletonBox key={i} className="h-12 w-full" />)}
@@ -391,31 +477,85 @@ export default function Dashboard() {
           />
         ) : (
           <div className="space-y-2">
-            {attention.map((item, i) => (
-              <Link
-                key={`${item.type}-${i}`}
-                to={item.link}
-                className={`flex items-center gap-3 p-3 rounded-lg border transition-colors group ${
-                  item.severity === 'red'
-                    ? 'bg-red-50 border-red-200 hover:bg-red-100'
-                    : 'bg-amber-50 border-amber-200 hover:bg-amber-100'
-                }`}
-              >
-                <span className={`flex-shrink-0 ${item.severity === 'red' ? 'text-red-500' : 'text-amber-500'}`}>
-                  {ATTENTION_ICONS[item.type]}
-                </span>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className={`text-[11px] font-semibold uppercase tracking-wide ${item.severity === 'red' ? 'text-red-600' : 'text-amber-600'}`}>
-                      {ATTENTION_TYPE_LABELS[item.type]}
+            {attention.map((item, i) => {
+              // A help request is answerable right here: who is needed, where,
+              // how long they have waited, and the two actions that end the wait.
+              if (item.type === 'andon_call' && item.call_id) {
+                const cfg = teamConfig(item.team);
+                const Icon = cfg.icon;
+                const busy = callActionId === item.call_id;
+                return (
+                  <div
+                    key={item.call_id}
+                    className={`flex items-start gap-3 p-3 rounded-lg border ${
+                      item.severity === 'red' ? 'bg-red-50 border-red-200' : 'bg-amber-50 border-amber-200'
+                    }`}
+                  >
+                    <span className={`flex-shrink-0 mt-0.5 ${item.severity === 'red' ? 'text-red-500' : 'text-amber-500'}`}>
+                      <Icon size={15} />
                     </span>
-                    <span className="text-sm font-medium text-gray-900 truncate">{item.label}</span>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full border ${cfg.chip}`}>
+                          {item.target_label ?? item.team_label ?? cfg.label}
+                        </span>
+                        <span className="text-sm font-medium text-gray-900 truncate">{item.label}</span>
+                        <span className={`text-xs font-semibold tabular-nums ${item.severity === 'red' ? 'text-red-600' : 'text-amber-600'}`}>
+                          {item.age_minutes ?? 0}m
+                        </span>
+                      </div>
+                      {item.detail && <div className="text-xs text-gray-500 truncate">{item.detail}</div>}
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      {item.call_status === 'open' && (
+                        <button
+                          onClick={() => void respondToCall(item, 'ack')}
+                          disabled={busy}
+                          className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors whitespace-nowrap"
+                        >
+                          {busy ? '…' : 'On my way'}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => void respondToCall(item, 'resolve')}
+                        disabled={busy}
+                        className="text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-white border border-gray-200 text-gray-600 hover:bg-gray-50 disabled:opacity-50 transition-colors"
+                      >
+                        Resolve
+                      </button>
+                      <Link to={item.link} className="text-gray-300 hover:text-gray-500" title="Open the Andon Board">
+                        <ChevronRight size={15} />
+                      </Link>
+                    </div>
                   </div>
-                  {item.detail && <div className="text-xs text-gray-500 truncate">{item.detail}</div>}
-                </div>
-                <ChevronRight size={15} className="text-gray-300 group-hover:text-gray-500 flex-shrink-0" />
-              </Link>
-            ))}
+                );
+              }
+              return (
+                <Link
+                  key={`${item.type}-${i}`}
+                  to={item.link}
+                  className={`flex items-center gap-3 p-3 rounded-lg border transition-colors group ${
+                    item.severity === 'red'
+                      ? 'bg-red-50 border-red-200 hover:bg-red-100'
+                      : 'bg-amber-50 border-amber-200 hover:bg-amber-100'
+                  }`}
+                >
+                  <span className={`flex-shrink-0 ${item.severity === 'red' ? 'text-red-500' : 'text-amber-500'}`}>
+                    {attentionIcon(item.type)}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`text-[11px] font-semibold uppercase tracking-wide ${item.severity === 'red' ? 'text-red-600' : 'text-amber-600'}`}>
+                        {attentionLabel(item.type)}
+                      </span>
+                      <span className="text-sm font-medium text-gray-900 truncate">{item.label}</span>
+                    </div>
+                    {item.detail && <div className="text-xs text-gray-500 truncate">{item.detail}</div>}
+                  </div>
+                  <ChevronRight size={15} className="text-gray-300 group-hover:text-gray-500 flex-shrink-0" />
+                </Link>
+              );
+            })}
           </div>
         )}
       </div>

@@ -1,4 +1,4 @@
-import { CalendarCheck, Wrench, ShieldCheck, Package, ShoppingCart } from 'lucide-react';
+import { CalendarCheck, Wrench, ShieldCheck, Package, ShoppingCart, PhoneCall } from 'lucide-react';
 import type { AttentionType } from '../types';
 
 export const ATTENTION_ICONS: Record<AttentionType, React.ReactNode> = {
@@ -8,6 +8,7 @@ export const ATTENTION_ICONS: Record<AttentionType, React.ReactNode> = {
   ncr_critical: <ShieldCheck size={15} />,
   stock_low:    <Package size={15} />,
   po_late:      <ShoppingCart size={15} />,
+  andon_call:   <PhoneCall size={15} />,
 };
 
 export const ATTENTION_TYPE_LABELS: Record<AttentionType, string> = {
@@ -17,4 +18,16 @@ export const ATTENTION_TYPE_LABELS: Record<AttentionType, string> = {
   ncr_critical: 'Critical NCR',
   stock_low:    'Low stock',
   po_late:      'Late delivery',
+  andon_call:   'Team called',
 };
+
+/** Fallbacks so an item type this build doesn't know about still renders. */
+export const ATTENTION_ICON_FALLBACK = <ShieldCheck size={15} />;
+
+export function attentionIcon(type: AttentionType): React.ReactNode {
+  return ATTENTION_ICONS[type] ?? ATTENTION_ICON_FALLBACK;
+}
+
+export function attentionLabel(type: AttentionType): string {
+  return ATTENTION_TYPE_LABELS[type] ?? 'Needs attention';
+}

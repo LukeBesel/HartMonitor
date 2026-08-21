@@ -1,123 +1,133 @@
-import { useEffect, useState, useCallback } from 'react';
+// ─── Andon Board ──────────────────────────────────────────────────────────────
+// The responder's side of the ONE request-help mechanism. Every alert — raised
+// from the operator player, from the app shell or from this page — lands here
+// tagged with WHO IS NEEDED (a function team or one of the company's
+// departments), the place it came from and the run context behind it.
+// Responders acknowledge ("On my way", which records who and when) and then
+// resolve. The board updates live over the shared WebSocket.
+
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Siren, HelpCircle, ShieldAlert, Package, Wrench, AlertTriangle,
-  CheckCircle, X, ChevronDown, RefreshCw, Plus, Loader2,
-  type LucideIcon,
+  CheckCircle, X, ChevronDown, RefreshCw, Plus, Loader2, Timer, MapPin, Hash, Building2,
 } from 'lucide-react';
 import { api } from '../api/client';
-
-// ── Types ─────────────────────────────────────────────────────────────────────
-
-interface AndonCall {
-  id: string;
-  type: 'help' | 'quality' | 'material' | 'maintenance' | 'safety';
-  priority: 'low' | 'normal' | 'high' | 'critical';
-  status: 'open' | 'acknowledged' | 'resolved';
-  title: string;
-  message: string;
-  department_id?: string;
-  department_name?: string;
-  station_id?: string;
-  created_by: string;
-  assigned_to?: string;
-  acknowledged_at?: string;
-  resolved_at?: string;
-  created_at: string;
-}
-
-interface Department {
-  id: string;
-  name: string;
-  description: string;
-  manager_name: string;
-  color: string;
-  created_at: string;
-}
-
-interface AndonSummary {
-  open: number;
-  critical: number;
-  acknowledged: number;
-  resolved_today: number;
-  by_type: Record<string, number>;
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
+import { ANDON_TEAMS, ANDON_TEAM_ORDER, teamConfig, formatAge, targetLabel, targetPayload } from '../config/andonTeams';
+import type { AlertTarget } from '../config/andonTeams';
+import { subscribeRealtime, isAndonEvent } from '../utils/realtime';
+import type { AndonCall, AndonCallType, AndonPriority, AndonStatus, AndonSummary, AndonTeam, Department, Station } from '../types';
 
 // ── Config maps ───────────────────────────────────────────────────────────────
 
 const TYPE_CONFIG: Record<
-  AndonCall['type'],
-  { label: string; icon: React.ElementType; color: string; borderColor: string; bgColor: string; iconColor: string }
+  AndonCallType,
+  { label: string; icon: React.ElementType; borderColor: string; bgColor: string; iconColor: string }
 > = {
-  help:        { label: 'Help',        icon: HelpCircle,   color: 'blue',   borderColor: 'border-l-blue-500',   bgColor: 'bg-blue-600 hover:bg-blue-700',   iconColor: 'text-blue-400' },
-  quality:     { label: 'Quality',     icon: ShieldAlert,  color: 'purple', borderColor: 'border-l-purple-500', bgColor: 'bg-purple-600 hover:bg-purple-700', iconColor: 'text-purple-400' },
-  material:    { label: 'Material',    icon: Package,      color: 'amber',  borderColor: 'border-l-amber-500',  bgColor: 'bg-amber-600 hover:bg-amber-700',  iconColor: 'text-amber-400' },
-  maintenance: { label: 'Maintenance', icon: Wrench,       color: 'orange', borderColor: 'border-l-orange-500', bgColor: 'bg-orange-600 hover:bg-orange-700', iconColor: 'text-orange-400' },
-  safety:      { label: 'Safety',      icon: AlertTriangle,color: 'red',    borderColor: 'border-l-red-500',    bgColor: 'bg-red-600 hover:bg-red-700',      iconColor: 'text-red-400' },
+  help:        { label: 'Help',        icon: HelpCircle,    borderColor: 'border-l-blue-500',   bgColor: 'bg-blue-600 hover:bg-blue-700',     iconColor: 'text-blue-400' },
+  quality:     { label: 'Quality',     icon: ShieldAlert,   borderColor: 'border-l-purple-500', bgColor: 'bg-purple-600 hover:bg-purple-700', iconColor: 'text-purple-400' },
+  material:    { label: 'Material',    icon: Package,       borderColor: 'border-l-amber-500',  bgColor: 'bg-amber-600 hover:bg-amber-700',   iconColor: 'text-amber-400' },
+  maintenance: { label: 'Maintenance', icon: Wrench,        borderColor: 'border-l-orange-500', bgColor: 'bg-orange-600 hover:bg-orange-700', iconColor: 'text-orange-400' },
+  safety:      { label: 'Safety',      icon: AlertTriangle, borderColor: 'border-l-red-500',    bgColor: 'bg-red-600 hover:bg-red-700',       iconColor: 'text-red-400' },
 };
 
-const PRIORITY_BADGE: Record<AndonCall['priority'], string> = {
+const TYPE_FALLBACK = TYPE_CONFIG.help;
+const typeConfig = (t: string) => TYPE_CONFIG[t as AndonCallType] ?? TYPE_FALLBACK;
+
+const PRIORITY_BADGE: Record<AndonPriority, string> = {
   low:      'bg-gray-700 text-gray-300',
   normal:   'bg-gray-700 text-gray-300',
   high:     'bg-amber-900/50 text-amber-300 border border-amber-700',
   critical: 'bg-red-900/50 text-red-300 border border-red-700 animate-pulse',
 };
 
-const STATUS_BADGE: Record<AndonCall['status'], string> = {
+const STATUS_BADGE: Record<AndonStatus, string> = {
   open:         'bg-red-900/50 text-red-300',
   acknowledged: 'bg-amber-900/50 text-amber-300',
   resolved:     'bg-green-900/50 text-green-300',
 };
 
-// ── Raise Call Modal ──────────────────────────────────────────────────────────
+// Dark-board team chip (this page runs on gray-950, not the workbench canvas).
+const TEAM_CHIP: Record<AndonTeam, string> = {
+  quality:     'bg-purple-500/15 text-purple-300 border-purple-500/40',
+  supervisor:  'bg-blue-500/15 text-blue-300 border-blue-500/40',
+  maintenance: 'bg-orange-500/15 text-orange-300 border-orange-500/40',
+  materials:   'bg-amber-500/15 text-amber-300 border-amber-500/40',
+};
+const TEAM_CHIP_FALLBACK = 'bg-gray-700/40 text-gray-300 border-gray-600';
 
-interface RaiseCallModalProps {
+// Selected-tile fill in the request-help modal.
+const TEAM_BUTTON: Record<AndonTeam, string> = {
+  quality:     'bg-purple-600 hover:bg-purple-700',
+  supervisor:  'bg-blue-600 hover:bg-blue-700',
+  maintenance: 'bg-orange-600 hover:bg-orange-700',
+  materials:   'bg-amber-600 hover:bg-amber-700',
+};
+
+// Who was alerted. A department alert wears a neutral chip with a building
+// icon; a function team wears its own color.
+function TeamChip({ team, label, isDepartment }: { team: string; label?: string; isDepartment?: boolean }) {
+  const cfg = teamConfig(team);
+  const Icon = isDepartment ? Building2 : cfg.icon;
+  const style = isDepartment ? 'bg-slate-500/15 text-slate-200 border-slate-400/40' : (TEAM_CHIP[team as AndonTeam] ?? TEAM_CHIP_FALLBACK);
+  return (
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold border ${style}`}>
+      <Icon size={12} />
+      {label ?? cfg.label}
+    </span>
+  );
+}
+
+// ── Request-help modal ────────────────────────────────────────────────────────
+// The same targets the player offers: four function teams plus the company's
+// own departments. Raised from this page there is no run context to attach.
+
+interface RequestHelpModalProps {
   departments: Department[];
   onClose: () => void;
   onCreated: () => void;
 }
 
-function RaiseCallModal({ departments, onClose, onCreated }: RaiseCallModalProps) {
-  const [selectedType, setSelectedType] = useState<AndonCall['type'] | null>(null);
+function RequestHelpModal({ departments, onClose, onCreated }: RequestHelpModalProps) {
+  const [target, setTarget] = useState<AlertTarget | null>(null);
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
   const [priority, setPriority] = useState<'normal' | 'high' | 'critical'>('normal');
-  const [departmentId, setDepartmentId] = useState('');
+  const [stationId, setStationId] = useState('');
+  const [stations, setStations] = useState<Station[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
-  const types = Object.entries(TYPE_CONFIG) as [AndonCall['type'], typeof TYPE_CONFIG[AndonCall['type']]][];
+  useEffect(() => {
+    api.getStations().then(rows => setStations(rows.filter(s => s.status === 'active'))).catch(() => setStations([]));
+  }, []);
+
+  const isTarget = (t: AlertTarget) => {
+    if (!target) return false;
+    if (target.kind === 'team' && t.kind === 'team') return target.team === t.team;
+    if (target.kind === 'department' && t.kind === 'department') return target.id === t.id;
+    return false;
+  };
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!selectedType) { setError('Please select a call type.'); return; }
-    if (!title.trim()) { setError('Title is required.'); return; }
+    if (!target) { setError('Pick who you need.'); return; }
     setError('');
     setSubmitting(true);
     try {
+      const station = stations.find(s => s.id === stationId);
       await api.createAndonCall({
-        type: selectedType,
-        title: title.trim(),
+        ...targetPayload(target),
+        title: title.trim() || undefined,
         message: message.trim() || undefined,
         priority,
-        department_id: departmentId || undefined,
+        station_id: stationId || undefined,
+        ...(target.kind === 'team' ? { department_id: station?.department_id || undefined } : {}),
       });
       onCreated();
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create call.');
+      setError(err instanceof Error ? err.message : 'Failed to send the request.');
     } finally {
       setSubmitting(false);
     }
@@ -126,13 +136,12 @@ function RaiseCallModal({ departments, onClose, onCreated }: RaiseCallModalProps
   return (
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-800">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-red-900/40 rounded-lg">
               <Siren size={20} className="text-red-400" />
             </div>
-            <h2 className="text-lg font-semibold text-white">Raise an Andon Call</h2>
+            <h2 className="text-lg font-semibold text-white">Request help</h2>
           </div>
           <button
             onClick={onClose}
@@ -143,46 +152,94 @@ function RaiseCallModal({ departments, onClose, onCreated }: RaiseCallModalProps
         </div>
 
         <form onSubmit={handleSubmit} className="p-6 space-y-5">
-          {/* Type Selector */}
+          {/* Target selector — the same four teams the player offers */}
           <div>
-            <label className="section-label mb-3 block">Call Type *</label>
-            <div className="grid grid-cols-3 gap-2">
-              {types.map(([key, cfg]) => {
+            <label className="section-label mb-3 block">Who do you need? *</label>
+            <div className="grid grid-cols-2 gap-2">
+              {ANDON_TEAM_ORDER.map(team => {
+                const cfg = ANDON_TEAMS[team];
                 const Icon = cfg.icon;
-                const isSelected = selectedType === key;
+                const isSelected = isTarget({ kind: 'team', team });
                 return (
                   <button
-                    key={key}
+                    key={team}
                     type="button"
-                    onClick={() => setSelectedType(key)}
-                    className={`flex flex-col items-center gap-2 p-3 rounded-xl border transition-all ${
+                    onClick={() => setTarget({ kind: 'team', team })}
+                    className={`flex items-center gap-2.5 p-3 rounded-xl border text-left transition-all ${
                       isSelected
-                        ? `${cfg.bgColor} border-transparent text-white`
+                        ? `${TEAM_BUTTON[team]} border-transparent text-white`
                         : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700 hover:text-white'
                     }`}
                   >
-                    <Icon size={20} />
-                    <span className="text-xs font-medium">{cfg.label}</span>
+                    <Icon size={18} className="shrink-0" />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-semibold">{cfg.tileLabel}</span>
+                      <span className="block text-[11px] opacity-80 truncate">{cfg.hint}</span>
+                    </span>
                   </button>
                 );
               })}
             </div>
           </div>
 
-          {/* Title */}
+          {/* Or one of the company's own departments */}
+          {departments.length > 0 && (
+            <div>
+              <label className="section-label mb-2 flex items-center gap-1.5">
+                <Building2 size={12} /> Or a department
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {departments.map(d => {
+                  const isSelected = isTarget({ kind: 'department', id: d.id, name: d.name });
+                  return (
+                    <button
+                      key={d.id}
+                      type="button"
+                      onClick={() => setTarget({ kind: 'department', id: d.id, name: d.name })}
+                      className={`px-3 py-1.5 rounded-full text-xs font-semibold border transition-colors ${
+                        isSelected
+                          ? 'bg-white border-white text-gray-900'
+                          : 'bg-gray-800 border-gray-700 text-gray-400 hover:bg-gray-700 hover:text-white'
+                      }`}
+                    >
+                      {d.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {stations.length > 0 && (
+            <div>
+              <label className="section-label mb-1 block">Where (optional)</label>
+              <div className="relative">
+                <select
+                  className="input-field w-full appearance-none pr-8"
+                  value={stationId}
+                  onChange={e => setStationId(e.target.value)}
+                >
+                  <option value="">— No specific station —</option>
+                  {stations.map(s => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                </select>
+                <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              </div>
+            </div>
+          )}
+
           <div>
-            <label className="section-label mb-1 block">Title *</label>
+            <label className="section-label mb-1 block">Title (optional)</label>
             <input
               type="text"
               className="input-field w-full"
-              placeholder="Brief description of the issue"
+              placeholder={target ? `${targetLabel(target)} needed` : 'Brief description of the issue'}
               value={title}
               onChange={e => setTitle(e.target.value)}
-              required
             />
           </div>
 
-          {/* Message */}
           <div>
             <label className="section-label mb-1 block">Message (optional)</label>
             <textarea
@@ -194,7 +251,6 @@ function RaiseCallModal({ departments, onClose, onCreated }: RaiseCallModalProps
             />
           </div>
 
-          {/* Priority */}
           <div>
             <label className="section-label mb-2 block">Priority</label>
             <div className="flex gap-2">
@@ -219,43 +275,21 @@ function RaiseCallModal({ departments, onClose, onCreated }: RaiseCallModalProps
             </div>
           </div>
 
-          {/* Department */}
-          {departments.length > 0 && (
-            <div>
-              <label className="section-label mb-1 block">Department (optional)</label>
-              <div className="relative">
-                <select
-                  className="input-field w-full appearance-none pr-8"
-                  value={departmentId}
-                  onChange={e => setDepartmentId(e.target.value)}
-                >
-                  <option value="">— Select department —</option>
-                  {departments.map(d => (
-                    <option key={d.id} value={d.id}>{d.name}</option>
-                  ))}
-                </select>
-                <ChevronDown size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-              </div>
-            </div>
-          )}
-
-          {/* Error */}
           {error && (
             <p className="text-sm text-red-400 bg-red-900/20 border border-red-800 rounded-lg px-3 py-2">{error}</p>
           )}
 
-          {/* Actions */}
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose} className="btn-secondary flex-1">
               Cancel
             </button>
             <button
               type="submit"
-              disabled={submitting}
+              disabled={submitting || !target}
               className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-2 px-4 rounded-xl flex items-center justify-center gap-2 transition-colors"
             >
               {submitting ? <Loader2 size={16} className="animate-spin" /> : <Siren size={16} />}
-              {submitting ? 'Raising…' : 'Raise Call'}
+              {submitting ? 'Notifying…' : target ? `Notify ${targetLabel(target)}` : 'Pick who you need'}
             </button>
           </div>
         </form>
@@ -290,6 +324,7 @@ function SkeletonCards() {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function Andon() {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [calls, setCalls] = useState<AndonCall[]>([]);
   const [summary, setSummary] = useState<AndonSummary | null>(null);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -297,7 +332,28 @@ export default function Andon() {
   const [error, setError] = useState('');
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [typeFilter, setTypeFilter] = useState<string>('all');
+  // Deep-linkable so a Command Center attention row can hand off "?team=quality"
+  // or "?department_id=…" straight into the right queue.
+  const teamFilter = (searchParams.get('team') ?? 'all') as AndonTeam | 'all';
+  const departmentFilter = searchParams.get('department_id') ?? '';
+  const setTeamFilter = useCallback((team: AndonTeam | 'all') => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.delete('department_id');
+      if (team === 'all') next.delete('team');
+      else next.set('team', team);
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+  const setDepartmentFilter = useCallback((departmentId: string) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.delete('team');
+      if (!departmentId) next.delete('department_id');
+      else next.set('department_id', departmentId);
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
 
   const [showCreate, setShowCreate] = useState(false);
 
@@ -314,9 +370,10 @@ export default function Andon() {
     if (!silent) setLoading(true);
     setError('');
     try {
-      const params: { status?: string; type?: string } = {};
+      const params: { status?: string; team?: AndonTeam; department_id?: string } = {};
       if (statusFilter !== 'all') params.status = statusFilter;
-      if (typeFilter !== 'all') params.type = typeFilter;
+      if (teamFilter !== 'all') params.team = teamFilter;
+      if (departmentFilter) params.department_id = departmentFilter;
 
       const [callsData, summaryData, depsData] = await Promise.all([
         api.getAndonCalls(params),
@@ -331,13 +388,18 @@ export default function Andon() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [statusFilter, typeFilter]);
+  }, [statusFilter, teamFilter, departmentFilter]);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  // Auto-refresh every 30 seconds
+  // Live: a call raised on any tablet lands here immediately (the 30s poll is
+  // the backstop for a dropped socket, not the primary path).
+  useEffect(() => subscribeRealtime(evt => {
+    if (isAndonEvent(evt)) void load(true);
+  }), [load]);
+
   useEffect(() => {
     const interval = setInterval(() => load(true), 30_000);
     return () => clearInterval(interval);
@@ -351,7 +413,7 @@ export default function Andon() {
       await api.acknowledgeAndonCall(id);
       await load(true);
     } catch (err) {
-      console.error('Acknowledge failed:', err);
+      setError(err instanceof Error ? err.message : 'Could not acknowledge the call.');
     } finally {
       setActionLoading(prev => ({ ...prev, [id]: false }));
     }
@@ -365,7 +427,7 @@ export default function Andon() {
       setResolutionText('');
       await load(true);
     } catch (err) {
-      console.error('Resolve failed:', err);
+      setError(err instanceof Error ? err.message : 'Could not resolve the call.');
     } finally {
       setActionLoading(prev => ({ ...prev, [id]: false }));
     }
@@ -374,7 +436,10 @@ export default function Andon() {
   // ── Render helpers ────────────────────────────────────────────────────────
 
   const statusFilters = ['all', 'open', 'acknowledged', 'resolved'];
-  const typeFilters = ['all', 'help', 'quality', 'material', 'maintenance', 'safety'];
+
+  const avgResponse = summary?.avg_response_seconds_today ?? null;
+
+  const teamCounts = useMemo(() => summary?.by_team ?? {}, [summary]);
 
   // ── Render ────────────────────────────────────────────────────────────────
 
@@ -390,7 +455,7 @@ export default function Andon() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-white">Andon Board</h1>
-              <p className="text-sm text-gray-400">Real-time production call management</p>
+              <p className="text-sm text-gray-400">Every help request from the floor — who is needed, where, and how long they have waited</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -407,7 +472,7 @@ export default function Andon() {
               className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-xl flex items-center gap-2 transition-colors w-full sm:w-auto justify-center"
             >
               <Plus size={18} />
-              Raise a Call
+              Request help
             </button>
           </div>
         </div>
@@ -428,10 +493,9 @@ export default function Andon() {
         {/* ── Stats Strip ── */}
         {summary && (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Open */}
             <div className={`bg-gray-900 border border-gray-800 rounded-xl p-4 ${summary.open > 0 ? 'border-red-800/60' : ''}`}>
               <div className="flex items-center justify-between mb-1">
-                <span className="section-label">Open Calls</span>
+                <span className="section-label">Open requests</span>
                 {summary.open > 0 && (
                   <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                 )}
@@ -441,35 +505,88 @@ export default function Andon() {
               </p>
             </div>
 
-            {/* Critical */}
-            <div className={`bg-gray-900 border border-gray-800 rounded-xl p-4 ${summary.critical > 0 ? 'border-red-800/60' : ''}`}>
-              <div className="flex items-center justify-between mb-1">
-                <span className="section-label">Critical</span>
-                {summary.critical > 0 && (
-                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
-                )}
-              </div>
-              <p className={`text-3xl font-bold ${summary.critical > 0 ? 'text-red-400' : 'text-white'}`}>
-                {summary.critical}
-              </p>
-            </div>
-
-            {/* Acknowledged */}
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
               <p className="section-label mb-1">Acknowledged</p>
               <p className="text-3xl font-bold text-amber-400">{summary.acknowledged}</p>
             </div>
 
-            {/* Resolved Today */}
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
               <p className="section-label mb-1">Resolved Today</p>
               <p className="text-3xl font-bold text-green-400">{summary.resolved_today}</p>
+            </div>
+
+            {/* Time-to-respond: measured, never estimated — blank until a call
+                has actually been acknowledged today. */}
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+              <p className="section-label mb-1">Avg. response today</p>
+              {avgResponse === null ? (
+                <p className="text-lg font-semibold text-gray-500 mt-1.5">Nothing answered yet</p>
+              ) : (
+                <p className="text-3xl font-bold text-white flex items-baseline gap-2">
+                  {formatAge(avgResponse)}
+                  <span className="text-xs font-medium text-gray-500">
+                    over {summary.responded_today} request{summary.responded_today === 1 ? '' : 's'}
+                  </span>
+                </p>
+              )}
             </div>
           </div>
         )}
 
         {/* ── Filter Chips ── */}
         <div className="space-y-3">
+          {/* Team filter — the routing dimension: who was alerted */}
+          <div className="flex flex-wrap gap-2 items-center">
+            <span className="section-label mr-1">Team:</span>
+            <button
+              onClick={() => setTeamFilter('all')}
+              className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                teamFilter === 'all' && !departmentFilter ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
+              }`}
+            >
+              All teams
+            </button>
+            {ANDON_TEAM_ORDER.map(team => {
+              const cfg = ANDON_TEAMS[team];
+              const Icon = cfg.icon;
+              const openForTeam = teamCounts[team] ?? 0;
+              return (
+                <button
+                  key={team}
+                  onClick={() => setTeamFilter(team)}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${
+                    teamFilter === team ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
+                  }`}
+                >
+                  <Icon size={13} />
+                  {cfg.label}
+                  {openForTeam > 0 && (
+                    <span className="ml-0.5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold">{openForTeam}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Department filter — everything raised by or aimed at one department */}
+          {departments.length > 0 && (
+            <div className="flex flex-wrap gap-2 items-center">
+              <span className="section-label mr-1">Department:</span>
+              {departments.map(d => (
+                <button
+                  key={d.id}
+                  onClick={() => setDepartmentFilter(departmentFilter === d.id ? '' : d.id)}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${
+                    departmentFilter === d.id ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
+                  }`}
+                >
+                  <Building2 size={13} />
+                  {d.name}
+                </button>
+              ))}
+            </div>
+          )}
+
           {/* Status filters */}
           <div className="flex flex-wrap gap-2 items-center">
             <span className="section-label mr-1">Status:</span>
@@ -487,44 +604,27 @@ export default function Andon() {
               </button>
             ))}
           </div>
-
-          {/* Type filters */}
-          <div className="flex flex-wrap gap-2 items-center">
-            <span className="section-label mr-1">Type:</span>
-            {typeFilters.map(t => (
-              <button
-                key={t}
-                onClick={() => setTypeFilter(t)}
-                className={`px-3 py-1.5 rounded-full text-sm font-medium capitalize transition-colors ${
-                  typeFilter === t
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
-                }`}
-              >
-                {t === 'all' ? 'All' : TYPE_CONFIG[t as AndonCall['type']]?.label ?? t}
-              </button>
-            ))}
-          </div>
         </div>
 
         {/* ── Call Cards ── */}
         {loading ? (
           <SkeletonCards />
         ) : calls.length === 0 ? (
-          /* ── Empty State ── */
           <div className="flex flex-col items-center justify-center py-24 gap-4">
             <div className="p-5 bg-green-900/30 border border-green-800/50 rounded-full">
               <CheckCircle size={40} className="text-green-400" />
             </div>
             <div className="text-center">
               <h3 className="text-xl font-semibold text-white mb-1">All clear</h3>
-              <p className="text-gray-400">No active Andon calls</p>
+              <p className="text-gray-400">
+                {teamFilter === 'all' ? 'No open help requests' : `Nothing open for ${ANDON_TEAMS[teamFilter]?.label ?? teamFilter}`}
+              </p>
             </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
             {calls.map(call => {
-              const cfg = TYPE_CONFIG[call.type];
+              const cfg = typeConfig(call.type);
               const Icon = cfg.icon;
               const isActioning = !!actionLoading[call.id];
               const isResolvingThis = resolveCardId === call.id;
@@ -534,7 +634,7 @@ export default function Andon() {
                   key={call.id}
                   className={`bg-gray-900 border border-gray-800 rounded-xl p-4 border-l-4 ${cfg.borderColor} flex flex-col gap-3`}
                 >
-                  {/* Card Header */}
+                  {/* Card Header — team chip leads: who is needed */}
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-2 min-w-0">
                       <Icon size={16} className={`${cfg.iconColor} shrink-0`} />
@@ -544,49 +644,77 @@ export default function Andon() {
                       {call.priority === 'critical' && (
                         <span className="animate-pulse bg-red-500 rounded-full w-2 h-2 shrink-0" />
                       )}
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${PRIORITY_BADGE[call.priority]}`}>
+                      <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${PRIORITY_BADGE[call.priority] ?? PRIORITY_BADGE.normal}`}>
                         {call.priority}
                       </span>
                     </div>
                   </div>
 
-                  {/* Meta row */}
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-400">
-                    {call.department_name && (
-                      <span className="font-medium text-gray-300">{call.department_name}</span>
-                    )}
-                    <span className="capitalize flex items-center gap-1">
-                      <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${STATUS_BADGE[call.status]}`}>
-                        {call.status}
-                      </span>
+                  {/* Team + status + age */}
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 text-xs text-gray-400">
+                    <TeamChip team={call.team} label={call.target_label} isDepartment={call.target_type === 'department'} />
+                    <span className={`px-1.5 py-0.5 rounded text-xs font-medium capitalize ${STATUS_BADGE[call.status] ?? STATUS_BADGE.open}`}>
+                      {call.status}
                     </span>
-                    <span>{timeAgo(call.created_at)}</span>
+                    <span className="tnum">
+                      {call.status === 'resolved' ? `closed after ${formatAge(call.resolution_seconds)}` : `waiting ${formatAge(call.age_seconds)}`}
+                    </span>
                   </div>
 
-                  {/* Message */}
+                  {/* Where it came from — location + run context */}
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
+                    {call.location && (
+                      <span className="inline-flex items-center gap-1 text-gray-300 font-medium">
+                        <MapPin size={11} /> {call.location}
+                      </span>
+                    )}
+                    {call.work_order_number && (
+                      <span className="inline-flex items-center gap-1">
+                        <Hash size={11} /> {call.work_order_number}{call.part_name ? ` · ${call.part_name}` : ''}
+                      </span>
+                    )}
+                    {call.app_name && (
+                      <span className="truncate">{call.app_name}{call.step_name ? ` · ${call.step_name}` : ''}</span>
+                    )}
+                    {call.created_by && <span>by {call.created_by}</span>}
+                  </div>
+
                   {call.message && (
                     <p className="text-sm text-gray-400 leading-relaxed line-clamp-2">{call.message}</p>
                   )}
 
-                  {/* Assigned to */}
+                  {/* Responder + measured time-to-respond */}
                   {call.assigned_to && (
-                    <p className="text-xs text-gray-500">
-                      Assigned to: <span className="text-gray-300">{call.assigned_to}</span>
+                    <p className="text-xs text-gray-500 flex items-center gap-1.5 flex-wrap">
+                      <span>Responder: <span className="text-gray-300">{call.assigned_to}</span></span>
+                      {call.response_seconds !== null && (
+                        <span className="inline-flex items-center gap-1 text-green-400">
+                          <Timer size={11} /> answered in {formatAge(call.response_seconds)}
+                        </span>
+                      )}
                     </p>
                   )}
 
                   {/* Actions */}
                   {call.status === 'open' && (
-                    <button
-                      onClick={() => handleAcknowledge(call.id)}
-                      disabled={isActioning}
-                      className="mt-auto btn-primary flex items-center justify-center gap-2 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      {isActioning ? (
-                        <Loader2 size={14} className="animate-spin" />
-                      ) : null}
-                      Acknowledge
-                    </button>
+                    <div className="mt-auto flex gap-2">
+                      <button
+                        onClick={() => handleAcknowledge(call.id)}
+                        disabled={isActioning}
+                        className="btn-primary flex-1 flex items-center justify-center gap-2 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {isActioning ? <Loader2 size={14} className="animate-spin" /> : null}
+                        On my way
+                      </button>
+                      <button
+                        onClick={() => { setResolveCardId(call.id); setResolutionText(''); }}
+                        disabled={isActioning}
+                        className="btn-ghost text-sm px-3 disabled:opacity-50"
+                        title="Resolve without acknowledging"
+                      >
+                        Resolve
+                      </button>
+                    </div>
                   )}
 
                   {call.status === 'acknowledged' && !isResolvingThis && (
@@ -600,7 +728,7 @@ export default function Andon() {
                     </button>
                   )}
 
-                  {call.status === 'acknowledged' && isResolvingThis && (
+                  {call.status !== 'resolved' && isResolvingThis && (
                     <div className="mt-auto space-y-2">
                       <textarea
                         className="input-field w-full resize-none text-sm"
@@ -629,11 +757,11 @@ export default function Andon() {
                     </div>
                   )}
 
-                  {/* Resolved footer */}
-                  {call.status === 'resolved' && call.resolved_at && (
-                    <p className="text-xs text-green-400 mt-auto">
-                      Resolved {timeAgo(call.resolved_at)}
-                    </p>
+                  {call.status === 'resolved' && (
+                    <div className="mt-auto text-xs text-green-400 space-y-0.5">
+                      <p>Resolved{call.resolved_by ? ` by ${call.resolved_by}` : ''}</p>
+                      {call.resolution && <p className="text-gray-500 line-clamp-2">{call.resolution}</p>}
+                    </div>
                   )}
                 </div>
               );
@@ -644,7 +772,7 @@ export default function Andon() {
 
       {/* ── Raise Call Modal ── */}
       {showCreate && (
-        <RaiseCallModal
+        <RequestHelpModal
           departments={departments}
           onClose={() => setShowCreate(false)}
           onCreated={() => load()}

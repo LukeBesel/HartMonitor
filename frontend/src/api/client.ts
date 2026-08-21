@@ -8,6 +8,7 @@ import type {
   BOM, BOMLine, Kit, KitLine, KitLineStatus,
   CompletionValue, CompletionValueInput,
   MESTable,
+  AndonCall, AndonCallInput, AndonSummary, AndonTeam,
 } from '../types';
 
 const BASE = '/api';
@@ -772,21 +773,27 @@ export const api = {
     request<any>(`/shifts/${id}/handoff`, { method: 'POST', body: JSON.stringify(data) }),
   deleteShiftNote: (id: string) => request<any>(`/shifts/${id}`, { method: 'DELETE' }),
 
-  // ── Andon System
-  getAndonCalls: (params?: { status?: string; department_id?: string; type?: string }) => {
+  // ── Andon System / team calls
+  getAndonCalls: (params?: { status?: string; department_id?: string; type?: string; team?: AndonTeam; station_id?: string }) => {
     const qs = new URLSearchParams();
     if (params?.status)        qs.set('status', params.status);
     if (params?.department_id) qs.set('department_id', params.department_id);
     if (params?.type)          qs.set('type', params.type);
+    if (params?.team)          qs.set('team', params.team);
+    if (params?.station_id)    qs.set('station_id', params.station_id);
     const s = qs.toString();
-    return request<any[]>(`/andon${s ? `?${s}` : ''}`);
+    return request<AndonCall[]>(`/andon${s ? `?${s}` : ''}`);
   },
-  createAndonCall: (data: any) => request<any>('/andon', { method: 'POST', body: JSON.stringify(data) }),
-  acknowledgeAndonCall: (id: string) => request<any>(`/andon/${id}/acknowledge`, { method: 'PUT' }),
+  createAndonCall: (data: AndonCallInput) => request<AndonCall>('/andon', { method: 'POST', body: JSON.stringify(data) }),
+  /** "On my way" — records the responder and the response time. */
+  acknowledgeAndonCall: (id: string) => request<AndonCall>(`/andon/${id}/acknowledge`, { method: 'PUT' }),
   resolveAndonCall: (id: string, resolution?: string) =>
-    request<any>(`/andon/${id}/resolve`, { method: 'PUT', body: JSON.stringify({ resolution: resolution ?? '' }) }),
-  deleteAndonCall: (id: string) => request<any>(`/andon/${id}`, { method: 'DELETE' }),
-  getAndonSummary: () => request<any>('/andon/summary'),
+    request<AndonCall>(`/andon/${id}/resolve`, { method: 'PUT', body: JSON.stringify({ resolution: resolution ?? '' }) }),
+  /** The operator stood the call down — kept on the board with an honest reason. */
+  cancelAndonCall: (id: string, reason?: string) =>
+    request<AndonCall>(`/andon/${id}/cancel`, { method: 'PUT', body: JSON.stringify({ reason: reason ?? '' }) }),
+  deleteAndonCall: (id: string) => request<{ ok: boolean }>(`/andon/${id}`, { method: 'DELETE' }),
+  getAndonSummary: () => request<AndonSummary>('/andon/summary'),
 
   // ── CAPA (standalone module)
   getCAPAs: (params?: { status?: string; priority?: string; department_id?: string; search?: string }) => {

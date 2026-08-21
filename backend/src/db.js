@@ -2152,5 +2152,33 @@ db.exec(`
   if (!ncrCols.includes('step_name'))             db.exec("ALTER TABLE ncrs ADD COLUMN step_name TEXT DEFAULT ''");
 }
 
+// ─── Help requests on Andon (additive) ────────────────────────────────────────
+// One mechanism for "request help": the player (or anyone in the app) raises an
+// andon_call tagged with the TEAM or DEPARTMENT being alerted plus whatever run
+// context it came from, so the Andon Board and Command Center can route and
+// resolve it. All guarded PRAGMA-checked ALTERs — never DROP/RENAME.
+// `title`/`message`/`created_by`/`assigned_to` back the existing /api/andon
+// contract (the table shipped with description/raised_by/acknowledged_by only);
+// legacy rows keep working because reads coalesce.
+{
+  const andonCols = db.prepare('PRAGMA table_info(andon_calls)').all().map(r => r.name);
+  const addAndon = (name, ddl) => { if (!andonCols.includes(name)) db.exec(`ALTER TABLE andon_calls ADD COLUMN ${ddl}`); };
+  addAndon('title',                   "title TEXT DEFAULT ''");
+  // 'team' (one of the four function teams) or 'department' (a row in departments).
+  addAndon('target_type',             "target_type TEXT DEFAULT 'team'");
+  addAndon('message',                 "message TEXT DEFAULT ''");
+  addAndon('created_by',              "created_by TEXT DEFAULT ''");
+  addAndon('assigned_to',             "assigned_to TEXT DEFAULT ''");
+  addAndon('team',                    "team TEXT DEFAULT ''");
+  addAndon('work_order_id',           'work_order_id TEXT');
+  addAndon('app_id',                  'app_id TEXT');
+  addAndon('step_name',               "step_name TEXT DEFAULT ''");
+  addAndon('completion_id',           'completion_id TEXT');
+  addAndon('created_by_user_id',      'created_by_user_id TEXT');
+  addAndon('acknowledged_by_user_id', 'acknowledged_by_user_id TEXT');
+  addAndon('resolved_by_user_id',     'resolved_by_user_id TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_andon_calls_team ON andon_calls(company_id, team, status, created_at DESC)');
+}
+
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;
