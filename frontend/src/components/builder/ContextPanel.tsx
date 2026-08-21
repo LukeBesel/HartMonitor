@@ -13,13 +13,14 @@ import {
   AlertTriangle, AlignCenter, AlignLeft as AlignLeftIcon, AlignRight,
   Box, ChevronDown, ChevronRight, ExternalLink, Image, LayoutGrid, Loader2,
   MousePointerClick, MoveDown, MoveUp, Package, Plus, PlusCircle, Rows3,
-  Settings, Tag, Trash2, Video, X, Zap,
+  Settings, Tag, Trash2, Upload, Video, X, Zap,
 } from 'lucide-react';
 import type {
   App, AppVariable, Department, ProductType, Station, Step, Trigger,
   Widget, WidgetLayout,
 } from '../../types';
 import { api } from '../../api/client';
+import TableImportModal from '../shared/TableImportModal';
 import { defaultLayout } from '../app/WidgetView';
 import { WIDGET_META, INPUT_WIDGET_TYPES } from './WidgetPalette';
 import { inferVariableType, VARIABLE_NAME_RE } from './VariablesPanel';
@@ -725,6 +726,7 @@ function TableLookupForm({ config, setConfig }: {
   interface TableLite { id: string; name: string; fields?: { id: string; name: string }[]; }
   const [tables, setTables] = useState<TableLite[] | null>(null);
   const [fields, setFields] = useState<{ id: string; name: string }[]>([]);
+  const [showImport, setShowImport] = useState(false);
   useEffect(() => {
     api.getTables().then((ts: TableLite[]) => setTables(ts)).catch(() => setTables([]));
   }, []);
@@ -738,6 +740,13 @@ function TableLookupForm({ config, setConfig }: {
     }
   }, [config.tableId]);
 
+  const handleImported = (t: { id: string; name: string; fields?: { id: string; name: string }[] }) => {
+    setShowImport(false);
+    setTables(prev => [...(prev ?? []), t]);
+    // Auto-select the freshly imported table on the widget.
+    setConfig({ tableId: t.id, lookupFieldId: '', displayFieldIds: [] });
+  };
+
   return (
     <>
       <Field label="Table">
@@ -745,7 +754,21 @@ function TableLookupForm({ config, setConfig }: {
           <option value="">— pick a table —</option>
           {(tables ?? []).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
         </select>
+        {tables !== null && tables.length === 0 && (
+          <p className="mt-1 text-muted" style={{ fontSize: 11 }}>No tables yet — import a spreadsheet to create one.</p>
+        )}
+        <button
+          type="button"
+          onClick={() => setShowImport(true)}
+          className="mt-1.5 inline-flex items-center gap-1 text-accent hover:underline"
+          style={{ fontSize: 12, fontWeight: 600 }}
+        >
+          <Upload size={12} /> Import a spreadsheet…
+        </button>
       </Field>
+      {showImport && (
+        <TableImportModal onClose={() => setShowImport(false)} onImported={handleImported} />
+      )}
       {config.tableId && (
         <>
           <Field label="Match field" hint="The table field compared against the variable.">

@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
 import { MESTable, TableField, FieldType } from '../types';
-import { Plus, Trash2, Database, ChevronRight, X, AlertTriangle } from 'lucide-react';
+import { Plus, Trash2, Database, ChevronRight, X, AlertTriangle, Upload } from 'lucide-react';
 import { v4 as uuidv4 } from '../utils/uuid';
 import { useAuth } from '../context/AuthContext';
+import { useToast } from '../context/ToastContext';
+import TableImportModal from '../components/shared/TableImportModal';
 
 const FIELD_TYPES: { value: FieldType; label: string }[] = [
   { value: 'text', label: 'Text' },
@@ -19,6 +21,7 @@ export default function Tables() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newTable, setNewTable] = useState({ name: '', description: '' });
   const [newFields, setNewFields] = useState<TableField[]>([
@@ -26,6 +29,7 @@ export default function Tables() {
   ]);
   const navigate = useNavigate();
   const { canEdit } = useAuth();
+  const { addToast } = useToast();
 
   const load = () => api.getTables()
     .then(t => { setTables(t); setError(''); })
@@ -79,9 +83,14 @@ export default function Tables() {
           </p>
         </div>
         {canEdit && (
-          <button onClick={() => setShowCreate(true)} className="btn-primary">
-            <Plus size={16} /> New Table
-          </button>
+          <div className="flex gap-2">
+            <button onClick={() => setShowImport(true)} className="btn-secondary">
+              <Upload size={16} /> Import Excel/CSV
+            </button>
+            <button onClick={() => setShowCreate(true)} className="btn-primary">
+              <Plus size={16} /> New Table
+            </button>
+          </div>
         )}
       </div>
 
@@ -141,6 +150,18 @@ export default function Tables() {
             </Link>
           ))}
         </div>
+      )}
+
+      {/* Import modal — shared with the builder's table-lookup config form */}
+      {showImport && (
+        <TableImportModal
+          onClose={() => setShowImport(false)}
+          onImported={t => {
+            setShowImport(false);
+            addToast(`Imported "${t.name}" — ${t.record_count} record${t.record_count === 1 ? '' : 's'}`, 'success');
+            navigate(`/tables/${t.id}`);
+          }}
+        />
       )}
 
       {/* Create modal */}
