@@ -127,6 +127,9 @@ router.post('/', (req, res) => {
   const { name, description = '', department_id, site_id, station_id, show_takt_warnings } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
 
+  const dup = db.prepare('SELECT id FROM apps WHERE company_id = ? AND LOWER(name) = LOWER(?)').get(req.companyId, name);
+  if (dup) return res.status(409).json({ error: 'duplicate_name', message: `An app named "${name}" already exists` });
+
   // Plan limit check — base tier limit plus purchased add-on slots
   // (skipped entirely during early access — no limits while EARLY_ACCESS is on)
   const { config: appCfg } = require('../config');
@@ -163,6 +166,11 @@ router.put('/:id', (req, res) => {
   const { name, description, steps, variables, status, department_id, site_id, station_id, show_takt_warnings, step_groups, schema_version } = req.body;
   const app = db.prepare('SELECT * FROM apps WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!app) return res.status(404).json({ error: 'Not found' });
+
+  if (name !== undefined && name !== app.name) {
+    const dup = db.prepare('SELECT id FROM apps WHERE company_id = ? AND LOWER(name) = LOWER(?) AND id != ?').get(req.companyId, name, req.params.id);
+    if (dup) return res.status(409).json({ error: 'duplicate_name', message: `An app named "${name}" already exists` });
+  }
 
   if (steps !== undefined) {
     if (JSON.stringify(steps).length > MAX_STEPS_BYTES) {

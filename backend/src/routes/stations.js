@@ -40,6 +40,8 @@ router.get('/', (req, res) => {
 router.post('/', (req, res) => {
   const { name, description = '', location = '', department_id = null, site_id = null } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
+  const dup = db.prepare('SELECT id FROM stations WHERE company_id = ? AND LOWER(name) = LOWER(?)').get(req.companyId, name);
+  if (dup) return res.status(409).json({ error: 'duplicate_name', message: `A station named "${name}" already exists` });
   const id = uuidv4();
   const safeDeptId = ownedOrNull('departments', department_id, req.companyId);
   const safeSiteId = ownedOrNull('sites', site_id, req.companyId);
@@ -54,6 +56,10 @@ router.put('/:id', (req, res) => {
   const { name, description, location, status, current_app_id, department_id, site_id } = req.body;
   const station = db.prepare('SELECT * FROM stations WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!station) return res.status(404).json({ error: 'Not found' });
+  if (name !== undefined && name !== station.name) {
+    const dup = db.prepare('SELECT id FROM stations WHERE company_id = ? AND LOWER(name) = LOWER(?) AND id != ?').get(req.companyId, name, req.params.id);
+    if (dup) return res.status(409).json({ error: 'duplicate_name', message: `A station named "${name}" already exists` });
+  }
   const updates = {
     name: name ?? station.name,
     description: description ?? station.description,

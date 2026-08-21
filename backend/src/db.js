@@ -2082,5 +2082,26 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_completion_values_var ON completion_values(company_id, app_id, variable_name, recorded_at);
 `);
 
+// ─── Facility shifts (per-site shift builder) ─────────────────────────────────
+// Additive, guarded: CREATE IF NOT EXISTS only — no changes to existing tables.
+// starts_at/ends_at are 'HH:MM'; overnight spans (ends_at < starts_at) are valid
+// and roll into the next day. days is a JSON array of weekday numbers 0-6 (Sun-Sat).
+
+db.exec(`
+  CREATE TABLE IF NOT EXISTS site_shifts (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    starts_at TEXT NOT NULL,
+    ends_at TEXT NOT NULL,
+    days TEXT NOT NULL DEFAULT '[0,1,2,3,4,5,6]',
+    color TEXT DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_site_shifts_site ON site_shifts(company_id, site_id, sort_order);
+`);
+
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;

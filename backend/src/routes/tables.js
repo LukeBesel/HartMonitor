@@ -50,6 +50,8 @@ router.get('/', (req, res) => {
 router.post('/', (req, res) => {
   const { name, description = '', fields = [] } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
+  const dup = db.prepare('SELECT id FROM tables WHERE company_id = ? AND LOWER(name) = LOWER(?)').get(req.companyId, name);
+  if (dup) return res.status(409).json({ error: 'duplicate_name', message: `A table named "${name}" already exists` });
   const id = uuidv4();
   db.prepare('INSERT INTO tables (id, name, description, fields, company_id) VALUES (?, ?, ?, ?, ?)')
     .run(id, name, description, JSON.stringify(fields), req.companyId);
@@ -171,6 +173,10 @@ router.put('/:id', (req, res) => {
   const { name, description, fields } = req.body;
   const table = db.prepare('SELECT * FROM tables WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!table) return res.status(404).json({ error: 'Not found' });
+  if (name !== undefined && name !== table.name) {
+    const dup = db.prepare('SELECT id FROM tables WHERE company_id = ? AND LOWER(name) = LOWER(?) AND id != ?').get(req.companyId, name, req.params.id);
+    if (dup) return res.status(409).json({ error: 'duplicate_name', message: `A table named "${name}" already exists` });
+  }
   const updates = {
     name: name ?? table.name,
     description: description ?? table.description,
