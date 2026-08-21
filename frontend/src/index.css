@@ -409,3 +409,259 @@
 
 .dark ::-webkit-scrollbar-thumb { background-color: #334155; }
 .dark ::-webkit-scrollbar-thumb:hover { background-color: #475569; }
+
+/* ════════════════════════════════════════════════════════════════════════
+   App-platform v2 design tokens (remodel spec §1.1)
+   Merged system: dci-tracker "sports-almanac workbench" chrome +
+   harthome-v2 accent/focus/motion. Light values on :root, dark under .dark.
+   Appended after the legacy blocks so these values win the cascade for the
+   shared --surface-* / --border-subtle names.
+   ════════════════════════════════════════════════════════════════════════ */
+:root {
+  /* Ground & surfaces (dci-tracker light) */
+  --page:            #f2f4f8;   /* app background */
+  --surface-1:       #ffffff;   /* cards, panels */
+  --surface-2:       #eef1f6;   /* wells, table header, segmented tracks */
+  --border-subtle:   #dfe4ec;   /* hairline card border */
+  --grid-line:       #e4e9f1;   /* table row dividers */
+  --baseline:        #c4cdda;   /* stronger divider, control borders */
+
+  /* Ink (dci-tracker, AA >= 4.5:1 on both light surfaces) */
+  --ink:             #16233d;   /* primary text, near-navy */
+  --ink-2:           #3f4c63;   /* secondary text */
+  --muted:           #636f7e;   /* captions, th labels */
+
+  /* Accent (harthome-v2 indigo family, RGB triplets for alpha composition) */
+  --accent-rgb:      79 70 229;    /* #4f46e5 indigo-600 */
+  --accent-hover:    #4338ca;
+  --accent-tint:     #ebecfd;      /* selected-tab / soft-button ground */
+  --on-accent:       #ffffff;
+
+  /* Selection & highlight (dci-tracker gold) */
+  --gold:            #f0b429;      /* underline = "current selection" motif */
+  --gold-wash:       rgba(240, 180, 41, 0.14); /* notable rows, active chips */
+
+  /* Status */
+  --good:            #2b8a3e;
+  --bad:             #c92a2a;
+  --warn:            #d97706;      /* amber; takt warning, short-pick */
+  --warn-ink:        #a16207;
+  --live:            #e03131;      /* pulsing running badge */
+
+  /* Shape & elevation */
+  --r-card:          14px;         /* cards, panels (dci) */
+  --r-ctrl:          8px;          /* buttons, inputs, tabs (dci) */
+  --r-pill:          999px;
+  --shadow-card:     0 1px 3px rgba(22, 35, 61, 0.06);   /* navy-tinted, not black */
+  --shadow-pop:      0 12px 34px rgba(11, 11, 11, 0.16); /* dropdowns, trigger modal */
+  --shadow-toast:    0 8px 30px rgba(22, 35, 61, 0.35);
+  --focus-ring:      0 0 0 3px rgb(var(--accent-rgb) / 0.15); /* harthome input focus */
+}
+
+.dark {
+  --page:            #12161d;
+  --surface-1:       #1b212b;
+  --surface-2:       #262e3a;
+  --border-subtle:   #333c49;
+  --grid-line:       #2b3441;
+  --baseline:        #3d4756;
+  --ink:             #edf1f6;
+  --ink-2:           #c0c9d5;
+  --muted:           #8b95a4;
+  --accent-rgb:      129 140 248;  /* #818cf8 indigo-400 — brighter on dark */
+  --accent-hover:    #a5b4fc;
+  --accent-tint:     rgba(129, 140, 248, 0.16);
+  --on-accent:       #10132b;
+  --gold:            #f5c24a;      /* dci dark gold */
+  --gold-wash:       rgba(245, 194, 74, 0.14);
+  --good:            #4ade80;
+  --bad:             #f87171;
+  --warn:            #fbbf24;
+  --warn-ink:        #fde68a;
+  --shadow-card:     0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* ── Workbench utilities (spec §1.3 / §1.4) ─────────────────────────────── */
+
+/* Tabular numerals — every qty, timer, takt readout, step counter (dci). */
+.tnum { font-variant-numeric: tabular-nums; }
+
+/* dci uppercase section label ("th style"): 11.5px, +0.5px tracking, muted. */
+.wb-label {
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+/* Workbench control: dci-tight density — 13.5px text, 38px min height. */
+.wb-input {
+  width: 100%;
+  min-height: 38px;
+  padding: 7px 12px;
+  font-size: 13.5px;
+  color: var(--ink);
+  background: var(--surface-1);
+  border: 1px solid var(--baseline);
+  border-radius: var(--r-ctrl);
+  outline: none;
+  transition: box-shadow 0.12s ease, border-color 0.12s ease;
+}
+.wb-input::placeholder { color: var(--muted); opacity: 0.75; }
+.wb-input:focus {
+  border-color: rgb(var(--accent-rgb) / 0.55);
+  box-shadow: var(--focus-ring);
+}
+textarea.wb-input { min-height: 0; }
+
+/* Buttons */
+.wb-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 38px; padding: 7px 14px;
+  font-size: 13.5px; font-weight: 550;
+  color: var(--ink-2);
+  background: var(--surface-1);
+  border: 1px solid var(--baseline);
+  border-radius: var(--r-ctrl);
+  transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+  cursor: pointer;
+}
+.wb-btn:hover:not(:disabled) { background: var(--surface-2); color: var(--ink); }
+.wb-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.wb-btn-primary {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 38px; padding: 7px 16px;
+  font-size: 13.5px; font-weight: 650;
+  color: var(--on-accent);
+  background: rgb(var(--accent-rgb));
+  border: 1px solid transparent;
+  border-radius: var(--r-ctrl);
+  transition: background 0.12s ease, transform 0.08s ease;
+  cursor: pointer;
+}
+.wb-btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.wb-btn-primary:active:not(:disabled) { transform: translateY(0.5px); }
+.wb-btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.wb-btn-ghost {
+  display: inline-flex; align-items: center; gap: 6px;
+  min-height: 34px; padding: 5px 10px;
+  font-size: 13px; font-weight: 550;
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-ctrl);
+  transition: background 0.12s ease, color 0.12s ease;
+  cursor: pointer;
+}
+.wb-btn-ghost:hover:not(:disabled) { background: var(--surface-2); color: var(--ink); }
+
+/* Gold "current selection" motif — 2px gold underline + gold-wash ground. */
+.gold-tab {
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  font-weight: 550;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.gold-tab:hover { color: var(--ink); }
+.gold-tab.is-active {
+  border-bottom-color: var(--gold);
+  background: var(--gold-wash);
+  color: var(--ink);
+  font-weight: 650;
+}
+
+/* Segmented control (dci .seg): surface-2 track, surface-1 raised thumb. */
+.seg {
+  display: inline-flex; align-items: stretch;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--r-ctrl);
+  padding: 2px;
+  gap: 2px;
+}
+.seg > button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  padding: 5px 12px;
+  font-size: 12.5px; font-weight: 550;
+  color: var(--muted);
+  border-radius: calc(var(--r-ctrl) - 2px);
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
+  white-space: nowrap;
+}
+.seg > button:hover { color: var(--ink); }
+.seg > button.is-active {
+  background: var(--surface-1);
+  border-color: var(--border-subtle);
+  color: var(--ink);
+  font-weight: 650;
+  box-shadow: var(--shadow-card);
+}
+
+/* Trigger-count pill: gold-wash chip with tabular count (⚡ 2). */
+.trigger-pill {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 1px 7px;
+  font-size: 11px; font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--warn-ink);
+  background: var(--gold-wash);
+  border: 1px solid rgba(240, 180, 41, 0.35);
+  border-radius: var(--r-pill);
+  line-height: 1.5;
+  white-space: nowrap;
+}
+
+/* Trigger When/If/Then clause well (spec §1.4): surface-2, 8px radius. */
+.wb-well {
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+}
+
+/* dci iOS-style toggle — toggle the .is-on class from React state. */
+.wb-toggle {
+  position: relative; display: inline-block;
+  width: 38px; height: 22px; flex-shrink: 0;
+  border-radius: var(--r-pill);
+  background: var(--baseline);
+  border: none;
+  padding: 0;
+  transition: background 0.15s ease;
+  cursor: pointer;
+}
+.wb-toggle::after {
+  content: '';
+  position: absolute; top: 2px; left: 2px;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(22, 35, 61, 0.25);
+  transition: transform 0.15s ease;
+}
+.wb-toggle.is-on { background: rgb(var(--accent-rgb)); }
+.wb-toggle.is-on::after { transform: translateX(16px); }
+
+/* harthome check-pop micro-animation (verified kit line, saved chip). */
+@keyframes check-pop {
+  0%   { transform: scale(0); }
+  60%  { transform: scale(1.4); }
+  100% { transform: scale(1); }
+}
+.check-pop { animation: check-pop 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+
+/* Pulsing live badge (player takt exceed, "running"). */
+@keyframes live-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+.live-pulse { animation: live-pulse 1s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .check-pop, .live-pulse { animation: none; }
+}
