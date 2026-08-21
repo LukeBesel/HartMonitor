@@ -9,6 +9,7 @@ import type {
   CompletionValue, CompletionValueInput,
   MESTable,
   AndonCall, AndonCallInput, AndonSummary, AndonTeam,
+  DepartmentMember, DepartmentMemberInput, DepartmentTeamRole,
 } from '../types';
 
 const BASE = '/api';
@@ -320,6 +321,25 @@ export const api = {
     return request<any[]>(`/departments${s ? `?${s}` : ''}`);
   },
   createDepartment: (data: any) => request<any>('/departments', { method: 'POST', body: JSON.stringify(data) }),
+
+  // ── Department membership — who receives that department's Andon alerts
+  getDepartmentMembers: (departmentId: string) =>
+    request<DepartmentMember[]>(`/departments/${departmentId}/members`),
+  /** Company-wide lookup, e.g. everyone on the quality team. */
+  findDepartmentMembers: (params?: { team_role?: DepartmentTeamRole; user_id?: string; active_only?: boolean }) => {
+    const qs = new URLSearchParams();
+    if (params?.team_role) qs.set('team_role', params.team_role);
+    if (params?.user_id) qs.set('user_id', params.user_id);
+    if (params?.active_only) qs.set('active_only', 'true');
+    const s = qs.toString();
+    return request<DepartmentMember[]>(`/departments/members${s ? `?${s}` : ''}`);
+  },
+  addDepartmentMember: (departmentId: string, data: DepartmentMemberInput) =>
+    request<DepartmentMember>(`/departments/${departmentId}/members`, { method: 'POST', body: JSON.stringify(data) }),
+  updateDepartmentMember: (memberId: string, data: Partial<Omit<DepartmentMemberInput, 'user_id'>>) =>
+    request<DepartmentMember>(`/departments/members/${memberId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  removeDepartmentMember: (memberId: string) =>
+    request<{ success: boolean }>(`/departments/members/${memberId}`, { method: 'DELETE' }),
   updateDepartment: (id: string, data: any) => request<any>(`/departments/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteDepartment: (id: string) => request<any>(`/departments/${id}`, { method: 'DELETE' }),
 

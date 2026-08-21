@@ -7,12 +7,14 @@ import {
   ChevronRight, Tv, AlertTriangle
 } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
+import DepartmentTeam from '../components/departments/DepartmentTeam';
 
 interface Department {
   id: string;
   name: string;
   description?: string;
   color?: string;
+  site_id?: string | null;
 }
 
 interface WorkOrder {
@@ -71,15 +73,23 @@ export default function Departments() {
   const [deptError, setDeptError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // Load departments list
+  // Load departments. The site filter is applied here rather than server-side so
+  // a department that has never been assigned to a site still shows up — it
+  // isn't "somewhere else", it just hasn't been placed yet, and hiding it left
+  // this page blank for anyone who hadn't filled in site assignments.
   const loadDepartments = useCallback(() => {
     setDeptError(null);
-    api.getDepartments({ site_id: selectedSiteId || undefined })
+    api.getDepartments()
       .then((depts: Department[]) => {
-        const list = Array.isArray(depts) ? depts : [];
+        const all = Array.isArray(depts) ? depts : [];
+        const list = selectedSiteId
+          ? all.filter(d => !d.site_id || d.site_id === selectedSiteId)
+          : all;
         setDepartments(list);
         if (list.length > 0) {
-          setSelectedDeptId(prev => prev || list[0].id);
+          setSelectedDeptId(prev => (prev && list.some(d => d.id === prev) ? prev : list[0].id));
+        } else {
+          setSelectedDeptId('');
         }
       })
       .catch((err: any) => {
@@ -214,6 +224,13 @@ export default function Departments() {
         </div>
       ) : (
         <>
+          {/* Who this department's help requests reach */}
+          <DepartmentTeam
+            key={selectedDeptId}
+            departmentId={selectedDeptId}
+            departmentName={selectedDept?.name ?? 'this department'}
+          />
+
           {/* Metrics row */}
           <div className="grid grid-cols-3 gap-4">
             <div className="card p-5">

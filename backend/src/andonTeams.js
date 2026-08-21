@@ -29,4 +29,23 @@ function teamLabel(team) {
   return TEAMS[team]?.label || 'Team';
 }
 
-module.exports = { TEAMS, TEAM_BY_TYPE, teamOf, teamLabel };
+// The roles a person can hold inside a department. The first four match the
+// alert teams exactly, so routing an alert is a direct lookup; 'lead' is the
+// department's catch-all responder and 'operator' is a member who works there
+// but is not on call for a function team.
+const TEAM_ROLES = [...Object.keys(TEAMS), 'lead', 'operator'];
+
+const TEAM_ROLE_LABELS = {
+  quality: 'Quality',
+  supervisor: 'Supervisor',
+  maintenance: 'Maintenance',
+  materials: 'Materials',
+  lead: 'Department lead',
+  operator: 'Operator',
+};
+
+function isTeamRole(role) {
+  return TEAM_ROLES.includes(role);
+}
+
+module.exports = { TEAMS, TEAM_BY_TYPE, TEAM_ROLES, TEAM_ROLE_LABELS, teamOf, teamLabel, isTeamRole };

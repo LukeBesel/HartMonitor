@@ -2180,5 +2180,31 @@ db.exec(`
   db.exec('CREATE INDEX IF NOT EXISTS idx_andon_calls_team ON andon_calls(company_id, team, status, created_at DESC)');
 }
 
+// ─── Department membership (who gets an Andon alert) ─────────────────────────
+// A person can sit in several departments with a different role in each — the
+// quality lead on Assembly may also be a plain operator on Packaging. That is
+// why membership is its own table rather than a second column on users
+// (users.department_id stays the person's PRIMARY department).
+// `team_role` deliberately shares its vocabulary with the alert teams
+// (quality / supervisor / maintenance / materials, plus lead / operator), so
+// routing an alert is a direct lookup rather than a mapping table.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS department_members (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    department_id TEXT NOT NULL REFERENCES departments(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    team_role TEXT NOT NULL DEFAULT 'operator',
+    notify_email INTEGER NOT NULL DEFAULT 1,
+    notify_in_app INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(company_id, department_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_department_members_role
+    ON department_members(company_id, team_role);
+  CREATE INDEX IF NOT EXISTS idx_department_members_dept
+    ON department_members(company_id, department_id);
+`);
+
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;

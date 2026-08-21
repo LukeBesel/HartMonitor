@@ -488,6 +488,36 @@ export interface AndonSummary {
   responded_today: number;
 }
 
+// ── Department membership (who receives a department's alerts) ────────────────
+// A person can sit in several departments with a different role in each. The
+// first four roles match the alert teams exactly, so routing is a direct lookup.
+
+export type DepartmentTeamRole = AndonTeam | 'lead' | 'operator';
+
+export interface DepartmentMember {
+  id: string;
+  department_id: string;
+  department_name?: string | null;
+  user_id: string;
+  display_name: string;
+  email: string;
+  role: string;
+  job_title?: string;
+  is_active: boolean;
+  team_role: DepartmentTeamRole;
+  /** Per-person delivery preferences, honoured independently. */
+  notify_email: boolean;
+  notify_in_app: boolean;
+  created_at: string;
+}
+
+export interface DepartmentMemberInput {
+  user_id: string;
+  team_role?: DepartmentTeamRole;
+  notify_email?: boolean;
+  notify_in_app?: boolean;
+}
+
 /** Payload sent when anyone requests help — from the player mid-run, from the
  *  app shell, or from the Andon Board. Run context is optional throughout. */
 export interface AndonCallInput {

@@ -17,6 +17,7 @@ const { broadcast } = require('../ws');
 const { notify } = require('../notifications');
 const { deliverWebhooks } = require('../webhooks');
 const { TEAMS, TEAM_BY_TYPE, teamOf, teamLabel } = require('../andonTeams');
+const { deliverAlert } = require('../andonRouting');
 
 const router = express.Router();
 
@@ -221,13 +222,25 @@ router.post('/', (req, res) => {
     call.work_order_number && `WO ${call.work_order_number}`,
     call.app_name && call.step_name && `${call.app_name} · ${call.step_name}`,
   ].filter(Boolean).join(' · ');
+  // Company-wide subscription (Settings → Notifications), unchanged.
   notify(req.companyId, 'andon.alert', {
     subject: `${targetLabel} alerted — ${finalTitle}`,
     body: `${targetLabel} has been alerted${raisedBy ? ` by ${raisedBy}` : ''}.\n${finalTitle}${contextBits ? `\n${contextBits}` : ''}${body ? `\nNote: ${body}` : ''}`,
   });
+  // Per-person routing: the department's members for this team, else the
+  // company's, else the company alert address. Emails them and drops a targeted
+  // in-app message so the right people are pinged, not just the board.
+  const routed = deliverAlert(req.companyId, call);
   deliverWebhooks(req.companyId, 'andon.alert', call);
 
-  res.status(201).json(call);
+  res.status(201).json({
+    ...call,
+    // Honest feedback for the raiser: who this actually reached.
+    notified: routed.recipients
+      .filter(r => r.user_id)
+      .map(r => ({ user_id: r.user_id, display_name: r.display_name, team_role: r.team_role })),
+    notify_scope: routed.scope,
+  });
 });
 
 // ─── PUT /andon/:id/acknowledge — "On my way" ─────────────────────────────────
