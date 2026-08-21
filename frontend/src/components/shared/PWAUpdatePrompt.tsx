@@ -44,10 +44,13 @@ export default function PWAUpdatePrompt() {
   if (!needsUpdate || dismissed) return null;
 
   return (
-    // bottom-56 keeps this banner above the transient toast band (bottom-40),
-    // the alerts edge tab (bottom-24) and the quick-create FAB (bottom-5).
-    // z-40 keeps it *below* modal dialogs (z-50), so it never covers a form.
-    <div className="fixed bottom-56 right-4 z-40 max-w-sm w-full animate-slide-up">
+    // Bottom-right stack, from the corner up: the app coach button (bottom-4),
+    // this banner (bottom-20), then transient toasts (bottom-40). It used to sit
+    // at bottom-56 to clear a quick-create FAB and an alerts edge tab that no
+    // longer exist, which left it floating a third of the way up the page,
+    // covering content. z-40 keeps it *below* modal dialogs (z-50), so it never
+    // covers a form.
+    <div className="fixed bottom-20 right-4 z-40 max-w-sm w-full animate-slide-up">
       <div className="bg-gray-900 text-white rounded-2xl shadow-2xl border border-white/10 px-4 py-3 flex items-center gap-3">
         <div className="w-8 h-8 rounded-full bg-indigo-500/20 flex items-center justify-center flex-shrink-0">
           <RefreshCw size={15} className="text-indigo-400" />

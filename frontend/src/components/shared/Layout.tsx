@@ -337,7 +337,7 @@ export default function Layout() {
           <button
             onClick={() => setCollapsed(c => !c)}
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className={`hidden lg:flex items-center rounded-xl text-sm font-medium text-gray-600 hover:text-white hover:bg-white/8 transition-all w-full ${
+            className={`hidden lg:flex items-center rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-white/8 transition-all w-full ${
               collapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
             }`}
           >
