@@ -48,6 +48,13 @@ export interface PlayerWidgetProps {
   onRequestCameraScan: (widget: Widget) => void;
   /** Parent-rendered kit checklist (owns kit state). */
   renderKit: (widget: Widget) => ReactNode;
+  /**
+   * Non-interactive rendering for the builder canvas: pixel-identical output,
+   * but nothing grabs focus or starts running on its own (no scan autoFocus,
+   * no auto-starting timer). Absent / false is the operator-facing behavior,
+   * unchanged in every respect — a real run never sets this.
+   */
+  readOnly?: boolean;
 }
 
 // ─── table-lookup ────────────────────────────────────────────────────────────
@@ -112,10 +119,12 @@ function TableLookup({ widget, variables }: { widget: Widget; variables: Record<
 
 // ─── scan-input ──────────────────────────────────────────────────────────────
 
-function ScanInput({ widget, value, invalid, onScanCode, onRequestCameraScan }: {
+function ScanInput({ widget, value, invalid, readOnly, onScanCode, onRequestCameraScan }: {
   widget: Widget;
   value: unknown;
   invalid: boolean;
+  /** Builder canvas: render the field but never steal the page's focus. */
+  readOnly: boolean;
   onScanCode: (widget: Widget, code: string) => void;
   onRequestCameraScan: (widget: Widget) => void;
 }) {
@@ -146,7 +155,7 @@ function ScanInput({ widget, value, invalid, onScanCode, onRequestCameraScan }: 
             style={{ paddingLeft: 44 }}
             placeholder={widget.config.placeholder || 'Scan or type a code…'}
             value={draft}
-            autoFocus
+            autoFocus={!readOnly}
             onChange={e => setDraft(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }}
             onBlur={() => { if (draft.trim()) commit(); }}
@@ -172,18 +181,20 @@ function ScanInput({ widget, value, invalid, onScanCode, onRequestCameraScan }: 
 
 // ─── Timer (upgraded: fires timer_done, reports elapsed) ─────────────────────
 
-function TimerWidget({ widget, onTimerDone, onTimerTick }: {
+function TimerWidget({ widget, readOnly, onTimerDone, onTimerTick }: {
   widget: Widget;
+  /** Builder canvas: show the timer at its full duration, never counting down. */
+  readOnly: boolean;
   onTimerDone: (widget: Widget) => void;
   onTimerTick: (widgetId: string, elapsedSeconds: number) => void;
 }) {
   const duration = widget.config.duration || 60;
-  const [running, setRunning] = useState(!!widget.config.autoStart);
+  const [running, setRunning] = useState(!readOnly && !!widget.config.autoStart);
   const [left, setLeft] = useState(duration);
   const doneFired = useRef(false);
 
   useEffect(() => {
-    if (!running || left <= 0) return;
+    if (readOnly || !running || left <= 0) return;
     const iv = setInterval(() => {
       setLeft(t => {
         const next = t - 1;
@@ -202,7 +213,7 @@ function TimerWidget({ widget, onTimerDone, onTimerTick }: {
     }, 1000);
     return () => clearInterval(iv);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [running]);
+  }, [running, readOnly]);
 
   const pct = (left / duration) * 100;
   return (
@@ -272,7 +283,7 @@ function CounterWidget({ widget, value, onChange }: {
 
 export default function PlayerWidget(props: PlayerWidgetProps) {
   const {
-    widget, value, invalidMessage, variables, appInfo, preview,
+    widget, value, invalidMessage, variables, appInfo, preview, readOnly = false,
     onChange, onButtonPress, onTimerDone, onTimerTick, onScanCode, onRequestCameraScan, renderKit,
   } = props;
   const { config } = widget;
@@ -436,7 +447,7 @@ export default function PlayerWidget(props: PlayerWidgetProps) {
       );
 
     case 'timer':
-      return <TimerWidget widget={widget} onTimerDone={onTimerDone} onTimerTick={onTimerTick} />;
+      return <TimerWidget widget={widget} readOnly={readOnly} onTimerDone={onTimerDone} onTimerTick={onTimerTick} />;
 
     case 'counter':
       return <CounterWidget widget={widget} value={value} onChange={onChange} />;
@@ -560,6 +571,7 @@ export default function PlayerWidget(props: PlayerWidgetProps) {
           widget={widget}
           value={value}
           invalid={invalid}
+          readOnly={readOnly}
           onScanCode={onScanCode}
           onRequestCameraScan={onRequestCameraScan}
         />

@@ -13,26 +13,20 @@ import {
 } from '../types';
 import { normalizeApp } from '../engine';
 import {
-  AlertTriangle, CheckCircle2, ChevronDown, ChevronLeft, CheckSquare,
-  Globe, Image, Loader2, MapPin, Maximize2, PenTool, Play, Plus,
-  Save, Trash2, Variable as VariableIcon, X, ZoomIn, ZoomOut, GripVertical,
+  AlertTriangle, CheckCircle2, ChevronLeft,
+  Globe, Loader2, MapPin, Maximize2, Play,
+  Save, Variable as VariableIcon, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import CanvasEditor from '../components/app/CanvasEditor';
-import { defaultLayout, DEFAULT_CANVAS_H, ImgSafe, ShapeSVG, WidgetView } from '../components/app/WidgetView';
-import WidgetPalette, { defaultWidget, WIDGET_META } from '../components/builder/WidgetPalette';
+import { defaultLayout, DEFAULT_CANVAS_H } from '../components/app/WidgetView';
+import WidgetPalette, { defaultWidget } from '../components/builder/WidgetPalette';
 import StepList from '../components/builder/StepList';
+import BuilderStage, { StageStepHeading } from '../components/builder/BuilderStage';
 import ContextPanel, { ContextTab, Field, effectiveRequireRunContext } from '../components/builder/ContextPanel';
 import TriggerEditor, { TriggerAttachment } from '../components/builder/TriggerEditor';
 import VariablesPanel, { autoRegisterVariables } from '../components/builder/VariablesPanel';
-import {
-  DndContext, closestCenter, KeyboardSensor, PointerSensor,
-  useSensor, useSensors, DragEndEvent,
-} from '@dnd-kit/core';
-import {
-  arrayMove, SortableContext, sortableKeyboardCoordinates,
-  useSortable, verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
+import { arrayMove } from '@dnd-kit/sortable';
+import type { DragEndEvent } from '@dnd-kit/core';
 import { useAuth } from '../context/AuthContext';
 
 type ZoomMode = 'fit' | number;
@@ -57,11 +51,6 @@ export default function AppBuilder() {
   const [productTypes, setProductTypes] = useState<ProductType[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
-
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  );
 
   const loadApp = useCallback(() => {
     if (!id) return;
@@ -427,49 +416,64 @@ export default function AppBuilder() {
         <div className="flex flex-col flex-1 overflow-hidden min-w-0 min-h-0">
           <WidgetPalette onAdd={addWidget} disabled={!canEdit} />
 
-          {/* Canvas scroller */}
-          <div className="flex-1 overflow-auto p-6 relative">
-            <div className={`mx-auto ${activeStep?.layoutMode === 'canvas' ? '' : 'max-w-2xl'}`}
-              style={activeStep?.layoutMode === 'canvas' && typeof zoom === 'number' ? { width: 'max-content', minWidth: '100%' } : undefined}>
-              {/* Step header */}
-              <div className="mb-3 flex items-center gap-2" style={activeStep?.layoutMode === 'canvas' ? { maxWidth: 720, margin: '0 auto 12px' } : undefined}>
-                <input
-                  className="bg-transparent border-none outline-none hover:bg-surface-1 focus:bg-surface-1 px-2 py-1 rounded-ctrl flex-1 min-w-0 text-ink"
-                  style={{ fontSize: 17, fontWeight: 750 }}
-                  value={activeStep?.name ?? ''}
-                  readOnly={!canEdit}
-                  onChange={e => updateStep(s => ({ ...s, name: e.target.value }))}
+          {/* ── Stage ──
+              The canvas is the player's own step region: [data-player] scopes
+              every --p-* token here, so PlayerWidget draws on the canvas
+              exactly what it draws in a run. The scroller mirrors PlayerShell's
+              <main> (justify-center, px-4 py-6 sm:py-8) and the column mirrors
+              its content wrapper (max-w-2xl flow / max-w-3xl canvas). Entering
+              preview changes the frame around this, not the pixels inside it. */}
+          <div
+            data-player
+            className="wb-stage flex-1 overflow-auto flex justify-center px-4 py-6 sm:py-8 relative"
+          >
+            <div
+              className={`w-full space-y-4 ${activeStep?.layoutMode === 'canvas' ? 'max-w-3xl' : 'max-w-2xl'}`}
+              style={activeStep?.layoutMode === 'canvas' && typeof zoom === 'number'
+                ? { width: 'max-content', maxWidth: 'none', minWidth: '100%' }
+                : undefined}
+            >
+              {activeStep && (
+                <StageStepHeading
+                  step={activeStep}
+                  name={activeStep.name ?? ''}
+                  canEdit={canEdit}
+                  onRename={name => updateStep(s => ({ ...s, name }))}
                   onFocus={() => { if (!selectedWidgetId) setRightTab('step'); }}
+                  trailing={
+                    <>
+                      <span className="p-chip flex-shrink-0 tnum" style={{ minHeight: 40, fontSize: 14 }}>
+                        Step {activeStepIdx + 1} of {app.steps.length}
+                      </span>
+                      {activeStep.layoutMode === 'canvas' && (
+                        <div className="seg flex-shrink-0">
+                          <button onClick={zoomOut} disabled={zoomIdx === 0} title="Zoom out" aria-label="Zoom out"><ZoomOut size={13} /></button>
+                          <button
+                            className={zoom === 'fit' ? 'is-active' : ''}
+                            onClick={() => setZoom('fit')}
+                            title="Fit to window"
+                          >
+                            <Maximize2 size={11} /> Fit
+                          </button>
+                          <button
+                            className={`tnum ${zoom === 1 ? 'is-active' : ''}`}
+                            onClick={() => setZoom(1)}
+                            title="Actual size"
+                          >
+                            {typeof zoom === 'number' ? `${Math.round(zoom * 100)}%` : '100%'}
+                          </button>
+                          <button onClick={zoomIn} disabled={zoomIdx === ZOOM_STEPS.length - 1} title="Zoom in" aria-label="Zoom in"><ZoomIn size={13} /></button>
+                        </div>
+                      )}
+                    </>
+                  }
                 />
-                <span className="tnum flex-shrink-0 text-muted rounded-full bg-surface-2 px-2 py-0.5" style={{ fontSize: 11, fontWeight: 550 }}>
-                  Step {activeStepIdx + 1} of {app.steps.length}
-                </span>
-                {activeStep?.layoutMode === 'canvas' && (
-                  <div className="seg flex-shrink-0">
-                    <button onClick={zoomOut} disabled={zoomIdx === 0} title="Zoom out" aria-label="Zoom out"><ZoomOut size={13} /></button>
-                    <button
-                      className={zoom === 'fit' ? 'is-active' : ''}
-                      onClick={() => setZoom('fit')}
-                      title="Fit to window"
-                    >
-                      <Maximize2 size={11} /> Fit
-                    </button>
-                    <button
-                      className={`tnum ${zoom === 1 ? 'is-active' : ''}`}
-                      onClick={() => setZoom(1)}
-                      title="Actual size"
-                    >
-                      {typeof zoom === 'number' ? `${Math.round(zoom * 100)}%` : '100%'}
-                    </button>
-                    <button onClick={zoomIn} disabled={zoomIdx === ZOOM_STEPS.length - 1} title="Zoom in" aria-label="Zoom in"><ZoomIn size={13} /></button>
-                  </div>
-                )}
-              </div>
+              )}
 
               {activeStep?.layoutMode === 'canvas' ? (
                 <>
                   {activeStep.widgets.length === 0 && (
-                    <div className="mb-3 text-center text-muted" style={{ fontSize: 12 }}>
+                    <div className="text-center" style={{ fontSize: 12.5, color: 'var(--p-muted)' }}>
                       Add widgets from the toolbar above, then drag, resize, and rotate them anywhere on the canvas.
                       Add more steps with &ldquo;+ New step&rdquo; in the left panel.
                     </div>
@@ -482,34 +486,17 @@ export default function AppBuilder() {
                     zoom={typeof zoom === 'number' ? zoom : undefined}
                   />
                 </>
-              ) : (
-                /* ── Stacked flow list (unchanged mechanics) ── */
-                <div
-                  className="bg-surface-1 rounded-card border-2 border-dashed border-baseline min-h-64 p-4 space-y-2"
-                  onClick={() => setSelectedWidgetId(null)}
-                >
-                  {(!activeStep || activeStep.widgets.length === 0) && (
-                    <div className="flex flex-col items-center justify-center py-12 text-baseline">
-                      <Plus size={32} className="mb-2" />
-                      <p className="text-sm text-muted">Click widgets in the toolbar above to add them</p>
-                      <p className="mt-1 text-muted" style={{ fontSize: 12 }}>Add more steps with &ldquo;+ New step&rdquo; in the left panel</p>
-                    </div>
-                  )}
-                  <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleWidgetDragEnd}>
-                    <SortableContext items={activeStep?.widgets.map(w => w.id) ?? []} strategy={verticalListSortingStrategy}>
-                      {activeStep?.widgets.map(widget => (
-                        <SortableWidgetCard
-                          key={widget.id}
-                          widget={widget}
-                          isSelected={selectedWidgetId === widget.id}
-                          onClick={e => { e.stopPropagation(); setSelectedWidgetId(widget.id); setRightTab('widget'); }}
-                          onRemove={() => removeWidget(widget.id)}
-                        />
-                      ))}
-                    </SortableContext>
-                  </DndContext>
-                </div>
-              )}
+              ) : activeStep ? (
+                <BuilderStage
+                  app={app}
+                  step={activeStep}
+                  selectedWidgetId={selectedWidgetId}
+                  canEdit={canEdit}
+                  onSelectWidget={wid => { setSelectedWidgetId(wid); setRightTab(wid ? 'widget' : 'step'); }}
+                  onRemoveWidget={removeWidget}
+                  onReorder={handleWidgetDragEnd}
+                />
+              ) : null}
             </div>
           </div>
         </div>
@@ -646,129 +633,4 @@ function PublishModal({ app, departments, stations, saving, onClose, onPublish }
       </div>
     </div>
   );
-}
-
-// ── Sortable widget card in the stacked-flow builder list ─────────────────────
-
-function SortableWidgetCard({ widget, isSelected, onClick, onRemove }: {
-  widget: Widget; isSelected: boolean; onClick: (e: React.MouseEvent) => void; onRemove: () => void;
-}) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: widget.id });
-  const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.5 : 1 };
-
-  const meta = WIDGET_META[widget.type];
-  const Icon = meta?.icon;
-  const authored = (widget.triggers ?? []).filter(t => !t.id.startsWith('legacy_')).length;
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      onClick={onClick}
-      className={`group flex items-start gap-2 p-3 rounded-ctrl border-2 cursor-pointer transition-all ${
-        isSelected
-          ? 'border-accent bg-accent-tint'
-          : 'border-border-subtle hover:border-baseline bg-surface-2/60'
-      }`}
-    >
-      <button
-        {...attributes}
-        {...listeners}
-        className="mt-0.5 p-0.5 text-baseline hover:text-muted cursor-grab active:cursor-grabbing flex-shrink-0"
-        onClick={e => e.stopPropagation()}
-        aria-label="Drag to reorder"
-      >
-        <GripVertical size={14} />
-      </button>
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-1.5 mb-1 text-muted" style={{ fontSize: 11.5 }}>
-          {Icon && <Icon size={11} />}
-          <span style={{ fontWeight: 550 }}>{meta?.label}</span>
-          {widget.label && <span className="opacity-70">· {widget.label}</span>}
-          {authored > 0 && <span className="trigger-pill" style={{ fontSize: 9.5, padding: '0 5px' }}>⚡ {authored}</span>}
-        </div>
-        <WidgetPreview widget={widget} />
-      </div>
-      <button
-        onClick={e => { e.stopPropagation(); onRemove(); }}
-        className="opacity-0 group-hover:opacity-100 p-1 rounded text-baseline hover:text-bad transition-all flex-shrink-0"
-        aria-label="Delete widget"
-      >
-        <Trash2 size={12} />
-      </button>
-    </div>
-  );
-}
-
-function WidgetPreview({ widget }: { widget: Widget }) {
-  const { config } = widget;
-  switch (widget.type) {
-    case 'text':
-      return <p className="text-sm text-ink-2 truncate">{config.text || '(empty text)'}</p>;
-    case 'instruction':
-      return <div className="text-xs text-ink-2 bg-blue-50 rounded px-2 py-1 truncate">{config.content || '(instructions)'}</div>;
-    case 'button':
-      return (
-        <div className="inline-flex items-center gap-1 px-3 py-1 rounded text-white text-xs font-medium" style={{ backgroundColor: config.buttonColor || '#3b82f6' }}>
-          {config.buttonText || 'Button'}
-        </div>
-      );
-    case 'text-input':
-    case 'number-input':
-      return <div className="h-7 border border-border-subtle rounded px-2 flex items-center text-xs text-muted bg-surface-1">{config.placeholder || 'Input field'}</div>;
-    case 'select-input':
-      return <div className="h-7 border border-border-subtle rounded px-2 flex items-center text-xs text-muted bg-surface-1 justify-between">{config.options?.[0] || 'Select...'} <ChevronDown size={10} /></div>;
-    case 'checkbox':
-      return <div className="flex items-center gap-2 text-xs text-ink-2"><CheckSquare size={14} className="text-muted" />{widget.label || 'Checkbox'}</div>;
-    case 'pass-fail':
-      return <div className="flex gap-2"><span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 rounded text-xs font-medium">Pass</span><span className="px-2 py-0.5 bg-red-100 text-red-700 rounded text-xs font-medium">Fail</span></div>;
-    case 'timer':
-      return <div className="text-sm font-mono tnum text-ink-2">{formatDuration(config.duration || 0)}</div>;
-    case 'counter':
-      return <div className="flex items-center gap-2 text-sm"><span className="px-2 py-0.5 border border-border-subtle rounded text-muted">−</span><span className="font-mono tnum">{config.initialValue ?? 0}</span><span className="px-2 py-0.5 border border-border-subtle rounded text-muted">+</span></div>;
-    case 'separator':
-      return <div className="border-t border-border-subtle mt-1" />;
-    case 'image':
-      return config.imageUrl
-        ? <ImgSafe src={config.imageUrl} alt={config.imageAlt || ''} className="max-h-20 h-16 rounded border border-border-subtle object-contain bg-surface-2" />
-        : <div className="h-8 border border-dashed border-baseline rounded flex items-center justify-center text-xs text-muted"><Image size={12} className="mr-1" />Image placeholder</div>;
-    case 'signature':
-      return <div className="h-12 border border-dashed border-baseline rounded flex items-center justify-center text-xs text-muted"><PenTool size={12} className="mr-1" />Signature area</div>;
-    case 'video':
-      // Live embed preview so the builder shows the actual video, not a stub.
-      // pointer-events-none keeps card clicks selecting the widget.
-      return config.videoUrl
-        ? (
-          <div className="h-36 rounded overflow-hidden pointer-events-none border border-border-subtle bg-black">
-            <WidgetView widget={widget} />
-          </div>
-        )
-        : <div className="h-8 border border-dashed border-baseline rounded flex items-center justify-center text-xs text-muted">Video — set a URL in the panel</div>;
-    case 'model-viewer':
-      return <div className="h-8 border border-dashed border-baseline rounded flex items-center justify-center text-xs text-muted">3D model{config.modelUrl ? ' ✓' : ''}</div>;
-    case 'variable-display':
-      return <div className="inline-flex items-center gap-1 text-xs font-mono text-ink-2 bg-surface-1 border border-border-subtle rounded px-1.5 py-0.5">{config.variableRef ? `{{${config.variableRef}}}` : 'variable'}</div>;
-    case 'table-lookup':
-      return <div className="h-8 border border-dashed border-baseline rounded flex items-center justify-center text-xs text-muted">Table lookup</div>;
-    case 'kit-checklist':
-      return <div className="h-8 border border-dashed border-baseline rounded flex items-center justify-center text-xs text-muted">Kit checklist ({config.kitScope === 'step' ? 'this step' : 'whole kit'})</div>;
-    case 'scan-input':
-      return <div className="h-7 border border-border-subtle rounded px-2 flex items-center text-xs text-muted bg-surface-1 font-mono">{config.placeholder || 'Scan code…'}</div>;
-    case 'photo-capture':
-      return <div className="h-8 border border-dashed border-baseline rounded flex items-center justify-center text-xs text-muted">Photo capture ×{config.maxPhotos ?? 1}</div>;
-    case 'shape':
-      return (
-        <div className="w-24" style={{ height: config.shapeKind === 'line' || config.shapeKind === 'arrow' ? 16 : 32, opacity: config.opacity ?? 1 }}>
-          <ShapeSVG config={config} />
-        </div>
-      );
-    default:
-      return null;
-  }
-}
-
-function formatDuration(s: number) {
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
 }
