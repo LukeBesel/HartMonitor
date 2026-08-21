@@ -2082,5 +2082,24 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_completion_values_var ON completion_values(company_id, app_id, variable_name, recorded_at);
 `);
 
+// ─── App templates (additive, guarded via IF NOT EXISTS) ──────────────────────
+// Snapshots of an app's authoring blob that can be re-instantiated as new draft
+// apps. Built-in "model" templates live in code (routes/apps.js MODEL_TEMPLATES),
+// only user-saved templates are stored here.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS app_templates (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    steps TEXT NOT NULL DEFAULT '[]',
+    variables TEXT NOT NULL DEFAULT '[]',
+    step_groups TEXT NOT NULL DEFAULT '[]',
+    created_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_app_templates_company ON app_templates(company_id, created_at);
+`);
+
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;

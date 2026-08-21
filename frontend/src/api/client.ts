@@ -837,4 +837,31 @@ export const api = {
     return request<any[]>(`/admin/activity${s ? `?${s}` : ''}`);
   },
   getAdminHealth: () => request<any>('/admin/health'),
+
+  // ─── App templates (app-templates slice) ───────────────────────────────────
+  getAppTemplates: () => request<AppTemplatesResponse>('/apps/templates'),
+  saveAppAsTemplate: (appId: string, data: { name?: string; description?: string }) =>
+    request<MyTemplateSummary>(`/apps/${appId}/save-as-template`, { method: 'POST', body: JSON.stringify(data) }),
+  deleteAppTemplate: (id: string) =>
+    request<{ success: boolean }>(`/apps/templates/${id}`, { method: 'DELETE' }),
+  createAppFromTemplate: (data: { built_in_key?: string; template_id?: string; name: string }) =>
+    request<App>('/apps/from-template', { method: 'POST', body: JSON.stringify(data) }),
 };
+
+// ─── App templates (app-templates slice) ─────────────────────────────────────
+
+/** A built-in HartMonitor model template (defined in server code). */
+export interface BuiltInTemplateSummary {
+  key: string; name: string; description: string; step_count: number;
+}
+
+/** A template this company saved from one of its own apps. */
+export interface MyTemplateSummary {
+  id: string; name: string; description: string; step_count: number; created_at: string;
+}
+
+/** Response of GET /api/apps/templates. */
+export interface AppTemplatesResponse {
+  built_in: BuiltInTemplateSummary[];
+  mine: MyTemplateSummary[];
+}
