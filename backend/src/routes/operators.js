@@ -57,4 +57,41 @@ router.post('/verify', (req, res) => {
   res.status(400).json({ error: 'Provide a badge code, or a user and PIN' });
 });
 
+// POST /api/operators/badge-login — player attribution at run start.
+// Body: { badge_code } OR { pin } (optionally { user_id, pin } to disambiguate).
+// Returns { user_id, display_name } so the player can attach a verified
+// operator identity (completions.operator_user_id) instead of free text.
+// Scoped to the tablet's company; any active member may badge in (supervisors
+// run apps too), matching the pin/badge columns on users.
+router.post('/badge-login', (req, res) => {
+  const { badge_code, pin, user_id } = req.body || {};
+
+  if (badge_code && String(badge_code).trim()) {
+    const user = db.prepare(`
+      SELECT id, display_name FROM users
+      WHERE company_id = ? AND is_active = 1 AND badge_code != '' AND badge_code = ?
+    `).get(req.companyId, String(badge_code).trim());
+    if (!user) return res.status(401).json({ error: 'Badge not recognized' });
+    return res.json({ user_id: user.id, display_name: user.display_name });
+  }
+
+  if (pin !== undefined && pin !== null && String(pin) !== '') {
+    // With a user_id we verify one specific hash; without one we check the
+    // company's active users that have a PIN set (rosters are small).
+    const candidates = user_id
+      ? db.prepare(`SELECT id, display_name, pin_hash FROM users WHERE id = ? AND company_id = ? AND is_active = 1 AND pin_hash != ''`)
+          .all(user_id, req.companyId)
+      : db.prepare(`SELECT id, display_name, pin_hash FROM users WHERE company_id = ? AND is_active = 1 AND pin_hash != ''`)
+          .all(req.companyId);
+    for (const u of candidates) {
+      if (verifyPassword(String(pin), u.pin_hash)) {
+        return res.json({ user_id: u.id, display_name: u.display_name });
+      }
+    }
+    return res.status(401).json({ error: 'Invalid PIN' });
+  }
+
+  res.status(400).json({ error: 'Provide badge_code or pin' });
+});
+
 module.exports = router;

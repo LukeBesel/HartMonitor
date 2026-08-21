@@ -345,34 +345,78 @@ router.get('/requirements', (req, res) => {
      WHERE wo.company_id = ? AND wo.status IN ('pending','in_progress')`
   ).all(req.companyId);
 
-  // Parse step parts_list from each work order's app steps
-  const neededMap = {}; // name+sku → { sku, name, required_qty, work_orders[] }
+  const activeBomLines = db.prepare(`
+    SELECT bl.*, i.name AS item_name, i.sku AS item_sku
+    FROM boms b
+    JOIN bom_lines bl ON bl.bom_id = b.id
+    JOIN items i ON i.id = bl.item_id
+    WHERE b.company_id = ? AND b.product_type_id = ? AND b.status = 'active'
+    ORDER BY bl.sort_order ASC
+  `);
+
+  // Two passes per work order. When the WO carries a product type with an
+  // active BOM, its requirements come from the BOM keyed exactly by item_id —
+  // no string matching — and the legacy parts_list pass is skipped for that WO
+  // (BOM-derived rows win). Otherwise the original parts_list string pass runs.
+  const neededMap = {}; // key → { sku, name, required_qty, work_orders[], item_id?, source }
+
+  const addNeed = (key, seed, woRow, qty) => {
+    if (!neededMap[key]) neededMap[key] = { ...seed, required_qty: 0, work_orders: [] };
+    neededMap[key].required_qty += qty;
+    const existing = neededMap[key].work_orders.find(w => w.wo_number === woRow.work_order_number);
+    if (existing) { existing.needed += qty; }
+    else { neededMap[key].work_orders.push({ wo_number: woRow.work_order_number, part_name: woRow.part_name, needed: qty }); }
+  };
+
   for (const wo of wos) {
+    let bomLines = [];
+    if (wo.product_type_id) bomLines = activeBomLines.all(req.companyId, wo.product_type_id);
+
+    if (bomLines.length > 0) {
+      // Exact-keyed BOM pass: active BOM lines × remaining quantity.
+      const remaining = Math.max(0, (wo.quantity || 0) - (wo.quantity_completed || 0));
+      if (remaining === 0) continue;
+      for (const bl of bomLines) {
+        // SKUs are per-company unique, so parts_list rows for the same physical
+        // item from other WOs aggregate into the same bucket.
+        const key = (bl.item_sku || '').toUpperCase() || `item:${bl.item_id}`;
+        addNeed(key, { sku: bl.item_sku || '', name: bl.item_name, unit: bl.unit || 'ea', item_id: bl.item_id, source: 'bom' },
+          wo, bl.qty_per * remaining);
+        neededMap[key].item_id = bl.item_id;      // exact key wins even if a string row seeded first
+        neededMap[key].source = 'bom';
+      }
+      continue; // BOM-derived rows win for this WO — skip its parts_list
+    }
+
+    // Legacy parts_list string-matching pass (v1 apps) — unchanged behavior.
     let steps = [];
     try { steps = JSON.parse(wo.steps || '[]'); } catch { continue; }
     for (const step of steps) {
       const parts = step.parts_list || [];
       for (const part of parts) {
         const key = (part.sku || '').toUpperCase() || part.name.toLowerCase();
-        if (!neededMap[key]) {
-          neededMap[key] = { sku: part.sku || '', name: part.name, unit: part.unit || 'ea', required_qty: 0, work_orders: [] };
-        }
-        neededMap[key].required_qty += (part.quantity || 1) * (wo.quantity || 1);
-        const existing = neededMap[key].work_orders.find(w => w.wo_number === wo.work_order_number);
-        if (existing) { existing.needed += (part.quantity || 1) * (wo.quantity || 1); }
-        else { neededMap[key].work_orders.push({ wo_number: wo.work_order_number, part_name: wo.part_name, needed: (part.quantity || 1) * (wo.quantity || 1) }); }
+        addNeed(key, { sku: part.sku || '', name: part.name, unit: part.unit || 'ea', source: 'parts_list' },
+          wo, (part.quantity || 1) * (wo.quantity || 1));
       }
     }
   }
 
   const items = Object.values(neededMap).map(item => {
-    // Look up current stock by SKU or name
-    const dbItem = db.prepare(
-      `SELECT i.*, COALESCE(SUM(sl.quantity),0) as on_hand_qty
-       FROM items i LEFT JOIN stock_levels sl ON sl.item_id = i.id
-       WHERE i.company_id = ? AND (UPPER(i.sku)=UPPER(?) OR LOWER(i.name)=LOWER(?))
-       GROUP BY i.id LIMIT 1`
-    ).get(req.companyId, item.sku, item.name);
+    // BOM-derived rows resolve stock exactly by item_id; string rows keep the
+    // original SKU-or-name lookup.
+    const dbItem = item.item_id
+      ? db.prepare(
+          `SELECT i.*, COALESCE(SUM(sl.quantity),0) as on_hand_qty
+           FROM items i LEFT JOIN stock_levels sl ON sl.item_id = i.id
+           WHERE i.company_id = ? AND i.id = ?
+           GROUP BY i.id LIMIT 1`
+        ).get(req.companyId, item.item_id)
+      : db.prepare(
+          `SELECT i.*, COALESCE(SUM(sl.quantity),0) as on_hand_qty
+           FROM items i LEFT JOIN stock_levels sl ON sl.item_id = i.id
+           WHERE i.company_id = ? AND (UPPER(i.sku)=UPPER(?) OR LOWER(i.name)=LOWER(?))
+           GROUP BY i.id LIMIT 1`
+        ).get(req.companyId, item.sku, item.name);
     const onHand = dbItem ? Number(dbItem.on_hand_qty) : 0;
     return {
       ...item,
