@@ -27,6 +27,11 @@ const PORT = 3183; // unique per test file — 3184-3199 are taken by other suit
 const BASE = `http://localhost:${PORT}`;
 const DB_PATH = path.join(os.tmpdir(), `mes-auth-flows-test-${Date.now()}.db`);
 
+// The expiry test needs src/db in THIS process against the same file the server
+// child uses (WAL makes multi-process access safe). config.js reads env on load.
+process.env.DATABASE_PATH = DB_PATH;
+process.env.SEED_DEMO_DATA = 'false';
+
 let server;
 
 function startServer() {
@@ -262,4 +267,22 @@ test('change-password ends other sessions but not the one making the change', as
   // Logout ends exactly one session, not the account.
   assert.equal((await api('POST', '/api/auth/logout', { token: sessionB })).status, 200);
   assert.equal((await api('GET', '/api/auth/me', { token: sessionB })).status, 401);
+});
+
+test('an expired session stops working', async () => {
+  const email = `expiry-${stamp}@hartmonitor-qa.test`;
+  const signup = await api('POST', '/api/auth/signup', {
+    body: { company_name: `Expiry Co ${stamp}`, email, password: 'first-password-1', display_name: 'Expiry Tester' },
+  });
+  assert.equal(signup.status, 201);
+  const token = signup.json.token;
+  assert.equal((await api('GET', '/api/auth/me', { token })).status, 200, 'valid while fresh');
+
+  // Backdate the session's expiry the way 30 days of wall clock would.
+  const db = require('../src/db');
+  const changed = db.prepare("UPDATE sessions SET expires_at = datetime('now', '-1 hour') WHERE token = ?").run(token);
+  assert.equal(changed.changes, 1, 'the session row was found');
+
+  assert.equal((await api('GET', '/api/auth/me', { token })).status, 401, 'an expired session is refused');
+  assert.equal((await api('GET', '/api/apps', { token })).status, 401, 'and it unlocks nothing else either');
 });
