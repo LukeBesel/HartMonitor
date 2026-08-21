@@ -80,11 +80,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       api.getMe()
         .then(u => { setUser(u); localStorage.setItem('hm_user', JSON.stringify(u)); })
-        .catch(() => {
-          localStorage.removeItem('hm_user');
-          localStorage.removeItem('hm_token'); // stale SSO marker
-          clearToken();
-          setUser(null);
+        .catch((err: unknown) => {
+          // Only a real 401 invalidates the session. Transient failures
+          // (rate limit, offline, server hiccup) keep the stored user —
+          // logging people out on a network blip is worse than a stale name.
+          if ((err as { status?: number })?.status === 401) {
+            localStorage.removeItem('hm_user');
+            localStorage.removeItem('hm_token'); // stale SSO marker
+            clearToken();
+            setUser(null);
+          }
         })
         .finally(() => setLoading(false));
     })();
