@@ -4,14 +4,26 @@ export type WidgetType =
   | 'timer' | 'counter' | 'pass-fail' | 'separator' | 'signature'
   | 'video' | 'model-viewer'
   // v2 additions (app-platform remodel)
-  | 'variable-display' | 'table-lookup' | 'kit-checklist' | 'scan-input' | 'photo-capture';
+  | 'variable-display' | 'table-lookup' | 'kit-checklist' | 'scan-input' | 'photo-capture'
+  // canvas decoration (never captured in completion values)
+  | 'shape';
+
+/** Geometry variants for the 'shape' decoration widget. */
+export type ShapeKind = 'rect' | 'ellipse' | 'line' | 'arrow';
 
 export interface WidgetConfig {
   text?: string; content?: string; fontSize?: number; fontWeight?: string;
   color?: string; backgroundColor?: string; textAlign?: 'left' | 'center' | 'right';
   verticalAlign?: 'top' | 'center' | 'bottom'; fontStyle?: 'normal' | 'italic';
   buttonText?: string; buttonType?: 'next' | 'prev' | 'complete' | 'custom';
-  buttonColor?: string; buttonSize?: 'sm' | 'md' | 'lg';
+  buttonColor?: string; buttonSize?: 'sm' | 'md' | 'lg' | 'xl';
+  // Button appearance upgrades (all optional — legacy buttons render solid/md/rounded)
+  buttonVariant?: 'solid' | 'outline' | 'ghost';
+  buttonShape?: 'rounded' | 'pill' | 'square';
+  /** Key into the curated BUTTON_ICONS lookup map (never a dynamic import). */
+  buttonIcon?: string;
+  /** Flow mode: false renders an auto-width button. Absent/true = full width (v1 behavior). */
+  fullWidth?: boolean;
   placeholder?: string; required?: boolean; variableName?: string;
   defaultValue?: string | number | boolean; options?: string[];
   min?: number; max?: number; step?: number; initialValue?: number;
@@ -40,6 +52,12 @@ export interface WidgetConfig {
   // number-input (activated — fields already exist: min, max, step)
   enforceRange?: boolean;           // true = blocking validation, not just HTML attrs
   decimals?: number;
+  // shape (canvas decoration — pure SVG, never captured)
+  shapeKind?: ShapeKind;
+  fill?: string;                    // rect/ellipse interior
+  stroke?: string;                  // outline / line color
+  strokeWidth?: number;
+  cornerRadius?: number;            // rect only
 }
 
 /** Free-form placement of a widget on a canvas-mode step. All values are in

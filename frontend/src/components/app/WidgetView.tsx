@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
+import type { LucideIcon } from 'lucide-react';
 import {
-  Camera, CheckCircle, CheckCircle2, Flag, Image as ImageIcon,
-  PackageCheck, PenTool, ScanLine, Table2, Variable,
+  AlertTriangle, ArrowLeft, ArrowRight, Camera, Check, CheckCircle, CheckCircle2,
+  Flag, Image as ImageIcon, PackageCheck, Pause, PenTool, Play, Printer, RotateCcw,
+  Save, ScanLine, Table2, Variable, Wrench, X,
 } from 'lucide-react';
-import type { Widget, WidgetType, WidgetLayout } from '../../types';
+import type { Widget, WidgetConfig, WidgetType, WidgetLayout } from '../../types';
 
 // Fixed logical canvas width. Both the builder and player render the canvas at
 // this width, then scale uniformly to fit their container — so what you build is
@@ -42,8 +44,136 @@ export function defaultLayout(type: WidgetType, index = 0): WidgetLayout {
     case 'kit-checklist':    return at(640, 320);
     case 'scan-input':       return at(440, 96);
     case 'photo-capture':    return at(380, 200);
+    case 'shape':            return at(260, 160);
     default:              return at(360, 80);
   }
+}
+
+// ─── Button appearance (professional button upgrades) ─────────────────────────
+
+/** Curated icon set for buttons — a safe static lookup map keyed by lucide
+ *  name. NEVER extend this with dynamic imports; add entries explicitly. */
+export const BUTTON_ICONS: Record<string, LucideIcon> = {
+  'arrow-right':    ArrowRight,
+  'arrow-left':     ArrowLeft,
+  'check':          Check,
+  'check-circle':   CheckCircle2,
+  'x':              X,
+  'play':           Play,
+  'pause':          Pause,
+  'flag':           Flag,
+  'camera':         Camera,
+  'scan-line':      ScanLine,
+  'printer':        Printer,
+  'save':           Save,
+  'rotate-ccw':     RotateCcw,
+  'wrench':         Wrench,
+  'alert-triangle': AlertTriangle,
+};
+
+export interface ButtonAppearance {
+  variant: 'solid' | 'outline' | 'ghost';
+  size: 'sm' | 'md' | 'lg' | 'xl';
+  shape: 'rounded' | 'pill' | 'square';
+  /** Effective border radius in px (legacy config.borderRadius still wins). */
+  radius: number;
+  /** Resolved icon component, or undefined when unset/unknown. */
+  icon?: LucideIcon;
+}
+
+/** Resolve a button's appearance with v1 back-compat defaults: a config with
+ *  no variant/size/shape renders exactly as before — solid / md / rounded. */
+export function buttonAppearance(config: WidgetConfig): ButtonAppearance {
+  const shape = config.buttonShape ?? 'rounded';
+  return {
+    variant: config.buttonVariant ?? 'solid',
+    size: config.buttonSize ?? 'md',
+    shape,
+    radius: config.borderRadius ?? (shape === 'pill' ? 999 : shape === 'square' ? 2 : 12),
+    icon: config.buttonIcon ? BUTTON_ICONS[config.buttonIcon] : undefined,
+  };
+}
+
+/** Variant → background/text/border styles for the configured accent color. */
+export function buttonVariantStyle(variant: ButtonAppearance['variant'], color: string): React.CSSProperties {
+  const tint = /^#[0-9a-fA-F]{6}$/.test(color) ? `${color}1f` : 'rgba(127, 127, 127, 0.12)';
+  switch (variant) {
+    case 'outline': return { background: 'transparent', color, border: `2px solid ${color}` };
+    case 'ghost':   return { background: tint, color, border: '2px solid transparent' };
+    default:        return { background: color, color: '#ffffff', border: '2px solid transparent' };
+  }
+}
+
+// ─── Shape widget (canvas decoration — pure SVG) ──────────────────────────────
+
+/** Pure-SVG shape filling its parent box. Percentage geometry scales with the
+ *  widget's canvas layout box; rotation comes free from the canvas engine.
+ *  Never captured — shapes have no value and fire no events. */
+export function ShapeSVG({ config }: { config: WidgetConfig }) {
+  const uid = useId();
+  const kind = config.shapeKind ?? 'rect';
+  const fill = config.fill ?? '#e0e7ff';
+  const stroke = config.stroke ?? '#6366f1';
+  const sw = config.strokeWidth ?? 1.5;
+  const markerId = `shape-arrow-${uid.replace(/[^a-zA-Z0-9_-]/g, '')}`;
+
+  return (
+    <svg
+      className="w-full h-full block"
+      style={{ overflow: 'visible' }}
+      aria-hidden="true"
+      focusable="false"
+      data-shape-kind={kind}
+    >
+      {kind === 'rect' && (
+        <rect
+          x="0" y="0" width="100%" height="100%"
+          rx={config.cornerRadius ?? 0}
+          fill={fill}
+          stroke={sw > 0 ? stroke : 'none'}
+          strokeWidth={sw}
+        />
+      )}
+      {kind === 'ellipse' && (
+        <ellipse
+          cx="50%" cy="50%" rx="50%" ry="50%"
+          fill={fill}
+          stroke={sw > 0 ? stroke : 'none'}
+          strokeWidth={sw}
+        />
+      )}
+      {kind === 'line' && (
+        <line
+          x1="0" y1="50%" x2="100%" y2="50%"
+          stroke={stroke}
+          strokeWidth={Math.max(sw, 1)}
+          strokeLinecap="round"
+        />
+      )}
+      {kind === 'arrow' && (
+        <>
+          <defs>
+            <marker
+              id={markerId}
+              viewBox="0 0 10 10"
+              refX="8" refY="5"
+              markerWidth="4" markerHeight="4"
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 10 5 L 0 10 z" fill={stroke} />
+            </marker>
+          </defs>
+          <line
+            x1="0" y1="50%" x2="100%" y2="50%"
+            stroke={stroke}
+            strokeWidth={Math.max(sw, 1)}
+            strokeLinecap="round"
+            markerEnd={`url(#${markerId})`}
+          />
+        </>
+      )}
+    </svg>
+  );
 }
 
 // Tracks the uniform scale needed to fit a CANVAS_W-wide stage into `ref`'s width.
@@ -292,14 +422,21 @@ export function WidgetView({ widget, value, onChange, onNext, onPrev, onComplete
         else if (config.buttonType === 'complete') onComplete?.();
         else onNext?.();
       };
+      const ap = buttonAppearance(config);
+      const fontSize = { sm: 14, md: 16, lg: 20, xl: 24 }[ap.size];
+      const ButtonIcon = ap.icon;
       return (
         <button type="button" onClick={click}
-          className="w-full h-full rounded-xl font-semibold text-white transition-all hover:opacity-90 active:scale-[0.99]"
-          style={{ backgroundColor: config.buttonColor || '#3b82f6', fontSize: config.buttonSize === 'lg' ? 20 : config.buttonSize === 'sm' ? 14 : 16, borderRadius: config.borderRadius }}>
+          className="w-full h-full font-semibold transition-all hover:opacity-90 active:scale-[0.99] inline-flex items-center justify-center gap-2"
+          style={{ ...buttonVariantStyle(ap.variant, config.buttonColor || '#3b82f6'), fontSize, borderRadius: ap.radius }}>
+          {ButtonIcon && <ButtonIcon size={Math.round(fontSize * 1.15)} className="flex-shrink-0" />}
           {config.buttonText || 'Next'}
         </button>
       );
     }
+
+    case 'shape':
+      return <ShapeSVG config={config} />;
 
     case 'video': {
       const isYoutube = config.videoType === 'youtube' || (config.videoUrl || '').includes('youtube') || (config.videoUrl || '').includes('youtu.be');
