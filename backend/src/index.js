@@ -161,6 +161,7 @@ app.use(express.json({ limit: '10mb' }));
 // Throttle credential endpoints specifically, then everything under /api.
 app.use('/api/auth/login',           authLimiter);
 app.use('/api/auth/signup',          authLimiter);
+app.use('/api/auth/demo',            authLimiter);   // sandbox creation is write-heavy — same throttle
 app.use('/api/auth/change-password', authLimiter);
 app.use('/api', generalLimiter);
 

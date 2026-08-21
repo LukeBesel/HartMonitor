@@ -125,6 +125,27 @@ router.post('/signup', (req, res) => {
   });
 });
 
+// ─── POST /demo — instant no-sign-in sandbox workspace (public) ───────────────
+// Creates an isolated throwaway org with sample data and logs the visitor in.
+// Rate-limited at the mount (same limiter as login/signup). Sandboxes and all
+// their data are deleted automatically after 24 hours (see ../sandbox.js).
+
+router.post('/demo', (req, res) => {
+  const { createSandbox } = require('../sandbox');
+  const { rawToken, userId, email } = createSandbox(generateToken);
+  const user = db.prepare('SELECT id, email, display_name, role FROM users WHERE id = ?').get(userId);
+
+  res.cookie('hm_token', rawToken, {
+    httpOnly: true,
+    secure: config.isProd,
+    sameSite: 'lax',
+    maxAge: 24 * 60 * 60 * 1000, // sandbox lives 24h
+    path: '/',
+  });
+
+  res.status(201).json({ token: rawToken, user, sandbox: true, sandbox_email: email });
+});
+
 // ─── POST /logout ─────────────────────────────────────────────────────────────
 
 router.post('/logout', requireAuth, (req, res) => {

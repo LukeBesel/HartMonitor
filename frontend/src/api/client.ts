@@ -200,6 +200,9 @@ export const api = {
   badgeLogin: (payload: { badge_code?: string; pin?: string }) =>
     request<{ user_id: string; display_name: string }>('/operators/badge-login', { method: 'POST', body: JSON.stringify(payload) }),
 
+  // ── Instant no-sign-in demo sandbox (sets the session cookie server-side)
+  startDemo: () => request<{ user: any; sandbox: boolean }>('/auth/demo', { method: 'POST' }),
+
   // ── Tables
   getTables: () => request<any[]>('/tables'),
   getTable: (id: string) => request<any>(`/tables/${id}`),

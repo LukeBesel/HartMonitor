@@ -12,6 +12,24 @@ export function BillingBanner() {
 
   if (!user || dismissed) return null;
 
+  // Throwaway sandbox workspace — steer visitors toward keeping their work.
+  if (user.email?.endsWith('@sandbox.hartmonitor.local')) {
+    return (
+      <div className="flex items-center gap-3 px-4 py-2 bg-amber-500/15 border-b border-amber-500/30 text-amber-200 text-sm">
+        <Zap size={15} className="shrink-0 text-amber-400" />
+        <span className="flex-1">
+          You're in a <strong>demo workspace</strong> — explore everything freely. It resets after 24 hours.
+        </span>
+        <a href="/login?mode=signup" className="shrink-0 px-3 py-1 rounded-lg bg-amber-500 text-gray-900 font-semibold text-xs hover:bg-amber-400 transition-colors">
+          Keep my work — create a free account
+        </a>
+        <button onClick={() => setDismissed(true)} className="shrink-0 p-1 text-amber-400/70 hover:text-amber-200" aria-label="Dismiss">
+          <X size={14} />
+        </button>
+      </div>
+    );
+  }
+
   const handleUpgrade = async () => {
     setLoading(true);
     try {

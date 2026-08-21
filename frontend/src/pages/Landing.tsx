@@ -361,9 +361,19 @@ export default function Landing() {
                 Start free — early access
                 <ArrowRight size={17} className="group-hover:translate-x-0.5 transition-transform" />
               </Link>
-              <Link to="/pricing" className="inline-flex items-center gap-2 px-7 py-3.5 rounded-full text-gray-200 font-semibold text-base border border-white/15 hover:bg-white/5 transition-all">
-                View pricing
-              </Link>
+              <button
+                onClick={async () => {
+                  try {
+                    await api.startDemo();
+                    window.location.href = '/dashboard';
+                  } catch {
+                    window.location.href = '/login?mode=signup';
+                  }
+                }}
+                className="inline-flex items-center gap-2 px-7 py-3.5 rounded-full text-gray-200 font-semibold text-base border border-white/15 hover:bg-white/5 transition-all"
+              >
+                Try the live demo — no sign-up
+              </button>
             </div>
             <p className="mt-5 text-sm text-gray-500">Free during early access · Every module included · No credit card, no limits</p>
           </Reveal>
