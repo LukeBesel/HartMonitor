@@ -2,8 +2,18 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { logActivity } = require('../activity');
+const { buildUpdate, nextValue } = require('../patch');
 
 const router = express.Router();
+
+// Columns PUT /kaizen/:id may write. Everything else on the row (id, number,
+// company_id, submitter, timestamps) is owned by the server.
+const EDITABLE_COLUMNS = [
+  'title', 'description', 'category', 'type', 'status', 'department_id',
+  'champion_name', 'estimated_savings', 'actual_savings', 'estimated_hours',
+  'actual_hours', 'target_date', 'rejection_reason', 'before_description',
+  'after_description',
+];
 
 function nextIdeaNumber(companyId) {
   const year = new Date().getFullYear();
@@ -68,15 +78,18 @@ router.get('/:id', (req, res) => {
 // ─── POST /kaizen ─────────────────────────────────────────────────────────────
 
 router.post('/', (req, res) => {
-  const { title, description = '', category = 'cost', type = 'improvement', department_id, submitter_name = '', estimated_savings = 0, estimated_hours = 0, target_date, before_description = '' } = req.body;
+  // champion_name is accepted here as well as on PUT — an idea often arrives
+  // with its champion already agreed, and dropping it on create meant the field
+  // came back empty right after a form that had asked for it.
+  const { title, description = '', category = 'cost', type = 'improvement', department_id, submitter_name = '', champion_name = '', estimated_savings = 0, estimated_hours = 0, target_date, before_description = '' } = req.body;
   if (!title?.trim()) return res.status(400).json({ error: 'title required' });
   const id = uuidv4();
   const idea_number = nextIdeaNumber(req.companyId);
   const now = new Date().toISOString();
   db.prepare(`
-    INSERT INTO kaizen_ideas (id, company_id, number, idea_number, title, description, category, type, department_id, submitter_id, submitter_name, estimated_savings, estimated_hours, target_date, before_description, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(id, req.companyId, idea_number, idea_number, title.trim(), description, category, type, department_id || null, req.user?.id || null, submitter_name || req.user?.display_name || '', estimated_savings, estimated_hours, target_date || null, before_description, now, now);
+    INSERT INTO kaizen_ideas (id, company_id, number, idea_number, title, description, category, type, department_id, submitter_id, submitter_name, champion_name, estimated_savings, estimated_hours, target_date, before_description, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(id, req.companyId, idea_number, idea_number, title.trim(), description, category, type, department_id || null, req.user?.id || null, submitter_name || req.user?.display_name || '', champion_name, estimated_savings, estimated_hours, target_date || null, before_description, now, now);
   logActivity(req.companyId, 'kaizen', id, `Idea ${idea_number} submitted: ${title}`, req.user?.display_name);
   res.status(201).json(ideaWithDept(id, req.companyId));
 });
@@ -86,28 +99,18 @@ router.post('/', (req, res) => {
 router.put('/:id', (req, res) => {
   const idea = ownedIdea(req);
   if (!idea) return res.status(404).json({ error: 'Not found' });
-  const { title, description, category, type, status, department_id, champion_name, estimated_savings, actual_savings, estimated_hours, actual_hours, target_date, rejection_reason, before_description, after_description } = req.body;
   const now = new Date().toISOString();
+  // Only the columns the client actually named are written, so blanking the
+  // champion, the target date or the department clears it instead of being
+  // read as "no opinion" and silently restoring the old value.
+  const { sql, params } = buildUpdate(req.body, EDITABLE_COLUMNS);
+  const status = nextValue(req.body, 'status', idea.status);
   const completed_at = status === 'implemented' && idea.status !== 'implemented' ? now : idea.completed_at;
-  db.prepare(`
-    UPDATE kaizen_ideas SET
-      title = COALESCE(?, title), description = COALESCE(?, description),
-      category = COALESCE(?, category), type = COALESCE(?, type),
-      status = COALESCE(?, status), department_id = COALESCE(?, department_id),
-      champion_name = COALESCE(?, champion_name),
-      estimated_savings = COALESCE(?, estimated_savings),
-      actual_savings = COALESCE(?, actual_savings),
-      estimated_hours = COALESCE(?, estimated_hours),
-      actual_hours = COALESCE(?, actual_hours),
-      target_date = COALESCE(?, target_date),
-      rejection_reason = COALESCE(?, rejection_reason),
-      before_description = COALESCE(?, before_description),
-      after_description = COALESCE(?, after_description),
-      completed_at = ?,
-      updated_at = ?
-    WHERE id = ?
-  `).run(title, description, category, type, status, department_id, champion_name, estimated_savings, actual_savings, estimated_hours, actual_hours, target_date, rejection_reason, before_description, after_description, completed_at, now, req.params.id);
-  if (status && status !== idea.status) {
+
+  db.prepare(`UPDATE kaizen_ideas SET ${sql ? sql + ', ' : ''}completed_at = ?, updated_at = ? WHERE id = ?`)
+    .run(...params, completed_at, now, req.params.id);
+
+  if (status !== idea.status) {
     logActivity(req.companyId, 'kaizen', req.params.id, `Idea status → ${status}`, req.user?.display_name);
   }
   res.json(ideaWithDept(req.params.id, req.companyId));

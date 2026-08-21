@@ -2,8 +2,17 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { logActivity } = require('../activity');
+const { buildUpdate, nextValue } = require('../patch');
 
 const router = express.Router();
+
+// Columns PUT /capa/:id may write. `verified_at` and `closed_at` are derived
+// from the status transition below, not taken from the client.
+const EDITABLE_COLUMNS = [
+  'title', 'description', 'source', 'type', 'priority', 'status',
+  'department_id', 'owner_name', 'due_date', 'root_cause_analysis',
+  'containment_action', 'corrective_action', 'preventive_action', 'verified_by',
+];
 
 function nextCAPANumber(companyId) {
   const year = new Date().getFullYear();
@@ -96,33 +105,22 @@ router.post('/', (req, res) => {
 router.put('/:id', (req, res) => {
   const capa = ownedCAPA(req);
   if (!capa) return res.status(404).json({ error: 'Not found' });
-  const { title, description, source, type, priority, status, department_id, owner_name, due_date, root_cause_analysis, containment_action, corrective_action, preventive_action, verified_by } = req.body;
-
   const now = new Date().toISOString();
+  // Only the columns the client actually named are written, so un-assigning a
+  // department or clearing a due date sticks instead of being read as "no
+  // opinion" and silently restoring the old value.
+  const { sql, params } = buildUpdate(req.body, EDITABLE_COLUMNS);
+  const status = nextValue(req.body, 'status', capa.status);
+
   let closed_at = capa.closed_at;
   let verified_at = capa.verified_at;
   if (status === 'closed' && capa.status !== 'closed') closed_at = now;
   if (status === 'verification' && capa.status !== 'verification') verified_at = now;
 
-  db.prepare(`
-    UPDATE capa_items SET
-      title = COALESCE(?, title), description = COALESCE(?, description),
-      source = COALESCE(?, source), type = COALESCE(?, type),
-      priority = COALESCE(?, priority), status = COALESCE(?, status),
-      department_id = COALESCE(?, department_id), owner_name = COALESCE(?, owner_name),
-      due_date = COALESCE(?, due_date),
-      root_cause_analysis = COALESCE(?, root_cause_analysis),
-      containment_action = COALESCE(?, containment_action),
-      corrective_action = COALESCE(?, corrective_action),
-      preventive_action = COALESCE(?, preventive_action),
-      verified_by = COALESCE(?, verified_by),
-      verified_at = COALESCE(?, verified_at),
-      closed_at = ?,
-      updated_at = ?
-    WHERE id = ?
-  `).run(title, description, source, type, priority, status, department_id, owner_name, due_date, root_cause_analysis, containment_action, corrective_action, preventive_action, verified_by, verified_at, closed_at, now, req.params.id);
+  db.prepare(`UPDATE capa_items SET ${sql ? sql + ', ' : ''}verified_at = ?, closed_at = ?, updated_at = ? WHERE id = ?`)
+    .run(...params, verified_at, closed_at, now, req.params.id);
 
-  if (status && status !== capa.status) {
+  if (status !== capa.status) {
     logActivity(req.companyId, 'capa', req.params.id, `Status changed to ${status}`, req.user?.display_name);
   }
   res.json(capaWithDetails(req.params.id, req.companyId));
@@ -162,8 +160,13 @@ router.put('/:id/actions/:actionId', (req, res) => {
   if (!ownedCAPA(req)) return res.status(404).json({ error: 'Not found' });
   const action = db.prepare('SELECT * FROM capa_actions WHERE id = ? AND capa_id = ?').get(req.params.actionId, req.params.id);
   if (!action) return res.status(404).json({ error: 'Action not found' });
-  const { status, description, owner_name, due_date, notes } = req.body;
-  const completed_at = status === 'complete' && action.status !== 'complete' ? new Date().toISOString() : action.completed_at;
+  const { description, owner_name, due_date, notes } = req.body;
+  // The stored vocabulary is open / in_progress / done (a CHECK constraint that
+  // cannot be altered in place). Older clients say "complete" for the same
+  // thing, and sending it used to fail the constraint with a 500 — so a CAPA
+  // action could be started but never finished. Accept both, store one.
+  const status = req.body.status === 'complete' ? 'done' : req.body.status;
+  const completed_at = status === 'done' && action.status !== 'done' ? new Date().toISOString() : action.completed_at;
   db.prepare(`UPDATE capa_actions SET status = COALESCE(?, status), description = COALESCE(?, description), owner_name = COALESCE(?, owner_name), due_date = COALESCE(?, due_date), notes = COALESCE(?, notes), completed_at = ? WHERE id = ?`)
     .run(status, description, owner_name, due_date, notes, completed_at, req.params.actionId);
   res.json(db.prepare('SELECT * FROM capa_actions WHERE id = ?').get(req.params.actionId));

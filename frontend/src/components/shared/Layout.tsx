@@ -295,10 +295,14 @@ export default function Layout() {
           <div className="space-y-0.5">
             {enabledSections.map(renderSection)}
           </div>
-        </nav>
 
-        {/* Setup checklist — only visible when sidebar is expanded */}
-        {!effectiveCollapsed && <SetupChecklist />}
+          {/* The setup checklist scrolls WITH the workspaces rather than sitting
+              below them. As a sibling it claimed ~270px of fixed height, which
+              pushed three or four workspaces off a 900px screen on a new
+              account — the one session where the product most needs to look
+              complete. Inside the scroller, navigation always comes first. */}
+          {!effectiveCollapsed && <SetupChecklist />}
+        </nav>
 
         <div className="p-2 border-t border-white/10 flex-shrink-0 space-y-0.5">
           {/* Site switcher — the active plant, anchored at the bottom of the bar */}
@@ -337,7 +341,7 @@ export default function Layout() {
           <button
             onClick={() => setCollapsed(c => !c)}
             title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className={`hidden lg:flex items-center rounded-xl text-sm font-medium text-gray-600 hover:text-white hover:bg-white/8 transition-all w-full ${
+            className={`hidden lg:flex items-center rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-white/8 transition-all w-full ${
               collapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
             }`}
           >

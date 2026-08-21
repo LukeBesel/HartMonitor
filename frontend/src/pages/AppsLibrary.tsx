@@ -23,7 +23,6 @@ import TemplatePickerModal from '../components/shared/TemplatePickerModal';
 import TemplateGallery, { TemplateChoice } from '../components/apps/TemplateGallery';
 import { useCoachDocked } from '../components/apps/AppTrainingCoach';
 import { appShape, fmtRelative, pluralize } from '../components/apps/appModel';
-import { markWalkthroughSeen } from '../components/shared/ModuleOnboarding';
 import OnboardingWizard from '../components/shared/OnboardingWizard';
 import { usePlan } from '../context/PlanContext';
 import { useAuth } from '../context/AuthContext';
@@ -59,10 +58,6 @@ export default function AppsLibrary() {
       setSearchParams(searchParams, { replace: true });
     }
   }, [searchParams, setSearchParams]);
-
-  // The builder-first training coach is this workspace's walkthrough now, so
-  // the old library modal tour never stacks on top of it.
-  useEffect(() => { markWalkthroughSeen('apps'); }, []);
 
   const load = () => {
     setLoadError(null);
@@ -169,7 +164,7 @@ export default function AppsLibrary() {
       {/* New accounts land here rather than on the Command Center, so the
           first-run welcome lives here too. It self-gates on the company's
           onboarding_completed setting, so it shows exactly once. */}
-      <OnboardingWizard onWillShow={() => markWalkthroughSeen('apps')} />
+      <OnboardingWizard />
 
       <PageHeader
         title="Apps"

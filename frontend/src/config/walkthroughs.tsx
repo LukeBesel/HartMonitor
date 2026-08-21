@@ -114,54 +114,9 @@ export const WALKTHROUGHS: Record<string, WalkthroughStep[]> = {
     },
   ],
 
-  // ─────────────────────────────── App Library ──────────────────────────────
-  apps: [
-    {
-      title: 'What the App Library is',
-      body: 'Apps are digital work instructions and data-collection forms. Build one once and run it on any station — operators always see the latest published version.',
-      icon: AppWindow,
-    },
-    {
-      title: 'Browse & search',
-      body: 'The library lists every app you have. Use search and any filters to find the one you need across all your products and processes.',
-      icon: Search,
-      bullets: [
-        'Each card shows the app name and status',
-        'Look for the Published badge — that is what operators run',
-        'Search by name to narrow a long list quickly',
-      ],
-    },
-    {
-      title: 'Preview an app',
-      body: 'Click any app to open it and step through exactly what an operator will see, including instructions, prompts, and data fields.',
-      icon: Eye,
-      bullets: [
-        'Walk the steps in order to validate the flow',
-        'Check that prompts and fields read clearly',
-        'Confirm the right inputs are being captured',
-      ],
-    },
-    {
-      title: 'Build or edit',
-      body: 'Open the App Builder to create a new app or change an existing one. Drag in steps, add fields, and arrange the sequence operators follow.',
-      icon: Plus,
-      bullets: [
-        'Add steps for each part of the work instruction',
-        'Attach inputs like pass/fail, numbers, photos, or notes',
-        'Reorder steps until the flow matches the real process',
-      ],
-    },
-    {
-      title: 'Publish to the floor',
-      body: 'When an app is ready, publish it. Stations pick up the new version instantly, so operators never run outdated instructions.',
-      icon: CheckCircle2,
-      bullets: [
-        'Publishing makes the app live on assigned stations',
-        'Edits stay in draft until you publish again',
-        "You're ready to put apps to work!",
-      ],
-    },
-  ],
+  // The App Library has no entry here on purpose: <AppTrainingCoach/> walks
+  // people through building and running an app in the product itself, and a
+  // second modal tour on the same screen would compete with it.
 
   // ───────────────────────────── Department View ────────────────────────────
   departments: [

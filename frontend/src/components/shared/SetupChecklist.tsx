@@ -26,11 +26,7 @@ const INITIAL_ITEMS: ChecklistItem[] = [
 export function SetupChecklist() {
   const { user } = useAuth();
   const [items, setItems] = useState<ChecklistItem[]>(INITIAL_ITEMS);
-  // Start collapsed on short (laptop) viewports so the checklist never crowds
-  // the nav — expanding is one tap away.
-  const [expanded, setExpanded] = useState(() => {
-    try { return window.innerHeight >= 800; } catch { return true; }
-  });
+  const [expanded, setExpanded] = useState(true);
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
@@ -71,9 +67,11 @@ export function SetupChecklist() {
   };
 
   return (
-    // flex-shrink-0 keeps the card its natural size; the nav above scrolls
-    // instead of the checklist being crushed into overlapping it.
-    <div className="mx-3 mb-3 flex-shrink-0 bg-blue-950/60 border border-blue-700/40 rounded-lg overflow-hidden">
+    // Lives inside the nav's scroll container, below the workspaces, so it can
+    // stay expanded at any viewport height without hiding navigation. It used
+    // to guess from window.innerHeight whether there was room, and the guess
+    // was wrong on every common laptop size.
+    <div className="mt-3 mb-1 bg-blue-950/60 border border-blue-700/40 rounded-lg overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center justify-between p-3 text-left"

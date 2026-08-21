@@ -395,3 +395,48 @@ test('the /stats and /templates routes are never captured as app ids', async () 
   assert.equal(templates.status, 200);
   assert.ok(Array.isArray(templates.json.built_in));
 });
+
+// ─── Multi-operator attribution ───────────────────────────────────────────────
+// A half-finished job can be picked up by someone else, and the owner asked for
+// that to show in the data — "captured in data that more operators were on it".
+// The operators list used to GROUP BY completions.operator_name, which credits
+// only whoever STARTED each run, so anyone who joined mid-job never appeared.
+
+test('GET /api/apps/:id/detail credits operators who joined a run mid-job', async () => {
+  const run = await api('POST', '/api/completions', {
+    token: tokenA,
+    body: { app_id: appId, operator_name: 'Dana Ruiz' },
+  });
+  assert.equal(run.status, 201, `starting a run failed: ${JSON.stringify(run.json)}`);
+
+  const joined = await api('POST', `/api/completions/${run.json.id}/sessions`, {
+    token: tokenA,
+    body: { operator_name: 'Sam Okafor' },
+  });
+  assert.ok(joined.status < 400, `joining failed: ${JSON.stringify(joined.json)}`);
+
+  await api('PUT', `/api/completions/${run.json.id}`, {
+    token: tokenA,
+    body: { status: 'completed', data: {} },
+  });
+
+  const detail = await api('GET', `/api/apps/${appId}/detail`, { token: tokenA });
+  assert.equal(detail.status, 200);
+  const names = detail.json.operators.map(o => o.operator_name);
+  assert.ok(names.includes('Dana Ruiz'), `starter missing from ${JSON.stringify(names)}`);
+  assert.ok(names.includes('Sam Okafor'), `joiner missing from ${JSON.stringify(names)}`);
+
+  // The two are still distinguishable — a joiner is not credited with starting.
+  const sam = detail.json.operators.find(o => o.operator_name === 'Sam Okafor');
+  const dana = detail.json.operators.find(o => o.operator_name === 'Dana Ruiz');
+  assert.equal(sam.joined_runs, 1, 'Sam picked the job up, so it counts as joined');
+  assert.equal(dana.joined_runs, 0, 'Dana started the job, so nothing is joined');
+  assert.ok(sam.runs >= 1);
+});
+
+test('a joined session does not double-count the run in the operator totals', async () => {
+  const detail = await api('GET', `/api/apps/${appId}/detail`, { token: tokenA });
+  const sam = detail.json.operators.find(o => o.operator_name === 'Sam Okafor');
+  // One run worked, however many session rows it took.
+  assert.equal(sam.runs, 1, `expected exactly one run for the joiner, got ${sam.runs}`);
+});

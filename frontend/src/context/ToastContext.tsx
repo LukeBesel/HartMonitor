@@ -38,8 +38,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ addToast }}>
       {children}
-      {/* bottom-40 keeps transient toasts clear of the quick-create FAB
-          (bottom-5) and the alerts edge tab (bottom-24) in the corner. */}
+      {/* Top of the bottom-right stack: the app coach button sits at bottom-4
+          and the PWA update banner at bottom-20, so toasts start above both. */}
       <div className="fixed bottom-40 right-4 z-50 flex flex-col gap-2 max-w-sm">
         {toasts.map(toast => {
           const Icon = ICONS[toast.type];

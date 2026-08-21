@@ -1,10 +1,12 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   ClipboardCheck, Plus, Search, X, AlertTriangle, ChevronRight,
   Calendar, User, Loader2, CheckCircle2, Circle, CheckCheck,
   Trash2, Save, AlertCircle,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
+import DepartmentFilter from '../components/shared/DepartmentFilter';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -41,7 +43,8 @@ interface CAPAAction {
   description: string;
   owner_name: string;
   due_date?: string;
-  status: 'open' | 'in_progress' | 'complete';
+  // Matches the stored vocabulary (a DB CHECK): open / in_progress / done.
+  status: 'open' | 'in_progress' | 'done';
   completed_at?: string;
   notes?: string;
 }
@@ -53,13 +56,10 @@ interface CAPASummary {
   by_priority: Record<string, number>;
 }
 
-interface Department {
+/** Just enough of a department to offer it in a picker. */
+interface DepartmentChoice {
   id: string;
   name: string;
-  description: string;
-  manager_name: string;
-  color: string;
-  created_at: string;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -129,13 +129,13 @@ const TYPE_BADGE: Record<CAPA['type'], string> = {
 const ACTION_STATUS_BADGE: Record<CAPAAction['status'], string> = {
   open:        'bg-gray-100 text-gray-700',
   in_progress: 'bg-blue-50 text-blue-700 border border-blue-200',
-  complete:    'bg-emerald-50 text-emerald-700 border border-emerald-200',
+  done:        'bg-emerald-50 text-emerald-700 border border-emerald-200',
 };
 
 const ACTION_STATUS_NEXT: Record<CAPAAction['status'], CAPAAction['status']> = {
   open:        'in_progress',
-  in_progress: 'complete',
-  complete:    'open',
+  in_progress: 'done',
+  done:        'open',
 };
 
 const STATUS_STEPS: CAPA['status'][] = ['open', 'root_cause', 'action', 'verification', 'closed'];
@@ -187,7 +187,7 @@ function StatusStepper({ status }: { status: CAPA['status'] }) {
 // ── New CAPA Modal ────────────────────────────────────────────────────────────
 
 interface NewCAPAModalProps {
-  departments: Department[];
+  departments: DepartmentChoice[];
   onClose: () => void;
   onCreated: (id: string) => void;
 }
@@ -688,7 +688,7 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
             ) : (
               <div className="space-y-2">
                 {actions.map(action => (
-                  <div key={action.id} className={`bg-gray-100 rounded-xl p-3 flex items-start gap-3 ${action.status === 'complete' ? 'opacity-60' : ''}`}>
+                  <div key={action.id} className={`bg-gray-100 rounded-xl p-3 flex items-start gap-3 ${action.status === 'done' ? 'opacity-60' : ''}`}>
                     <button
                       onClick={() => handleToggleActionStatus(action)}
                       disabled={togglingAction === action.id}
@@ -697,7 +697,7 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
                     >
                       {togglingAction === action.id ? (
                         <Loader2 size={18} className="animate-spin text-blue-700" />
-                      ) : action.status === 'complete' ? (
+                      ) : action.status === 'done' ? (
                         <CheckCircle2 size={18} className="text-emerald-700" />
                       ) : action.status === 'in_progress' ? (
                         <Circle size={18} className="text-blue-700" />
@@ -706,7 +706,7 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
                       )}
                     </button>
                     <div className="flex-1 min-w-0">
-                      <p className={`text-sm text-gray-900 ${action.status === 'complete' ? 'line-through text-gray-500' : ''}`}>
+                      <p className={`text-sm text-gray-900 ${action.status === 'done' ? 'line-through text-gray-500' : ''}`}>
                         {action.description}
                       </p>
                       <div className="flex flex-wrap items-center gap-2 mt-1">
@@ -785,33 +785,30 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
 export default function CAPA() {
   const [capas, setCapas] = useState<CAPA[]>([]);
   const [summary, setSummary] = useState<CAPASummary | null>(null);
-  const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('');
-  const [departmentFilter, setDepartmentFilter] = useState('');
 
   const [showCreate, setShowCreate] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deptFilter = useDepartmentFilter('capa');
 
   // ── Load data ───────────────────────────────────────────────────────────────
+  //
+  // Every CAPA is fetched once and narrowed in the browser. Status, priority
+  // and search used to round-trip to the server, but the summary strip has to
+  // be recomputed for the chosen department and that needs the department's
+  // whole CAPA list, not just the rows surviving the other filters.
 
   const loadCapas = useCallback(async () => {
     setError('');
     try {
-      const params: { status?: string; priority?: string; department_id?: string; search?: string } = {};
-      if (statusFilter)     params.status        = statusFilter;
-      if (priorityFilter)   params.priority      = priorityFilter;
-      if (departmentFilter) params.department_id = departmentFilter;
-      if (search.trim())    params.search        = search.trim();
-
       const [list, sum] = await Promise.all([
-        api.getCAPAs(params),
+        api.getCAPAs(),
         api.getCAPAModuleSummary(),
       ]);
       setCapas(list);
@@ -821,30 +818,64 @@ export default function CAPA() {
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, priorityFilter, departmentFilter, search]);
-
-  // Load departments once
-  useEffect(() => {
-    api.getDepartments()
-      .then(d => setDepartments(d as Department[]))
-      .catch(() => {});
   }, []);
 
-  // Reload CAPAs when filters change (debounce search)
   useEffect(() => {
-    if (searchTimer.current) clearTimeout(searchTimer.current);
-    if (search) {
-      searchTimer.current = setTimeout(() => { setLoading(true); loadCapas(); }, 300);
-    } else {
-      setLoading(true);
-      loadCapas();
-    }
-    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
-  }, [loadCapas, search]);
+    setLoading(true);
+    loadCapas();
+  }, [loadCapas]);
+
+  // ── Filtering ───────────────────────────────────────────────────────────────
+
+  // Everything the chosen department owns, before status/priority/search — this
+  // is what the summary strip counts.
+  const deptCapas = useMemo(() => capas.filter(deptFilter.matches), [capas, deptFilter.matches]);
+
+  // What the table actually shows.
+  const visibleCapas = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return deptCapas.filter(capa => {
+      if (statusFilter && capa.status !== statusFilter) return false;
+      if (priorityFilter && capa.priority !== priorityFilter) return false;
+      if (q) {
+        const haystack = `${capa.title ?? ''} ${capa.number ?? ''}`.toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [deptCapas, statusFilter, priorityFilter, search]);
+
+  const otherFiltersActive = !!statusFilter || !!priorityFilter || !!search.trim();
+
+  // A remembered department id filters correctly from the first render, but its
+  // name only arrives with the departments fetch — so copy that would otherwise
+  // read "No CAPAs in undefined" falls back to a generic phrase for that beat.
+  const deptName = deptFilter.selected?.name ?? 'this department';
 
   // ── Summary computed values ─────────────────────────────────────────────────
+  //
+  // Under "All departments" the server's own tally is authoritative. /capa/summary
+  // takes no department, so once one is chosen the same four numbers are
+  // recomputed from that department's CAPAs rather than left showing the plant.
 
-  const closedCount = summary?.by_status?.closed ?? 0;
+  const stats = useMemo(() => {
+    if (deptFilter.active) {
+      if (loading) return null; // don't flash zeros before the CAPAs arrive
+      return {
+        open:    deptCapas.filter(c => c.status !== 'closed').length,
+        overdue: deptCapas.filter(isOverdue).length,
+        closed:  deptCapas.filter(c => c.status === 'closed').length,
+        total:   deptCapas.length,
+      };
+    }
+    if (!summary) return null;
+    return {
+      open:    summary.open,
+      overdue: summary.overdue,
+      closed:  summary.by_status?.closed ?? 0,
+      total:   Object.values(summary.by_status ?? {}).reduce((a, b) => a + b, 0),
+    };
+  }, [deptFilter.active, deptCapas, summary, loading]);
 
   // ── Render ──────────────────────────────────────────────────────────────────
 
@@ -884,30 +915,31 @@ export default function CAPA() {
           </div>
         )}
 
-        {/* Summary Strip */}
+        {/* Summary Strip — scoped to the selected department, so the headline
+            numbers never describe a wider plant than the table below. */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Open</p>
-            <p className="text-3xl font-bold text-gray-900">{summary?.open ?? '—'}</p>
-            <p className="text-xs text-gray-500 mt-1">active CAPAs</p>
+            <p className="text-3xl font-bold text-gray-900">{stats?.open ?? '—'}</p>
+            <p className="text-xs text-gray-500 mt-1 truncate">
+              active CAPAs{deptFilter.selected ? ` — ${deptFilter.selected.name}` : ''}
+            </p>
           </div>
-          <div className={`bg-white border rounded-xl p-4 ${summary && summary.overdue > 0 ? 'border-red-200 bg-red-50' : 'border-gray-200'}`}>
+          <div className={`bg-white border rounded-xl p-4 ${stats && stats.overdue > 0 ? 'border-red-200 bg-red-50' : 'border-gray-200'}`}>
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Overdue</p>
-            <p className={`text-3xl font-bold ${summary && summary.overdue > 0 ? 'text-red-700' : 'text-gray-900'}`}>
-              {summary?.overdue ?? '—'}
+            <p className={`text-3xl font-bold ${stats && stats.overdue > 0 ? 'text-red-700' : 'text-gray-900'}`}>
+              {stats?.overdue ?? '—'}
             </p>
             <p className="text-xs text-gray-500 mt-1">past due date</p>
           </div>
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Closed</p>
-            <p className="text-3xl font-bold text-emerald-700">{closedCount}</p>
+            <p className="text-3xl font-bold text-emerald-700">{stats?.closed ?? '—'}</p>
             <p className="text-xs text-gray-500 mt-1">completed</p>
           </div>
           <div className="bg-white border border-gray-200 rounded-xl p-4">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Total</p>
-            <p className="text-3xl font-bold text-gray-900">
-              {summary ? Object.values(summary.by_status).reduce((a, b) => a + b, 0) : '—'}
-            </p>
+            <p className="text-3xl font-bold text-gray-900">{stats?.total ?? '—'}</p>
             <p className="text-xs text-gray-500 mt-1">all time</p>
           </div>
         </div>
@@ -929,7 +961,7 @@ export default function CAPA() {
           <select
             className={`${darkSelect} min-w-[160px] flex-none`}
             value={statusFilter}
-            onChange={e => { setStatusFilter(e.target.value); setLoading(true); }}
+            onChange={e => setStatusFilter(e.target.value)}
           >
             <option value="">All Statuses</option>
             <option value="open">Open</option>
@@ -943,7 +975,7 @@ export default function CAPA() {
           <select
             className={`${darkSelect} min-w-[140px] flex-none`}
             value={priorityFilter}
-            onChange={e => { setPriorityFilter(e.target.value); setLoading(true); }}
+            onChange={e => setPriorityFilter(e.target.value)}
           >
             <option value="">All Priorities</option>
             <option value="low">Low</option>
@@ -952,17 +984,14 @@ export default function CAPA() {
             <option value="critical">Critical</option>
           </select>
 
-          {/* Department */}
-          {departments.length > 0 && (
-            <select
-              className={`${darkSelect} min-w-[160px] flex-none`}
-              value={departmentFilter}
-              onChange={e => { setDepartmentFilter(e.target.value); setLoading(true); }}
-            >
-              <option value="">All Departments</option>
-              {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
-          )}
+          {/* Department — the shared picker, so the choice is remembered and
+              site-aware like it is on the other management screens. */}
+          <DepartmentFilter
+            filter={deptFilter}
+            matchCount={deptCapas.length}
+            matchNoun={deptCapas.length === 1 ? 'CAPA' : 'CAPAs'}
+            className="flex-none"
+          />
         </div>
 
         {/* CAPA Table */}
@@ -978,15 +1007,34 @@ export default function CAPA() {
               </div>
             ))}
           </div>
-        ) : capas.length === 0 ? (
+        ) : visibleCapas.length === 0 ? (
+          /* An empty department reads very differently from an empty plant, so
+             say which one this is and offer the way back out. */
           <div className="flex flex-col items-center justify-center py-24 gap-4">
             <div className="p-5 bg-emerald-50 border border-emerald-200 rounded-full">
               <ClipboardCheck size={40} className="text-emerald-700" />
             </div>
-            <div className="text-center">
-              <h3 className="text-xl font-semibold text-gray-900 mb-1">No CAPAs found</h3>
-              <p className="text-gray-500">Adjust filters or create a new CAPA</p>
+            <div className="text-center max-w-sm">
+              <h3 className="text-xl font-semibold text-gray-900 mb-1">
+                {deptFilter.active ? `No CAPAs in ${deptName}` : 'No CAPAs found'}
+              </h3>
+              <p className="text-gray-500">
+                {deptFilter.active
+                  ? otherFiltersActive
+                    ? `Nothing in ${deptName} matches the current filters. Other departments may have CAPAs that do.`
+                    : `No corrective or preventive actions are assigned to ${deptName}. Other departments may have some.`
+                  : 'Adjust filters or create a new CAPA'}
+              </p>
             </div>
+            {deptFilter.active && (
+              <button
+                onClick={deptFilter.clear}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors"
+              >
+                <X size={15} />
+                Show all departments
+              </button>
+            )}
           </div>
         ) : (
           <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
@@ -999,7 +1047,7 @@ export default function CAPA() {
 
             {/* Table rows */}
             <div className="divide-y divide-gray-100">
-              {capas.map(capa => {
+              {visibleCapas.map(capa => {
                 const overdue = isOverdue(capa);
                 const isSelected = selectedId === capa.id;
                 return (
@@ -1078,7 +1126,9 @@ export default function CAPA() {
       {/* New CAPA modal */}
       {showCreate && (
         <NewCAPAModal
-          departments={departments}
+          // Same department list the filter uses — one source of truth, and it
+          // follows the selected site like the rest of the app.
+          departments={deptFilter.departments}
           onClose={() => setShowCreate(false)}
           onCreated={(id) => {
             setShowCreate(false);

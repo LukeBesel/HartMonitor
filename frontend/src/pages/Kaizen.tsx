@@ -1,10 +1,12 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   ShieldAlert, CheckCircle2, Truck, DollarSign, Smile, Leaf,
   Plus, Search, X, ChevronRight, Lightbulb,
   Users, Target, Edit3, Trash2, LayoutList, LayoutGrid,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
+import DepartmentFilter from '../components/shared/DepartmentFilter';
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -16,6 +18,9 @@ interface KaizenIdea {
   category: 'safety' | 'quality' | 'delivery' | 'cost' | 'morale' | 'environment';
   type: 'improvement' | 'problem' | 'suggestion';
   status: 'submitted' | 'reviewing' | 'approved' | 'in_progress' | 'implemented' | 'rejected' | 'on_hold';
+  // GET /kaizen selects k.* plus a joined d.name, so rows carry both the id and
+  // the display name of the department.
+  department_id?: string;
   department_name?: string;
   submitter_name: string;
   champion_name?: string;
@@ -36,6 +41,7 @@ interface KaizenSummary {
   submitted_this_month: number;
 }
 
+/** Just enough of a department to offer it in the submit form. */
 interface Department {
   id: string;
   name: string;
@@ -703,7 +709,6 @@ function SummaryCard({ label, value, color = 'text-gray-900', icon }: SummaryCar
 export default function Kaizen() {
   const [ideas, setIdeas] = useState<KaizenIdea[]>([]);
   const [summary, setSummary] = useState<KaizenSummary | null>(null);
-  const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [search, setSearch] = useState('');
@@ -714,18 +719,20 @@ export default function Kaizen() {
   const [selectedIdea, setSelectedIdea] = useState<KaizenIdea | null>(null);
   const [showSubmitModal, setShowSubmitModal] = useState(false);
 
+  const deptFilter = useDepartmentFilter('kaizen');
+
+  // The whole company's ideas are fetched once and narrowed in the browser.
+  // Status/category/search used to be server-side, but the summary strip has to
+  // be recomputed for the chosen department and that needs every idea in the
+  // department, not just the ones surviving the status chip.
   const fetchIdeas = useCallback(async () => {
     try {
-      const data = await api.getKaizenIdeas({
-        status: statusFilter !== 'All' ? statusFilter : undefined,
-        category: categoryFilter || undefined,
-        search: search || undefined,
-      });
+      const data = await api.getKaizenIdeas();
       setIdeas(data);
     } catch {
       // ignore
     }
-  }, [statusFilter, categoryFilter, search]);
+  }, []);
 
   const fetchSummary = useCallback(async () => {
     try {
@@ -736,23 +743,64 @@ export default function Kaizen() {
     }
   }, []);
 
-  const fetchDepartments = useCallback(async () => {
-    try {
-      const data = await api.getDepartments();
-      setDepartments(data);
-    } catch {
-      // ignore
-    }
-  }, []);
-
   useEffect(() => {
-    Promise.all([fetchIdeas(), fetchSummary(), fetchDepartments()]).finally(() => setLoading(false));
-  }, [fetchIdeas, fetchSummary, fetchDepartments]);
+    Promise.all([fetchIdeas(), fetchSummary()]).finally(() => setLoading(false));
+  }, [fetchIdeas, fetchSummary]);
 
   const handleRefresh = () => {
     fetchIdeas();
     fetchSummary();
   };
+
+  // Everything the chosen department owns, before the status/category/search
+  // chips are applied — this is what the summary strip counts.
+  const deptIdeas = useMemo(() => ideas.filter(deptFilter.matches), [ideas, deptFilter.matches]);
+
+  // What the list actually shows.
+  const visibleIdeas = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return deptIdeas.filter(idea => {
+      if (statusFilter !== 'All' && idea.status !== statusFilter) return false;
+      if (categoryFilter && idea.category !== categoryFilter) return false;
+      if (q) {
+        const haystack = `${idea.title ?? ''} ${idea.idea_number ?? ''}`.toLowerCase();
+        if (!haystack.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [deptIdeas, statusFilter, categoryFilter, search]);
+
+  // Under "All departments" the server's own tally is authoritative. Once a
+  // department is chosen the server can't answer — /kaizen/summary takes no
+  // department — so the same four numbers are recomputed from that
+  // department's ideas rather than left showing the whole plant.
+  const stats = useMemo(() => {
+    if (!deptFilter.active) {
+      return summary
+        ? {
+            total: summary.total,
+            implemented: summary.implemented,
+            totalSavings: summary.total_savings,
+            inProgress: summary.in_progress,
+          }
+        : null;
+    }
+    if (loading) return null; // don't flash zeros before the ideas arrive
+    const implemented = deptIdeas.filter(i => i.status === 'implemented');
+    return {
+      total: deptIdeas.length,
+      implemented: implemented.length,
+      totalSavings: implemented.reduce((sum, i) => sum + (i.actual_savings || 0), 0),
+      inProgress: deptIdeas.filter(i => i.status === 'approved' || i.status === 'in_progress').length,
+    };
+  }, [deptFilter.active, deptIdeas, summary, loading]);
+
+  const otherFiltersActive = statusFilter !== 'All' || !!categoryFilter || !!search.trim();
+
+  // A remembered department id filters correctly from the first render, but its
+  // name only arrives with the departments fetch — so copy that would otherwise
+  // read "No ideas in undefined" falls back to a generic phrase for that beat.
+  const deptName = deptFilter.selected?.name ?? 'this department';
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -779,13 +827,13 @@ export default function Kaizen() {
       {/* Summary strip */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
         <SummaryCard
-          label="Total Ideas"
-          value={summary?.total ?? '—'}
+          label={deptFilter.selected ? `Total Ideas — ${deptFilter.selected.name}` : 'Total Ideas'}
+          value={stats?.total ?? '—'}
           icon={<Lightbulb className="w-5 h-5 text-amber-700" />}
         />
         <SummaryCard
           label="Implemented"
-          value={summary?.implemented ?? '—'}
+          value={stats?.implemented ?? '—'}
           color="text-emerald-700"
           icon={<CheckCircle2 className="w-5 h-5 text-emerald-700" />}
         />
@@ -793,13 +841,13 @@ export default function Kaizen() {
           // Sums the ACTUAL savings recorded on implemented ideas. With none
           // recorded it shows "—", not a $0 that reads like "we saved nothing".
           label="Savings Recorded"
-          value={summary?.total_savings ? formatCurrency(summary.total_savings) : '—'}
+          value={stats?.totalSavings ? formatCurrency(stats.totalSavings) : '—'}
           color="text-emerald-700"
           icon={<DollarSign className="w-5 h-5 text-emerald-700" />}
         />
         <SummaryCard
           label="In Progress"
-          value={summary?.in_progress ?? '—'}
+          value={stats?.inProgress ?? '—'}
           color="text-amber-700"
           icon={<Target className="w-5 h-5 text-amber-700" />}
         />
@@ -828,6 +876,14 @@ export default function Kaizen() {
               <option key={cat} value={cat}>{catOf(cat).label}</option>
             ))}
           </select>
+
+          {/* Department — sits in the same filter row as category and the
+              status chips, so the page has one place to narrow the view. */}
+          <DepartmentFilter
+            filter={deptFilter}
+            matchCount={deptIdeas.length}
+            matchNoun={deptIdeas.length === 1 ? 'idea' : 'ideas'}
+          />
 
           {/* View toggle */}
           <div className="flex items-center gap-1 bg-gray-100 border border-gray-300 rounded-lg p-1">
@@ -875,27 +931,73 @@ export default function Kaizen() {
         <div className="flex items-center justify-center py-24">
           <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
         </div>
-      ) : ideas.length === 0 ? (
-        /* Empty state */
+      ) : visibleIdeas.length === 0 ? (
+        /* Empty state — an empty department reads very differently from an
+           empty company, so say which one this is. */
         <div className="flex flex-col items-center justify-center py-24 text-center">
           <div className="w-20 h-20 bg-amber-50 border border-amber-200 rounded-full flex items-center justify-center mb-4">
             <Lightbulb className="w-10 h-10 text-amber-700" />
           </div>
-          <h3 className="text-gray-900 font-semibold text-lg mb-1">No ideas yet</h3>
-          <p className="text-gray-500 text-sm mb-6 max-w-xs">
-            Be the first to submit a continuous improvement idea
-          </p>
-          <button
-            onClick={() => setShowSubmitModal(true)}
-            className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-base font-semibold hover:bg-green-700 transition-colors"
-          >
-            <Plus className="w-5 h-5" />
-            Submit Your First Idea
-          </button>
+          {deptFilter.active ? (
+            <>
+              <h3 className="text-gray-900 font-semibold text-lg mb-1">
+                No ideas in {deptName}
+              </h3>
+              <p className="text-gray-500 text-sm mb-6 max-w-sm">
+                {otherFiltersActive
+                  ? `Nothing in ${deptName} matches the current filters. Other departments may have ideas that do.`
+                  : `No continuous improvement ideas are assigned to ${deptName} yet. Other departments may have some.`}
+              </p>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <button
+                  onClick={deptFilter.clear}
+                  className="inline-flex items-center gap-2 px-5 py-3 bg-white text-gray-700 border border-gray-300 rounded-xl text-base font-semibold hover:bg-gray-100 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                  Show all departments
+                </button>
+                <button
+                  onClick={() => setShowSubmitModal(true)}
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-base font-semibold hover:bg-green-700 transition-colors"
+                >
+                  <Plus className="w-5 h-5" />
+                  Submit Idea
+                </button>
+              </div>
+            </>
+          ) : otherFiltersActive ? (
+            <>
+              <h3 className="text-gray-900 font-semibold text-lg mb-1">No matching ideas</h3>
+              <p className="text-gray-500 text-sm mb-6 max-w-xs">
+                No ideas match the current search and filters
+              </p>
+              <button
+                onClick={() => { setSearch(''); setStatusFilter('All'); setCategoryFilter(''); }}
+                className="inline-flex items-center gap-2 px-5 py-3 bg-white text-gray-700 border border-gray-300 rounded-xl text-base font-semibold hover:bg-gray-100 transition-colors"
+              >
+                <X className="w-5 h-5" />
+                Clear filters
+              </button>
+            </>
+          ) : (
+            <>
+              <h3 className="text-gray-900 font-semibold text-lg mb-1">No ideas yet</h3>
+              <p className="text-gray-500 text-sm mb-6 max-w-xs">
+                Be the first to submit a continuous improvement idea
+              </p>
+              <button
+                onClick={() => setShowSubmitModal(true)}
+                className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-base font-semibold hover:bg-green-700 transition-colors"
+              >
+                <Plus className="w-5 h-5" />
+                Submit Your First Idea
+              </button>
+            </>
+          )}
         </div>
       ) : viewMode === 'list' ? (
         <div className="space-y-3">
-          {ideas.map(idea => (
+          {visibleIdeas.map(idea => (
             <IdeaListCard
               key={idea.id}
               idea={idea}
@@ -905,7 +1007,7 @@ export default function Kaizen() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {ideas.map(idea => (
+          {visibleIdeas.map(idea => (
             <IdeaGridCard
               key={idea.id}
               idea={idea}
@@ -933,7 +1035,9 @@ export default function Kaizen() {
       {/* Submit modal */}
       {showSubmitModal && (
         <SubmitIdeaModal
-          departments={departments}
+          // Same department list the filter uses — one source of truth, and it
+          // follows the selected site like the rest of the app.
+          departments={deptFilter.departments}
           onClose={() => setShowSubmitModal(false)}
           onSubmitted={handleRefresh}
         />

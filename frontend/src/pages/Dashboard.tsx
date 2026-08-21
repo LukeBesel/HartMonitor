@@ -379,25 +379,30 @@ export default function Dashboard() {
               <Sparkles size={26} />
             </div>
             <div className="flex-1 min-w-0">
-              <h2 className="text-lg font-bold text-gray-900">Your workspace is ready — let's fill it in</h2>
+              <h2 className="text-lg font-bold text-gray-900">Your workspace is ready — build your first app</h2>
               <p className="text-sm text-gray-600 mt-1">
-                There's no production data yet. {isAtLeast('manager')
-                  ? 'Load a realistic sample dataset (apps, work orders, stations, inventory) to explore everything right away — you can clear it anytime. Or start adding your own from the App Library.'
-                  : 'Ask a manager to load sample data, or start by building an app in the App Library.'}
+                Every number on this page comes from an app your floor runs. Build one — a guided
+                procedure with the checks and readings you want captured — and this dashboard fills
+                itself in as operators work through it.
+                {isAtLeast('manager')
+                  ? ' Prefer to look around first? Load a realistic sample dataset and clear it whenever you like.'
+                  : ' A manager can also load sample data if you want to explore first.'}
               </p>
               {sampleError && (
                 <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mt-3">{sampleError}</p>
               )}
               <div className="flex items-center gap-2 mt-4 flex-wrap">
+                {/* Apps are the product's front door, so this is the primary
+                    action even for managers who could load sample data instead. */}
+                <Link to="/apps?new=1" className="btn-primary">
+                  <AppWindow size={16} /> Build your first app
+                </Link>
                 {isAtLeast('manager') && (
-                  <button onClick={handleLoadSampleData} disabled={loadingSample} className="btn-primary">
+                  <button onClick={handleLoadSampleData} disabled={loadingSample} className="btn-secondary">
                     {loadingSample ? <RefreshCw size={16} className="animate-spin" /> : <Database size={16} />}
                     {loadingSample ? 'Loading…' : 'Load Sample Data'}
                   </button>
                 )}
-                <Link to="/apps" className="btn-secondary">
-                  <AppWindow size={16} /> Go to App Library
-                </Link>
               </div>
             </div>
           </div>

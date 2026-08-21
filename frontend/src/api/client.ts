@@ -836,7 +836,12 @@ export const api = {
   cancelAndonCall: (id: string, reason?: string) =>
     request<AndonCall>(`/andon/${id}/cancel`, { method: 'PUT', body: JSON.stringify({ reason: reason ?? '' }) }),
   deleteAndonCall: (id: string) => request<{ ok: boolean }>(`/andon/${id}`, { method: 'DELETE' }),
-  getAndonSummary: () => request<AndonSummary>('/andon/summary'),
+  /** Pass department_id to scope every number to one department — GET /andon/summary
+   *  honours it the same way GET /andon does. Omit it for plant-wide totals. */
+  getAndonSummary: (params?: { department_id?: string }) => {
+    const qs = params?.department_id ? `?department_id=${encodeURIComponent(params.department_id)}` : '';
+    return request<AndonSummary>(`/andon/summary${qs}`);
+  },
 
   // ── CAPA (standalone module)
   getCAPAs: (params?: { status?: string; priority?: string; department_id?: string; search?: string }) => {
@@ -1142,6 +1147,8 @@ export interface AppDetailStats {
 
 export interface AppDetailOperator {
   operator_name: string; runs: number; completed: number;
+  /** Runs this person picked up mid-job rather than started. */
+  joined_runs: number;
   last_run_at: string | null; avg_duration_s: number | null;
 }
 

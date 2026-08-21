@@ -580,15 +580,35 @@ router.get('/:id/detail', (req, res) => {
     )
   `).get(...args);
 
+  // Who has actually worked this app. Grouping on completions.operator_name
+  // alone credits only whoever STARTED each run, so an operator who picked up a
+  // half-finished job never appeared here at all — and knowing that more than
+  // one person was on a job is the whole point of tracking handoffs. Sessions
+  // are unioned in, and `joined_runs` says how many of a person's runs they
+  // came into rather than started, so the two are still distinguishable.
   const operators = db.prepare(`
-    SELECT c.operator_name, COUNT(*) AS runs,
-           SUM(CASE WHEN c.status = 'completed' THEN 1 ELSE 0 END) AS completed,
+    WITH worked AS (
+      SELECT c.id AS completion_id, c.operator_name, 1 AS started
+      FROM completions c
+      WHERE c.app_id = ? AND c.company_id = ? AND COALESCE(c.operator_name, '') != ''
+      UNION
+      SELECT c.id AS completion_id, s.operator_name, 0 AS started
+      FROM completion_sessions s
+      JOIN completions c ON c.id = s.completion_id
+      WHERE c.app_id = ? AND c.company_id = ? AND s.company_id = c.company_id
+        AND COALESCE(s.operator_name, '') != ''
+        AND s.operator_name != COALESCE(c.operator_name, '')
+    )
+    SELECT w.operator_name,
+           COUNT(DISTINCT w.completion_id) AS runs,
+           SUM(CASE WHEN c.status = 'completed' AND w.started = 1 THEN 1 ELSE 0 END) AS completed,
+           SUM(CASE WHEN w.started = 0 THEN 1 ELSE 0 END) AS joined_runs,
            MAX(c.started_at) AS last_run_at,
            ${AVG_DURATION_S} AS avg_duration_s
-    FROM completions c
-    WHERE c.app_id = ? AND c.company_id = ? AND c.operator_name IS NOT NULL AND c.operator_name != ''
-    GROUP BY c.operator_name ORDER BY runs DESC, c.operator_name LIMIT 25
-  `).all(...args);
+    FROM worked w
+    JOIN completions c ON c.id = w.completion_id
+    GROUP BY w.operator_name ORDER BY runs DESC, w.operator_name LIMIT 25
+  `).all(...args, ...args);
 
   const recentRuns = db.prepare(`
     SELECT c.id, c.started_at, c.completed_at, c.status, c.operator_name,

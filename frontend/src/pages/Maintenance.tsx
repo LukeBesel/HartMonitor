@@ -32,8 +32,10 @@ interface MaintenanceWO {
   type: 'pm' | 'corrective' | 'emergency' | 'inspection';
   title: string;
   description: string;
-  priority: 'low' | 'normal' | 'high' | 'critical';
-  status: 'open' | 'in_progress' | 'on_hold' | 'complete' | 'cancelled';
+  // These two match the stored vocabularies exactly (DB CHECK constraints):
+  // priority medium (not "normal"), status completed (not "complete").
+  priority: 'low' | 'medium' | 'high' | 'critical';
+  status: 'open' | 'in_progress' | 'on_hold' | 'completed' | 'cancelled';
   assigned_to: string;
   due_date?: string;
   completed_at?: string;
@@ -85,7 +87,7 @@ function priorityColor(p: string): string {
   switch (p) {
     case 'critical': return 'bg-red-50 text-red-700 border border-red-200';
     case 'high':     return 'bg-amber-50 text-amber-700 border border-amber-200';
-    case 'normal':   return 'bg-blue-50 text-blue-700 border border-blue-200';
+    case 'medium':   return 'bg-blue-50 text-blue-700 border border-blue-200';
     case 'low':      return 'bg-gray-100 text-gray-500 border border-gray-300';
     default:         return 'bg-gray-100 text-gray-500 border border-gray-300';
   }
@@ -96,7 +98,7 @@ function statusColor(s: string): string {
     case 'open':        return 'bg-blue-50 text-blue-700 border border-blue-200';
     case 'in_progress': return 'bg-amber-50 text-amber-700 border border-amber-200';
     case 'on_hold':     return 'bg-gray-100 text-gray-500 border border-gray-300';
-    case 'complete':    return 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+    case 'completed':   return 'bg-emerald-50 text-emerald-700 border border-emerald-200';
     case 'cancelled':   return 'bg-red-50 text-red-700 border border-red-200';
     default:            return 'bg-gray-100 text-gray-500 border border-gray-300';
   }
@@ -209,7 +211,7 @@ function CreateWOModal({ assets, onClose, onCreated }: CreateWOModalProps) {
     type: 'corrective',
     title: '',
     description: '',
-    priority: 'normal',
+    priority: 'medium',
     assigned_to: '',
     due_date: '',
   });
@@ -295,7 +297,7 @@ function CreateWOModal({ assets, onClose, onCreated }: CreateWOModalProps) {
                 className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               >
                 <option value="low">Low</option>
-                <option value="normal">Normal</option>
+                <option value="medium">Medium</option>
                 <option value="high">High</option>
                 <option value="critical">Critical</option>
               </select>
@@ -945,7 +947,7 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO }: WorkOrdersTabProps)
           <option value="open">Open</option>
           <option value="in_progress">In Progress</option>
           <option value="on_hold">On Hold</option>
-          <option value="complete">Complete</option>
+          <option value="completed">Completed</option>
           <option value="cancelled">Cancelled</option>
         </select>
         <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className={selectCls}>
@@ -958,7 +960,7 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO }: WorkOrdersTabProps)
         <select value={priorityFilter} onChange={e => setPriorityFilter(e.target.value)} className={selectCls}>
           <option value="">All Priorities</option>
           <option value="low">Low</option>
-          <option value="normal">Normal</option>
+          <option value="medium">Medium</option>
           <option value="high">High</option>
           <option value="critical">Critical</option>
         </select>
@@ -1025,7 +1027,7 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO }: WorkOrdersTabProps)
                   <span className="flex items-center gap-1"><User size={10} /> {wo.assigned_to}</span>
                 )}
                 {wo.due_date && (
-                  <span className={`flex items-center gap-1 ${isOverdue(wo.due_date) && wo.status !== 'complete' && wo.status !== 'cancelled' ? 'text-red-700' : ''}`}>
+                  <span className={`flex items-center gap-1 ${isOverdue(wo.due_date) && wo.status !== 'completed' && wo.status !== 'cancelled' ? 'text-red-700' : ''}`}>
                     <Calendar size={10} /> {formatDate(wo.due_date)}
                   </span>
                 )}
@@ -1043,7 +1045,7 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO }: WorkOrdersTabProps)
                   <option value="open">Open</option>
                   <option value="in_progress">In Progress</option>
                   <option value="on_hold">On Hold</option>
-                  <option value="complete">Complete</option>
+                  <option value="completed">Completed</option>
                   <option value="cancelled">Cancelled</option>
                 </select>
                 {updatingId === wo.id && <RefreshCw size={12} className="animate-spin text-blue-700" />}
