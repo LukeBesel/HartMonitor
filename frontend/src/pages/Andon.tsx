@@ -481,6 +481,7 @@ export default function Andon() {
               filter={deptFilter}
               matchCount={calls.length}
               matchNoun={calls.length === 1 ? 'request' : 'requests'}
+              onDark
             />
             <LastRefreshed
               at={auto.lastRefreshed}

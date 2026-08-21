@@ -7,6 +7,11 @@ import type { DepartmentFilterState } from '../../hooks/useDepartmentFilter';
 //
 // It renders nothing when the company has no departments yet — a shop with a
 // single unnamed floor should not be asked to narrow it down.
+//
+// On a surface that is dark regardless of the app theme (the Andon board, TV
+// boards, the player) pass `onDark`, which scopes the shipped dark palette to
+// this element rather than hardcoding a second set of colours — the same
+// mechanism <LastRefreshed/> uses, so the two read alike side by side.
 
 export interface DepartmentFilterProps {
   filter: DepartmentFilterState;
@@ -16,17 +21,19 @@ export interface DepartmentFilterProps {
   matchCount?: number;
   /** Noun for the count, e.g. "work orders". */
   matchNoun?: string;
+  /** Render against a permanently dark surface (Andon board, TV, player). */
+  onDark?: boolean;
   className?: string;
 }
 
 export default function DepartmentFilter({
-  filter, allLabel = 'All departments', matchCount, matchNoun, className = '',
+  filter, allLabel = 'All departments', matchCount, matchNoun, onDark = false, className = '',
 }: DepartmentFilterProps) {
   const { departments, departmentId, setDepartmentId, active, clear } = filter;
   if (departments.length === 0) return null;
 
   return (
-    <div className={`flex items-center gap-2 ${className}`} data-testid="department-filter">
+    <div className={`${onDark ? 'dark ' : ''}flex items-center gap-2 ${className}`} data-testid="department-filter">
       <label className="flex items-center gap-1.5">
         <Building2 size={13} className="text-gray-400" aria-hidden="true" />
         <span className="sr-only">Department</span>

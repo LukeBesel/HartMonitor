@@ -70,4 +70,15 @@ describe('DepartmentFilter', () => {
     render(<DepartmentFilter filter={state()} allLabel="Whole plant" />);
     expect(screen.getByRole('option', { name: 'Whole plant' })).toBeInTheDocument();
   });
+
+  it('scopes the dark palette to itself on permanently dark boards', () => {
+    // The Andon board and the TV screens are dark whatever the app theme is,
+    // so the picker has to opt into the dark tokens locally rather than
+    // rendering light-on-dark there.
+    const { rerender } = render(<DepartmentFilter filter={state()} />);
+    expect(screen.getByTestId('department-filter').className).not.toMatch(/\bdark\b/);
+
+    rerender(<DepartmentFilter filter={state()} onDark />);
+    expect(screen.getByTestId('department-filter').className).toMatch(/\bdark\b/);
+  });
 });
