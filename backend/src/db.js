@@ -1992,6 +1992,43 @@ if (!kaizenCols.includes('idea_number')) {
   db.exec('UPDATE kaizen_ideas SET idea_number = number WHERE idea_number IS NULL');
 }
 
+// ─── CAPA items: columns the routes write but the table never had ─────────────
+// Same bug class as kaizen_ideas above, and worse: POST /api/capa 500'd on
+// EVERY database (`no column named source_ref`) and PUT 500'd on four more, so
+// a customer could not create or edit a single CAPA. Demo data still rendered
+// because the sandbox seed inserts the older column names directly.
+//
+// The route also renamed three fields. Rather than rewrite the route, the new
+// names are added alongside and backfilled from the old ones, so seeded and
+// customer rows keep their containment notes and owners instead of appearing
+// to have lost them. Additive, guarded ALTERs only — nothing is dropped.
+const capaCols = db.prepare('PRAGMA table_info(capa_items)').all().map(c => c.name);
+const CAPA_ADDITIONS = [
+  ['source_ref', "TEXT DEFAULT ''"],
+  ['owner_name', "TEXT DEFAULT ''"],
+  ['root_cause_analysis', "TEXT DEFAULT ''"],
+  ['containment_action', "TEXT DEFAULT ''"],
+  ['verified_by', "TEXT DEFAULT ''"],
+  ['updated_at', 'TEXT'],
+];
+for (const [col, decl] of CAPA_ADDITIONS) {
+  if (!capaCols.includes(col)) db.exec(`ALTER TABLE capa_items ADD COLUMN ${col} ${decl}`);
+}
+// Backfill only on the migration that introduced each column, so a later edit
+// through the UI is never overwritten by its legacy twin.
+if (!capaCols.includes('owner_name')) {
+  db.exec("UPDATE capa_items SET owner_name = COALESCE(assigned_to, '') WHERE COALESCE(owner_name, '') = ''");
+}
+if (!capaCols.includes('root_cause_analysis')) {
+  db.exec("UPDATE capa_items SET root_cause_analysis = COALESCE(root_cause, '') WHERE COALESCE(root_cause_analysis, '') = ''");
+}
+if (!capaCols.includes('containment_action')) {
+  db.exec("UPDATE capa_items SET containment_action = COALESCE(containment, '') WHERE COALESCE(containment_action, '') = ''");
+}
+if (!capaCols.includes('updated_at')) {
+  db.exec('UPDATE capa_items SET updated_at = created_at WHERE updated_at IS NULL');
+}
+
 // ─── SSO OAuth State (persisted so multi-process deployments work) ─────────────
 db.exec(`
   CREATE TABLE IF NOT EXISTS sso_state (

@@ -2,8 +2,17 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { logActivity } = require('../activity');
+const { buildUpdate, nextValue } = require('../patch');
 
 const router = express.Router();
+
+// Columns PUT /capa/:id may write. `verified_at` and `closed_at` are derived
+// from the status transition below, not taken from the client.
+const EDITABLE_COLUMNS = [
+  'title', 'description', 'source', 'type', 'priority', 'status',
+  'department_id', 'owner_name', 'due_date', 'root_cause_analysis',
+  'containment_action', 'corrective_action', 'preventive_action', 'verified_by',
+];
 
 function nextCAPANumber(companyId) {
   const year = new Date().getFullYear();
@@ -96,33 +105,22 @@ router.post('/', (req, res) => {
 router.put('/:id', (req, res) => {
   const capa = ownedCAPA(req);
   if (!capa) return res.status(404).json({ error: 'Not found' });
-  const { title, description, source, type, priority, status, department_id, owner_name, due_date, root_cause_analysis, containment_action, corrective_action, preventive_action, verified_by } = req.body;
-
   const now = new Date().toISOString();
+  // Only the columns the client actually named are written, so un-assigning a
+  // department or clearing a due date sticks instead of being read as "no
+  // opinion" and silently restoring the old value.
+  const { sql, params } = buildUpdate(req.body, EDITABLE_COLUMNS);
+  const status = nextValue(req.body, 'status', capa.status);
+
   let closed_at = capa.closed_at;
   let verified_at = capa.verified_at;
   if (status === 'closed' && capa.status !== 'closed') closed_at = now;
   if (status === 'verification' && capa.status !== 'verification') verified_at = now;
 
-  db.prepare(`
-    UPDATE capa_items SET
-      title = COALESCE(?, title), description = COALESCE(?, description),
-      source = COALESCE(?, source), type = COALESCE(?, type),
-      priority = COALESCE(?, priority), status = COALESCE(?, status),
-      department_id = COALESCE(?, department_id), owner_name = COALESCE(?, owner_name),
-      due_date = COALESCE(?, due_date),
-      root_cause_analysis = COALESCE(?, root_cause_analysis),
-      containment_action = COALESCE(?, containment_action),
-      corrective_action = COALESCE(?, corrective_action),
-      preventive_action = COALESCE(?, preventive_action),
-      verified_by = COALESCE(?, verified_by),
-      verified_at = COALESCE(?, verified_at),
-      closed_at = ?,
-      updated_at = ?
-    WHERE id = ?
-  `).run(title, description, source, type, priority, status, department_id, owner_name, due_date, root_cause_analysis, containment_action, corrective_action, preventive_action, verified_by, verified_at, closed_at, now, req.params.id);
+  db.prepare(`UPDATE capa_items SET ${sql ? sql + ', ' : ''}verified_at = ?, closed_at = ?, updated_at = ? WHERE id = ?`)
+    .run(...params, verified_at, closed_at, now, req.params.id);
 
-  if (status && status !== capa.status) {
+  if (status !== capa.status) {
     logActivity(req.companyId, 'capa', req.params.id, `Status changed to ${status}`, req.user?.display_name);
   }
   res.json(capaWithDetails(req.params.id, req.companyId));
