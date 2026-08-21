@@ -94,7 +94,9 @@ router.post('/ncrs', (req, res) => {
   const {
     title, description = '', severity = 'minor', source = 'production',
     app_id, completion_id, work_order_id, item_id,
-    assigned_to = '', due_date
+    assigned_to = '', due_date,
+    // In-run quality reports (player batch): supervisor authorization + step link.
+    authorized_by = '', authorized_by_user_id, step_name = '',
   } = req.body;
   if (!title) return res.status(400).json({ error: 'title required' });
   if (!['minor', 'major', 'critical'].includes(severity)) {
@@ -104,15 +106,18 @@ router.post('/ncrs', (req, res) => {
   const id = uuidv4();
   const ncr_number = nextNCRNumber(cid);
   db.prepare(`
-    INSERT INTO ncrs (id, ncr_number, title, description, severity, status, source, app_id, completion_id, work_order_id, item_id, assigned_to, due_date, company_id)
-    VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO ncrs (id, ncr_number, title, description, severity, status, source, app_id, completion_id, work_order_id, item_id, assigned_to, due_date, company_id, authorized_by, authorized_by_user_id, step_name)
+    VALUES (?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, ncr_number, title, description, severity, source,
     ownedOrNull('apps', app_id, cid),
     ownedOrNull('completions', completion_id, cid),
     ownedOrNull('work_orders', work_order_id, cid),
     ownedOrNull('items', item_id, cid),
-    assigned_to, due_date || null, cid
+    assigned_to, due_date || null, cid,
+    String(authorized_by || ''),
+    ownedOrNull('users', authorized_by_user_id, cid),
+    String(step_name || '')
   );
   logActivity(cid, 'ncr', id, 'NCR created', req.user?.display_name);
 

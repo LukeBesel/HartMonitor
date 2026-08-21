@@ -2082,5 +2082,33 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_completion_values_var ON completion_values(company_id, app_id, variable_name, recorded_at);
 `);
 
+// ─── Player batch: multi-operator run sessions + NCR authorization (additive) ─
+// completion_sessions: one row per operator stint on a completion (open a row on
+// run start/resume, close it on pause-and-leave / abandon / complete). ncrs gains
+// supervisor-authorization columns for in-run quality reports. All guarded.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS completion_sessions (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    completion_id TEXT NOT NULL REFERENCES completions(id) ON DELETE CASCADE,
+    operator_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+    operator_name TEXT NOT NULL DEFAULT '',
+    started_at TEXT DEFAULT (datetime('now')),
+    ended_at TEXT,
+    handoff_comment TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_completion_sessions_completion
+    ON completion_sessions(completion_id, started_at);
+  CREATE INDEX IF NOT EXISTS idx_completion_sessions_company
+    ON completion_sessions(company_id, ended_at);
+`);
+{
+  const ncrCols = db.prepare('PRAGMA table_info(ncrs)').all().map(r => r.name);
+  if (!ncrCols.includes('authorized_by'))         db.exec("ALTER TABLE ncrs ADD COLUMN authorized_by TEXT DEFAULT ''");
+  if (!ncrCols.includes('authorized_by_user_id')) db.exec('ALTER TABLE ncrs ADD COLUMN authorized_by_user_id TEXT');
+  if (!ncrCols.includes('step_name'))             db.exec("ALTER TABLE ncrs ADD COLUMN step_name TEXT DEFAULT ''");
+}
+
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;

@@ -21,16 +21,34 @@ function resolveDepartmentId(completion) {
 }
 
 router.get('/', (req, res) => {
-  const { limit = 50, status, operator_name } = req.query;
+  const { limit = 50, status, operator_name, app_id } = req.query;
   let query = 'SELECT * FROM completions WHERE company_id = ?';
   const params = [req.companyId];
   if (status) { query += ' AND status = ?'; params.push(status); }
   if (operator_name) { query += ' AND operator_name = ?'; params.push(operator_name); }
+  if (app_id) { query += ' AND app_id = ?'; params.push(app_id); }
   query += ' ORDER BY started_at DESC LIMIT ?';
   // Guard against NaN (better-sqlite3 throws on NaN bindings) and cap the page size.
   params.push(Math.min(Math.max(parseInt(limit, 10) || 50, 1), 500));
   const completions = db.prepare(query).all(...params);
-  res.json(completions.map(c => ({ ...c, data: JSON.parse(c.data), step_times: JSON.parse(c.step_times) })));
+  // Jobs-in-progress listing (player setup screen): attach the most recent
+  // operator session per run so the picker can show who touched it last, when,
+  // and any handoff comment left for the next operator.
+  const attachLastSession = status === 'in_progress';
+  const lastSessionStmt = attachLastSession
+    ? db.prepare(`
+        SELECT operator_name, operator_user_id, started_at, ended_at, handoff_comment
+        FROM completion_sessions
+        WHERE completion_id = ? AND company_id = ?
+        ORDER BY started_at DESC, rowid DESC LIMIT 1
+      `)
+    : null;
+  res.json(completions.map(c => ({
+    ...c,
+    data: JSON.parse(c.data),
+    step_times: JSON.parse(c.step_times),
+    ...(attachLastSession ? { last_session: lastSessionStmt.get(c.id, req.companyId) || null } : {}),
+  })));
 });
 
 router.post('/', (req, res) => {
@@ -117,6 +135,16 @@ router.put('/:id', (req, res) => {
     if (problem) return res.status(400).json({ error: problem });
   }
 
+  // Preserve the server-maintained _operators roster (multi-operator sessions)
+  // when a client flushes a data blob that doesn't carry it. Never invents the
+  // key — blobs without prior _operators are written exactly as sent.
+  if (data && typeof data === 'object' && !Array.isArray(data) && data._operators === undefined) {
+    try {
+      const prev = JSON.parse(completion.data);
+      if (prev && Array.isArray(prev._operators)) data._operators = prev._operators;
+    } catch { /* unparsable legacy blob — leave as sent */ }
+  }
+
   // partial:true = autosave flush — it must never flip the run's status.
   const effectiveStatus = partial === true ? completion.status : status;
 
@@ -195,6 +223,104 @@ router.get('/:id/values', (req, res) => {
     ORDER BY recorded_at ASC, step_id ASC, widget_id ASC
   `).all(req.params.id, req.companyId);
   res.json(rows);
+});
+
+// ─── Player batch: multi-operator sessions on a completion ────────────────────
+// A completion_sessions row is one operator's stint on a run. The player opens
+// a session on start/resume and closes it on pause-and-leave, abandon, or
+// complete (optionally leaving a handoff comment for the next operator). All
+// routes are company-scoped; cross-tenant completion ids 404 like everywhere else.
+
+const listSessionsStmt = () => db.prepare(`
+  SELECT * FROM completion_sessions
+  WHERE completion_id = ? AND company_id = ?
+  ORDER BY started_at ASC, rowid ASC
+`);
+
+// GET /:id — one completion, with its operator sessions attached.
+router.get('/:id', (req, res) => {
+  const completion = db.prepare('SELECT * FROM completions WHERE id = ? AND company_id = ?')
+    .get(req.params.id, req.companyId);
+  if (!completion) return res.status(404).json({ error: 'Not found' });
+  const sessions = listSessionsStmt().all(req.params.id, req.companyId);
+  res.json({
+    ...completion,
+    data: JSON.parse(completion.data),
+    step_times: JSON.parse(completion.step_times),
+    sessions,
+  });
+});
+
+// POST /:id/sessions — open a session (run start or resume by any operator).
+// Body: { operator_name, operator_user_id? }. Any still-open session on the run
+// is closed first (tablet crash / battery death must never wedge a job), so at
+// most one session per completion is ever open.
+router.post('/:id/sessions', (req, res) => {
+  const completion = db.prepare('SELECT * FROM completions WHERE id = ? AND company_id = ?')
+    .get(req.params.id, req.companyId);
+  if (!completion) return res.status(404).json({ error: 'Not found' });
+  const { operator_name, operator_user_id } = req.body || {};
+  if (!operator_name || typeof operator_name !== 'string' || !operator_name.trim()) {
+    return res.status(400).json({ error: 'operator_name required' });
+  }
+  // Verified identity must belong to this company or it is dropped (spoof guard).
+  const safeUserId = operator_user_id
+    ? (db.prepare('SELECT id FROM users WHERE id = ? AND company_id = ?').get(operator_user_id, req.companyId) ? operator_user_id : null)
+    : null;
+
+  const id = uuidv4();
+  const open = db.transaction(() => {
+    db.prepare(`
+      UPDATE completion_sessions SET ended_at = datetime('now')
+      WHERE completion_id = ? AND company_id = ? AND ended_at IS NULL
+    `).run(completion.id, req.companyId);
+    db.prepare(`
+      INSERT INTO completion_sessions (id, company_id, completion_id, operator_user_id, operator_name)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, req.companyId, completion.id, safeUserId, operator_name.trim());
+
+    // Dual-write the distinct operator roster into completions.data._operators
+    // so the legacy blob (exports, history views) knows every hand on the unit.
+    let data;
+    try { data = JSON.parse(completion.data); } catch { data = {}; }
+    if (!data || typeof data !== 'object' || Array.isArray(data)) data = {};
+    const names = Array.isArray(data._operators) ? data._operators.map(String) : [];
+    if (!names.includes(operator_name.trim())) names.push(operator_name.trim());
+    data._operators = names;
+    db.prepare('UPDATE completions SET data = ? WHERE id = ?').run(JSON.stringify(data), completion.id);
+  });
+  open();
+
+  logActivity(req.companyId, 'completion', completion.id,
+    `${operator_name.trim()} joined ${completion.app_name}`, operator_name.trim(), {
+      department_id: resolveDepartmentId(completion),
+      station_id: completion.station_id || null,
+    });
+
+  const session = db.prepare('SELECT * FROM completion_sessions WHERE id = ?').get(id);
+  res.status(201).json(session);
+});
+
+// PUT /:id/sessions/close — close the run's open session (pause-and-leave,
+// abandon, or complete). Body: { handoff_comment? } — shown to the next
+// operator as a banner when they resume the job.
+router.put('/:id/sessions/close', (req, res) => {
+  const completion = db.prepare('SELECT id FROM completions WHERE id = ? AND company_id = ?')
+    .get(req.params.id, req.companyId);
+  if (!completion) return res.status(404).json({ error: 'Not found' });
+  const { handoff_comment } = req.body || {};
+  const open = db.prepare(`
+    SELECT id FROM completion_sessions
+    WHERE completion_id = ? AND company_id = ? AND ended_at IS NULL
+    ORDER BY started_at DESC, rowid DESC LIMIT 1
+  `).get(completion.id, req.companyId);
+  if (!open) return res.status(404).json({ error: 'No open session for this run' });
+  db.prepare(`
+    UPDATE completion_sessions
+    SET ended_at = datetime('now'), handoff_comment = ?
+    WHERE id = ?
+  `).run(typeof handoff_comment === 'string' ? handoff_comment : '', open.id);
+  res.json(db.prepare('SELECT * FROM completion_sessions WHERE id = ?').get(open.id));
 });
 
 module.exports = router;
