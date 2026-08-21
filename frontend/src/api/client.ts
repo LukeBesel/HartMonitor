@@ -4,6 +4,9 @@ import type {
   Site, NotificationPrefs, NotificationLogEntry, RolePermissionMap, ApiKey, Webhook, WebhookDelivery,
   AuditLogEntry, SSOProviderInfo,
   InventoryTrackerSummary, InventoryMovement,
+  App, Step, StepGroup, AppVariable,
+  BOM, BOMLine, Kit, KitLine, KitLineStatus,
+  CompletionValue, CompletionValueInput,
 } from '../types';
 
 const BASE = '/api';
@@ -29,6 +32,45 @@ function filterQS(f?: AnalyticsFilters, extra?: Record<string, string | number>)
   if (f?.department_id) qs.set('department_id', f.department_id);
   const s = qs.toString();
   return s ? `?${s}` : '';
+}
+
+// ── App-platform v2 payload shapes (spec §7) ─────────────────────────────────
+
+/** Whole-blob save payload for PUT /api/apps/:id — v2 adds step_groups,
+ *  schema_version alongside the existing fields (all optional / additive). */
+export interface AppSavePayload {
+  name?: string; description?: string; status?: 'draft' | 'published';
+  steps?: Step[]; variables?: AppVariable[];
+  step_groups?: StepGroup[]; schema_version?: number;
+  department_id?: string | null; site_id?: string | null; station_id?: string | null;
+  show_takt_warnings?: number | boolean;
+}
+
+/** Line input for PUT /api/boms/:id (draft only — server replaces lines). */
+export interface BOMLineInput {
+  id?: string; item_id: string; qty_per: number;
+  unit?: string; reference?: string; step_id?: string;
+  scan_code?: string; sort_order?: number; notes?: string;
+}
+
+/** Body for PUT /api/kits/:kitId/lines/:lineId. */
+export interface KitLineUpdate {
+  status: KitLineStatus;
+  qty_picked?: number;
+  short_reason?: string;
+  actor?: string;
+}
+
+/** Flush payload for PUT /api/completions/:id — dual-writes legacy data/
+ *  step_times and upserts structured completion_values. partial:true never
+ *  flips status (autosave). */
+export interface CompletionFlushPayload {
+  data?: Record<string, unknown>;
+  step_times?: Record<string, number>;
+  values?: CompletionValueInput[];
+  partial?: boolean;
+  status?: 'in_progress' | 'completed' | 'abandoned';
+  takt_exceeded_steps?: number[];
 }
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -105,6 +147,58 @@ export const api = {
   updateCompletion: (id: string, data: any) => request<any>(`/completions/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   getAppHistory: (appId: string, page = 1, limit = 25) =>
     request<any>(`/completions/app/${appId}/history?page=${page}&limit=${limit}`),
+
+  // ── App-platform v2: typed app save (rides the existing PUT /api/apps/:id
+  //    whole-blob endpoint; adds step_groups / schema_version / variables)
+  saveApp: (id: string, data: AppSavePayload) =>
+    request<App>(`/apps/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+
+  // ── App-platform v2: structured completion capture
+  // Flush the player's values buffer (autosave / step change / complete).
+  flushCompletion: (id: string, data: CompletionFlushPayload) =>
+    request<any>(`/completions/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  getCompletionValues: (id: string) =>
+    request<CompletionValue[]>(`/completions/${id}/values`),
+
+  // ── BOMs (per product type, versioned)
+  getBOMs: (params?: { product_type_id?: string; app_id?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.product_type_id) qs.set('product_type_id', params.product_type_id);
+    if (params?.app_id)          qs.set('app_id', params.app_id);
+    const s = qs.toString();
+    return request<BOM[]>(`/boms${s ? `?${s}` : ''}`);
+  },
+  createBOM: (data: { product_type_id: string; notes?: string }) =>
+    request<BOM>('/boms', { method: 'POST', body: JSON.stringify(data) }),
+  getBOM: (id: string) => request<BOM>(`/boms/${id}`),
+  updateBOM: (id: string, data: { lines: BOMLineInput[]; notes?: string }) =>
+    request<BOM>(`/boms/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  activateBOM: (id: string) => request<BOM>(`/boms/${id}/activate`, { method: 'POST' }),
+  newBOMVersion: (id: string) => request<BOM>(`/boms/${id}/new-version`, { method: 'POST' }),
+  deleteBOM: (id: string) => request<any>(`/boms/${id}`, { method: 'DELETE' }),
+  // WO → product_type → active BOM + lines; 404 {code:'NO_BOM'} when absent.
+  resolveBOM: (workOrderId: string) =>
+    request<BOM & { lines: BOMLine[] }>(`/boms/resolve?work_order_id=${encodeURIComponent(workOrderId)}`),
+
+  // ── Kits (one per work order, generated from the active BOM)
+  generateKit: (data: { work_order_id: string; location_id?: string }) =>
+    request<Kit>('/kits/generate', { method: 'POST', body: JSON.stringify(data) }),
+  getKits: (params?: { work_order_id?: string; status?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.work_order_id) qs.set('work_order_id', params.work_order_id);
+    if (params?.status)        qs.set('status', params.status);
+    const s = qs.toString();
+    return request<Kit[]>(`/kits${s ? `?${s}` : ''}`);
+  },
+  getKit: (id: string) => request<Kit & { lines: KitLine[] }>(`/kits/${id}`),
+  updateKitLine: (kitId: string, lineId: string, data: KitLineUpdate) =>
+    request<{ line: KitLine; kit_status: string }>(`/kits/${kitId}/lines/${lineId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  verifyKit: (id: string) => request<Kit>(`/kits/${id}/verify`, { method: 'POST' }),
+  deleteKit: (id: string) => request<any>(`/kits/${id}`, { method: 'DELETE' }),
+
+  // ── Operator badge/PIN login for player attribution
+  badgeLogin: (payload: { badge_code?: string; pin?: string }) =>
+    request<{ user_id: string; display_name: string }>('/operators/badge-login', { method: 'POST', body: JSON.stringify(payload) }),
 
   // ── Tables
   getTables: () => request<any[]>('/tables'),
