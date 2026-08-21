@@ -17,9 +17,11 @@ router.post('/', (req, res) => {
   if (!name) return res.status(400).json({ error: 'name required' });
 
   // Plan limit check — base tier limit plus purchased add-on slots
+  // (skipped entirely during early access — no limits while EARLY_ACCESS is on)
+  const { config: appCfg } = require('../config');
   const { getPlanRow } = require('./config');
   const plan = getPlanRow(req.companyId);
-  if (plan && plan.dashboard_limit >= 0) {
+  if (!appCfg.earlyAccess && plan && plan.dashboard_limit >= 0) {
     const effectiveLimit = plan.dashboard_limit + (plan.extra_dashboard_slots || 0);
     const count = db.prepare('SELECT COUNT(*) as c FROM dashboards WHERE company_id = ?').get(req.companyId).c;
     if (count >= effectiveLimit) {

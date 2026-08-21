@@ -43,30 +43,34 @@ export function PlanProvider({ children }: { children: ReactNode }) {
     else { setPlan(null); setLoading(false); }
   }, [user, refresh]);
 
-  const isPro        = plan?.tier === 'pro' || plan?.tier === 'enterprise';
-  const isEnterprise = plan?.tier === 'enterprise';
-  const isFree       = plan?.tier === 'free' || !plan;
-  const tier         = (plan?.tier ?? 'free') as 'free' | 'pro' | 'enterprise';
+  // Early access: the whole product is unlocked for every account. The backend
+  // sends early_access on the plan payload while EARLY_ACCESS is on.
+  const earlyAccess = (plan as any)?.early_access === true;
+
+  const isPro        = earlyAccess || plan?.tier === 'pro' || plan?.tier === 'enterprise';
+  const isEnterprise = earlyAccess || plan?.tier === 'enterprise';
+  const isFree       = !earlyAccess && (plan?.tier === 'free' || !plan);
+  const tier         = earlyAccess ? 'enterprise' : ((plan?.tier ?? 'free') as 'free' | 'pro' | 'enterprise');
 
   // Effective limits include purchased à-la-carte add-on slots
   const appLimit  = plan?.effective_app_limit ?? plan?.app_limit ?? -1;
   const dashLimit = plan?.effective_dashboard_limit ?? plan?.dashboard_limit ?? -1;
-  const canCreateApp = !plan || appLimit < 0 || (plan.app_count ?? 0) < appLimit;
-  const canCreateDashboard = !plan || dashLimit < 0 || (plan.dashboard_count ?? 0) < dashLimit;
+  const canCreateApp = earlyAccess || !plan || appLimit < 0 || (plan.app_count ?? 0) < appLimit;
+  const canCreateDashboard = earlyAccess || !plan || dashLimit < 0 || (plan.dashboard_count ?? 0) < dashLimit;
 
   // Always show all modules so customers can see what's available and upgrade
   // per-module. Locked items show an upgrade prompt instead of being hidden.
   const showProFeatures = true;
 
-  // Trial status
+  // Trial status — suppressed entirely during early access (nothing to count down)
   const trialEndsAt = (plan as any)?.trial_ends_at ? new Date((plan as any).trial_ends_at) : null;
-  const isOnTrial = trialEndsAt ? trialEndsAt > new Date() : false;
+  const isOnTrial = !earlyAccess && (trialEndsAt ? trialEndsAt > new Date() : false);
   const trialDaysRemaining = isOnTrial && trialEndsAt
     ? Math.max(0, Math.ceil((trialEndsAt.getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
     : 0;
 
-  // Payment status
-  const isPastDue = (plan as any)?.subscription_status === 'past_due';
+  // Payment status — never past-due while everything is free
+  const isPastDue = !earlyAccess && (plan as any)?.subscription_status === 'past_due';
 
   // Active = paid subscription or on trial
   const isActive = isPro || isOnTrial;
