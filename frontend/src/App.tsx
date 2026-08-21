@@ -33,6 +33,7 @@ const StationView      = lazy(() => import('./pages/StationView'));
 const ManagerView      = lazy(() => import('./pages/ManagerView'));
 const CompletionDetail = lazy(() => import('./pages/CompletionDetail'));
 const AppHistory       = lazy(() => import('./pages/AppHistory'));
+const AppAnalytics     = lazy(() => import('./pages/AppAnalytics'));
 const StepMetrics      = lazy(() => import('./pages/StepMetrics'));
 const CapacityPlanning = lazy(() => import('./pages/CapacityPlanning'));
 const OperatorPortal   = lazy(() => import('./pages/OperatorPortal'));
@@ -150,6 +151,7 @@ export default function App() {
                 <Route path="/apps" element={<ModuleGate module="apps"><AppsLibrary /></ModuleGate>} />
                 <Route path="/apps/:id/build" element={<ModuleGate module="apps"><AppBuilder /></ModuleGate>} />
                 <Route path="/apps/:id/history" element={<ModuleGate module="apps"><AppHistory /></ModuleGate>} />
+                <Route path="/apps/:id/analytics" element={<ModuleGate module="apps"><AppAnalytics /></ModuleGate>} />
                 <Route path="/tables" element={<ModuleGate module="apps"><Tables /></ModuleGate>} />
                 <Route path="/tables/:id" element={<ModuleGate module="apps"><TableDetail /></ModuleGate>} />
                 <Route path="/analytics" element={<Analytics />} />

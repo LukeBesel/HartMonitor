@@ -205,9 +205,14 @@ export default function AppHistory() {
             <p className="text-gray-500 text-xs mt-0.5">Completion History</p>
           </div>
         </div>
-        <Link to={`/play/${appId}`} className="btn-primary">
-          <Play size={14} /> Run App
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link to={`/apps/${appId}/analytics`} className="btn-secondary">
+            <BarChart2 size={14} /> Analytics
+          </Link>
+          <Link to={`/play/${appId}`} className="btn-primary">
+            <Play size={14} /> Run App
+          </Link>
+        </div>
       </div>
 
       {/* Summary Stats */}
