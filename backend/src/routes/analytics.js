@@ -7,14 +7,53 @@ const { teamOf: andonTeamOf, teamLabel: andonTeamLabel } = require('../andonTeam
 const router = express.Router();
 
 // ─── Filter helper ────────────────────────────────────────────────────────────
-// Builds an optional `AND app_id = ? AND product_type_id = ?` clause from the
-// query string so completion-based analytics can be scoped to a specific app
-// and/or product (part) type. Returns the SQL fragment plus ordered params.
+// Builds an optional `AND …` clause from the query string so completion-based
+// analytics can be scoped to a specific app, product (part) type and/or
+// department. Returns the SQL fragment plus ordered params.
+//
+// The fragment is spliced into whatever query the caller wrote, so every column
+// it names must exist on `completions` itself (`app_id`, `product_type_id`,
+// `work_order_id`, `station_id`) and must be written WITHOUT a table qualifier —
+// callers alias the table differently (or not at all), and a qualifier that does
+// not match the caller's alias is a 500 on a page a customer is reading.
+//
+// `completions` has no department_id. A completion belongs to its work order's
+// department, falling back to its station's department when the work order has
+// none (or there is no work order at all) — the same rule the joined queries
+// further down this file express as COALESCE(wo.department_id, st.department_id).
+// Here it is written as uncorrelated sub-selects over the id sets, which keeps
+// the fragment alias-agnostic (no outer table reference) and lets both
+// sub-selects carry `company_id = ?`, so a department id belonging to another
+// tenant matches nothing instead of widening the result.
+//
+// A completion with neither a work order nor a station has no department at all:
+// `station_id IN (…)` is NULL for it, so it is excluded from every specific
+// department — it can only ever appear in the unfiltered, plant-wide view. Same
+// for a completion whose work order carries no department and whose station
+// carries none. Nothing is silently filed under whichever department is on
+// screen.
+const DEPARTMENT_COMPLETION_CLAUSE = `(
+    work_order_id IN (SELECT id FROM work_orders WHERE company_id = ? AND department_id = ?)
+    OR (
+      (work_order_id IS NULL
+       OR work_order_id NOT IN (SELECT id FROM work_orders WHERE company_id = ? AND department_id IS NOT NULL))
+      AND station_id IN (SELECT id FROM stations WHERE company_id = ? AND department_id = ?)
+    )
+  )`;
+
 function completionFilter(req) {
   const clauses = [];
   const params = [];
   if (req.query.app_id) { clauses.push('app_id = ?'); params.push(req.query.app_id); }
   if (req.query.product_type_id) { clauses.push('product_type_id = ?'); params.push(req.query.product_type_id); }
+  if (req.query.department_id) {
+    clauses.push(DEPARTMENT_COMPLETION_CLAUSE);
+    params.push(
+      req.companyId, req.query.department_id,   // work order's own department
+      req.companyId,                            // …unless that work order has none
+      req.companyId, req.query.department_id,   // …then fall back to the station's
+    );
+  }
   return { clause: clauses.length ? ' AND ' + clauses.join(' AND ') : '', params };
 }
 
@@ -158,6 +197,14 @@ router.get('/quality', (req, res) => {
 // ─── GET /manager-view ────────────────────────────────────────────────────────
 
 router.get('/manager-view', (req, res) => {
+  // Optional site scope, same convention as /plant-view and GET /departments:
+  // a record with no site belongs to the whole company and stays visible under
+  // every site, so selecting the auto-created primary site never empties the
+  // page for a company that has never used sites.
+  const { site_id } = req.query;
+  const siteClause = site_id ? ' AND (site_id = ? OR site_id IS NULL)' : '';
+  const siteParams = site_id ? [site_id] : [];
+
   // Active (in-progress) completions joined with app and work order info
   const activeCompletions = db.prepare(`
     SELECT
@@ -171,10 +218,11 @@ router.get('/manager-view', (req, res) => {
     FROM completions c
     LEFT JOIN apps        a  ON a.id  = c.app_id
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
+    LEFT JOIN stations    st ON st.id = c.station_id
     LEFT JOIN departments d  ON d.id  = wo.department_id
-    WHERE c.company_id = ? AND c.status = 'in_progress'
+    WHERE c.company_id = ? AND c.status = 'in_progress'${site_id ? ' AND (COALESCE(wo.site_id, st.site_id) = ? OR COALESCE(wo.site_id, st.site_id) IS NULL)' : ''}
     ORDER BY c.started_at DESC
-  `).all(req.companyId);
+  `).all(req.companyId, ...siteParams);
 
   // All non-cancelled work orders enriched with schedule_status
   const allWorkOrders = db.prepare(`
@@ -186,9 +234,9 @@ router.get('/manager-view', (req, res) => {
     FROM work_orders wo
     LEFT JOIN departments d ON d.id = wo.department_id
     LEFT JOIN apps        a ON a.id = wo.app_id
-    WHERE wo.company_id = ? AND wo.status != 'cancelled'
+    WHERE wo.company_id = ? AND wo.status != 'cancelled'${site_id ? ' AND (wo.site_id = ? OR wo.site_id IS NULL)' : ''}
     ORDER BY wo.priority DESC, wo.scheduled_end ASC
-  `).all(req.companyId);
+  `).all(req.companyId, ...siteParams);
 
   const workOrders = allWorkOrders.map(wo => ({
     ...wo,
@@ -196,8 +244,10 @@ router.get('/manager-view', (req, res) => {
     completion_pct: wo.quantity > 0 ? Math.round((wo.quantity_completed / wo.quantity) * 100) : 0,
   }));
 
-  // Per-department stats
-  const depts = db.prepare('SELECT * FROM departments WHERE company_id = ?').all(req.companyId);
+  // Per-department stats. Scoped to the requested site as well as the company —
+  // without the site filter a multi-site tenant read another site's departments
+  // in its Department Summary (empty rows for departments it cannot see).
+  const depts = db.prepare(`SELECT * FROM departments WHERE company_id = ?${siteClause}`).all(req.companyId, ...siteParams);
   const departmentStats = depts.map(dept => {
     const deptWOs = workOrders.filter(wo => wo.department_id === dept.id);
     const activeCount   = deptWOs.filter(wo => wo.status === 'in_progress').length;

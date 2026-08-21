@@ -493,6 +493,8 @@ export interface AndonSummary {
   by_team: Record<string, number>;
   avg_response_seconds_today: number | null;
   responded_today: number;
+  /** The department these numbers cover, or null when they are plant-wide. */
+  department_id?: string | null;
 }
 
 // ── Department membership (who receives a department's alerts) ────────────────

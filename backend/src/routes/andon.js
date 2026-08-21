@@ -120,32 +120,47 @@ router.get('/teams', (_req, res) => {
 
 // ─── GET /andon/summary ────────────────────────────────────────────────────────
 
+// Optional ?department_id=… scopes every number here to one department, exactly
+// as GET /andon scopes the list (same column, `andon_calls.department_id`), so
+// the board's KPI cards and team badges can be read as that department's rather
+// than the plant's. Without the parameter the counts stay company-wide.
+// The `company_id = ?` on every statement still bounds the query, so a
+// department id from another tenant matches nothing instead of widening it.
+
 router.get('/summary', (req, res) => {
   const today = new Date().toISOString().slice(0, 10);
-  const open = db.prepare("SELECT COUNT(*) as n FROM andon_calls WHERE company_id = ? AND status = 'open'").get(req.companyId).n;
-  const critical = db.prepare("SELECT COUNT(*) as n FROM andon_calls WHERE company_id = ? AND status = 'open' AND priority = 'critical'").get(req.companyId).n;
-  const acknowledged = db.prepare("SELECT COUNT(*) as n FROM andon_calls WHERE company_id = ? AND status = 'acknowledged'").get(req.companyId).n;
-  const resolved_today = db.prepare("SELECT COUNT(*) as n FROM andon_calls WHERE company_id = ? AND status = 'resolved' AND date(resolved_at) = ?").get(req.companyId, today).n;
-  const byType = db.prepare("SELECT type, COUNT(*) as n FROM andon_calls WHERE company_id = ? AND status != 'resolved' GROUP BY type").all(req.companyId);
+  const deptId = req.query.department_id || null;
+  const dept = deptId ? ' AND department_id = ?' : '';
+  const deptParams = deptId ? [deptId] : [];
+  const cid = req.companyId;
+
+  const open = db.prepare(`SELECT COUNT(*) as n FROM andon_calls WHERE company_id = ? AND status = 'open'${dept}`).get(cid, ...deptParams).n;
+  const critical = db.prepare(`SELECT COUNT(*) as n FROM andon_calls WHERE company_id = ? AND status = 'open' AND priority = 'critical'${dept}`).get(cid, ...deptParams).n;
+  const acknowledged = db.prepare(`SELECT COUNT(*) as n FROM andon_calls WHERE company_id = ? AND status = 'acknowledged'${dept}`).get(cid, ...deptParams).n;
+  const resolved_today = db.prepare(`SELECT COUNT(*) as n FROM andon_calls WHERE company_id = ? AND status = 'resolved' AND date(resolved_at) = ?${dept}`).get(cid, today, ...deptParams).n;
+  const byType = db.prepare(`SELECT type, COUNT(*) as n FROM andon_calls WHERE company_id = ? AND status != 'resolved'${dept} GROUP BY type`).all(cid, ...deptParams);
   const by_type = Object.fromEntries(byType.map(r => [r.type, r.n]));
 
   // Live per-team load + today's median-ish response time (mean, in seconds).
   const teamRows = db.prepare(`
-    SELECT type, team, status FROM andon_calls WHERE company_id = ? AND status != 'resolved'
-  `).all(req.companyId);
+    SELECT type, team, status FROM andon_calls WHERE company_id = ? AND status != 'resolved'${dept}
+  `).all(cid, ...deptParams);
   const by_team = Object.fromEntries(Object.keys(TEAMS).map(t => [t, 0]));
   for (const r of teamRows) by_team[teamOf(r)] = (by_team[teamOf(r)] || 0) + 1;
 
   const respRow = db.prepare(`
     SELECT AVG((julianday(acknowledged_at) - julianday(created_at)) * 86400) AS avg_s, COUNT(*) AS n
     FROM andon_calls
-    WHERE company_id = ? AND acknowledged_at IS NOT NULL AND date(created_at) = ?
-  `).get(req.companyId, today);
+    WHERE company_id = ? AND acknowledged_at IS NOT NULL AND date(created_at) = ?${dept}
+  `).get(cid, today, ...deptParams);
 
   res.json({
     open, critical, acknowledged, resolved_today, by_type, by_team,
     avg_response_seconds_today: respRow?.n ? Math.round(respRow.avg_s) : null,
     responded_today: respRow?.n ?? 0,
+    // Echoed so a caller (and the board) can tell a scoped payload from a
+    // plant-wide one without re-deriving it from its own state.
+    department_id: deptId,
   });
 });
 

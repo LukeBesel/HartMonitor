@@ -82,6 +82,7 @@ export default function Analytics() {
 
   const hasFilters = !!appId || !!productTypeId || !!departmentId;
   const clearFilters = () => { setAppId(''); setProductTypeId(''); setDepartmentId(''); setDrillAppId(''); };
+  const selectedDeptName = departments.find((d: any) => d.id === departmentId)?.name;
 
   // When the department changes, reset the operation drill-down selection.
   useEffect(() => { setDrillAppId(''); }, [departmentId]);
@@ -181,7 +182,11 @@ export default function Analytics() {
         )}
         <div className="ml-auto text-xs text-gray-400">
           {hasFilters
-            ? `Showing ${apps.find(a => a.id === appId)?.name ?? 'all apps'}${productTypeId ? ` · ${productTypes.find(p => p.id === productTypeId)?.name}` : ''}`
+            ? `Showing ${[
+                apps.find(a => a.id === appId)?.name ?? 'all apps',
+                productTypeId ? productTypes.find(p => p.id === productTypeId)?.name : null,
+                selectedDeptName,
+              ].filter(Boolean).join(' · ')}`
             : 'Showing all production data'}
         </div>
       </div>
@@ -208,9 +213,14 @@ export default function Analytics() {
                 .map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           </div>
+          {/* Step timing comes from GET /analytics/step-metrics/:appId, which is
+              per-operation and takes no department parameter — it reads every run
+              of the chosen operation. Saying so beats letting the panel sit under
+              a department filter looking like it obeyed it. */}
           {departmentId && (
-            <span className="text-xs text-gray-400">
-              in {departments.find((d: any) => d.id === departmentId)?.name ?? 'this department'}
+            <span className="flex items-center gap-1.5 text-xs text-amber-600">
+              <AlertTriangle size={12} className="shrink-0" />
+              All runs of this operation — not narrowed to {selectedDeptName ?? 'the selected department'}
             </span>
           )}
           {drillAppId && (
