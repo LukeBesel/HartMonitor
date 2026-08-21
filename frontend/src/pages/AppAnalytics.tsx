@@ -2,10 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api, AppAnalyticsResponse, AppAnalyticsField, AppAnalyticsParams } from '../api/client';
 import { useToast } from '../context/ToastContext';
+import { useAuth } from '../context/AuthContext';
+import { markTrainingDataSeen } from '../components/apps/useAppTraining';
+import { useCoachDocked } from '../components/apps/AppTrainingCoach';
 import {
   ArrowLeft, Play, Activity, Clock, CheckCircle2, XCircle, TrendingUp,
   Download, Database, BarChart2, Calendar, User, Package, ChevronRight,
-  SlidersHorizontal, RefreshCw, Type, Hash, ListChecks, History,
+  SlidersHorizontal, RefreshCw, Type, Hash, ListChecks, History, Info,
 } from 'lucide-react';
 import {
   ResponsiveContainer, BarChart, Bar, LineChart, Line, XAxis, YAxis,
@@ -75,6 +78,9 @@ export default function AppAnalytics() {
   const { id: appId } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { addToast } = useToast();
+  const { user } = useAuth();
+  // Leave the floating training coach a lane instead of covering a chart.
+  const coachDocked = useCoachDocked();
 
   const [days, setDays] = useState(30);
   const [operator, setOperator] = useState('');
@@ -105,6 +111,12 @@ export default function AppAnalytics() {
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
   }, [appId, filterParams]);
+
+  // Looking at what a run captured is the last milestone of the builder-first
+  // training — and it is only true once there is something here to look at.
+  useEffect(() => {
+    if ((data?.totals.runs ?? 0) > 0) markTrainingDataSeen(user?.id);
+  }, [data?.totals.runs, user?.id]);
 
   // App takt (sum of per-step takt) for the "avg cycle vs takt" comparison.
   // stepTaktSeconds also reads the legacy `takt_time` key — apps built before
@@ -185,7 +197,7 @@ export default function AppAnalytics() {
   const durationData = seriesData.filter(s => s.avg_duration_s !== null);
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] p-6 space-y-6">
+    <div className={`min-h-screen bg-[#f8fafc] p-6 space-y-6 transition-[padding] ${coachDocked ? 'lg:pr-[392px]' : ''}`}>
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-4">
         <div className="flex items-center gap-3">
@@ -202,6 +214,9 @@ export default function AppAnalytics() {
           </div>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <Link to={`/apps/${appId}`} className="btn-secondary">
+            <Info size={14} /> App details
+          </Link>
           <Link to={`/apps/${appId}/history`} className="btn-secondary">
             <History size={14} /> History
           </Link>

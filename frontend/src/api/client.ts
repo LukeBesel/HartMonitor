@@ -1002,6 +1002,19 @@ export const api = {
   /** This app's in_progress runs for the setup screen's "Jobs in progress" list. */
   getJobsInProgress: (appId: string) =>
     request<JobInProgress[]>(`/completions?status=in_progress&app_id=${encodeURIComponent(appId)}`),
+
+  // ── Apps-first slice: library stats, in-depth detail, duplicate ────────────
+  // (appended block — see AppRunStats / AppDetailResponse types at file end)
+  /** Per-app run counters for the App Library cards + "has this company ever
+   *  run anything?", the signal the first-run landing decision uses. */
+  getAppsStats: () => request<AppsStatsResponse>('/apps/stats'),
+  /** Everything the in-depth app page shows: bindings, run stats, operators,
+   *  recent runs. Tenant-scoped server-side (404 for other companies' apps). */
+  getAppDetail: (id: string) => request<AppDetailResponse>(`/apps/${id}/detail`),
+  /** Copy an app into a new draft with fresh step/widget ids. */
+  duplicateApp: (id: string, data: { name?: string } = {}) =>
+    request<App>(`/apps/${id}/duplicate`, { method: 'POST', body: JSON.stringify(data) }),
+  // ── end apps-first block ───────────────────────────────────────────────────
 };
 
 // ─── App templates (app-templates slice) ─────────────────────────────────────
@@ -1074,3 +1087,78 @@ export interface JobInProgress {
   } | null;
 
 }
+
+// ── Apps-first types (appended block) ────────────────────────────────────────
+
+/** One app's run counters, from GET /api/apps/stats. */
+export interface AppRunStats {
+  app_id: string;
+  runs_total: number;
+  runs_7d: number;
+  in_progress: number;
+  last_run_at: string | null;
+}
+
+/** Response of GET /api/apps/stats. */
+export interface AppsStatsResponse {
+  /** True once this company has ever started a run of any app. */
+  company_has_completions: boolean;
+  apps: AppRunStats[];
+}
+
+export interface AppDetailStationRef {
+  id: string; name: string; location: string; status: string;
+}
+
+export interface AppDetailRoutingRef {
+  routing_id: string; routing_name: string; step_name: string; step_number: number;
+}
+
+export interface AppDetailWorkOrderRef {
+  id: string; work_order_number: string; part_number: string; part_name: string;
+  status: string; quantity: number; quantity_completed: number;
+}
+
+/** Everything this app is wired into — all real rows that point at it. */
+export interface AppDetailBindings {
+  department: { id: string; name: string; color: string } | null;
+  site: { id: string; name: string; code: string } | null;
+  default_station: AppDetailStationRef | null;
+  stations: AppDetailStationRef[];
+  product_types: { id: string; name: string; description: string }[];
+  routings: AppDetailRoutingRef[];
+  work_orders: AppDetailWorkOrderRef[];
+  work_order_count: number;
+}
+
+export interface AppDetailStats {
+  runs_total: number; completed: number; abandoned: number; in_progress: number;
+  runs_7d: number; runs_30d: number; completed_30d: number;
+  avg_duration_s: number | null; avg_duration_30d_s: number | null;
+  first_run_at: string | null; last_run_at: string | null;
+  first_pass_yield: number | null;
+  operator_count: number;
+}
+
+export interface AppDetailOperator {
+  operator_name: string; runs: number; completed: number;
+  last_run_at: string | null; avg_duration_s: number | null;
+}
+
+export interface AppDetailRun {
+  id: string; started_at: string; completed_at: string | null;
+  status: 'in_progress' | 'completed' | 'abandoned';
+  operator_name: string; duration_s: number | null;
+  work_order_number: string | null; product_type_name: string | null;
+  station_name: string | null;
+}
+
+/** Response of GET /api/apps/:id/detail. */
+export interface AppDetailResponse {
+  app: App;
+  bindings: AppDetailBindings;
+  stats: AppDetailStats;
+  operators: AppDetailOperator[];
+  recent_runs: AppDetailRun[];
+}
+// ── end apps-first types ─────────────────────────────────────────────────────

@@ -27,6 +27,7 @@ export type NavItem = {
 };
 
 export type SectionId =
+  | 'apps'
   | 'production'
   | 'planning'
   | 'apps'
@@ -56,6 +57,21 @@ export const PINNED_ITEMS: NavItem[] = [];
 // Multi-tab pages (Training, Maintenance/CMMS, Purchasing) get exactly ONE nav
 // item each — their page-internal tabs are the sub-navigation.
 export const SECTIONS: NavSection[] = [
+  // Apps comes FIRST on purpose: the no-code builder and the operator player
+  // are what HartMonitor is for. New accounts land here (see FirstRunLanding),
+  // the guided training teaches this workspace before anything else, and the
+  // rest of the MES plugs into the runs these apps produce.
+  {
+    id: 'apps',
+    label: 'Apps',
+    icon: AppWindow,
+    description: 'Build guided procedures, run them on the floor',
+    items: [
+      { to: '/apps',     icon: AppWindow, label: 'App Library',     module: 'apps' },
+      { to: '/tables',   icon: Database,  label: 'Tables',          minRole: 'supervisor', proOnly: true, module: 'apps' },
+      { to: '/operator', icon: Tablet,    label: 'Operator Portal', standalone: true, module: 'production' },
+    ],
+  },
   {
     id: 'production',
     label: 'Production',
@@ -79,17 +95,6 @@ export const SECTIONS: NavSection[] = [
       { to: '/routings',    icon: GitBranch,     label: 'Routings',      proOnly: true, minRole: 'supervisor', module: 'production' },
       { to: '/manager',     icon: ClipboardList, label: 'Manager View',  minRole: 'manager', module: 'production' },
       { to: '/capacity',    icon: Users,         label: 'Capacity Plan', minRole: 'manager', module: 'analytics' },
-    ],
-  },
-  {
-    id: 'apps',
-    label: 'Apps',
-    icon: AppWindow,
-    description: 'Build guided processes and run them on the floor',
-    items: [
-      { to: '/apps',     icon: AppWindow, label: 'App Library',     module: 'apps' },
-      { to: '/tables',   icon: Database,  label: 'Tables',          minRole: 'supervisor', proOnly: true, module: 'apps' },
-      { to: '/operator', icon: Tablet,    label: 'Operator Portal', standalone: true, module: 'production' },
     ],
   },
   {
