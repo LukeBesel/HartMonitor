@@ -388,9 +388,12 @@ export default function Andon() {
       // department instead of the whole plant.
       if (departmentFilter) params.department_id = departmentFilter;
 
+      // The summary takes the same department scope, so the four KPI cards and
+      // the team badges describe the same slice of the plant as the cards below
+      // them. They used to count the whole company whatever was selected.
       const [callsData, summaryData] = await Promise.all([
         api.getAndonCalls(params),
-        api.getAndonSummary(),
+        api.getAndonSummary(departmentFilter ? { department_id: departmentFilter } : undefined),
       ]);
       setCalls(callsData);
       setSummary(summaryData);
@@ -513,15 +516,15 @@ export default function Andon() {
         )}
 
         {/* ── Stats Strip ── */}
-        {/* These four come from GET /andon/summary, which counts the whole
-            company and takes no department parameter. Rather than quietly
-            re-label plant totals as one department's, say what they are. */}
+        {/* These four come from GET /andon/summary, which now takes the same
+            department_id as the board below, so they describe whatever scope is
+            selected — one department, or the whole plant. */}
         {summary && (
           <div className="space-y-2">
             {deptFilter.active && (
               <p className="flex items-center gap-1.5 text-xs text-gray-500">
                 <Building2 size={12} className="shrink-0" />
-                Plant-wide totals — the board below is narrowed to {deptFilter.selected?.name}, these four numbers are not.
+                Scoped to {deptFilter.selected?.name} — these four numbers and the team badges below count only this department's requests.
               </p>
             )}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -532,19 +535,19 @@ export default function Andon() {
                     <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                   )}
                 </div>
-                <p className={`text-3xl font-bold ${summary.open > 0 ? 'text-red-400' : 'text-white'}`}>
+                <p data-testid="stat-open" className={`text-3xl font-bold ${summary.open > 0 ? 'text-red-400' : 'text-white'}`}>
                   {summary.open}
                 </p>
               </div>
 
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
                 <p className="section-label mb-1">Acknowledged</p>
-                <p className="text-3xl font-bold text-amber-400">{summary.acknowledged}</p>
+                <p data-testid="stat-acknowledged" className="text-3xl font-bold text-amber-400">{summary.acknowledged}</p>
               </div>
 
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
                 <p className="section-label mb-1">Resolved Today</p>
-                <p className="text-3xl font-bold text-green-400">{summary.resolved_today}</p>
+                <p data-testid="stat-resolved-today" className="text-3xl font-bold text-green-400">{summary.resolved_today}</p>
               </div>
 
               {/* Time-to-respond: measured, never estimated — blank until a call
@@ -552,9 +555,9 @@ export default function Andon() {
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
                 <p className="section-label mb-1">Avg. response today</p>
                 {avgResponse === null ? (
-                  <p className="text-lg font-semibold text-gray-500 mt-1.5">Nothing answered yet</p>
+                  <p data-testid="stat-avg-response" className="text-lg font-semibold text-gray-500 mt-1.5">Nothing answered yet</p>
                 ) : (
-                  <p className="text-3xl font-bold text-white flex items-baseline gap-2">
+                  <p data-testid="stat-avg-response" className="text-3xl font-bold text-white flex items-baseline gap-2">
                     {formatAge(avgResponse)}
                     <span className="text-xs font-medium text-gray-500">
                       over {summary.responded_today} request{summary.responded_today === 1 ? '' : 's'}
@@ -594,11 +597,12 @@ export default function Andon() {
                 >
                   <Icon size={13} />
                   {cfg.label}
-                  {/* The badge is a plant-wide open count from the summary
-                      endpoint. Under a department scope it would overstate this
-                      queue, and a bare number has nowhere to carry the caveat. */}
-                  {openForTeam > 0 && !deptFilter.active && (
-                    <span className="ml-0.5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold">{openForTeam}</span>
+                  {/* Unresolved count for this team, from the summary endpoint —
+                      which carries the same department scope as the board, so
+                      the badge never overstates the queue a manager is looking
+                      at. The caption above the KPI cards names the scope. */}
+                  {openForTeam > 0 && (
+                    <span data-testid={`team-count-${team}`} className="ml-0.5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold">{openForTeam}</span>
                   )}
                 </button>
               );
