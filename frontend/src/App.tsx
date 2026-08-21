@@ -29,7 +29,6 @@ const Schedule         = lazy(() => import('./pages/Schedule'));
 const DepartmentView   = lazy(() => import('./pages/DepartmentView'));
 const DepartmentTV     = lazy(() => import('./pages/DepartmentTV'));
 const Departments      = lazy(() => import('./pages/Departments'));
-const SQDC             = lazy(() => import('./pages/SQDC'));
 const StationView      = lazy(() => import('./pages/StationView'));
 const ManagerView      = lazy(() => import('./pages/ManagerView'));
 const CompletionDetail = lazy(() => import('./pages/CompletionDetail'));
@@ -154,7 +153,8 @@ export default function App() {
                 <Route path="/tables" element={<ModuleGate module="apps"><Tables /></ModuleGate>} />
                 <Route path="/tables/:id" element={<ModuleGate module="apps"><TableDetail /></ModuleGate>} />
                 <Route path="/analytics" element={<Analytics />} />
-                <Route path="/sqdc" element={<ModuleGate module="quality"><SQDC /></ModuleGate>} />
+                {/* SQDC is shelved for now — route redirects until it returns */}
+                <Route path="/sqdc" element={<Navigate to="/dashboard" replace />} />
                 <Route path="/stations" element={<Stations />} />
                 <Route path="/stations/:id" element={<StationView />} />
                 <Route path="/schedule" element={<Schedule />} />

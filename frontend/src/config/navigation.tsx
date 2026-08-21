@@ -54,7 +54,6 @@ export const SECTIONS: NavSection[] = [
       { to: '/dashboard',   icon: LayoutDashboard, label: 'Command Center', exact: true, module: 'production' },
       { to: '/apps',        icon: AppWindow,  label: 'App Library',     module: 'apps' },
       { to: '/departments', icon: Building2,  label: 'Departments',     module: 'production' },
-      { to: '/sqdc',        icon: HeartPulse, label: 'SQDC',            module: 'quality' },
       { to: '/andon',       icon: Bell,       label: 'Andon Board',     module: 'andon' },
       { to: '/shift-notes', icon: BookOpen,   label: 'Shift Notes',     module: 'shifts' },
       { to: '/operator',    icon: Tablet,     label: 'Operator Portal', standalone: true, module: 'production' },
