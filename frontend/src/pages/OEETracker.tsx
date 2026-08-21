@@ -41,16 +41,16 @@ interface LogEventForm {
 }
 
 const STATUS_CONFIG = {
-  running:     { color: 'bg-green-500',  text: 'text-green-400', label: 'Running',     icon: Play },
-  down:        { color: 'bg-red-500',    text: 'text-red-400',   label: 'Down',        icon: AlertTriangle },
-  maintenance: { color: 'bg-amber-500',  text: 'text-amber-400', label: 'Maintenance', icon: Wrench },
-  idle:        { color: 'bg-gray-400',   text: 'text-gray-400',  label: 'Idle',        icon: Pause },
+  running:     { color: 'bg-green-500',  text: 'text-emerald-700', label: 'Running',     icon: Play },
+  down:        { color: 'bg-red-500',    text: 'text-red-700',   label: 'Down',        icon: AlertTriangle },
+  maintenance: { color: 'bg-amber-500',  text: 'text-amber-700', label: 'Maintenance', icon: Wrench },
+  idle:        { color: 'bg-gray-400',   text: 'text-gray-500',  label: 'Idle',        icon: Pause },
 };
 
 function oeeColor(pct: number): string {
-  if (pct >= 80) return 'text-green-400';
-  if (pct >= 60) return 'text-amber-400';
-  return 'text-red-400';
+  if (pct >= 80) return 'text-emerald-700';
+  if (pct >= 60) return 'text-amber-700';
+  return 'text-red-700';
 }
 
 function oeeBgColor(pct: number): string {
@@ -78,12 +78,12 @@ function MiniBar({ label, value, color, hint }: { label: string; value: number |
   return (
     <div className="space-y-1">
       <div className="flex justify-between text-[10px]">
-        <span className="text-gray-400 font-medium">{label}</span>
+        <span className="text-gray-500 font-medium">{label}</span>
         {known
-          ? <span className="text-gray-300 font-semibold">{safe.toFixed(1)}%</span>
-          : <span className="text-gray-500 font-semibold" title={hint}>not measured</span>}
+          ? <span className="text-gray-700 font-semibold">{safe.toFixed(1)}%</span>
+          : <span className="text-gray-400 font-semibold" title={hint}>not measured</span>}
       </div>
-      <div className="h-1.5 bg-gray-700 rounded-full overflow-hidden">
+      <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
         {known && (
           <div
             className={`h-full rounded-full transition-all ${color}`}
@@ -132,7 +132,7 @@ function MachineCard({
   };
 
   return (
-    <div className="rounded-2xl border border-gray-700 overflow-hidden" style={{ backgroundColor: '#1a2235' }}>
+    <div className="rounded-2xl border border-gray-200 bg-white overflow-hidden">
       {/* Card body */}
       <div className="p-4 space-y-3">
         {/* Status row */}
@@ -140,8 +140,8 @@ function MachineCard({
           <div className="flex items-center gap-2 min-w-0">
             <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${statusCfg.color}`} />
             <div className="min-w-0">
-              <div className="font-semibold text-white text-sm truncate">{machine.name}</div>
-              <div className="text-[11px] text-gray-400 truncate">{machine.location}</div>
+              <div className="font-semibold text-gray-900 text-sm truncate">{machine.name}</div>
+              <div className="text-[11px] text-gray-500 truncate">{machine.location}</div>
             </div>
           </div>
           <div className="text-right flex-shrink-0">
@@ -185,7 +185,7 @@ function MachineCard({
           </div>
           <button
             onClick={onToggleExpand}
-            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors text-gray-400 hover:text-white border border-gray-600 hover:border-gray-500 hover:bg-gray-700"
+            className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-[11px] font-medium transition-colors text-gray-500 hover:text-gray-900 border border-gray-300 hover:border-gray-400 hover:bg-gray-100"
           >
             {isExpanded ? (
               <>
@@ -204,15 +204,15 @@ function MachineCard({
 
       {/* Expand: log event form */}
       {isExpanded && (
-        <div className="border-t border-gray-700 p-4 space-y-3" style={{ backgroundColor: '#111827' }}>
-          <div className="text-xs font-semibold text-gray-300 uppercase tracking-wider">Log Status Event</div>
+        <div className="border-t border-gray-200 bg-gray-50 p-4 space-y-3">
+          <div className="text-xs font-semibold text-gray-700 uppercase tracking-wider">Log Status Event</div>
 
           <div>
-            <label className="text-[11px] text-gray-400 mb-1 block">New Status</label>
+            <label className="text-[11px] text-gray-500 mb-1 block">New Status</label>
             <select
               value={form.event_type}
               onChange={e => setForm(f => ({ ...f, event_type: e.target.value as LogEventForm['event_type'] }))}
-              className="w-full px-3 py-2 rounded-lg text-sm bg-gray-800 border border-gray-600 text-white focus:outline-none focus:border-blue-500 transition-colors"
+              className="w-full px-3 py-2 rounded-lg text-sm bg-white border border-gray-300 text-gray-900 focus:outline-none focus:border-blue-500 transition-colors"
             >
               <option value="running">Running</option>
               <option value="down">Down</option>
@@ -222,13 +222,13 @@ function MachineCard({
           </div>
 
           <div>
-            <label className="text-[11px] text-gray-400 mb-1 block">Reason (optional)</label>
+            <label className="text-[11px] text-gray-500 mb-1 block">Reason (optional)</label>
             <textarea
               value={form.reason}
               onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}
               rows={2}
               placeholder="Describe what happened..."
-              className="w-full px-3 py-2 rounded-lg text-sm bg-gray-800 border border-gray-600 text-white placeholder-gray-500 focus:outline-none focus:border-blue-500 transition-colors resize-none"
+              className="w-full px-3 py-2 rounded-lg text-sm bg-white border border-gray-300 text-gray-900 placeholder-gray-400 focus:outline-none focus:border-blue-500 transition-colors resize-none"
             />
           </div>
 
@@ -242,7 +242,7 @@ function MachineCard({
             </button>
             <button
               onClick={onToggleExpand}
-              className="px-4 py-2 rounded-lg text-sm font-medium text-gray-400 hover:text-white border border-gray-600 hover:border-gray-500 transition-colors"
+              className="px-4 py-2 rounded-lg text-sm font-medium text-gray-500 hover:text-gray-900 border border-gray-300 hover:border-gray-400 transition-colors"
             >
               Cancel
             </button>
@@ -361,15 +361,15 @@ export default function OEETracker() {
         </div>
       ) : loadError && machines.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
-          <AlertTriangle size={28} className="text-red-400" />
+          <AlertTriangle size={28} className="text-red-700" />
           <p className="text-gray-500 font-medium">Couldn't load machines</p>
-          <p className="text-sm text-gray-400">{loadError}</p>
+          <p className="text-sm text-gray-500">{loadError}</p>
           <button onClick={() => { void auto.refresh(); }} className="btn-secondary">
             <RefreshCw size={14} /> Retry
           </button>
         </div>
       ) : machines.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+        <div className="flex flex-col items-center justify-center py-20 text-gray-500">
           <Activity size={40} className="mb-3 opacity-30" />
           <div className="font-medium text-gray-500">No machines configured</div>
           <div className="text-sm mt-1">Add machines to the OEE system to see data here</div>
@@ -415,7 +415,7 @@ function KpiCard({
         <div>
           <div className={`text-2xl font-bold ${valueClass || 'text-gray-900'}`}>{value}</div>
           <div className="text-xs font-medium text-gray-500">{label}</div>
-          {sub && <div className="text-xs text-gray-400">{sub}</div>}
+          {sub && <div className="text-xs text-gray-500">{sub}</div>}
         </div>
       </div>
     </div>

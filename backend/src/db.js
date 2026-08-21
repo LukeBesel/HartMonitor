@@ -1929,6 +1929,20 @@ db.exec(`
     ON shift_notes(company_id, shift_date DESC, department_id);
 `);
 
+// ─── shift_notes: columns routes/shifts.js has always written ────────────────
+// The table shipped narrower than the route's INSERT, so creating a shift note
+// 500'd on every database ("no column named shift_label"). Additive, guarded.
+{
+  const shiftCols = db.prepare('PRAGMA table_info(shift_notes)').all().map(c => c.name);
+  const addShift = (name, decl) => { if (!shiftCols.includes(name)) db.exec(`ALTER TABLE shift_notes ADD COLUMN ${decl}`); };
+  addShift('shift_label',      "shift_label TEXT DEFAULT ''");
+  addShift('author_id',        'author_id TEXT');
+  addShift('author_name',      "author_name TEXT DEFAULT ''");
+  addShift('attendance_count', 'attendance_count INTEGER DEFAULT 0');
+  addShift('safety_incidents', 'safety_incidents INTEGER DEFAULT 0');
+  addShift('updated_at',       'updated_at TEXT');
+}
+
 // ─── Kaizen / CI Ideas ────────────────────────────────────────────────────────
 db.exec(`
   CREATE TABLE IF NOT EXISTS kaizen_ideas (

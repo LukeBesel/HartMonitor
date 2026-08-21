@@ -299,7 +299,7 @@ function DayDots({ days, color }: { days: SiteShift['days']; color?: string | nu
         <span
           key={i}
           className={`w-3.5 h-3.5 rounded-full text-[8px] font-bold flex items-center justify-center ${
-            active.includes(i) ? 'text-white' : 'bg-gray-100 text-gray-300'
+            active.includes(i) ? 'text-white' : 'bg-gray-100 text-gray-400'
           }`}
           style={active.includes(i) ? { backgroundColor: color || '#3b82f6' } : undefined}
         >

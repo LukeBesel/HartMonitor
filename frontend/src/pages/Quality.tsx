@@ -930,7 +930,7 @@ export default function Quality() {
   }
 
   const pillBase = 'px-3 py-1.5 rounded-full text-xs font-medium transition-colors cursor-pointer';
-  const pillActive = 'bg-gray-900 text-white';
+  const pillActive = 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900';
   const pillInactive = 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50';
 
   return (

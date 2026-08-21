@@ -68,22 +68,22 @@ function bucketForFacilityShift(shift: SiteShift): 'day' | 'afternoon' | 'night'
 // ── Style helpers ─────────────────────────────────────────────────────────────
 
 const SHIFT_BADGE: Record<string, string> = {
-  day:       'bg-amber-500/20 text-amber-300 border border-amber-500/30',
-  afternoon: 'bg-blue-500/20 text-blue-300 border border-blue-500/30',
-  night:     'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30',
-  custom:    'bg-gray-700/60 text-gray-300 border border-gray-600',
+  day:       'bg-amber-50 text-amber-700 border border-amber-200',
+  afternoon: 'bg-blue-50 text-blue-700 border border-blue-200',
+  night:     'bg-indigo-50 text-indigo-700 border border-indigo-200',
+  custom:    'bg-gray-50 text-gray-700 border border-gray-300',
 };
 
 const STATUS_BADGE: Record<string, string> = {
-  draft:      'bg-gray-700 text-gray-300',
-  submitted:  'bg-blue-500/20 text-blue-300',
-  handed_off: 'bg-green-500/20 text-green-300',
+  draft:      'bg-gray-100 text-gray-700',
+  submitted:  'bg-blue-50 text-blue-700',
+  handed_off: 'bg-emerald-50 text-emerald-700',
 };
 
 const SEVERITY_BADGE: Record<Issue['severity'], string> = {
-  low:    'bg-yellow-500/20 text-yellow-300 border border-yellow-500/30',
-  medium: 'bg-orange-500/20 text-orange-300 border border-orange-500/30',
-  high:   'bg-red-500/20 text-red-300 border border-red-500/30',
+  low:    'bg-amber-50 text-amber-700 border border-amber-200',
+  medium: 'bg-amber-50 text-amber-700 border border-amber-200',
+  high:   'bg-red-50 text-red-700 border border-red-200',
 };
 
 function ShiftBadge({ shift, label }: { shift: string; label?: string }) {
@@ -169,11 +169,11 @@ function StartShiftModal({ departments, facilityShifts, selectedDate, onClose, o
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-gray-900 rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
         {/* Header */}
-        <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-gray-800">
-          <h2 className="text-lg font-semibold text-white">Start Shift Note</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-200 transition-colors">
+        <div className="flex items-center justify-between px-6 pt-6 pb-4 border-b border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-900">Start Shift Note</h2>
+          <button onClick={onClose} className="text-gray-500 hover:text-gray-700 transition-colors">
             <X size={20} />
           </button>
         </div>
@@ -181,7 +181,7 @@ function StartShiftModal({ departments, facilityShifts, selectedDate, onClose, o
         {/* Body */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
           {error && (
-            <div className="flex items-center gap-2 px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
+            <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
               <AlertTriangle size={14} />
               {error}
             </div>
@@ -189,7 +189,7 @@ function StartShiftModal({ departments, facilityShifts, selectedDate, onClose, o
 
           {facilityShifts.length > 0 && (
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Facility Shift</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Facility Shift</label>
               <select
                 value={facilityShiftId}
                 onChange={e => {
@@ -198,7 +198,7 @@ function StartShiftModal({ departments, facilityShifts, selectedDate, onClose, o
                   const shift = facilityShifts.find(s => s.id === id);
                   if (shift) setShiftName(bucketForFacilityShift(shift));
                 }}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               >
                 <option value="">— none —</option>
                 {facilityShifts.map(s => (
@@ -210,11 +210,11 @@ function StartShiftModal({ departments, facilityShifts, selectedDate, onClose, o
           )}
 
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-1">Shift</label>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Shift</label>
             <select
               value={shiftName}
               onChange={e => setShiftName(e.target.value as 'day' | 'afternoon' | 'night')}
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             >
               <option value="day">Day</option>
               <option value="afternoon">Afternoon</option>
@@ -224,11 +224,11 @@ function StartShiftModal({ departments, facilityShifts, selectedDate, onClose, o
 
           {departments.length > 0 && (
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Department</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Department</label>
               <select
                 value={departmentId}
                 onChange={e => setDepartmentId(e.target.value)}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               >
                 <option value="">All / None</option>
                 {departments.map(d => (
@@ -239,13 +239,13 @@ function StartShiftModal({ departments, facilityShifts, selectedDate, onClose, o
           )}
 
           <div>
-            <label className="text-xs font-medium text-gray-400 block mb-1">Your Name</label>
+            <label className="text-xs font-medium text-gray-500 block mb-1">Your Name</label>
             <input
               type="text"
               value={authorName}
               onChange={e => setAuthorName(e.target.value)}
               placeholder="Enter your name"
-              className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
           </div>
 
@@ -253,11 +253,11 @@ function StartShiftModal({ departments, facilityShifts, selectedDate, onClose, o
         </form>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-800">
+        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-200">
           <button
             type="button"
             onClick={onClose}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-gray-800 text-gray-200 border border-gray-700 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors"
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors"
           >
             Cancel
           </button>
@@ -399,14 +399,14 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
   const isSubmitted = note.status === 'submitted';
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
       {/* Note Header */}
-      <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-gray-800 bg-gray-900/80">
+      <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-gray-200 bg-gray-50">
         <ShiftBadge shift={note.shift_name} label={note.shift_label} />
         {note.department_name && (
-          <span className="text-sm text-gray-300 font-medium">{note.department_name}</span>
+          <span className="text-sm text-gray-700 font-medium">{note.department_name}</span>
         )}
-        <span className="text-sm text-gray-400">by <span className="text-white">{note.author_name}</span></span>
+        <span className="text-sm text-gray-500">by <span className="text-gray-900">{note.author_name}</span></span>
         <span className="text-sm text-gray-500">&mdash; {formatDate(note.shift_date)}</span>
         <div className="ml-auto">
           <StatusBadge status={note.status} />
@@ -415,7 +415,7 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
 
       <div className="p-4 space-y-6">
         {error && (
-          <div className="flex items-center gap-2 px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm">
+          <div className="flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
             <AlertTriangle size={14} />
             {error}
           </div>
@@ -423,13 +423,13 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
 
         {/* Production Numbers */}
         <div>
-          <h3 className="text-sm font-semibold text-gray-300 mb-3">Production Numbers</h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Production Numbers</h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
             {/* Good Count */}
-            <div className="bg-gray-800/60 rounded-lg p-3">
+            <div className="bg-gray-50 rounded-lg p-3">
               <div className="flex items-center gap-1.5 mb-2">
-                <Package size={14} className="text-green-400" />
-                <label className="text-xs font-medium text-gray-400">Good Count</label>
+                <Package size={14} className="text-emerald-700" />
+                <label className="text-xs font-medium text-gray-500">Good Count</label>
               </div>
               <input
                 type="number"
@@ -437,15 +437,15 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
                 value={goodCount}
                 onChange={e => setGoodCount(Number(e.target.value))}
                 onBlur={saveNumericFields}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
 
             {/* Scrap Count */}
-            <div className="bg-gray-800/60 rounded-lg p-3">
+            <div className="bg-gray-50 rounded-lg p-3">
               <div className="flex items-center gap-1.5 mb-2">
-                <Trash2 size={14} className="text-red-400" />
-                <label className="text-xs font-medium text-gray-400">Scrap Count</label>
+                <Trash2 size={14} className="text-red-700" />
+                <label className="text-xs font-medium text-gray-500">Scrap Count</label>
               </div>
               <input
                 type="number"
@@ -453,15 +453,15 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
                 value={scrapCount}
                 onChange={e => setScrapCount(Number(e.target.value))}
                 onBlur={saveNumericFields}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
 
             {/* Downtime */}
-            <div className="bg-gray-800/60 rounded-lg p-3">
+            <div className="bg-gray-50 rounded-lg p-3">
               <div className="flex items-center gap-1.5 mb-2">
-                <Clock size={14} className="text-amber-400" />
-                <label className="text-xs font-medium text-gray-400">Downtime (min)</label>
+                <Clock size={14} className="text-amber-700" />
+                <label className="text-xs font-medium text-gray-500">Downtime (min)</label>
               </div>
               <input
                 type="number"
@@ -469,15 +469,15 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
                 value={downtimeMinutes}
                 onChange={e => setDowntimeMinutes(Number(e.target.value))}
                 onBlur={saveNumericFields}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
 
             {/* Attendance */}
-            <div className="bg-gray-800/60 rounded-lg p-3">
+            <div className="bg-gray-50 rounded-lg p-3">
               <div className="flex items-center gap-1.5 mb-2">
-                <Users size={14} className="text-blue-400" />
-                <label className="text-xs font-medium text-gray-400">Attendance</label>
+                <Users size={14} className="text-blue-700" />
+                <label className="text-xs font-medium text-gray-500">Attendance</label>
               </div>
               <input
                 type="number"
@@ -485,15 +485,15 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
                 value={attendanceCount}
                 onChange={e => setAttendanceCount(Number(e.target.value))}
                 onBlur={saveNumericFields}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
 
             {/* Safety Incidents */}
-            <div className="bg-gray-800/60 rounded-lg p-3">
+            <div className="bg-gray-50 rounded-lg p-3">
               <div className="flex items-center gap-1.5 mb-2">
-                <Shield size={14} className="text-orange-400" />
-                <label className="text-xs font-medium text-gray-400">Safety Incidents</label>
+                <Shield size={14} className="text-amber-700" />
+                <label className="text-xs font-medium text-gray-500">Safety Incidents</label>
               </div>
               <input
                 type="number"
@@ -501,7 +501,7 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
                 value={safetyIncidents}
                 onChange={e => setSafetyIncidents(Number(e.target.value))}
                 onBlur={saveNumericFields}
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
           </div>
@@ -510,7 +510,7 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
         {/* Notes */}
         <div>
           <div className="flex items-center justify-between mb-2">
-            <label className="text-xs font-medium text-gray-400 block">Shift Notes</label>
+            <label className="text-xs font-medium text-gray-500 block">Shift Notes</label>
             {savingNotes && <span className="text-xs text-gray-500">Saving…</span>}
           </div>
           <textarea
@@ -519,23 +519,23 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
             onChange={e => handleNotesChange(e.target.value)}
             onBlur={saveNotesText}
             placeholder="Describe what happened this shift — production highlights, issues, observations…"
-            className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
+            className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
           />
         </div>
 
         {/* Issues */}
         <div>
-          <h3 className="text-sm font-semibold text-gray-300 mb-3">Issues</h3>
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">Issues</h3>
 
           {issues.length > 0 && (
             <ul className="space-y-2 mb-3">
               {issues.map((issue, i) => (
-                <li key={i} className="flex items-start gap-2 bg-gray-800/60 rounded-lg px-3 py-2">
+                <li key={i} className="flex items-start gap-2 bg-gray-50 rounded-lg px-3 py-2">
                   <IssueSeverityBadge severity={issue.severity} />
-                  <span className="flex-1 text-sm text-gray-200 leading-snug">{issue.text}</span>
+                  <span className="flex-1 text-sm text-gray-700 leading-snug">{issue.text}</span>
                   <button
                     onClick={() => removeIssue(i)}
-                    className="text-gray-500 hover:text-red-400 transition-colors flex-shrink-0 mt-0.5"
+                    className="text-gray-500 hover:text-red-800 transition-colors flex-shrink-0 mt-0.5"
                     title="Remove issue"
                   >
                     <X size={14} />
@@ -553,12 +553,12 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
               onChange={e => setNewIssueText(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addIssue(); } }}
               placeholder="Describe the issue…"
-              className="flex-1 bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="flex-1 bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
             <select
               value={newIssueSeverity}
               onChange={e => setNewIssueSeverity(e.target.value as Issue['severity'])}
-              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             >
               <option value="low">Low</option>
               <option value="medium">Medium</option>
@@ -567,7 +567,7 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
             <button
               onClick={addIssue}
               disabled={!newIssueText.trim()}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-gray-800 text-gray-200 border border-gray-700 rounded-lg text-sm font-medium hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-2 px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Plus size={14} />
               Add
@@ -577,7 +577,7 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
 
         {/* Submit Button (draft only) */}
         {isDraft && (
-          <div className="flex items-center justify-end pt-2 border-t border-gray-800">
+          <div className="flex items-center justify-end pt-2 border-t border-gray-200">
             <button
               onClick={handleSubmit}
               disabled={submitting}
@@ -591,28 +591,28 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
 
         {/* Handoff Section (submitted only) */}
         {isSubmitted && (
-          <div className="space-y-3 pt-4 border-t border-gray-800">
-            <h3 className="text-sm font-semibold text-gray-300">Shift Handoff</h3>
+          <div className="space-y-3 pt-4 border-t border-gray-200">
+            <h3 className="text-sm font-semibold text-gray-700">Shift Handoff</h3>
 
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Handoff Notes</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Handoff Notes</label>
               <textarea
                 rows={3}
                 value={handoffNotes}
                 onChange={e => setHandoffNotes(e.target.value)}
                 placeholder="Notes for the incoming shift leader…"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
               />
             </div>
 
             <div>
-              <label className="text-xs font-medium text-gray-400 block mb-1">Recipient Name</label>
+              <label className="text-xs font-medium text-gray-500 block mb-1">Recipient Name</label>
               <input
                 type="text"
                 value={handedOffTo}
                 onChange={e => setHandedOffTo(e.target.value)}
                 placeholder="Who is receiving this handoff?"
-                className="w-full bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
             </div>
 
@@ -645,35 +645,35 @@ function HistoryCard({ note, expanded, onToggle }: HistoryCardProps) {
   const issues = parseIssues(note.issues);
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
       {/* Card Header — always visible */}
       <button
         onClick={onToggle}
-        className="w-full flex flex-wrap items-center gap-3 px-4 py-3 text-left hover:bg-gray-800/40 transition-colors"
+        className="w-full flex flex-wrap items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 transition-colors"
       >
         <ShiftBadge shift={note.shift_name} label={note.shift_label} />
-        <span className="text-sm text-gray-300 font-medium">{formatDate(note.shift_date)}</span>
+        <span className="text-sm text-gray-700 font-medium">{formatDate(note.shift_date)}</span>
         {note.department_name && (
-          <span className="text-sm text-gray-400">{note.department_name}</span>
+          <span className="text-sm text-gray-500">{note.department_name}</span>
         )}
         <span className="text-sm text-gray-500">by {note.author_name}</span>
 
         {/* Stats row */}
         <div className="flex items-center gap-3 ml-auto flex-wrap">
-          <span className="flex items-center gap-1 text-xs text-green-400">
+          <span className="flex items-center gap-1 text-xs text-emerald-700">
             <Package size={12} /> {note.good_count}
           </span>
-          <span className="flex items-center gap-1 text-xs text-red-400">
+          <span className="flex items-center gap-1 text-xs text-red-700">
             <Trash2 size={12} /> {note.scrap_count}
           </span>
-          <span className="flex items-center gap-1 text-xs text-amber-400">
+          <span className="flex items-center gap-1 text-xs text-amber-700">
             <Clock size={12} /> {note.downtime_minutes}m
           </span>
-          <span className="flex items-center gap-1 text-xs text-blue-400">
+          <span className="flex items-center gap-1 text-xs text-blue-700">
             <Users size={12} /> {note.attendance_count}
           </span>
           {note.safety_incidents > 0 && (
-            <span className="flex items-center gap-1 text-xs text-orange-400">
+            <span className="flex items-center gap-1 text-xs text-amber-700">
               <Shield size={12} /> {note.safety_incidents}
             </span>
           )}
@@ -684,24 +684,24 @@ function HistoryCard({ note, expanded, onToggle }: HistoryCardProps) {
 
       {/* Expanded Details */}
       {expanded && (
-        <div className="px-4 pb-4 space-y-4 border-t border-gray-800 pt-4">
+        <div className="px-4 pb-4 space-y-4 border-t border-gray-200 pt-4">
           {/* Notes */}
           {note.notes && (
             <div>
-              <p className="text-xs font-medium text-gray-400 mb-1">Shift Notes</p>
-              <p className="text-sm text-gray-200 whitespace-pre-wrap leading-relaxed">{note.notes}</p>
+              <p className="text-xs font-medium text-gray-500 mb-1">Shift Notes</p>
+              <p className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">{note.notes}</p>
             </div>
           )}
 
           {/* Issues */}
           {issues.length > 0 && (
             <div>
-              <p className="text-xs font-medium text-gray-400 mb-2">Issues ({issues.length})</p>
+              <p className="text-xs font-medium text-gray-500 mb-2">Issues ({issues.length})</p>
               <ul className="space-y-1.5">
                 {issues.map((issue, i) => (
                   <li key={i} className="flex items-start gap-2">
                     <IssueSeverityBadge severity={issue.severity} />
-                    <span className="text-sm text-gray-300">{issue.text}</span>
+                    <span className="text-sm text-gray-700">{issue.text}</span>
                   </li>
                 ))}
               </ul>
@@ -710,16 +710,16 @@ function HistoryCard({ note, expanded, onToggle }: HistoryCardProps) {
 
           {/* Handoff info */}
           {note.status === 'handed_off' && (
-            <div className="bg-green-500/5 border border-green-500/20 rounded-lg p-3 space-y-1">
-              <p className="text-xs font-medium text-green-400">Handed Off</p>
+            <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3 space-y-1">
+              <p className="text-xs font-medium text-emerald-700">Handed Off</p>
               {note.handed_off_to && (
-                <p className="text-sm text-gray-300">To: <span className="text-white">{note.handed_off_to}</span></p>
+                <p className="text-sm text-gray-700">To: <span className="text-gray-900">{note.handed_off_to}</span></p>
               )}
               {note.handed_off_at && (
                 <p className="text-xs text-gray-500">{formatDatetime(note.handed_off_at)}</p>
               )}
               {note.handoff_notes && (
-                <p className="text-sm text-gray-300 pt-1 whitespace-pre-wrap">{note.handoff_notes}</p>
+                <p className="text-sm text-gray-700 pt-1 whitespace-pre-wrap">{note.handoff_notes}</p>
               )}
             </div>
           )}
@@ -805,14 +805,14 @@ export default function ShiftNotes() {
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
 
   return (
-    <div className="bg-gray-950 min-h-screen p-4 sm:p-6 space-y-6">
+    <div className="bg-gray-50 min-h-screen p-4 sm:p-6 space-y-6">
       {/* ── Page Header ── */}
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center">
-            <BookOpen size={20} className="text-blue-400" />
+          <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center">
+            <BookOpen size={20} className="text-blue-700" />
           </div>
-          <h1 className="text-2xl font-bold text-white">Shift Notes</h1>
+          <h1 className="text-2xl font-bold text-gray-900">Shift Notes</h1>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
@@ -821,7 +821,7 @@ export default function ShiftNotes() {
             type="date"
             value={selectedDate}
             onChange={e => setSelectedDate(e.target.value)}
-            className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
           />
 
           {/* Department Filter */}
@@ -829,7 +829,7 @@ export default function ShiftNotes() {
             <select
               value={selectedDept}
               onChange={e => setSelectedDept(e.target.value)}
-              className="bg-gray-800 border border-gray-700 rounded-lg px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             >
               <option value="">All Departments</option>
               {departments.map(d => (
@@ -853,17 +853,17 @@ export default function ShiftNotes() {
       {loading && (
         <div className="space-y-3">
           {[1, 2, 3].map(i => (
-            <div key={i} className="animate-pulse bg-gray-800 rounded-xl h-24" />
+            <div key={i} className="animate-pulse bg-gray-100 rounded-xl h-24" />
           ))}
         </div>
       )}
 
       {/* ── Error ── */}
       {!loading && fetchError && (
-        <div className="flex items-center gap-2 px-4 py-3 bg-red-500/10 border border-red-500/30 rounded-xl text-red-400 text-sm">
+        <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-sm">
           <AlertTriangle size={16} />
           {fetchError}
-          <button onClick={fetchNotes} className="ml-auto text-red-300 hover:text-red-100 underline">Retry</button>
+          <button onClick={fetchNotes} className="ml-auto text-red-700 hover:text-red-100 underline">Retry</button>
         </div>
       )}
 
@@ -873,8 +873,8 @@ export default function ShiftNotes() {
           {/* Active Note */}
           {activeNote ? (
             <div className="space-y-3">
-              <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                <ClipboardList size={18} className="text-blue-400" />
+              <h2 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+                <ClipboardList size={18} className="text-blue-700" />
                 Active Shift Note
               </h2>
               <ActiveNoteEditor
@@ -887,11 +887,11 @@ export default function ShiftNotes() {
             shiftNotes.length === 0 && (
               /* Empty State */
               <div className="flex flex-col items-center justify-center py-20 space-y-3 text-center">
-                <div className="w-16 h-16 rounded-2xl bg-gray-800 border border-gray-700 flex items-center justify-center mb-2">
+                <div className="w-16 h-16 rounded-2xl bg-gray-100 border border-gray-300 flex items-center justify-center mb-2">
                   <BookOpen size={28} className="text-gray-500" />
                 </div>
-                <p className="text-white font-semibold text-lg">No shift notes for {formatDate(selectedDate)}</p>
-                <p className="text-gray-400 text-sm max-w-xs">Start a shift note to begin tracking production, issues, and handoff information.</p>
+                <p className="text-gray-900 font-semibold text-lg">No shift notes for {formatDate(selectedDate)}</p>
+                <p className="text-gray-500 text-sm max-w-xs">Start a shift note to begin tracking production, issues, and handoff information.</p>
                 <button
                   onClick={() => setShowStartModal(true)}
                   className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors mt-2"
@@ -906,7 +906,7 @@ export default function ShiftNotes() {
           {/* History */}
           {historyNotes.length > 0 && (
             <div className="space-y-3">
-              <h2 className="text-lg font-semibold text-white">Past Shift Notes</h2>
+              <h2 className="text-lg font-semibold text-gray-900">Past Shift Notes</h2>
               <div className="space-y-2">
                 {historyNotes.map(note => (
                   <HistoryCard

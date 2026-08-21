@@ -66,7 +66,7 @@ function formatRunTime(iso: string) {
 }
 
 function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
-  if (!data) return <div className="flex items-center justify-center h-24 text-gray-300 text-sm">No data</div>;
+  if (!data) return <div className="flex items-center justify-center h-24 text-gray-400 text-sm">No data</div>;
 
   switch (card.type) {
     case 'metric': {

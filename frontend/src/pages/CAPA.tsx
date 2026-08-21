@@ -89,18 +89,18 @@ function isOverdue(capa: CAPA): boolean {
 // ── Style maps ────────────────────────────────────────────────────────────────
 
 const PRIORITY_BADGE: Record<CAPA['priority'], string> = {
-  low:      'bg-gray-700 text-gray-300',
-  medium:   'bg-blue-900/50 text-blue-300 border border-blue-700',
-  high:     'bg-amber-900/50 text-amber-300 border border-amber-700',
-  critical: 'bg-red-900/50 text-red-300 border border-red-700',
+  low:      'bg-gray-100 text-gray-700',
+  medium:   'bg-blue-50 text-blue-700 border border-blue-200',
+  high:     'bg-amber-50 text-amber-700 border border-amber-200',
+  critical: 'bg-red-50 text-red-700 border border-red-200',
 };
 
 const STATUS_BADGE: Record<CAPA['status'], string> = {
-  open:         'bg-gray-700 text-gray-300',
-  root_cause:   'bg-purple-900/50 text-purple-300 border border-purple-700',
-  action:       'bg-blue-900/50 text-blue-300 border border-blue-700',
-  verification: 'bg-amber-900/50 text-amber-300 border border-amber-700',
-  closed:       'bg-green-900/50 text-green-300 border border-green-700',
+  open:         'bg-gray-100 text-gray-700',
+  root_cause:   'bg-purple-50 text-purple-700 border border-purple-200',
+  action:       'bg-blue-50 text-blue-700 border border-blue-200',
+  verification: 'bg-amber-50 text-amber-700 border border-amber-200',
+  closed:       'bg-emerald-50 text-emerald-700 border border-emerald-200',
 };
 
 const STATUS_LABEL: Record<CAPA['status'], string> = {
@@ -112,24 +112,24 @@ const STATUS_LABEL: Record<CAPA['status'], string> = {
 };
 
 const SOURCE_BADGE: Record<CAPA['source'], string> = {
-  manual:   'bg-gray-700 text-gray-300',
-  ncr:      'bg-purple-900/50 text-purple-300 border border-purple-700',
-  audit:    'bg-indigo-900/50 text-indigo-300 border border-indigo-700',
-  andon:    'bg-orange-900/50 text-orange-300 border border-orange-700',
-  customer: 'bg-teal-900/50 text-teal-300 border border-teal-700',
-  supplier: 'bg-amber-900/50 text-amber-300 border border-amber-700',
+  manual:   'bg-gray-100 text-gray-700',
+  ncr:      'bg-purple-50 text-purple-700 border border-purple-200',
+  audit:    'bg-indigo-50 text-indigo-700 border border-indigo-200',
+  andon:    'bg-amber-50 text-amber-700 border border-amber-200',
+  customer: 'bg-cyan-50 text-cyan-700 border border-cyan-200',
+  supplier: 'bg-amber-50 text-amber-700 border border-amber-200',
 };
 
 const TYPE_BADGE: Record<CAPA['type'], string> = {
-  corrective: 'bg-blue-900/50 text-blue-300 border border-blue-700',
-  preventive: 'bg-green-900/50 text-green-300 border border-green-700',
-  both:       'bg-cyan-900/50 text-cyan-300 border border-cyan-700',
+  corrective: 'bg-blue-50 text-blue-700 border border-blue-200',
+  preventive: 'bg-emerald-50 text-emerald-700 border border-emerald-200',
+  both:       'bg-cyan-50 text-cyan-700 border border-cyan-200',
 };
 
 const ACTION_STATUS_BADGE: Record<CAPAAction['status'], string> = {
-  open:        'bg-gray-700 text-gray-300',
-  in_progress: 'bg-blue-900/50 text-blue-300 border border-blue-700',
-  complete:    'bg-green-900/50 text-green-300 border border-green-700',
+  open:        'bg-gray-100 text-gray-700',
+  in_progress: 'bg-blue-50 text-blue-700 border border-blue-200',
+  complete:    'bg-emerald-50 text-emerald-700 border border-emerald-200',
 };
 
 const ACTION_STATUS_NEXT: Record<CAPAAction['status'], CAPAAction['status']> = {
@@ -142,7 +142,7 @@ const STATUS_STEPS: CAPA['status'][] = ['open', 'root_cause', 'action', 'verific
 
 // ── Dark input styling helper (inline since this is a dark page) ──────────────
 
-const darkInput = 'bg-gray-800 border border-gray-700 text-white placeholder:text-gray-500 rounded-lg px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm';
+const darkInput = 'bg-white border border-gray-300 text-gray-900 placeholder:text-gray-500 rounded-lg px-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm';
 const darkSelect = `${darkInput} appearance-none`;
 
 // ── Status Stepper ────────────────────────────────────────────────────────────
@@ -163,19 +163,19 @@ function StatusStepper({ status }: { status: CAPA['status'] }) {
                 done
                   ? 'bg-blue-600 text-white'
                   : active
-                  ? 'bg-blue-600 text-white ring-4 ring-blue-500/30'
-                  : 'bg-gray-700 text-gray-500'
+                  ? 'bg-blue-600 text-white ring-4 ring-blue-200'
+                  : 'bg-gray-100 text-gray-500'
               }`}>
                 {done ? <CheckCheck size={12} /> : idx + 1}
               </div>
               <span className={`text-xs mt-1 whitespace-nowrap font-medium ${
-                done ? 'text-blue-400' : active ? 'text-white' : 'text-gray-500'
+                done ? 'text-blue-700' : active ? 'text-gray-900' : 'text-gray-500'
               }`}>
                 {STATUS_LABEL[step]}
               </span>
             </div>
             {idx < STATUS_STEPS.length - 1 && (
-              <div className={`flex-1 h-0.5 mx-1 transition-colors ${done ? 'bg-blue-600' : 'bg-gray-700'}`} />
+              <div className={`flex-1 h-0.5 mx-1 transition-colors ${done ? 'bg-blue-600' : 'bg-gray-100'}`} />
             )}
           </div>
         );
@@ -237,16 +237,16 @@ function NewCAPAModal({ departments, onClose, onCreated }: NewCAPAModalProps) {
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-gray-900 border border-gray-800 rounded-2xl w-full max-w-xl max-h-[90vh] flex flex-col">
+      <div className="bg-white border border-gray-200 rounded-2xl w-full max-w-xl max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-800">
+        <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-blue-900/40 rounded-lg">
-              <ClipboardCheck size={20} className="text-blue-400" />
+            <div className="p-2 bg-blue-50 rounded-lg">
+              <ClipboardCheck size={20} className="text-blue-700" />
             </div>
-            <h2 className="text-lg font-semibold text-white">New CAPA</h2>
+            <h2 className="text-lg font-semibold text-gray-900">New CAPA</h2>
           </div>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors">
+          <button onClick={onClose} className="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors">
             <X size={18} />
           </button>
         </div>
@@ -254,20 +254,20 @@ function NewCAPAModal({ departments, onClose, onCreated }: NewCAPAModalProps) {
         {/* Form */}
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-6 space-y-4">
           <div>
-            <label className="text-xs font-semibold text-gray-400 block mb-1">Title *</label>
+            <label className="text-xs font-semibold text-gray-500 block mb-1">Title *</label>
             <input className={darkInput} placeholder="Brief description of the issue" value={form.title}
               onChange={e => set('title', e.target.value)} required />
           </div>
 
           <div>
-            <label className="text-xs font-semibold text-gray-400 block mb-1">Description</label>
+            <label className="text-xs font-semibold text-gray-500 block mb-1">Description</label>
             <textarea className={`${darkInput} resize-none`} rows={3} placeholder="Detailed description..."
               value={form.description} onChange={e => set('description', e.target.value)} />
           </div>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-semibold text-gray-400 block mb-1">Source *</label>
+              <label className="text-xs font-semibold text-gray-500 block mb-1">Source *</label>
               <select className={darkSelect} value={form.source} onChange={e => set('source', e.target.value as CAPA['source'])}>
                 <option value="manual">Manual</option>
                 <option value="ncr">NCR</option>
@@ -278,7 +278,7 @@ function NewCAPAModal({ departments, onClose, onCreated }: NewCAPAModalProps) {
               </select>
             </div>
             <div>
-              <label className="text-xs font-semibold text-gray-400 block mb-1">Type *</label>
+              <label className="text-xs font-semibold text-gray-500 block mb-1">Type *</label>
               <select className={darkSelect} value={form.type} onChange={e => set('type', e.target.value as CAPA['type'])}>
                 <option value="corrective">Corrective</option>
                 <option value="preventive">Preventive</option>
@@ -289,7 +289,7 @@ function NewCAPAModal({ departments, onClose, onCreated }: NewCAPAModalProps) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-semibold text-gray-400 block mb-1">Priority *</label>
+              <label className="text-xs font-semibold text-gray-500 block mb-1">Priority *</label>
               <select className={darkSelect} value={form.priority} onChange={e => set('priority', e.target.value as CAPA['priority'])}>
                 <option value="low">Low</option>
                 <option value="medium">Medium</option>
@@ -298,7 +298,7 @@ function NewCAPAModal({ departments, onClose, onCreated }: NewCAPAModalProps) {
               </select>
             </div>
             <div>
-              <label className="text-xs font-semibold text-gray-400 block mb-1">Department</label>
+              <label className="text-xs font-semibold text-gray-500 block mb-1">Department</label>
               <select className={darkSelect} value={form.department_id} onChange={e => set('department_id', e.target.value)}>
                 <option value="">— None —</option>
                 {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
@@ -308,25 +308,25 @@ function NewCAPAModal({ departments, onClose, onCreated }: NewCAPAModalProps) {
 
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-semibold text-gray-400 block mb-1">Owner Name</label>
+              <label className="text-xs font-semibold text-gray-500 block mb-1">Owner Name</label>
               <input className={darkInput} placeholder="Person responsible" value={form.owner_name}
                 onChange={e => set('owner_name', e.target.value)} />
             </div>
             <div>
-              <label className="text-xs font-semibold text-gray-400 block mb-1">Due Date</label>
+              <label className="text-xs font-semibold text-gray-500 block mb-1">Due Date</label>
               <input type="date" className={darkInput} value={form.due_date} onChange={e => set('due_date', e.target.value)} />
             </div>
           </div>
 
           {error && (
-            <p className="text-sm text-red-400 bg-red-900/20 border border-red-800 rounded-lg px-3 py-2">{error}</p>
+            <p className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{error}</p>
           )}
         </form>
 
         {/* Footer */}
-        <div className="flex gap-3 p-6 border-t border-gray-800">
+        <div className="flex gap-3 p-6 border-t border-gray-200">
           <button type="button" onClick={onClose}
-            className="flex-1 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium rounded-lg transition-colors">
+            className="flex-1 px-4 py-2 bg-gray-100 hover:bg-gray-100 text-gray-700 font-medium rounded-lg transition-colors">
             Cancel
           </button>
           <button onClick={handleSubmit} disabled={submitting || !form.title.trim()}
@@ -466,28 +466,28 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
   }
 
   function FieldSaveIndicator({ field }: { field: string }) {
-    if (savingField === field) return <span className="text-blue-400 text-xs ml-1">Saving…</span>;
-    if (saved === field) return <span className="text-green-400 text-xs ml-1">Saved</span>;
+    if (savingField === field) return <span className="text-blue-700 text-xs ml-1">Saving…</span>;
+    if (saved === field) return <span className="text-emerald-700 text-xs ml-1">Saved</span>;
     return null;
   }
 
   return (
-    <div className="fixed inset-y-0 right-0 z-40 w-full max-w-2xl bg-gray-900 border-l border-gray-800 flex flex-col shadow-2xl">
+    <div className="fixed inset-y-0 right-0 z-40 w-full max-w-2xl bg-white border-l border-gray-200 flex flex-col shadow-2xl">
       {/* Panel Header */}
-      <div className="p-6 border-b border-gray-800 shrink-0">
+      <div className="p-6 border-b border-gray-200 shrink-0">
         <div className="flex items-start justify-between gap-3">
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
-              <span className="font-mono text-blue-400 text-sm">{detail?.number ?? '...'}</span>
+              <span className="font-mono text-blue-700 text-sm">{detail?.number ?? '...'}</span>
               {detail && isOverdue(detail) && (
-                <span className="text-xs font-bold text-red-400 uppercase tracking-wide">Overdue</span>
+                <span className="text-xs font-bold text-red-700 uppercase tracking-wide">Overdue</span>
               )}
             </div>
-            <h2 className="text-lg font-bold text-white leading-snug truncate">
+            <h2 className="text-lg font-bold text-gray-900 leading-snug truncate">
               {detail ? detail.title : 'Loading…'}
             </h2>
           </div>
-          <button onClick={onClose} className="p-2 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors shrink-0">
+          <button onClick={onClose} className="p-2 text-gray-500 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors shrink-0">
             <X size={18} />
           </button>
         </div>
@@ -497,63 +497,63 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
       {/* Body */}
       {loading ? (
         <div className="flex-1 flex items-center justify-center">
-          <Loader2 size={24} className="animate-spin text-blue-400" />
+          <Loader2 size={24} className="animate-spin text-blue-700" />
         </div>
       ) : error ? (
         <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6">
-          <AlertCircle size={32} className="text-red-400" />
-          <p className="text-red-300 text-sm text-center">{error}</p>
-          <button onClick={loadDetail} className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg text-sm">Retry</button>
+          <AlertCircle size={32} className="text-red-700" />
+          <p className="text-red-700 text-sm text-center">{error}</p>
+          <button onClick={loadDetail} className="px-4 py-2 bg-gray-100 hover:bg-gray-100 text-gray-900 rounded-lg text-sm">Retry</button>
         </div>
       ) : detail ? (
         <div className="flex-1 overflow-y-auto p-6 space-y-6">
 
           {/* Meta grid */}
-          <div className="grid grid-cols-2 gap-3 bg-gray-800 rounded-xl p-4 text-sm">
+          <div className="grid grid-cols-2 gap-3 bg-gray-100 rounded-xl p-4 text-sm">
             {detail.department_name && (
               <div>
-                <p className="text-xs text-gray-400 mb-0.5">Department</p>
-                <p className="text-white font-medium">{detail.department_name}</p>
+                <p className="text-xs text-gray-500 mb-0.5">Department</p>
+                <p className="text-gray-900 font-medium">{detail.department_name}</p>
               </div>
             )}
             {detail.owner_name && (
               <div>
-                <p className="text-xs text-gray-400 mb-0.5">Owner</p>
-                <p className="text-white font-medium flex items-center gap-1"><User size={12} /> {detail.owner_name}</p>
+                <p className="text-xs text-gray-500 mb-0.5">Owner</p>
+                <p className="text-gray-900 font-medium flex items-center gap-1"><User size={12} /> {detail.owner_name}</p>
               </div>
             )}
             <div>
-              <p className="text-xs text-gray-400 mb-0.5">Due Date</p>
-              <p className={`font-medium flex items-center gap-1 ${isOverdue(detail) ? 'text-red-400' : 'text-white'}`}>
+              <p className="text-xs text-gray-500 mb-0.5">Due Date</p>
+              <p className={`font-medium flex items-center gap-1 ${isOverdue(detail) ? 'text-red-700' : 'text-gray-900'}`}>
                 <Calendar size={12} /> {formatDate(detail.due_date)}
               </p>
             </div>
             <div>
-              <p className="text-xs text-gray-400 mb-0.5">Created</p>
-              <p className="text-white font-medium">{formatDate(detail.created_at)}</p>
+              <p className="text-xs text-gray-500 mb-0.5">Created</p>
+              <p className="text-gray-900 font-medium">{formatDate(detail.created_at)}</p>
             </div>
             <div>
-              <p className="text-xs text-gray-400 mb-0.5">Source</p>
+              <p className="text-xs text-gray-500 mb-0.5">Source</p>
               <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${SOURCE_BADGE[detail.source]}`}>
                 {detail.source}
               </span>
             </div>
             <div>
-              <p className="text-xs text-gray-400 mb-0.5">Type</p>
+              <p className="text-xs text-gray-500 mb-0.5">Type</p>
               <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${TYPE_BADGE[detail.type]}`}>
                 {detail.type}
               </span>
             </div>
             <div>
-              <p className="text-xs text-gray-400 mb-0.5">Priority</p>
+              <p className="text-xs text-gray-500 mb-0.5">Priority</p>
               <span className={`px-2 py-0.5 rounded-full text-xs font-medium capitalize ${PRIORITY_BADGE[detail.priority]}`}>
                 {detail.priority}
               </span>
             </div>
             {detail.created_by && (
               <div>
-                <p className="text-xs text-gray-400 mb-0.5">Created By</p>
-                <p className="text-white font-medium">{detail.created_by}</p>
+                <p className="text-xs text-gray-500 mb-0.5">Created By</p>
+                <p className="text-gray-900 font-medium">{detail.created_by}</p>
               </div>
             )}
           </div>
@@ -561,18 +561,18 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
           {/* Description */}
           {detail.description && (
             <div>
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Description</p>
-              <p className="text-sm text-gray-300 leading-relaxed whitespace-pre-wrap">{detail.description}</p>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Description</p>
+              <p className="text-sm text-gray-700 leading-relaxed whitespace-pre-wrap">{detail.description}</p>
             </div>
           )}
 
           {/* Investigation textareas */}
           <div>
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Investigation</p>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Investigation</p>
             <div className="space-y-4">
               {/* Containment */}
               <div>
-                <label className="text-xs font-medium text-gray-400 mb-1 flex items-center">
+                <label className="text-xs font-medium text-gray-500 mb-1 flex items-center">
                   Containment Action
                   <FieldSaveIndicator field="containment_action" />
                 </label>
@@ -588,7 +588,7 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
 
               {/* Root Cause */}
               <div>
-                <label className="text-xs font-medium text-gray-400 mb-1 flex items-center">
+                <label className="text-xs font-medium text-gray-500 mb-1 flex items-center">
                   Root Cause Analysis
                   <FieldSaveIndicator field="root_cause_analysis" />
                 </label>
@@ -604,7 +604,7 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
 
               {/* Corrective */}
               <div>
-                <label className="text-xs font-medium text-gray-400 mb-1 flex items-center">
+                <label className="text-xs font-medium text-gray-500 mb-1 flex items-center">
                   Corrective Action
                   <FieldSaveIndicator field="corrective_action" />
                 </label>
@@ -620,7 +620,7 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
 
               {/* Preventive */}
               <div>
-                <label className="text-xs font-medium text-gray-400 mb-1 flex items-center">
+                <label className="text-xs font-medium text-gray-500 mb-1 flex items-center">
                   Preventive Action
                   <FieldSaveIndicator field="preventive_action" />
                 </label>
@@ -639,10 +639,10 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
           {/* Action Items */}
           <div>
             <div className="flex items-center justify-between mb-3">
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Action Items ({actions.length})</p>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Action Items ({actions.length})</p>
               <button
                 onClick={() => setShowAddAction(v => !v)}
-                className="text-xs bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors"
+                className="text-xs bg-gray-100 hover:bg-gray-100 text-gray-700 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition-colors"
               >
                 <Plus size={12} /> Add Action
               </button>
@@ -650,27 +650,27 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
 
             {/* Add Action form */}
             {showAddAction && (
-              <form onSubmit={handleAddAction} className="bg-gray-800 rounded-xl p-4 mb-3 space-y-3">
+              <form onSubmit={handleAddAction} className="bg-gray-100 rounded-xl p-4 mb-3 space-y-3">
                 <div>
-                  <label className="text-xs text-gray-400 mb-1 block">Description *</label>
+                  <label className="text-xs text-gray-500 mb-1 block">Description *</label>
                   <input className={darkInput} placeholder="What needs to be done?" value={newAction.description}
                     onChange={e => setNewAction(a => ({ ...a, description: e.target.value }))} required />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="text-xs text-gray-400 mb-1 block">Owner</label>
+                    <label className="text-xs text-gray-500 mb-1 block">Owner</label>
                     <input className={darkInput} placeholder="Person's name" value={newAction.owner_name}
                       onChange={e => setNewAction(a => ({ ...a, owner_name: e.target.value }))} />
                   </div>
                   <div>
-                    <label className="text-xs text-gray-400 mb-1 block">Due Date</label>
+                    <label className="text-xs text-gray-500 mb-1 block">Due Date</label>
                     <input type="date" className={darkInput} value={newAction.due_date}
                       onChange={e => setNewAction(a => ({ ...a, due_date: e.target.value }))} />
                   </div>
                 </div>
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setShowAddAction(false)}
-                    className="flex-1 px-3 py-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 rounded-lg text-sm transition-colors">
+                    className="flex-1 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg text-sm transition-colors">
                     Cancel
                   </button>
                   <button type="submit" disabled={addingAction || !newAction.description.trim()}
@@ -688,7 +688,7 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
             ) : (
               <div className="space-y-2">
                 {actions.map(action => (
-                  <div key={action.id} className={`bg-gray-800 rounded-xl p-3 flex items-start gap-3 ${action.status === 'complete' ? 'opacity-60' : ''}`}>
+                  <div key={action.id} className={`bg-gray-100 rounded-xl p-3 flex items-start gap-3 ${action.status === 'complete' ? 'opacity-60' : ''}`}>
                     <button
                       onClick={() => handleToggleActionStatus(action)}
                       disabled={togglingAction === action.id}
@@ -696,27 +696,27 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
                       title="Toggle status"
                     >
                       {togglingAction === action.id ? (
-                        <Loader2 size={18} className="animate-spin text-blue-400" />
+                        <Loader2 size={18} className="animate-spin text-blue-700" />
                       ) : action.status === 'complete' ? (
-                        <CheckCircle2 size={18} className="text-green-400" />
+                        <CheckCircle2 size={18} className="text-emerald-700" />
                       ) : action.status === 'in_progress' ? (
-                        <Circle size={18} className="text-blue-400" />
+                        <Circle size={18} className="text-blue-700" />
                       ) : (
-                        <Circle size={18} className="text-gray-600" />
+                        <Circle size={18} className="text-gray-400" />
                       )}
                     </button>
                     <div className="flex-1 min-w-0">
-                      <p className={`text-sm text-white ${action.status === 'complete' ? 'line-through text-gray-500' : ''}`}>
+                      <p className={`text-sm text-gray-900 ${action.status === 'complete' ? 'line-through text-gray-500' : ''}`}>
                         {action.description}
                       </p>
                       <div className="flex flex-wrap items-center gap-2 mt-1">
                         {action.owner_name && (
-                          <span className="text-xs text-gray-400 flex items-center gap-1">
+                          <span className="text-xs text-gray-500 flex items-center gap-1">
                             <User size={10} /> {action.owner_name}
                           </span>
                         )}
                         {action.due_date && (
-                          <span className="text-xs text-gray-400 flex items-center gap-1">
+                          <span className="text-xs text-gray-500 flex items-center gap-1">
                             <Calendar size={10} /> {formatDate(action.due_date)}
                           </span>
                         )}
@@ -734,7 +734,7 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
           {/* CAPA Actions */}
           {detail.status !== 'closed' && (
             <div>
-              <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">Close CAPA</p>
+              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Close CAPA</p>
               <button
                 onClick={handleClose}
                 disabled={closing}
@@ -747,18 +747,18 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
           )}
 
           {/* Danger zone */}
-          <div className="border-t border-gray-800 pt-4">
+          <div className="border-t border-gray-200 pt-4">
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Danger Zone</p>
             {!confirmDelete ? (
               <button
                 onClick={() => setConfirmDelete(true)}
-                className="flex items-center gap-2 text-sm text-red-400 hover:text-red-300 hover:bg-red-900/20 px-3 py-2 rounded-lg transition-colors"
+                className="flex items-center gap-2 text-sm text-red-700 hover:text-red-800 hover:bg-red-100 px-3 py-2 rounded-lg transition-colors"
               >
                 <Trash2 size={14} /> Delete CAPA
               </button>
             ) : (
               <div className="flex items-center gap-3">
-                <span className="text-sm text-gray-300">Are you sure?</span>
+                <span className="text-sm text-gray-700">Are you sure?</span>
                 <button
                   onClick={handleDelete}
                   disabled={deleting}
@@ -768,7 +768,7 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
                   Delete
                 </button>
                 <button onClick={() => setConfirmDelete(false)}
-                  className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg">
+                  className="px-3 py-1.5 bg-gray-100 hover:bg-gray-100 text-gray-700 text-sm rounded-lg">
                   Cancel
                 </button>
               </div>
@@ -849,18 +849,18 @@ export default function CAPA() {
   // ── Render ──────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
+    <div className="min-h-screen bg-white text-gray-900">
       <div className="max-w-7xl mx-auto px-4 py-8">
 
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div className="flex items-center gap-3">
-            <div className="p-2.5 bg-blue-900/40 border border-blue-800/60 rounded-xl">
-              <ClipboardCheck size={24} className="text-blue-400" />
+            <div className="p-2.5 bg-blue-50 border border-blue-200 rounded-xl">
+              <ClipboardCheck size={24} className="text-blue-700" />
             </div>
             <div>
-              <h1 className="text-2xl font-bold text-white">CAPA Tracker</h1>
-              <p className="text-sm text-gray-400">Corrective and Preventive Action management</p>
+              <h1 className="text-2xl font-bold text-gray-900">CAPA Tracker</h1>
+              <p className="text-sm text-gray-500">Corrective and Preventive Action management</p>
             </div>
           </div>
           <button
@@ -873,12 +873,12 @@ export default function CAPA() {
 
         {/* Error banner */}
         {error && (
-          <div className="bg-red-900/20 border border-red-800 rounded-xl p-4 flex items-center justify-between gap-4 mb-6">
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center justify-between gap-4 mb-6">
             <div className="flex items-center gap-3">
-              <AlertTriangle size={18} className="text-red-400 shrink-0" />
-              <p className="text-red-300 text-sm">{error}</p>
+              <AlertTriangle size={18} className="text-red-700 shrink-0" />
+              <p className="text-red-700 text-sm">{error}</p>
             </div>
-            <button onClick={loadCapas} className="text-sm px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-white rounded-lg shrink-0">
+            <button onClick={loadCapas} className="text-sm px-3 py-1.5 bg-gray-100 hover:bg-gray-100 text-gray-900 rounded-lg shrink-0">
               Retry
             </button>
           </div>
@@ -886,26 +886,26 @@ export default function CAPA() {
 
         {/* Summary Strip */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Open</p>
-            <p className="text-3xl font-bold text-white">{summary?.open ?? '—'}</p>
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Open</p>
+            <p className="text-3xl font-bold text-gray-900">{summary?.open ?? '—'}</p>
             <p className="text-xs text-gray-500 mt-1">active CAPAs</p>
           </div>
-          <div className={`bg-gray-900 border rounded-xl p-4 ${summary && summary.overdue > 0 ? 'border-red-800/60 bg-red-950/30' : 'border-gray-800'}`}>
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Overdue</p>
-            <p className={`text-3xl font-bold ${summary && summary.overdue > 0 ? 'text-red-400' : 'text-white'}`}>
+          <div className={`bg-white border rounded-xl p-4 ${summary && summary.overdue > 0 ? 'border-red-200 bg-red-50' : 'border-gray-200'}`}>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Overdue</p>
+            <p className={`text-3xl font-bold ${summary && summary.overdue > 0 ? 'text-red-700' : 'text-gray-900'}`}>
               {summary?.overdue ?? '—'}
             </p>
             <p className="text-xs text-gray-500 mt-1">past due date</p>
           </div>
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Closed</p>
-            <p className="text-3xl font-bold text-green-400">{closedCount}</p>
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Closed</p>
+            <p className="text-3xl font-bold text-emerald-700">{closedCount}</p>
             <p className="text-xs text-gray-500 mt-1">completed</p>
           </div>
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Total</p>
-            <p className="text-3xl font-bold text-white">
+          <div className="bg-white border border-gray-200 rounded-xl p-4">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1">Total</p>
+            <p className="text-3xl font-bold text-gray-900">
               {summary ? Object.values(summary.by_status).reduce((a, b) => a + b, 0) : '—'}
             </p>
             <p className="text-xs text-gray-500 mt-1">all time</p>
@@ -918,7 +918,7 @@ export default function CAPA() {
           <div className="relative flex-1 min-w-[200px]">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500" />
             <input
-              className="bg-gray-900 border border-gray-800 text-white placeholder:text-gray-500 rounded-lg pl-9 pr-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+              className="bg-white border border-gray-200 text-gray-900 placeholder:text-gray-500 rounded-lg pl-9 pr-3 py-2 w-full focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               placeholder="Search CAPAs…"
               value={search}
               onChange={e => setSearch(e.target.value)}
@@ -967,38 +967,38 @@ export default function CAPA() {
 
         {/* CAPA Table */}
         {loading ? (
-          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
             {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="flex gap-4 p-4 border-b border-gray-800 animate-pulse">
-                <div className="h-4 bg-gray-800 rounded w-24 shrink-0" />
-                <div className="h-4 bg-gray-800 rounded flex-1" />
-                <div className="h-4 bg-gray-800 rounded w-16 shrink-0" />
-                <div className="h-4 bg-gray-800 rounded w-16 shrink-0" />
-                <div className="h-4 bg-gray-800 rounded w-20 shrink-0" />
+              <div key={i} className="flex gap-4 p-4 border-b border-gray-200 animate-pulse">
+                <div className="h-4 bg-gray-100 rounded w-24 shrink-0" />
+                <div className="h-4 bg-gray-100 rounded flex-1" />
+                <div className="h-4 bg-gray-100 rounded w-16 shrink-0" />
+                <div className="h-4 bg-gray-100 rounded w-16 shrink-0" />
+                <div className="h-4 bg-gray-100 rounded w-20 shrink-0" />
               </div>
             ))}
           </div>
         ) : capas.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-24 gap-4">
-            <div className="p-5 bg-green-900/30 border border-green-800/50 rounded-full">
-              <ClipboardCheck size={40} className="text-green-400" />
+            <div className="p-5 bg-emerald-50 border border-emerald-200 rounded-full">
+              <ClipboardCheck size={40} className="text-emerald-700" />
             </div>
             <div className="text-center">
-              <h3 className="text-xl font-semibold text-white mb-1">No CAPAs found</h3>
-              <p className="text-gray-400">Adjust filters or create a new CAPA</p>
+              <h3 className="text-xl font-semibold text-gray-900 mb-1">No CAPAs found</h3>
+              <p className="text-gray-500">Adjust filters or create a new CAPA</p>
             </div>
           </div>
         ) : (
-          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
             {/* Table header */}
-            <div className="hidden lg:grid grid-cols-[120px_1fr_100px_100px_100px_100px_120px_40px] gap-3 px-4 py-3 bg-gray-800 border-b border-gray-700">
+            <div className="hidden lg:grid grid-cols-[120px_1fr_100px_100px_100px_100px_120px_40px] gap-3 px-4 py-3 bg-gray-100 border-b border-gray-300">
               {['Number', 'Title', 'Source', 'Type', 'Priority', 'Status', 'Due Date', ''].map(h => (
-                <span key={h} className="text-xs font-semibold text-gray-400 uppercase tracking-wide">{h}</span>
+                <span key={h} className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</span>
               ))}
             </div>
 
             {/* Table rows */}
-            <div className="divide-y divide-gray-800">
+            <div className="divide-y divide-gray-100">
               {capas.map(capa => {
                 const overdue = isOverdue(capa);
                 const isSelected = selectedId === capa.id;
@@ -1006,17 +1006,17 @@ export default function CAPA() {
                   <div
                     key={capa.id}
                     onClick={() => setSelectedId(isSelected ? null : capa.id)}
-                    className={`cursor-pointer transition-colors px-4 py-3 hover:bg-gray-800
+                    className={`cursor-pointer transition-colors px-4 py-3 hover:bg-gray-100
                       lg:grid lg:grid-cols-[120px_1fr_100px_100px_100px_100px_120px_40px] lg:gap-3 lg:items-center
                       flex flex-col gap-2
-                      ${isSelected ? 'bg-blue-900/20 border-l-2 border-l-blue-500' : ''}`}
+                      ${isSelected ? 'bg-blue-50 border-l-2 border-l-blue-500' : ''}`}
                   >
                     {/* Number */}
-                    <span className="font-mono text-blue-400 text-sm">{capa.number}</span>
+                    <span className="font-mono text-blue-700 text-sm">{capa.number}</span>
 
                     {/* Title */}
                     <div className="min-w-0">
-                      <p className="text-white text-sm font-medium truncate">{capa.title}</p>
+                      <p className="text-gray-900 text-sm font-medium truncate">{capa.title}</p>
                       {capa.department_name && (
                         <p className="text-xs text-gray-500 truncate">{capa.department_name}</p>
                       )}
@@ -1043,13 +1043,13 @@ export default function CAPA() {
                     </span>
 
                     {/* Due date */}
-                    <span className={`text-sm flex items-center gap-1 ${overdue ? 'text-red-400 font-medium' : 'text-gray-400'}`}>
+                    <span className={`text-sm flex items-center gap-1 ${overdue ? 'text-red-700 font-medium' : 'text-gray-500'}`}>
                       {overdue && <AlertTriangle size={12} />}
                       {formatDate(capa.due_date)}
                     </span>
 
                     {/* Chevron */}
-                    <ChevronRight size={16} className="text-gray-600 hidden lg:block" />
+                    <ChevronRight size={16} className="text-gray-400 hidden lg:block" />
                   </div>
                 );
               })}
