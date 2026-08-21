@@ -15,7 +15,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const PORT = 3182;
+const PORT = 3177; // unique per test file — sharing a port silently CANCELS
+                   // the other suite's tests while the run still exits 0
 const BASE = `http://localhost:${PORT}`;
 const DB_PATH = path.join(os.tmpdir(), `mes-dashboard-filters-${Date.now()}.db`);
 

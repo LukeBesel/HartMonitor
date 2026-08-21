@@ -24,7 +24,8 @@ const os = require('node:os');
 const path = require('node:path');
 const WebSocket = require('ws');
 
-const PORT = 3183; // unique per test file — 3185-3199 are taken by other suites
+const PORT = 3176; // unique per test file — sharing a port silently CANCELS
+                   // the other suite's tests while the run still exits 0
 const BASE = `http://localhost:${PORT}`;
 const DB_PATH = path.join(os.tmpdir(), `mes-team-calls-test-${Date.now()}.db`);
 
