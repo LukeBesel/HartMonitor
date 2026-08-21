@@ -14,11 +14,14 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
+import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
+import type { DepartmentOption } from '../hooks/useDepartmentFilter';
 import LastRefreshed from '../components/shared/LastRefreshed';
+import DepartmentFilter from '../components/shared/DepartmentFilter';
 import { ANDON_TEAMS, ANDON_TEAM_ORDER, teamConfig, formatAge, targetLabel, targetPayload } from '../config/andonTeams';
 import type { AlertTarget } from '../config/andonTeams';
 import { subscribeRealtime, isAndonEvent } from '../utils/realtime';
-import type { AndonCall, AndonCallType, AndonPriority, AndonStatus, AndonSummary, AndonTeam, Department, Station } from '../types';
+import type { AndonCall, AndonCallType, AndonPriority, AndonStatus, AndonSummary, AndonTeam, Station } from '../types';
 
 // ── Config maps ───────────────────────────────────────────────────────────────
 
@@ -85,7 +88,7 @@ function TeamChip({ team, label, isDepartment }: { team: string; label?: string;
 // own departments. Raised from this page there is no run context to attach.
 
 interface RequestHelpModalProps {
-  departments: Department[];
+  departments: DepartmentOption[];
   onClose: () => void;
   onCreated: () => void;
 }
@@ -329,33 +332,39 @@ export default function Andon() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [calls, setCalls] = useState<AndonCall[]>([]);
   const [summary, setSummary] = useState<AndonSummary | null>(null);
-  const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const [statusFilter, setStatusFilter] = useState<string>('all');
   // Deep-linkable so a Command Center attention row can hand off "?team=quality"
-  // or "?department_id=…" straight into the right queue.
+  // straight into the right queue.
   const teamFilter = (searchParams.get('team') ?? 'all') as AndonTeam | 'all';
-  const departmentFilter = searchParams.get('department_id') ?? '';
   const setTeamFilter = useCallback((team: AndonTeam | 'all') => {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
-      next.delete('department_id');
       if (team === 'all') next.delete('team');
       else next.set('team', team);
       return next;
     }, { replace: true });
   }, [setSearchParams]);
-  const setDepartmentFilter = useCallback((departmentId: string) => {
+
+  // Department scope lives in the shared picker (same control, same memory as
+  // every other management screen) rather than in the URL. A "?department_id=…"
+  // handoff still works: it is adopted into the picker once, then dropped from
+  // the URL so the two can never disagree.
+  const deptFilter = useDepartmentFilter('andon');
+  const departmentFilter = deptFilter.departmentId;
+  const { setDepartmentId, departments } = deptFilter;
+  const urlDepartmentId = searchParams.get('department_id') ?? '';
+  useEffect(() => {
+    if (!urlDepartmentId) return;
+    setDepartmentId(urlDepartmentId);
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
-      next.delete('team');
-      if (!departmentId) next.delete('department_id');
-      else next.set('department_id', departmentId);
+      next.delete('department_id');
       return next;
     }, { replace: true });
-  }, [setSearchParams]);
+  }, [urlDepartmentId, setDepartmentId, setSearchParams]);
 
   const [showCreate, setShowCreate] = useState(false);
 
@@ -374,16 +383,17 @@ export default function Andon() {
       const params: { status?: string; team?: AndonTeam; department_id?: string } = {};
       if (statusFilter !== 'all') params.status = statusFilter;
       if (teamFilter !== 'all') params.team = teamFilter;
+      // GET /andon honours department_id (backend/src/routes/andon.js), so the
+      // board narrows server-side and the 100-row cap is spent on this
+      // department instead of the whole plant.
       if (departmentFilter) params.department_id = departmentFilter;
 
-      const [callsData, summaryData, depsData] = await Promise.all([
+      const [callsData, summaryData] = await Promise.all([
         api.getAndonCalls(params),
         api.getAndonSummary(),
-        api.getDepartments(),
       ]);
       setCalls(callsData);
       setSummary(summaryData);
-      setDepartments(depsData);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load Andon data.');
       // Rethrow so the freshness stamp does not claim data it never got.
@@ -441,6 +451,14 @@ export default function Andon() {
 
   const teamCounts = useMemo(() => summary?.by_team ?? {}, [summary]);
 
+  // What the board is currently narrowed to, for the empty state: "Nothing open
+  // for Assembly · Quality" beats "No open help requests" when the manager has
+  // in fact only asked about one corner of the plant.
+  const scopeLabel = useMemo(() => [
+    deptFilter.selected?.name,
+    teamFilter === 'all' ? null : (ANDON_TEAMS[teamFilter]?.label ?? teamFilter),
+  ].filter(Boolean).join(' · '), [deptFilter.selected, teamFilter]);
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -458,7 +476,12 @@ export default function Andon() {
               <p className="text-sm text-gray-400">Every help request from the floor — who is needed, where, and how long they have waited</p>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <DepartmentFilter
+              filter={deptFilter}
+              matchCount={calls.length}
+              matchNoun={calls.length === 1 ? 'request' : 'requests'}
+            />
             <LastRefreshed
               at={auto.lastRefreshed}
               refreshing={auto.refreshing}
@@ -489,57 +512,69 @@ export default function Andon() {
         )}
 
         {/* ── Stats Strip ── */}
+        {/* These four come from GET /andon/summary, which counts the whole
+            company and takes no department parameter. Rather than quietly
+            re-label plant totals as one department's, say what they are. */}
         {summary && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className={`bg-gray-900 border border-gray-800 rounded-xl p-4 ${summary.open > 0 ? 'border-red-800/60' : ''}`}>
-              <div className="flex items-center justify-between mb-1">
-                <span className="section-label">Open requests</span>
-                {summary.open > 0 && (
-                  <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+          <div className="space-y-2">
+            {deptFilter.active && (
+              <p className="flex items-center gap-1.5 text-xs text-gray-500">
+                <Building2 size={12} className="shrink-0" />
+                Plant-wide totals — the board below is narrowed to {deptFilter.selected?.name}, these four numbers are not.
+              </p>
+            )}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className={`bg-gray-900 border border-gray-800 rounded-xl p-4 ${summary.open > 0 ? 'border-red-800/60' : ''}`}>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="section-label">Open requests</span>
+                  {summary.open > 0 && (
+                    <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                  )}
+                </div>
+                <p className={`text-3xl font-bold ${summary.open > 0 ? 'text-red-400' : 'text-white'}`}>
+                  {summary.open}
+                </p>
+              </div>
+
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <p className="section-label mb-1">Acknowledged</p>
+                <p className="text-3xl font-bold text-amber-400">{summary.acknowledged}</p>
+              </div>
+
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <p className="section-label mb-1">Resolved Today</p>
+                <p className="text-3xl font-bold text-green-400">{summary.resolved_today}</p>
+              </div>
+
+              {/* Time-to-respond: measured, never estimated — blank until a call
+                  has actually been acknowledged today. */}
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <p className="section-label mb-1">Avg. response today</p>
+                {avgResponse === null ? (
+                  <p className="text-lg font-semibold text-gray-500 mt-1.5">Nothing answered yet</p>
+                ) : (
+                  <p className="text-3xl font-bold text-white flex items-baseline gap-2">
+                    {formatAge(avgResponse)}
+                    <span className="text-xs font-medium text-gray-500">
+                      over {summary.responded_today} request{summary.responded_today === 1 ? '' : 's'}
+                    </span>
+                  </p>
                 )}
               </div>
-              <p className={`text-3xl font-bold ${summary.open > 0 ? 'text-red-400' : 'text-white'}`}>
-                {summary.open}
-              </p>
-            </div>
-
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <p className="section-label mb-1">Acknowledged</p>
-              <p className="text-3xl font-bold text-amber-400">{summary.acknowledged}</p>
-            </div>
-
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <p className="section-label mb-1">Resolved Today</p>
-              <p className="text-3xl font-bold text-green-400">{summary.resolved_today}</p>
-            </div>
-
-            {/* Time-to-respond: measured, never estimated — blank until a call
-                has actually been acknowledged today. */}
-            <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
-              <p className="section-label mb-1">Avg. response today</p>
-              {avgResponse === null ? (
-                <p className="text-lg font-semibold text-gray-500 mt-1.5">Nothing answered yet</p>
-              ) : (
-                <p className="text-3xl font-bold text-white flex items-baseline gap-2">
-                  {formatAge(avgResponse)}
-                  <span className="text-xs font-medium text-gray-500">
-                    over {summary.responded_today} request{summary.responded_today === 1 ? '' : 's'}
-                  </span>
-                </p>
-              )}
             </div>
           </div>
         )}
 
         {/* ── Filter Chips ── */}
         <div className="space-y-3">
-          {/* Team filter — the routing dimension: who was alerted */}
+          {/* Team filter — the routing dimension: who was alerted. Composes
+              with the department picker: both are sent to the server as AND. */}
           <div className="flex flex-wrap gap-2 items-center">
             <span className="section-label mr-1">Team:</span>
             <button
               onClick={() => setTeamFilter('all')}
               className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                teamFilter === 'all' && !departmentFilter ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
+                teamFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
               }`}
             >
               All teams
@@ -558,32 +593,16 @@ export default function Andon() {
                 >
                   <Icon size={13} />
                   {cfg.label}
-                  {openForTeam > 0 && (
+                  {/* The badge is a plant-wide open count from the summary
+                      endpoint. Under a department scope it would overstate this
+                      queue, and a bare number has nowhere to carry the caveat. */}
+                  {openForTeam > 0 && !deptFilter.active && (
                     <span className="ml-0.5 px-1.5 rounded-full bg-red-500 text-white text-[10px] font-bold">{openForTeam}</span>
                   )}
                 </button>
               );
             })}
           </div>
-
-          {/* Department filter — everything raised by or aimed at one department */}
-          {departments.length > 0 && (
-            <div className="flex flex-wrap gap-2 items-center">
-              <span className="section-label mr-1">Department:</span>
-              {departments.map(d => (
-                <button
-                  key={d.id}
-                  onClick={() => setDepartmentFilter(departmentFilter === d.id ? '' : d.id)}
-                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors inline-flex items-center gap-1.5 ${
-                    departmentFilter === d.id ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white'
-                  }`}
-                >
-                  <Building2 size={13} />
-                  {d.name}
-                </button>
-              ))}
-            </div>
-          )}
 
           {/* Status filters */}
           <div className="flex flex-wrap gap-2 items-center">
@@ -615,8 +634,13 @@ export default function Andon() {
             <div className="text-center">
               <h3 className="text-xl font-semibold text-white mb-1">All clear</h3>
               <p className="text-gray-400">
-                {teamFilter === 'all' ? 'No open help requests' : `Nothing open for ${ANDON_TEAMS[teamFilter]?.label ?? teamFilter}`}
+                {scopeLabel ? `Nothing open for ${scopeLabel}` : 'No open help requests'}
               </p>
+              {deptFilter.active && (
+                <button onClick={deptFilter.clear} className="btn-secondary mt-4 text-sm">
+                  <X size={14} /> Show all departments
+                </button>
+              )}
             </div>
           </div>
         ) : (
