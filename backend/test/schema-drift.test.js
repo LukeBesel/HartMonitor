@@ -148,6 +148,84 @@ describe('every written column exists on its table', () => {
   });
 });
 
+// ─── Can a customer create one of everything? ─────────────────────────────────
+// The broadest guard in the suite, and the one that would have caught all five
+// of the 500s above on the day they landed. A 4xx here is fine — that is
+// validation talking. A 5xx is a dead button on a screen we shipped.
+
+describe('every "new" button a customer can press', () => {
+  it('never answers with a server error', async () => {
+    const stamp = Date.now();
+    const ids = {};
+    const results = [];
+
+    // Its own company: this block creates one of everything, which would
+    // otherwise skew the focused counter assertions further down the file.
+    const owner = await api('POST', '/api/auth/signup', {
+      body: {
+        company_name: `Create All ${stamp}`, email: `create${stamp}@drift.test`,
+        password: 'SecretPass1', display_name: 'Creator',
+      },
+    });
+    assert.equal(owner.status, 201, 'create-all signup failed');
+    const allToken = owner.json.token;
+    const allUserId = owner.json.user.id;
+
+    const make = async (label, path, body, keep) => {
+      const r = await api('POST', path, { token: allToken, body });
+      results.push({ label, path, status: r.status, body: JSON.stringify(r.json ?? {}).slice(0, 140) });
+      if (keep && r.json?.id) ids[keep] = r.json.id;
+      return r;
+    };
+
+    // Foundations first, so the rest have something real to point at.
+    await make('department', '/api/departments', { name: 'Create-All Welding' }, 'dept');
+    await make('site', '/api/sites', { name: `Plant ${stamp}`, code: `P${stamp % 100000}` }, 'site');
+    await make('station', '/api/stations', { name: 'Create-All Station', department_id: ids.dept }, 'station');
+    await make('app', '/api/apps', { name: 'Create-All App' }, 'app');
+    await make('product type', '/api/product-types', { app_id: ids.app, name: 'Part A', part_number: 'PA-1' }, 'ptype');
+    await make('vendor', '/api/purchasing/vendors', { name: `Acme ${stamp}`, code: `AC${stamp % 100000}` }, 'vendor');
+    await make('location', '/api/inventory/locations', { name: `Rack ${stamp}`, code: `RK${stamp % 100000}` }, 'loc');
+    await make('inventory item', '/api/inventory/items', { sku: `SKU-${stamp}`, name: 'Bracket', unit: 'ea' }, 'item');
+
+    // Everything else a customer clicks "new" on.
+    await make('work order', '/api/work-orders', { work_order_number: `WO-${stamp}`, part_number: 'PA-1', part_name: 'Bracket', quantity: 10, app_id: ids.app }, 'wo');
+    await make('NCR', '/api/quality/ncrs', { title: 'Weld porosity', description: 'three in a row', severity: 'major' });
+    await make('CAPA', '/api/capa', { title: 'Root-cause the porosity', source: 'ncr' }, 'capa');
+    await make('CAPA action', `/api/capa/${ids.capa}/actions`, { description: 'Re-train the cell', owner_name: 'Ann' });
+    await make('kaizen idea', '/api/kaizen', { title: 'Shorten changeover', category: 'quality', department_id: ids.dept });
+    await make('asset', '/api/maintenance/assets', { asset_number: `AS-${stamp}`, name: 'Press 1', type: 'machine' }, 'asset');
+    await make('maintenance WO', '/api/maintenance/work-orders', { title: 'Lube the press', asset_id: ids.asset });
+    await make('PM schedule', '/api/maintenance/pm', { asset_id: ids.asset, title: 'Quarterly lube', frequency_type: 'months', frequency_value: 3 });
+    await make('shift note', '/api/shifts', { shift_name: 'Day', shift_date: '2026-08-21', department_id: ids.dept }, 'shift');
+    await make('shift handoff', `/api/shifts/${ids.shift}/handoff`, { handoff_notes: 'belt is worn', handed_off_to: 'Night lead' });
+    await make('andon call', '/api/andon', { team: 'quality', title: 'Need a check', station_id: ids.station });
+    await make('dashboard', '/api/dashboards', { name: 'Create-All Dashboard' });
+    await make('table', '/api/tables', { name: `Torque specs ${stamp}`, columns: [{ name: 'part', type: 'text' }] }, 'table');
+    await make('table record', `/api/tables/${ids.table}/records`, { values: { part: 'PA-1' } });
+    await make('purchase order', '/api/purchasing/orders', { vendor_id: ids.vendor, expected_date: '2026-09-15' }, 'po');
+    await make('PO line', `/api/purchasing/orders/${ids.po}/lines`, { item_id: ids.item, quantity_ordered: 5, unit_cost: 3.5 });
+    await make('inventory movement', '/api/inventory/movements', { item_id: ids.item, quantity: 10, movement_type: 'receive', location_id: ids.loc });
+    await make('shipment', '/api/inventory/shipments', { tracking_number: `TRK-${stamp}`, carrier: 'UPS' });
+    await make('routing', '/api/routings', { name: `Routing ${stamp}`, part_number: 'PA-1' }, 'routing');
+    await make('routing step', `/api/routings/${ids.routing}/steps`, { name: 'Weld', department_id: ids.dept, sequence: 1 });
+    await make('BOM', '/api/boms', { app_id: ids.app, product_type_id: ids.ptype, name: 'Bracket BOM' });
+    await make('department member', `/api/departments/${ids.dept}/members`, { user_id: allUserId, team_role: 'quality' });
+    await make('site shift', `/api/sites/${ids.site}/shifts`, { name: 'Day', starts_at: '06:00', ends_at: '14:00', days: [1, 2, 3, 4, 5] });
+    await make('api key', '/api/developer/api-keys', { name: 'Create-All key' });
+    await make('webhook', '/api/developer/webhooks', { url: 'https://example.test/hook', events: ['completion.created'] });
+
+    const serverErrors = results.filter(r => r.status >= 500)
+      .map(r => `${r.label} (POST ${r.path}) → ${r.status} ${r.body}`);
+    assert.deepEqual(serverErrors, [], `endpoints answering with a server error:\n  ${serverErrors.join('\n  ')}`);
+
+    // A guard that stops reaching the endpoints stops guarding them, so hold the
+    // floor: if a route is renamed and every call starts 404ing, this fails.
+    const created = results.filter(r => r.status < 400).length;
+    assert.ok(created >= 30, `expected at least 30 of ${results.length} creates to succeed, got ${created}`);
+  });
+});
+
 // ─── Maintenance: the module that could not create anything ───────────────────
 
 describe('Maintenance work orders and assets', () => {
