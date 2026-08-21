@@ -1,15 +1,21 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import {
-  Users, Clock, CheckCircle2, AlertTriangle, Activity,
+  Users, Clock, AlertTriangle, Activity,
   RefreshCw, ChevronRight, Zap, Timer, Package, TrendingUp, TrendingDown
 } from 'lucide-react';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
+import DepartmentFilter from '../components/shared/DepartmentFilter';
+import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
 
 // ── Types matching actual API response ────────────────────────────────────────
 
+// The manager-view endpoint joins each in-progress run to its work order's
+// department, so a run carries a department whenever it belongs to a work
+// order. Ad-hoc runs (no work order) have none — they are counted separately
+// rather than being assigned to whichever department is on screen.
 interface ActiveCompletion {
   id: string;
   app_name: string;
@@ -18,6 +24,9 @@ interface ActiveCompletion {
   started_at: string;
   work_order_number: string | null;
   work_order_id: string | null;
+  department_id?: string | null;
+  department_name?: string | null;
+  department_color?: string | null;
 }
 
 interface WorkOrder {
@@ -27,6 +36,7 @@ interface WorkOrder {
   part_name: string;
   app_id: string | null;
   app_name?: string;
+  department_id?: string | null;
   department_name?: string;
   department_color?: string;
   quantity: number;
@@ -124,7 +134,7 @@ function calcETA(wo: WorkOrder): string {
 function ActiveRunCard({ run }: { run: ActiveCompletion }) {
   const elapsed = useElapsedSeconds(run.started_at);
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-2">
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-2" data-testid="active-run">
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-2">
           <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse flex-shrink-0 mt-0.5" />
@@ -209,14 +219,14 @@ function WorkOrderCard({ wo }: { wo: WorkOrder }) {
   );
 }
 
-function QuickStat({ icon, bg, label, value, sub }: {
-  icon: React.ReactNode; bg: string; label: string; value: string | number; sub?: string;
+function QuickStat({ icon, bg, label, value, sub, testId }: {
+  icon: React.ReactNode; bg: string; label: string; value: string | number; sub?: string; testId?: string;
 }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center gap-3">
       <div className={`w-10 h-10 ${bg} rounded-lg flex items-center justify-center flex-shrink-0`}>{icon}</div>
       <div>
-        <div className="text-2xl font-bold text-gray-900 leading-none">{value}</div>
+        <div className="text-2xl font-bold text-gray-900 leading-none" data-testid={testId}>{value}</div>
         <div className="text-xs text-gray-500 mt-0.5">{label}</div>
         {sub && <div className="text-xs text-gray-400 mt-0.5">{sub}</div>}
       </div>
@@ -224,15 +234,30 @@ function QuickStat({ icon, bg, label, value, sub }: {
   );
 }
 
-// ── Main Component ─────────────────────────────────────────────────────────────
+// Shown when the plant has rows but the chosen department has none — a dead end
+// the manager can back out of, rather than a screen that just looks broken.
+function FilteredEmpty({ icon, message, hint, onClear }: {
+  icon: React.ReactNode; message: string; hint?: string; onClear: () => void;
+}) {
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm py-10 text-center">
+      <div className="mx-auto mb-2 text-gray-300 w-fit">{icon}</div>
+      <p className="text-sm text-gray-500">{message}</p>
+      {hint && <p className="text-xs text-gray-400 mt-1">{hint}</p>}
+      <button onClick={onClear} className="btn-secondary mt-4 mx-auto">
+        Show all departments
+      </button>
+    </div>
+  );
+}
 
-const ALL_DEPARTMENTS = 'All';
+// ── Main Component ─────────────────────────────────────────────────────────────
 
 export default function ManagerView() {
   const [data, setData] = useState<ManagerViewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [activeDept, setActiveDept] = useState(ALL_DEPARTMENTS);
+  const dept = useDepartmentFilter('manager');
 
   const load = useCallback(async () => {
     try {
@@ -255,15 +280,37 @@ export default function ManagerView() {
   const activeCompletions: ActiveCompletion[] = data?.active_completions ?? [];
   const deptStats: DeptStat[] = data?.department_stats ?? [];
 
-  const departments = [ALL_DEPARTMENTS, ...Array.from(new Set(workOrders.map(wo => wo.department_name).filter(Boolean) as string[]))];
-
-  const filteredWOs = workOrders.filter(wo =>
-    activeDept === ALL_DEPARTMENTS || wo.department_name === activeDept
+  // One department choice scopes the whole page: the tiles, the live runs, the
+  // work order grid and the department summary all read from these three sets.
+  // Previously only the grid was filtered, so a manager who picked "Welding"
+  // read plant-wide totals directly above welding's work orders.
+  const { matches } = dept;
+  const filteredWOs = useMemo(() => workOrders.filter(matches), [workOrders, matches]);
+  const filteredRuns = useMemo(() => activeCompletions.filter(matches), [activeCompletions, matches]);
+  const filteredDeptStats = useMemo(
+    () => (dept.active ? deptStats.filter(d => d.id === dept.departmentId) : deptStats),
+    [deptStats, dept.active, dept.departmentId],
   );
 
-  const totalOnTrack = deptStats.reduce((s, d) => s + d.on_track_count, 0);
-  const totalBehind = deptStats.reduce((s, d) => s + d.behind_count, 0);
-  const totalWOs = workOrders.length;
+  // Runs that belong to no work order have no department to file them under.
+  // They are never silently folded into the selected department; the Live
+  // Active Runs heading says how many are being held back instead.
+  const undepartmentedRuns = useMemo(
+    () => activeCompletions.filter(r => !r.department_id && !r.department_name).length,
+    [activeCompletions],
+  );
+
+  // All four tiles are counted from the same filtered work-order set, so they
+  // agree with each other and with the grid below. The old tiles mixed sources:
+  // "On Track"/"Behind" summed per-department stats (which silently drop work
+  // orders with no department) while "Total" counted every work order.
+  const totalOnTrack = filteredWOs.filter(wo => wo.schedule_status === 'on_track').length;
+  const totalBehind = filteredWOs.filter(wo =>
+    wo.schedule_status === 'behind' || wo.schedule_status === 'overdue' || wo.schedule_status === 'at_risk'
+  ).length;
+  const totalWOs = filteredWOs.length;
+
+  const scopeLabel = dept.selected ? dept.selected.name : 'plant-wide';
 
   return (
     <div className="min-h-screen bg-[#f8fafc] p-6 space-y-6">
@@ -274,13 +321,24 @@ export default function ManagerView() {
             <Activity size={20} className="text-blue-600" />
             <h1 className="text-2xl font-bold text-gray-900">Operations Manager</h1>
           </div>
-          <p className="text-gray-500 text-sm mt-0.5">Live production floor view — auto-refreshes every 15s</p>
+          <p className="text-gray-500 text-sm mt-0.5">
+            {dept.selected
+              ? `${dept.selected.name} — auto-refreshes every 15s`
+              : 'Live production floor view — auto-refreshes every 15s'}
+          </p>
         </div>
-        <LastRefreshed
-          at={auto.lastRefreshed}
-          refreshing={auto.refreshing}
-          onRefresh={() => { void auto.refresh(); }}
-        />
+        <div className="flex items-center gap-3 flex-wrap">
+          <DepartmentFilter
+            filter={dept}
+            matchCount={filteredWOs.length}
+            matchNoun={filteredWOs.length === 1 ? 'work order' : 'work orders'}
+          />
+          <LastRefreshed
+            at={auto.lastRefreshed}
+            refreshing={auto.refreshing}
+            onRefresh={() => { void auto.refresh(); }}
+          />
+        </div>
       </div>
 
       {loading ? (
@@ -303,94 +361,106 @@ export default function ManagerView() {
         <>
           {/* Quick Stats */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* "Active Runs", not "Active Operators": this counts in-progress
+                runs, and one operator can have more than one going. It now
+                matches the Live Active Runs section below exactly. */}
             <QuickStat
               icon={<Users size={18} className="text-blue-600" />}
               bg="bg-blue-50"
-              label="Active Operators"
-              value={activeCompletions.length}
-              sub="currently running"
+              label="Active Runs"
+              value={filteredRuns.length}
+              sub={`in progress · ${scopeLabel}`}
+              testId="stat-active-runs"
             />
             <QuickStat
               icon={<TrendingUp size={18} className="text-green-600" />}
               bg="bg-green-50"
               label="On Track"
               value={totalOnTrack}
-              sub="work orders"
+              sub={`work orders · ${scopeLabel}`}
+              testId="stat-on-track"
             />
             <QuickStat
               icon={<TrendingDown size={18} className="text-red-500" />}
               bg="bg-red-50"
               label="Behind / At Risk"
               value={totalBehind}
-              sub="work orders"
+              sub={`behind, overdue or at risk · ${scopeLabel}`}
+              testId="stat-behind"
             />
             <QuickStat
               icon={<Package size={18} className="text-purple-600" />}
               bg="bg-purple-50"
               label="Total Work Orders"
               value={totalWOs}
-              sub="in schedule"
+              sub={`in schedule · ${scopeLabel}`}
+              testId="stat-total-wos"
             />
           </div>
 
-          {/* Live Active Runs */}
+          {/* Live Active Runs — scoped to the selected department via the
+              work order each run belongs to. */}
           <section>
-            <div className="flex items-center gap-2 mb-3">
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
               <span className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
-              <h2 className="text-base font-semibold text-gray-900">Live Active Runs</h2>
+              <h2 className="text-base font-semibold text-gray-900">
+                Live Active Runs{dept.selected ? ` — ${dept.selected.name}` : ''}
+              </h2>
               <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium">
-                {activeCompletions.length} running
+                {filteredRuns.length} running
               </span>
+              {dept.active && undepartmentedRuns > 0 && (
+                <span
+                  className="text-xs text-gray-400"
+                  title="These runs are not tied to a work order, so there is no department to file them under."
+                >
+                  {undepartmentedRuns} run{undepartmentedRuns === 1 ? '' : 's'} hidden — no work order, so no department
+                </span>
+              )}
             </div>
             {activeCompletions.length === 0 ? (
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm py-10 text-center text-gray-400 text-sm">
                 <Zap size={28} className="mx-auto mb-2 text-gray-300" />
                 No active runs at the moment
               </div>
+            ) : filteredRuns.length === 0 ? (
+              <FilteredEmpty
+                icon={<Zap size={28} />}
+                message={`Nothing running in ${dept.selected?.name ?? 'this department'} right now`}
+                hint={`${activeCompletions.length} run${activeCompletions.length === 1 ? '' : 's'} active elsewhere in the plant`}
+                onClear={dept.clear}
+              />
             ) : (
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-                {activeCompletions.map(run => (
+                {filteredRuns.map(run => (
                   <ActiveRunCard key={run.id} run={run} />
                 ))}
               </div>
             )}
           </section>
 
-          {/* Department filter tabs */}
-          <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 w-fit overflow-x-auto">
-            {departments.map(dept => (
-              <button
-                key={dept}
-                onClick={() => setActiveDept(dept)}
-                className={`px-3 py-1.5 rounded-md text-xs font-medium whitespace-nowrap transition-colors ${
-                  activeDept === dept
-                    ? 'bg-white text-gray-900 shadow-sm'
-                    : 'text-gray-500 hover:text-gray-700'
-                }`}
-              >
-                {dept}
-                {dept !== ALL_DEPARTMENTS && (
-                  <span className="ml-1 text-gray-400">
-                    ({workOrders.filter(wo => wo.department_name === dept).length})
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-
           {/* Work Order Grid */}
           <section>
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-base font-semibold text-gray-900">Work Orders</h2>
+              <h2 className="text-base font-semibold text-gray-900">
+                Work Orders{dept.selected ? ` — ${dept.selected.name}` : ''}
+              </h2>
               <Link to="/schedule" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
                 Manage Schedule <ChevronRight size={12} />
               </Link>
             </div>
-            {filteredWOs.length === 0 ? (
+            {workOrders.length === 0 ? (
               <div className="bg-white rounded-xl border border-gray-200 shadow-sm py-12 text-center text-gray-400 text-sm">
                 <Package size={28} className="mx-auto mb-2 text-gray-300" />
-                No work orders found
+                No work orders in the schedule yet
               </div>
+            ) : filteredWOs.length === 0 ? (
+              <FilteredEmpty
+                icon={<Package size={28} />}
+                message={`No work orders in ${dept.selected?.name ?? 'this department'}`}
+                hint={`${workOrders.length} work order${workOrders.length === 1 ? '' : 's'} elsewhere in the plant`}
+                onClear={dept.clear}
+              />
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
                 {filteredWOs.map(wo => (
@@ -403,46 +473,55 @@ export default function ManagerView() {
           {/* Department Stats */}
           {deptStats.length > 0 && (
             <section>
-              <h2 className="text-base font-semibold text-gray-900 mb-3">Department Summary</h2>
+              <h2 className="text-base font-semibold text-gray-900 mb-3">
+                {dept.selected ? `${dept.selected.name} Summary` : 'Department Summary'}
+              </h2>
+              {filteredDeptStats.length === 0 ? (
+                <FilteredEmpty
+                  icon={<Users size={28} />}
+                  message={`No summary recorded for ${dept.selected?.name ?? 'this department'}`}
+                  onClear={dept.clear}
+                />
+              ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                {deptStats.map(dept => {
+                {filteredDeptStats.map(stat => {
                   // null (not 0) when the department has no work orders — an
                   // empty department isn't "0% on track", it has nothing to track.
-                  const onTrackPct = dept.total_work_orders > 0
-                    ? Math.round((dept.on_track_count / dept.total_work_orders) * 100) : null;
+                  const onTrackPct = stat.total_work_orders > 0
+                    ? Math.round((stat.on_track_count / stat.total_work_orders) * 100) : null;
                   const statusColor =
                     onTrackPct === null ? 'text-gray-500 bg-gray-50 border-gray-200' :
                     onTrackPct >= 75 ? 'text-green-600 bg-green-50 border-green-200' :
                     onTrackPct >= 50 ? 'text-amber-600 bg-amber-50 border-amber-200' :
                     'text-red-600 bg-red-50 border-red-200';
                   return (
-                    <div key={dept.id} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
+                    <div key={stat.id} data-testid={`dept-summary-${stat.id}`} className="bg-white rounded-xl border border-gray-200 shadow-sm p-4">
                       <div className="flex items-start justify-between mb-3">
                         <div>
                           <div
                             className="w-2.5 h-2.5 rounded-full inline-block mr-2"
-                            style={{ backgroundColor: dept.color }}
+                            style={{ backgroundColor: stat.color }}
                           />
-                          <span className="font-semibold text-gray-900 text-sm">{dept.name}</span>
-                          {dept.manager_name && (
-                            <div className="text-xs text-gray-400 mt-0.5">{dept.manager_name}</div>
+                          <span className="font-semibold text-gray-900 text-sm">{stat.name}</span>
+                          {stat.manager_name && (
+                            <div className="text-xs text-gray-400 mt-0.5">{stat.manager_name}</div>
                           )}
                         </div>
                         <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${statusColor}`}>
-                          {dept.active_count} active
+                          {stat.active_count} active
                         </span>
                       </div>
                       <div className="grid grid-cols-3 gap-2 text-center mb-3">
                         <div>
-                          <div className="text-lg font-bold text-gray-900">{dept.on_track_count}</div>
+                          <div className="text-lg font-bold text-gray-900">{stat.on_track_count}</div>
                           <div className="text-xs text-gray-400">On Track</div>
                         </div>
                         <div>
-                          <div className="text-lg font-bold text-amber-600">{dept.behind_count}</div>
+                          <div className="text-lg font-bold text-amber-600">{stat.behind_count}</div>
                           <div className="text-xs text-gray-400">Behind</div>
                         </div>
                         <div>
-                          <div className="text-lg font-bold text-gray-900">{dept.total_work_orders}</div>
+                          <div className="text-lg font-bold text-gray-900">{stat.total_work_orders}</div>
                           <div className="text-xs text-gray-400">Total WOs</div>
                         </div>
                       </div>
@@ -457,16 +536,17 @@ export default function ManagerView() {
                       <div className="text-xs text-gray-400 mt-1 text-right">
                         {onTrackPct === null ? 'No work orders assigned' : `${onTrackPct}% on track`}
                       </div>
-                      {dept.behind_count > 0 && (
+                      {stat.behind_count > 0 && (
                         <div className="flex items-center gap-1.5 mt-2 text-xs text-red-500">
                           <AlertTriangle size={11} />
-                          {dept.behind_count} WO{dept.behind_count > 1 ? 's' : ''} behind schedule
+                          {stat.behind_count} WO{stat.behind_count > 1 ? 's' : ''} behind schedule
                         </div>
                       )}
                     </div>
                   );
                 })}
               </div>
+              )}
             </section>
           )}
         </>
