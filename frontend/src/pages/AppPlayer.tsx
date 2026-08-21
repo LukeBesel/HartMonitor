@@ -9,10 +9,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   AlertCircle, AlertTriangle, BadgeCheck, ChevronDown, ChevronUp, Factory,
-  Loader2, Lock, Package, ScanLine, Tag, X, Zap,
+  Hash, Loader2, Lock, MessageSquare, Package, ScanLine, ShieldCheck, Tag, X, Zap,
 } from 'lucide-react';
 import { api } from '../api/client';
-import type { CompletionFlushPayload, KitLineUpdate } from '../api/client';
+import type { CompletionFlushPayload, CompletionSession, JobInProgress, KitLineUpdate } from '../api/client';
 import type {
   App, Step, Widget, WorkOrder, ProductType, Station,
   Kit, KitLine, KitStatus, BOM, BOMLine, NCRSeverity,
@@ -35,7 +35,8 @@ import RunSummary from '../components/player/RunSummary';
 import PlayerWidget from '../components/player/PlayerWidgets';
 import {
   collectStepTriggers, evaluateKitScan, formatDur, getStepBlocks, kitProgress,
-  kitWidgetFor, legacyKey, stepShowsKit, summarizeBlocks, valueInputFor,
+  kitWidgetFor, legacyKey, runContextGate, runContextRequired, stepHidesFooterNav,
+  stepShowsKit, summarizeBlocks, taktBarState, valueInputFor,
 } from '../components/player/runtime';
 import type { BlockItem } from '../components/player/runtime';
 import '../player.css';
@@ -43,6 +44,12 @@ import '../player.css';
 // Work-order fields added by the v2 backend (list returns wo.*).
 interface WorkOrderExt extends WorkOrder {
   product_type_id?: string | null;
+}
+
+// App field written by the builder's run-context toggle (contract:
+// app.require_run_context boolean; absent → enforce only for schema_version ≥ 2).
+interface AppExt extends App {
+  require_run_context?: boolean;
 }
 
 type RunStatus = 'setup' | 'running' | 'completed' | 'abandoned';
@@ -87,6 +94,18 @@ export default function AppPlayer() {
   const [selectedStationId, setSelectedStationId] = useState(() => localStorage.getItem('hm_station') || '');
   const [starting, setStarting] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Run context (player batch B): typed part number when no work order is chosen,
+  // and whether this app enforces context (raw require_run_context / schema_version).
+  const [manualPartNumber, setManualPartNumber] = useState('');
+  const [requireContext, setRequireContext] = useState(false);
+  // Multi-operator sessions (player batch C)
+  const [jobs, setJobs] = useState<JobInProgress[]>([]);
+  const [resumingId, setResumingId] = useState<string | null>(null);
+  const [handoffNote, setHandoffNote] = useState<string | null>(null);
+  const [leaveOpen, setLeaveOpen] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  // Takt polish (player batch A3): one-time full-screen flash at takt zero
+  const [taktFlash, setTaktFlash] = useState(false);
 
   // ── Run state ──────────────────────────────────────────────────────────────
   const [status, setStatus] = useState<RunStatus>('setup');
@@ -137,6 +156,8 @@ export default function AppPlayer() {
   const firedTaktRef = useRef<Set<number>>(new Set());
   const popTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const statusRef = useRef<RunStatus>('setup'); statusRef.current = status;
+  const manualPartNumberRef = useRef(''); manualPartNumberRef.current = manualPartNumber;
+  const taktFlashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const selectedWO = workOrders.find(w => w.id === selectedWorkOrderId);
   const selectedPT = productTypes.find(p => p.id === selectedProductTypeId);
@@ -177,7 +198,11 @@ export default function AppPlayer() {
     setLoading(true);
     setLoadError(null);
     Promise.all([api.getApp(id), api.getWorkOrders(), api.getProductTypes(id), api.getStations()])
-      .then(([a, wos, pts, sts]: [App, WorkOrderExt[], ProductType[], Station[]]) => {
+      .then(([a, wos, pts, sts]: [AppExt, WorkOrderExt[], ProductType[], Station[]]) => {
+        // Compute the run-context rule from the RAW blob — normalizeApp
+        // force-upgrades schema_version in memory (spec: absent flag → enforce
+        // only for schema_version ≥ 2; explicit false → never; true → always).
+        setRequireContext(runContextRequired(a));
         setApp(normalizeApp(a));
         setWorkOrders(wos.filter(w => w.app_id === id && w.status !== 'completed' && w.status !== 'cancelled'));
         setProductTypes(pts);
@@ -198,6 +223,20 @@ export default function AppPlayer() {
   }, [id]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // "Jobs in progress" for the setup screen — this app's in_progress runs, any
+  // operator can pick one up at its saved position. Refreshed whenever the
+  // setup screen shows (start, next-unit context change, leave-job return).
+  const refreshJobs = useCallback(() => {
+    if (!id || previewMode) return;
+    api.getJobsInProgress(id)
+      .then(list => setJobs(list))
+      .catch(() => setJobs([]));
+  }, [id, previewMode]);
+
+  useEffect(() => {
+    if (status === 'setup') refreshJobs();
+  }, [status, refreshJobs]);
 
   // WO with a product type auto-selects + locks it (spec §6.4)
   useEffect(() => {
@@ -241,7 +280,7 @@ export default function AppPlayer() {
     return {
       operator: operatorNameRef.current || 'Operator',
       work_order_number: wo?.work_order_number ?? '',
-      part_number: wo?.part_number ?? '',
+      part_number: wo?.part_number ?? manualPartNumberRef.current ?? '',
       quantity: wo?.quantity ?? 0,
       quantity_completed: wo?.quantity_completed ?? 0,
       product_type: pt?.name ?? '',
@@ -440,6 +479,8 @@ export default function AppPlayer() {
         valuesBufferRef.current.clear();
         dirtyRef.current = false;
         removeQueuedFlush(`completion:${cid}`);
+        // Completing a run ends the operator's session stint (best-effort).
+        api.closeCompletionSession(cid).catch(() => undefined);
         setStatus('completed');
       } catch (err) {
         const hasStatus = typeof (err as { status?: number }).status === 'number';
@@ -447,6 +488,7 @@ export default function AppPlayer() {
           // Offline / network failure: enqueue the final PUT (spec §5.7)
           enqueueOutbox('completion_update', { completionId: cid, body } as unknown as Record<string, unknown>, `completion:${cid}`);
           setSavedLocally(true);
+          api.closeCompletionSession(cid).catch(() => undefined);
           setStatus('completed');
         } else {
           pushToast('error', err instanceof Error ? err.message : 'Failed to save completion — please try again');
@@ -479,6 +521,11 @@ export default function AppPlayer() {
     }
     if (intent.to === 'next' && target >= a.steps.length) { void doComplete(); return; }
     if (intent.to !== 'prev') historyRef.current.push(idx);
+
+    // Saved position for resume-by-another-operator (jobs in progress).
+    formDataRef.current = { ...formDataRef.current, _step_index: target };
+    setFormData(formDataRef.current);
+    dirtyRef.current = true;
 
     flushValues('step');
 
@@ -766,6 +813,13 @@ export default function AppPlayer() {
     // Step-level timer_done fires once per step when the takt expires
     if (!firedTaktRef.current.has(currentStepIdx)) {
       firedTaktRef.current.add(currentStepIdx);
+      // One-time full-screen red flash at takt zero (skipped for
+      // prefers-reduced-motion; the persistent banner still shows).
+      if (!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+        setTaktFlash(true);
+        if (taktFlashTimeoutRef.current) clearTimeout(taktFlashTimeoutRef.current);
+        taktFlashTimeoutRef.current = setTimeout(() => setTaktFlash(false), 1000);
+      }
       const step = appRef.current?.steps[currentStepIdx];
       if (step?.triggers?.length) {
         applyEffects(runTriggers(step.triggers, 'timer_done', buildState()));
@@ -840,6 +894,9 @@ export default function AppPlayer() {
   const startRun = useCallback(async () => {
     const a = appRef.current;
     if (!a || !id || starting) return;
+    // Run-context gate (player batch B): a work order OR a typed part number.
+    const gate = runContextGate(requireContext && !previewMode, selectedWorkOrderId, manualPartNumber);
+    if (!gate.ok) { setActionError(gate.reason); return; }
     if (selectedStationId) localStorage.setItem('hm_station', selectedStationId);
     else localStorage.removeItem('hm_station');
     setStarting(true);
@@ -856,12 +913,34 @@ export default function AppPlayer() {
         });
         setCompletionId(c.id);
         completionIdRef.current = c.id;
+        // Open this operator's session stint (best-effort — an offline start
+        // still runs; the roster is also dual-written client-side below).
+        api.openCompletionSession(c.id, {
+          operator_name: operatorName || 'Operator',
+          operator_user_id: operatorUserId || undefined,
+        }).catch(() => undefined);
       } else {
         setCompletionId(null);
         completionIdRef.current = null;
         debug('run started — preview mode, no completion created');
       }
       resetRunState();
+      // Seed run context + operator roster into the data blob. A manual part
+      // number is stored in data._part_number AND as a completion_values row
+      // (widget_id '_part_number', labeled 'Part number').
+      const seeded: Record<string, unknown> = { _operators: [operatorName || 'Operator'] };
+      const pn = manualPartNumber.trim();
+      if (!selectedWorkOrderId && pn) {
+        seeded._part_number = pn;
+        valuesBufferRef.current.set('_part_number', {
+          step_id: '', widget_id: '_part_number', variable_name: 'Part number',
+          value_type: 'text', value_text: pn,
+        });
+        dirtyRef.current = true;
+      }
+      formDataRef.current = { ...formDataRef.current, ...seeded };
+      setFormData(formDataRef.current);
+      setHandoffNote(null);
       if (selectedWorkOrderId) loadKitForWO(selectedWorkOrderId);
       else { setKitState(null); setBomFallback(null); }
       setStatus('running');
@@ -876,7 +955,8 @@ export default function AppPlayer() {
       setStarting(false);
     }
   }, [id, starting, previewMode, operatorName, operatorUserId, selectedWorkOrderId, selectedProductTypeId,
-    selectedStationId, resetRunState, loadKitForWO, setKitState, applyEffects, buildState, debug]);
+    selectedStationId, requireContext, manualPartNumber, resetRunState, loadKitForWO, setKitState,
+    applyEffects, buildState, debug]);
 
   const abandonRun = useCallback(() => {
     const cid = completionIdRef.current;
@@ -891,10 +971,121 @@ export default function AppPlayer() {
       }).catch(() => {
         // Still exit the run locally — the operator asked to stop.
       });
+      api.closeCompletionSession(cid).catch(() => undefined);
     }
     if (previewMode) debug('abandon — suppressed (preview)');
     setStatus('abandoned');
   }, [previewMode, debug, recordStepTime]);
+
+  // Pause-and-leave (player batch C): save progress at the current step, close
+  // this operator's session with an optional handoff comment, and return to
+  // setup so the job shows under "Jobs in progress" for anyone to resume.
+  const leaveJob = useCallback((handoffComment: string) => {
+    const cid = completionIdRef.current;
+    if (!cid || previewMode) { setLeaveOpen(false); return; }
+    setLeaving(true);
+    recordStepTime(stepIdxRef.current);
+    captureStepExitValues(appRef.current?.steps[stepIdxRef.current]);
+    formDataRef.current = { ...formDataRef.current, _step_index: stepIdxRef.current };
+    setFormData(formDataRef.current);
+    dirtyRef.current = true;
+    flushValues('leave');
+    api.closeCompletionSession(cid, { handoff_comment: handoffComment })
+      .catch(() => undefined)
+      .finally(() => {
+        setLeaving(false);
+        setLeaveOpen(false);
+        setCompletionId(null);
+        completionIdRef.current = null;
+        setKitState(null);
+        setBomFallback(null);
+        resetRunState();
+        setStatus('setup');
+        statusRef.current = 'setup';
+        refreshJobs();
+      });
+  }, [previewMode, recordStepTime, captureStepExitValues, flushValues, resetRunState, setKitState, refreshJobs]);
+
+  // Resume an in-progress job (any operator) at its saved position.
+  const resumeJob = useCallback(async (job: JobInProgress) => {
+    const a = appRef.current;
+    if (!a || previewMode || resumingId) return;
+    if (!operatorName.trim()) {
+      setActionError('Enter your name (or badge in) before resuming a job');
+      return;
+    }
+    setResumingId(job.id);
+    setActionError(null);
+    try {
+      await api.openCompletionSession(job.id, {
+        operator_name: operatorName.trim(),
+        operator_user_id: operatorUserId || undefined,
+      });
+      const full = await api.getCompletionWithSessions(job.id);
+
+      resetRunState();
+      const data: Record<string, unknown> =
+        full.data && typeof full.data === 'object' ? { ...(full.data as Record<string, unknown>) } : {};
+      formDataRef.current = data;
+      setFormData(data);
+      // Rebuild widget values + variables from the saved blob so triggers and
+      // interpolation see the previous operator's inputs.
+      const vars = { ...variablesRef.current };
+      for (const s of a.steps) {
+        for (const w of s.widgets) {
+          const v = data[legacyKey(w)];
+          if (v !== undefined) {
+            widgetValuesRef.current[w.id] = v;
+            vars[legacyKey(w)] = toPrimitive(v);
+          }
+        }
+      }
+      variablesRef.current = vars;
+      setVariables(vars);
+      const st: Record<number, number> = {};
+      for (const [k, v] of Object.entries((full.step_times ?? {}) as Record<string, number>)) {
+        const n = Number(k);
+        if (Number.isFinite(n)) st[n] = Number(v) || 0;
+      }
+      stepTimesRef.current = st;
+      setStepTimes(st);
+      let exceeded: number[] = [];
+      try {
+        const raw = typeof full.takt_exceeded_steps === 'string'
+          ? JSON.parse(full.takt_exceeded_steps) : full.takt_exceeded_steps;
+        if (Array.isArray(raw)) exceeded = raw.map(Number).filter(Number.isFinite);
+      } catch { /* keep [] */ }
+      setTaktExceededSteps(exceeded);
+      taktExceededRef.current = exceeded;
+
+      setSelectedWorkOrderId(full.work_order_id ?? '');
+      if (full.product_type_id) setSelectedProductTypeId(full.product_type_id);
+      setManualPartNumber(typeof data._part_number === 'string' ? data._part_number : '');
+
+      const savedIdx = Number(data._step_index ?? 0);
+      const idx = Number.isFinite(savedIdx) ? Math.min(Math.max(0, savedIdx), a.steps.length - 1) : 0;
+      stepIdxRef.current = idx;
+      setCurrentStepIdx(idx);
+      stepStartTimeRef.current = Date.now();
+
+      setCompletionId(job.id);
+      completionIdRef.current = job.id;
+      if (full.work_order_id) loadKitForWO(full.work_order_id);
+      else { setKitState(null); setBomFallback(null); }
+
+      // Handoff banner: the most recent closed stint that left a comment.
+      const sessions: CompletionSession[] = Array.isArray(full.sessions) ? full.sessions : [];
+      const prev = [...sessions].reverse().find(s => s.ended_at && s.handoff_comment && s.operator_name !== operatorName.trim());
+      setHandoffNote(prev ? `${prev.operator_name}: ${prev.handoff_comment}` : null);
+
+      setStatus('running');
+      statusRef.current = 'running';
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'Failed to resume job');
+    } finally {
+      setResumingId(null);
+    }
+  }, [previewMode, resumingId, operatorName, operatorUserId, resetRunState, loadKitForWO, setKitState]);
 
   const nextUnit = useCallback(async () => {
     setKitState(null);
@@ -911,9 +1102,21 @@ export default function AppPlayer() {
     setCompletionId(null);
     completionIdRef.current = null;
     resetRunState();
-    // Same setup retained — immediately start the next run
+    // Same setup retained (work order / part number carried forward) —
+    // immediately start the next run.
     setTimeout(() => { void startRun(); }, 0);
   }, [previewMode, id, resetRunState, setKitState, startRun]);
+
+  // One-tap "Change" from the summary: back to setup with the fields retained.
+  const changeContext = useCallback(() => {
+    setKitState(null);
+    setBomFallback(null);
+    setStatus('setup');
+    statusRef.current = 'setup';
+    setCompletionId(null);
+    completionIdRef.current = null;
+    resetRunState();
+  }, [resetRunState, setKitState]);
 
   // ── Badge login (spec §5.1) ────────────────────────────────────────────────
 
@@ -1000,6 +1203,7 @@ export default function AppPlayer() {
 
   // ── Setup screen ───────────────────────────────────────────────────────────
   if (status === 'setup') {
+    const setupGate = runContextGate(requireContext && !previewMode, selectedWorkOrderId, manualPartNumber);
     return (
       <div className="p-root items-center justify-center p-4 sm:p-6">
         <div className="p-card w-full max-w-md p-6 sm:p-8">
@@ -1079,13 +1283,41 @@ export default function AppPlayer() {
 
             {workOrders.length > 0 && (
               <div>
-                <label className="p-label">Work Order (optional)</label>
+                <label className="p-label">Work Order {requireContext ? '' : '(optional)'}</label>
                 <select className="p-input" value={selectedWorkOrderId} onChange={e => setSelectedWorkOrderId(e.target.value)}>
                   <option value="">— No work order —</option>
                   {workOrders.map(wo => (
                     <option key={wo.id} value={wo.id}>{wo.work_order_number} · {wo.part_name} ({wo.quantity_completed}/{wo.quantity})</option>
                   ))}
                 </select>
+              </div>
+            )}
+
+            {/* Run context (player batch B): no work order → typed part number.
+                Scan-friendly: mono font, Enter starts the run. */}
+            {!selectedWorkOrderId && (
+              <div>
+                <label className="p-label flex items-center gap-1.5">
+                  <Hash size={14} style={{ color: 'var(--p-accent)' }} /> Part number
+                  {requireContext && !previewMode && <span style={{ color: 'var(--p-bad)' }}>*</span>}
+                </label>
+                <div className="relative">
+                  <ScanLine size={17} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: 'var(--p-accent)' }} />
+                  <input
+                    className="p-input p-mono"
+                    style={{ paddingLeft: 42 }}
+                    placeholder="Scan or type a part number…"
+                    value={manualPartNumber}
+                    onChange={e => { setManualPartNumber(e.target.value); setActionError(null); }}
+                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void startRun(); } }}
+                    autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
+                  />
+                </div>
+                {requireContext && !previewMode && (
+                  <p style={{ fontSize: 12.5, color: 'var(--p-muted)', marginTop: 6 }}>
+                    Required — select a work order above or enter the part number being built.
+                  </p>
+                )}
               </div>
             )}
 
@@ -1114,9 +1346,70 @@ export default function AppPlayer() {
               </div>
             )}
 
-            <button className="p-btn p-btn-primary w-full" onClick={() => void startRun()} disabled={starting}>
+            <button
+              className="p-btn p-btn-primary w-full"
+              onClick={() => void startRun()}
+              disabled={starting || !setupGate.ok}
+              title={setupGate.ok ? undefined : setupGate.reason}
+            >
               {starting ? 'Starting…' : previewMode ? 'Start Preview' : 'Start Process'}
             </button>
+            {!setupGate.ok && (
+              <p className="text-center" style={{ fontSize: 13, color: 'var(--p-warn)', marginTop: -6 }}>
+                {setupGate.reason}
+              </p>
+            )}
+
+            {/* Jobs in progress (player batch C): resume any operator's run at
+                its saved position — with the last stint's handoff comment. */}
+            {!previewMode && jobs.length > 0 && (
+              <div className="pt-2">
+                <div className="p-label flex items-center gap-1.5" style={{ marginBottom: 10 }}>
+                  <Package size={14} style={{ color: 'var(--p-gold)' }} /> Jobs in progress
+                </div>
+                <div className="space-y-2">
+                  {jobs.map(job => {
+                    const jobWO = workOrders.find(w => w.id === job.work_order_id);
+                    const jobPN = typeof job.data?._part_number === 'string' ? job.data._part_number : '';
+                    const stepIdxRaw = Number(job.data?._step_index ?? 0);
+                    const stepPos = Number.isFinite(stepIdxRaw) ? Math.min(Math.max(0, stepIdxRaw), app.steps.length - 1) : 0;
+                    const last = job.last_session;
+                    const lastWhen = (last?.ended_at || last?.started_at || job.started_at || '').slice(0, 16);
+                    return (
+                      <div key={job.id} className="p-well p-3">
+                        <div className="flex items-center gap-2.5">
+                          <div className="flex-1 min-w-0">
+                            <div className="truncate" style={{ fontSize: 15, fontWeight: 650, color: 'var(--p-ink)' }}>
+                              {jobWO ? `${jobWO.work_order_number} · ${jobWO.part_name}` : jobPN ? `PN ${jobPN}` : 'No work order'}
+                            </div>
+                            <div className="truncate" style={{ fontSize: 12.5, color: 'var(--p-muted)', marginTop: 2 }}>
+                              Step {stepPos + 1}/{app.steps.length}
+                              {' · '}{last?.operator_name || job.operator_name}
+                              {lastWhen ? ` · ${lastWhen}` : ''}
+                            </div>
+                          </div>
+                          <button
+                            className="p-btn p-btn-ghost flex-shrink-0"
+                            style={{ minHeight: 44, fontSize: 15 }}
+                            onClick={() => void resumeJob(job)}
+                            disabled={resumingId !== null}
+                          >
+                            {resumingId === job.id ? 'Resuming…' : 'Resume'}
+                          </button>
+                        </div>
+                        {last?.handoff_comment && (
+                          <div className="flex items-start gap-1.5 mt-2" style={{ fontSize: 12.5, color: 'var(--p-warn-ink)' }}>
+                            <MessageSquare size={13} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--p-gold)' }} />
+                            <span>{last.handoff_comment}</span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <button
               className="w-full py-2 text-sm" style={{ color: 'var(--p-muted)' }}
               onClick={() => navigate('/apps')}
@@ -1132,6 +1425,12 @@ export default function AppPlayer() {
     const kitSummary = kit
       ? (() => { const p = kitProgress(kit.lines, false); return `${p.done}/${p.total}${p.short ? ` · ${p.short} short` : ''}`; })()
       : null;
+    // Next-unit run context (player batch B): carried forward from this run,
+    // one-tap change, disabled with a short reason until context exists.
+    const contextLabel = selectedWO
+      ? `${selectedWO.work_order_number} · ${selectedWO.part_name}`
+      : manualPartNumber.trim() ? `PN ${manualPartNumber.trim()}` : null;
+    const summaryGate = runContextGate(requireContext && !previewMode, selectedWorkOrderId, manualPartNumber);
     return (
       <RunSummary
         appName={app.name}
@@ -1144,6 +1443,9 @@ export default function AppPlayer() {
         capturedCount={capturedRef.current.size}
         kitSummary={kitSummary}
         savedLocally={savedLocally}
+        contextLabel={contextLabel}
+        nextUnitDisabledReason={summaryGate.ok ? undefined : summaryGate.reason}
+        onChangeContext={changeContext}
         onNextUnit={() => void nextUnit()}
         onDone={() => navigate('/apps')}
       />
@@ -1176,6 +1478,10 @@ export default function AppPlayer() {
   const isLast = currentStepIdx === app.steps.length - 1;
   const canBack = currentStepIdx > 0;
   const hasKitWidgetInStep = currentStep?.widgets.some(w => w.type === 'kit-checklist') ?? false;
+  // Footer-hiding rule (player batch A2): a step whose own button widget
+  // navigates hides the footer Next/Complete — exactly one way to advance.
+  const hideForwardNav = stepHidesFooterNav(currentStep);
+  const taktBar = taktBarState(stepTaktSeconds, stepElapsed);
 
   return (
     <>
@@ -1202,10 +1508,34 @@ export default function AppPlayer() {
             onAbandon={() => { if (window.confirm('Stop this process?')) abandonRun(); }}
             onShowParts={() => setShowPartsOverlay(o => !o)}
             onReportProblem={() => setReportOpen(true)}
+            onLeaveJob={previewMode ? undefined : () => setLeaveOpen(true)}
           />
         }
         banner={
           <>
+            {/* Always-visible takt countdown: slim bar draining with remaining
+                time — green → amber at 20% → red (player batch A3). */}
+            {taktBar && (
+              <div className="p-taktbar" role="progressbar" aria-label="Takt time remaining"
+                aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(taktBar.fraction * 100)}>
+                <div
+                  className={`p-taktbar-fill p-taktbar-${taktBar.level}`}
+                  style={{ width: `${taktBar.fraction * 100}%` }}
+                />
+              </div>
+            )}
+            {handoffNote && (
+              <div
+                className="flex items-center gap-2.5 px-4 py-2.5 flex-shrink-0"
+                style={{ background: 'var(--p-gold-wash)', borderBottom: '1px solid rgba(245, 194, 74, 0.4)', color: 'var(--p-warn-ink)', fontSize: 14, fontWeight: 550 }}
+              >
+                <MessageSquare size={15} className="flex-shrink-0" style={{ color: 'var(--p-gold)' }} />
+                <span className="flex-1">Handoff — {handoffNote}</span>
+                <button onClick={() => setHandoffNote(null)} aria-label="Dismiss handoff note" style={{ color: 'var(--p-muted)', width: 32, height: 32 }} className="flex items-center justify-center flex-shrink-0">
+                  <X size={16} />
+                </button>
+              </div>
+            )}
             {isOverTakt && (
               <div
                 className="flex items-center justify-center gap-2.5 py-2 flex-shrink-0"
@@ -1231,6 +1561,7 @@ export default function AppPlayer() {
             blocked={navBlocked}
             blockReason={blockReason}
             completing={completing}
+            hideForward={hideForwardNav}
             onBack={() => requestNavigate({ to: 'prev' })}
             onNext={() => requestNavigate({ to: 'next' })}
             onComplete={() => requestNavigate({ to: 'complete' })}
@@ -1340,13 +1671,27 @@ export default function AppPlayer() {
         />
       )}
 
-      {/* Report problem (existing NCR flow, offline-safe) */}
+      {/* One-time full-screen red flash at takt zero (player batch A3) */}
+      {taktFlash && <div className="p-takt-flash-overlay" aria-hidden="true" />}
+
+      {/* In-run quality issue (player batch C1): NCR filing mid-run without
+          losing progress — requires supervisor PIN authorization server-side. */}
       {reportOpen && (
         <ReportProblemSheet
+          preview={previewMode}
           onClose={() => setReportOpen(false)}
-          onSubmit={(title, severity, description) => {
-            setReportOpen(false);
-            if (previewMode) { debug(`create_ncr: ${severity} — ${title} (suppressed)`); return; }
+          onSubmit={async (title, severity, description, pin) => {
+            if (previewMode) {
+              debug(`create_ncr: ${severity} — ${title} (suppressed)`);
+              setReportOpen(false);
+              return null;
+            }
+            let auth: { user_id: string; display_name: string; role: string };
+            try {
+              auth = await api.verifyAuthorizer(pin);
+            } catch (err) {
+              return err instanceof Error ? err.message : 'Authorization failed';
+            }
             const payload = {
               title, description, severity,
               source: 'production',
@@ -1354,11 +1699,29 @@ export default function AppPlayer() {
               completion_id: completionIdRef.current,
               work_order_id: selectedWorkOrderId || null,
               operator_name: operatorName,
+              authorized_by: auth.display_name,
+              authorized_by_user_id: auth.user_id,
+              step_name: appRef.current?.steps[stepIdxRef.current]?.name ?? '',
             };
-            api.createNCR(payload)
-              .then(() => pushToast('info', 'Problem report created'))
-              .catch(() => { queueNCR(payload); pushToast('warning', 'Problem report queued — will sync'); });
+            try {
+              await api.createNCR(payload);
+              pushToast('info', `Quality issue filed — authorized by ${auth.display_name}`);
+            } catch {
+              queueNCR(payload);
+              pushToast('warning', 'Problem report queued — will sync');
+            }
+            setReportOpen(false); // the run continues exactly where it was
+            return null;
           }}
+        />
+      )}
+
+      {/* Pause-and-leave with an optional handoff comment (player batch C2) */}
+      {leaveOpen && (
+        <LeaveJobSheet
+          leaving={leaving}
+          onClose={() => { if (!leaving) setLeaveOpen(false); }}
+          onLeave={comment => leaveJob(comment)}
         />
       )}
 
@@ -1389,22 +1752,40 @@ export default function AppPlayer() {
   );
 }
 
-// ─── Report problem bottom sheet ─────────────────────────────────────────────
+// ─── Report quality issue bottom sheet (supervisor-authorized NCR) ───────────
+// Filing requires authorization: a supervisor (or above) enters their operator
+// PIN, verified server-side by POST /api/operators/verify-authorizer. The run
+// keeps its state while the sheet is open — nothing is paused or reset.
 
-function ReportProblemSheet({ onClose, onSubmit }: {
+function ReportProblemSheet({ preview, onClose, onSubmit }: {
+  preview: boolean;
   onClose: () => void;
-  onSubmit: (title: string, severity: NCRSeverity, description: string) => void;
+  /** Resolves to null on success (sheet closed by the caller) or an error
+   *  message to show inline (bad PIN / insufficient role / offline). */
+  onSubmit: (title: string, severity: NCRSeverity, description: string, pin: string) => Promise<string | null>;
 }) {
   const [title, setTitle] = useState('');
   const [severity, setSeverity] = useState<NCRSeverity>('minor');
   const [description, setDescription] = useState('');
+  const [pin, setPin] = useState('');
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+
+  const submit = async () => {
+    if (submitting || !title.trim() || (!preview && !pin.trim())) return;
+    setSubmitting(true);
+    setError('');
+    const problem = await onSubmit(title.trim(), severity, description.trim(), pin.trim());
+    setSubmitting(false);
+    if (problem) setError(problem);
+  };
 
   return (
     <div className="p-sheet-backdrop" onClick={onClose}>
       <div className="p-sheet" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center gap-2" style={{ fontSize: 18, fontWeight: 650, color: 'var(--p-ink)' }}>
-            <AlertTriangle size={19} style={{ color: 'var(--p-warn)' }} /> Report a problem
+            <AlertTriangle size={19} style={{ color: 'var(--p-warn)' }} /> Report quality issue
           </div>
           <button onClick={onClose} aria-label="Close" style={{ color: 'var(--p-muted)', width: 44, height: 44 }} className="flex items-center justify-center">
             <X size={20} />
@@ -1441,11 +1822,86 @@ function ReportProblemSheet({ onClose, onSubmit }: {
               value={description} onChange={e => setDescription(e.target.value)}
             />
           </div>
+          {!preview && (
+            <div>
+              <label className="p-label flex items-center gap-1.5">
+                <ShieldCheck size={15} style={{ color: 'var(--p-good)' }} /> Supervisor PIN (authorization)
+              </label>
+              <input
+                className="p-input p-mono"
+                type="password"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                placeholder="Supervisor enters their PIN…"
+                value={pin}
+                onChange={e => { setPin(e.target.value); setError(''); }}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void submit(); } }}
+              />
+              <p style={{ fontSize: 12.5, color: 'var(--p-muted)', marginTop: 6 }}>
+                A supervisor or above must authorize filing this report.
+              </p>
+            </div>
+          )}
+          {error && <div className="p-field-error">{error}</div>}
           <button
             className="p-btn p-btn-primary w-full"
-            disabled={!title.trim()}
-            onClick={() => onSubmit(title.trim(), severity, description.trim())}
-          >Submit report</button>
+            disabled={submitting || !title.trim() || (!preview && !pin.trim())}
+            onClick={() => void submit()}
+          >
+            {submitting ? <Loader2 size={20} className="animate-spin" /> : null}
+            {submitting ? 'Authorizing…' : preview ? 'Submit report' : 'Authorize & submit'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Leave-job bottom sheet (pause-and-leave with handoff comment) ───────────
+
+function LeaveJobSheet({ leaving, onClose, onLeave }: {
+  leaving: boolean;
+  onClose: () => void;
+  onLeave: (handoffComment: string) => void;
+}) {
+  const [comment, setComment] = useState('');
+
+  return (
+    <div className="p-sheet-backdrop" onClick={onClose}>
+      <div className="p-sheet" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2" style={{ fontSize: 18, fontWeight: 650, color: 'var(--p-ink)' }}>
+            <MessageSquare size={18} style={{ color: 'var(--p-gold)' }} /> Leave job
+          </div>
+          <button onClick={onClose} aria-label="Close" style={{ color: 'var(--p-muted)', width: 44, height: 44 }} className="flex items-center justify-center">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="space-y-4">
+          <p style={{ fontSize: 14.5, color: 'var(--p-ink-2)' }}>
+            Progress is saved at the current step. The job stays in
+            &ldquo;Jobs in progress&rdquo; so any operator can pick it up.
+          </p>
+          <div>
+            <label className="p-label">Handoff note (optional)</label>
+            <textarea
+              className="p-input" rows={3} style={{ minHeight: 88, resize: 'vertical' }}
+              placeholder="Anything the next operator should know…"
+              value={comment} onChange={e => setComment(e.target.value)}
+              autoFocus
+            />
+          </div>
+          <div className="flex gap-3">
+            <button className="p-btn p-btn-ghost flex-1" onClick={onClose} disabled={leaving}>Keep working</button>
+            <button
+              className="p-btn p-btn-primary flex-1"
+              style={{ minWidth: 0 }}
+              onClick={() => onLeave(comment.trim())}
+              disabled={leaving}
+            >
+              {leaving ? 'Saving…' : 'Save & leave'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

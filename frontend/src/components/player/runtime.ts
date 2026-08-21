@@ -273,3 +273,137 @@ export function collectStepTriggers(step: Step | undefined) {
   const widgetTriggers = step.widgets.flatMap(w => w.triggers ?? []);
   return [...widgetTriggers, ...(step.triggers ?? [])];
 }
+
+// ═══ Player batch additions (footer nav rule · takt bar · run context · ink) ══
+
+/** Trigger action types that advance the run (footer-hiding rule). prev_step is
+ *  deliberately excluded — a back-only button still needs the footer to go
+ *  forward. */
+const FORWARD_NAV_ACTIONS = ['next_step', 'go_to_step', 'complete_app'] as const;
+
+/**
+ * True when the step contains a button widget that itself advances the run:
+ * legacy buttonType next/complete (incl. the v1 default where buttonType is
+ * absent and the button has no authored triggers), or an enabled button_press
+ * trigger carrying a navigation action. Such steps hide the footer
+ * Next/Complete button — exactly one way to advance, never two.
+ */
+export function stepHidesFooterNav(step: Step | undefined): boolean {
+  if (!step) return false;
+  return step.widgets.some(w => {
+    if (w.type !== 'button') return false;
+    const triggers = w.triggers ?? [];
+    if (triggers.length > 0) {
+      return triggers.some(t =>
+        t.enabled !== false &&
+        t.event === 'button_press' &&
+        t.actions.some(a => (FORWARD_NAV_ACTIONS as readonly string[]).includes(a.type)));
+    }
+    // Un-normalized legacy button: absent buttonType behaves as 'next' (v1).
+    const bt = w.config.buttonType ?? 'next';
+    return bt === 'next' || bt === 'complete';
+  });
+}
+
+// ─── Takt countdown bar (slim drain bar under the header) ────────────────────
+
+export interface TaktBarState {
+  /** Remaining fraction of the takt window, clamped to [0, 1]. */
+  fraction: number;
+  /** ok (>20% left) → warn (≤20% left) → over (takt expired). */
+  level: 'ok' | 'warn' | 'over';
+}
+
+/** null when the step has no takt. Thresholds: green while >20% of the window
+ *  remains, amber at ≤20%, red once takt hits zero. */
+export function taktBarState(taktSeconds: number, elapsed: number): TaktBarState | null {
+  if (!taktSeconds || taktSeconds <= 0) return null;
+  const remaining = Math.max(0, taktSeconds - Math.max(0, elapsed));
+  const fraction = Math.min(1, remaining / taktSeconds);
+  const level: TaktBarState['level'] = remaining <= 0 ? 'over' : fraction <= 0.2 ? 'warn' : 'ok';
+  return { fraction, level };
+}
+
+// ─── Run context gating (work order OR typed part number) ────────────────────
+
+/**
+ * Whether an app enforces run context, from its RAW (pre-normalizeApp) fields:
+ *   • require_run_context true  → always enforce,
+ *   • require_run_context false → never enforce,
+ *   • absent → enforce only for schema_version >= 2 apps.
+ * (normalizeApp force-upgrades schema_version in memory, so callers must pass
+ * the raw server blob here.)
+ */
+export function runContextRequired(raw: { require_run_context?: boolean; schema_version?: number } | null | undefined): boolean {
+  if (!raw) return false;
+  if (raw.require_run_context === true) return true;
+  if (raw.require_run_context === false) return false;
+  return (raw.schema_version ?? 1) >= 2;
+}
+
+export interface RunContextGate {
+  ok: boolean;
+  /** Short reason shown next to the disabled Start / Next-unit button. */
+  reason: string;
+}
+
+/** Starting a run and "Next unit" both require a work order OR a typed part
+ *  number when the app enforces run context. */
+export function runContextGate(required: boolean, workOrderId: string, partNumber: string): RunContextGate {
+  if (!required) return { ok: true, reason: '' };
+  if (workOrderId.trim() !== '' || partNumber.trim() !== '') return { ok: true, reason: '' };
+  return { ok: false, reason: 'Select a work order or enter a part number' };
+}
+
+// ─── Text-contrast helpers (dark player ink, spec §1.4) ──────────────────────
+
+/** WCAG relative luminance of a CSS color (hex #rgb/#rrggbb or rgb()/rgba()).
+ *  Returns null for un-parseable values (CSS vars, named colors). */
+export function relativeLuminance(color: string | undefined | null): number | null {
+  if (!color) return null;
+  const c = color.trim();
+  let r: number, g: number, b: number;
+  const hex3 = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(c);
+  const hex6 = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(c);
+  const rgb = /^rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})/i.exec(c);
+  if (hex3) {
+    r = parseInt(hex3[1] + hex3[1], 16); g = parseInt(hex3[2] + hex3[2], 16); b = parseInt(hex3[3] + hex3[3], 16);
+  } else if (hex6) {
+    r = parseInt(hex6[1], 16); g = parseInt(hex6[2], 16); b = parseInt(hex6[3], 16);
+  } else if (rgb) {
+    r = Number(rgb[1]); g = Number(rgb[2]); b = Number(rgb[3]);
+  } else {
+    return null;
+  }
+  const lin = (v: number) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+}
+
+/** True for backgrounds that need dark ink (white cards, pastel washes). */
+export function isLightColor(color: string | undefined | null): boolean {
+  const lum = relativeLuminance(color);
+  return lum !== null && lum > 0.45;
+}
+
+/** Ink for an instruction card given its effective background: dark ink on
+ *  light configured backgrounds, light ink on dark ones. Un-parseable
+ *  backgrounds keep the light ink (the player default is a dark card). */
+export function instructionInk(background: string | undefined | null): string {
+  return isLightColor(background) ? '#1a2433' : '#f1f5f9';
+}
+
+/**
+ * Effective color for a text widget on the dark player surface. A configured
+ * dark ink (authored against the light builder canvas) with no background of
+ * its own would vanish on the dark shell, so it falls back to the player ink.
+ * Light / un-parseable configured colors pass through untouched.
+ */
+export function playerTextColor(configured: string | undefined | null, fallback = 'var(--p-ink-2)'): string {
+  if (!configured) return fallback;
+  const lum = relativeLuminance(configured);
+  if (lum !== null && lum < 0.25) return fallback;
+  return configured;
+}

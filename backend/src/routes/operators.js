@@ -8,7 +8,7 @@
 
 const express = require('express');
 const db = require('../db');
-const { verifyPassword } = require('../middleware/auth');
+const { verifyPassword, ROLE_LEVELS } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -92,6 +92,33 @@ router.post('/badge-login', (req, res) => {
   }
 
   res.status(400).json({ error: 'Provide badge_code or pin' });
+});
+
+// POST /api/operators/verify-authorizer — supervisor sign-off for in-run actions
+// (e.g. filing an NCR from the player). Body: { pin }. Matches an ACTIVE user in
+// THIS company whose operator PIN verifies (same scrypt compare as badge-login)
+// AND whose role is supervisor or above. Lower roles and bad PINs both return
+// 403 with a clear message so the player can show why authorization failed.
+router.post('/verify-authorizer', (req, res) => {
+  const { pin } = req.body || {};
+  if (pin === undefined || pin === null || String(pin) === '') {
+    return res.status(400).json({ error: 'pin required' });
+  }
+  // Rosters are small — check every active user with a PIN set (badge-login pattern).
+  const candidates = db.prepare(`
+    SELECT id, display_name, role, pin_hash FROM users
+    WHERE company_id = ? AND is_active = 1 AND pin_hash != ''
+  `).all(req.companyId);
+  const matches = candidates.filter(u => verifyPassword(String(pin), u.pin_hash));
+  if (matches.length === 0) {
+    return res.status(403).json({ error: 'PIN not recognized' });
+  }
+  // A PIN shared across roles (unlikely) authorizes if ANY match qualifies.
+  const authorizer = matches.find(u => (ROLE_LEVELS[u.role] ?? 0) >= ROLE_LEVELS.supervisor);
+  if (!authorizer) {
+    return res.status(403).json({ error: 'Authorization requires a supervisor or above' });
+  }
+  res.json({ user_id: authorizer.id, display_name: authorizer.display_name, role: authorizer.role });
 });
 
 module.exports = router;

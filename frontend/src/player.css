@@ -189,6 +189,43 @@
   50%, 100% { opacity: 0.45; }
 }
 
+/* Slim always-visible takt countdown bar under the header. The fill drains with
+   remaining time: green → amber at 20% remaining → red at zero. */
+.p-taktbar {
+  height: 6px;
+  background: var(--p-surface-2);
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.p-taktbar-fill {
+  height: 100%;
+  transition: width 1s linear, background-color 0.3s;
+}
+.p-taktbar-ok   { background: var(--p-good); }
+.p-taktbar-warn { background: var(--p-warn); }
+.p-taktbar-over { background: var(--p-live); }
+
+/* One-time full-screen red flash when takt hits zero. Pointer-transparent, and
+   removed from the DOM by the player after the animation window. */
+.p-takt-flash-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  pointer-events: none;
+  background: var(--p-live);
+  opacity: 0;
+  animation: p-takt-flash-screen 0.9s ease-out;
+}
+
+@keyframes p-takt-flash-screen {
+  0%   { opacity: 0; }
+  15%  { opacity: 0.55; }
+  45%  { opacity: 0.15; }
+  60%  { opacity: 0.45; }
+  100% { opacity: 0; }
+}
+
 .p-live-dot {
   width: 8px; height: 8px; border-radius: 999px;
   background: var(--p-live);
@@ -331,10 +368,12 @@
   .p-row-flash-good,
   .p-confetti,
   .p-takt-over,
+  .p-takt-flash-overlay,
   .p-live-dot,
   .p-block-banner,
   .p-toast,
   .p-sheet { animation: none !important; }
-  .p-confetti { display: none; }
+  .p-confetti,
+  .p-takt-flash-overlay { display: none; }
   .p-btn:active { transform: none; }
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  MoreVertical, Package, X, Pause, Play, AlertTriangle, WifiOff, Tag, ShieldCheck,
+  MoreVertical, Package, X, Pause, Play, AlertTriangle, WifiOff, Tag, ShieldCheck, LogOut,
 } from 'lucide-react';
 import { formatDur } from './runtime';
 
@@ -25,6 +25,10 @@ export interface PlayerHeaderProps {
   onAbandon: () => void;
   onShowParts: () => void;
   onReportProblem: () => void;
+  /** Pause-and-leave: save progress, close the operator's session (with an
+   *  optional handoff comment) and return to setup so another operator can
+   *  resume. Absent in preview mode (nothing to hand off). */
+  onLeaveJob?: () => void;
 }
 
 /** Takt countdown ring: accent → amber at 80% → red flashing past takt. */
@@ -70,7 +74,7 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
     appName, workOrderNumber, partName, productTypeName, operatorName, operatorVerified,
     stepIndex, stepCount, taktSeconds, stepElapsed, isOverTakt, paused,
     offlinePending, isOffline, preview, hasPartsList,
-    onTogglePause, onAbandon, onShowParts, onReportProblem,
+    onTogglePause, onAbandon, onShowParts, onReportProblem, onLeaveJob,
   } = props;
 
   const [menuOpen, setMenuOpen] = useState(false);
@@ -179,8 +183,13 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
                 </button>
               )}
               <button className={menuItem} onClick={() => { setMenuOpen(false); onReportProblem(); }}>
-                <AlertTriangle size={17} /> Report problem
+                <AlertTriangle size={17} /> Report quality issue
               </button>
+              {onLeaveJob && (
+                <button className={menuItem} onClick={() => { setMenuOpen(false); onLeaveJob(); }}>
+                  <LogOut size={17} /> Leave job (save progress)
+                </button>
+              )}
               <button
                 className={menuItem}
                 style={{ color: 'var(--p-bad)', borderTop: '1px solid var(--p-border)' }}

@@ -6,6 +6,7 @@ import {
   Save, ScanLine, Table2, Variable, Wrench, X,
 } from 'lucide-react';
 import type { Widget, WidgetConfig, WidgetType, WidgetLayout } from '../../types';
+import { instructionInk } from '../player/runtime';
 
 // Fixed logical canvas width. Both the builder and player render the canvas at
 // this width, then scale uniformly to fit their container — so what you build is
@@ -326,12 +327,17 @@ export function WidgetView({ widget, value, onChange, onNext, onPrev, onComplete
         </div>
       );
 
-    case 'instruction':
+    case 'instruction': {
+      // Text-contrast: dark ink on light configured backgrounds (default wash,
+      // white cards), light ink on dark ones — same luminance rule the player
+      // uses, so builder canvas and player render identically readable.
+      const instructionBg = config.backgroundColor || '#eff6ff';
       return (
-        <div className="w-full h-full rounded-xl border border-blue-200 overflow-auto p-4" style={{ backgroundColor: config.backgroundColor || '#eff6ff' }}>
-          <div className="text-gray-700 text-sm leading-relaxed whitespace-pre-wrap">{config.content}</div>
+        <div className="w-full h-full rounded-xl border border-blue-200 overflow-auto p-4" style={{ backgroundColor: instructionBg }}>
+          <div className="text-sm leading-relaxed whitespace-pre-wrap" style={{ color: instructionInk(instructionBg) }}>{config.content}</div>
         </div>
       );
+    }
 
     case 'separator':
       return <div className="w-full h-full flex items-center"><div className="w-full border-t-2" style={{ borderColor: config.color || '#e5e7eb' }} /></div>;
