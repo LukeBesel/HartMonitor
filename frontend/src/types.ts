@@ -2,7 +2,9 @@ export type WidgetType =
   | 'text' | 'instruction' | 'image' | 'button'
   | 'text-input' | 'number-input' | 'select-input' | 'checkbox'
   | 'timer' | 'counter' | 'pass-fail' | 'separator' | 'signature'
-  | 'video' | 'model-viewer';
+  | 'video' | 'model-viewer'
+  // v2 additions (app-platform remodel)
+  | 'variable-display' | 'table-lookup' | 'kit-checklist' | 'scan-input' | 'photo-capture';
 
 export interface WidgetConfig {
   text?: string; content?: string; fontSize?: number; fontWeight?: string;
@@ -21,6 +23,23 @@ export interface WidgetConfig {
   // 3D model viewer
   modelUrl?: string; modelAlt?: string; modelAutoRotate?: boolean; modelCameraOrbit?: string;
   modelExposure?: number; modelShadowIntensity?: number;
+  // ── v2 widget config additions (all optional — flat-bag pattern) ──
+  // variable-display
+  variableRef?: string; displayFormat?: 'plain' | 'stat';   // stat = dci tile: label + 30px/750 value
+  // table-lookup
+  tableId?: string; lookupFieldId?: string; matchVariable?: string; displayFieldIds?: string[];
+  // kit-checklist
+  kitScope?: 'step' | 'all';        // 'step' = only lines whose step_id === current step
+  allowShort?: boolean;             // operator may flag a line short (default true)
+  requireScan?: boolean;            // true = tap-to-verify disabled, scan only
+  // scan-input
+  scanTarget?: 'variable' | 'kit';  // write to variable, or attempt kit-line verification
+  expectedPattern?: string;         // optional regex the scan must match
+  // photo-capture
+  maxPhotos?: number;               // default 1
+  // number-input (activated — fields already exist: min, max, step)
+  enforceRange?: boolean;           // true = blocking validation, not just HTML attrs
+  decimals?: number;
 }
 
 /** Free-form placement of a widget on a canvas-mode step. All values are in
@@ -34,6 +53,8 @@ export interface Widget {
   id: string; type: WidgetType; label: string; order: number; config: WidgetConfig;
   /** Present only on canvas-mode steps. Absent = rendered in the stacked flow. */
   layout?: WidgetLayout;
+  /** Widget-level triggers: button_press | input_change | scan | timer_done. */
+  triggers?: Trigger[];
 }
 
 /** A part or material required for a specific step. */
@@ -45,6 +66,10 @@ export interface PartItem {
   notes?: string;
 }
 
+/** Cosmetic step grouping (apps.step_groups JSON column). Navigation order
+ *  remains the flat step.order sequence — groups only organize the builder list. */
+export interface StepGroup { id: string; name: string; order: number; collapsed?: boolean; }
+
 export interface Step {
   id: string; name: string; order: number; widgets: Widget[];
   takt_time_seconds?: number; description?: string;
@@ -54,11 +79,19 @@ export interface Step {
   canvasBackground?: string;
   /** Parts and materials needed for this step — shown to operators as an info overlay. */
   parts_list?: PartItem[];
+  /** References StepGroup.id (v2). */
+  group_id?: string;
+  /** Step-level triggers: step_enter | step_exit | timer_done | scan (v2). */
+  triggers?: Trigger[];
+  /** 'kit' renders the kit-verification chrome (v2). */
+  step_type?: 'standard' | 'kit';
 }
 
 export interface AppVariable {
-  id: string; name: string; type: 'text' | 'number' | 'boolean';
+  id: string; name: string;                       // name: ^[a-z][a-z0-9_]*$ enforced by builder
+  type: 'text' | 'number' | 'boolean';            // unchanged union — photos/scans are widget-typed
   defaultValue?: string | number | boolean;
+  description?: string;
 }
 
 export interface App {
@@ -69,6 +102,10 @@ export interface App {
   site_id?: string | null;
   station_id?: string | null;
   show_takt_warnings?: number | boolean;
+  /** apps.step_groups JSON column (v2). */
+  step_groups?: StepGroup[];
+  /** 1 = legacy blob; 2 = written by the new builder. normalizeApp upgrades in memory. */
+  schema_version?: number;
 }
 
 export interface Completion {
@@ -585,4 +622,119 @@ export interface InventoryTrackerSummary {
   categories: string[];
   value_by_category: InventoryCategoryValue[];
   low_stock_list: InventoryLowStockRow[];
+}
+
+// ── Trigger system (app-platform v2, spec §3.1) ───────────────────────────────
+
+export type TriggerEvent =
+  | 'button_press'    // widget: button
+  | 'step_enter'      // step
+  | 'step_exit'       // step (fires before navigation commits; block cancels nav)
+  | 'input_change'    // widget: any input widget
+  | 'timer_done'      // widget: timer reaches 0 / step: takt timer expires
+  | 'scan';           // widget: scan-input received a code / step: global scan while step open
+
+export interface ValueRef {
+  kind: 'static' | 'variable' | 'widget' | 'app_info';
+  value?: string | number | boolean;   // static
+  name?: string;                       // variable name | widget id
+  key?: 'operator' | 'work_order_number' | 'part_number' | 'quantity' | 'quantity_completed'
+      | 'product_type' | 'station' | 'elapsed_seconds' | 'step_elapsed_seconds' | 'scanned_code';
+}
+
+export type TriggerOp =
+  | 'eq' | 'neq' | 'gt' | 'gte' | 'lt' | 'lte'
+  | 'contains' | 'is_blank' | 'not_blank'
+  | 'kit_complete' | 'kit_has_short';        // kit ops need no left/right operands
+
+export interface TriggerCondition { left?: ValueRef; op: TriggerOp; right?: ValueRef; }
+
+export type TriggerAction =
+  | { type: 'go_to_step'; stepId: string }
+  | { type: 'next_step' } | { type: 'prev_step' }
+  | { type: 'set_variable'; name: string; value: ValueRef }
+  | { type: 'save_record'; tableId: string; fields: Record<string, ValueRef> }  // fieldId -> value
+  | { type: 'require_photo'; message?: string }        // gates step until a photo-capture on it has a photo
+  | { type: 'show_message'; level: 'info' | 'warning'; text: string }           // text supports {{var}}
+  | { type: 'block_with_error'; text: string }         // red banner; halts actions; cancels navigation
+  | { type: 'complete_app' }
+  | { type: 'create_ncr'; severity: NCRSeverity; title: string; description?: string }; // {{var}} allowed
+
+export interface Trigger {
+  id: string;
+  name?: string;
+  event: TriggerEvent;
+  match: 'all' | 'any';                 // AND / OR across conditions (Tulip's model)
+  conditions: TriggerCondition[];       // empty = always fire
+  actions: TriggerAction[];             // in order; at most ONE navigation/complete action, always last
+  enabled?: boolean;                    // default true
+}
+
+// ── BOMs & Kitting (app-platform v2, spec §2.2 / §7) ─────────────────────────
+
+export type BOMStatus = 'draft' | 'active' | 'superseded';
+
+export interface BOMLine {
+  id: string; bom_id: string; item_id: string;
+  qty_per: number; unit: string;
+  reference: string;                 // reference designator / note (e.g. "R12, R14")
+  step_id: string;                   // point of use: app step id ('' = whole process)
+  scan_code: string;                 // barcode override; '' = fall back to items.sku
+  sort_order: number; notes: string;
+  // joined for display
+  item_name?: string; sku?: string; unit_of_measure?: string; unit_cost?: number;
+}
+
+export interface BOM {
+  id: string; product_type_id: string; version: number;
+  status: BOMStatus; notes: string;
+  created_by: string; created_at: string; updated_at: string;
+  lines?: BOMLine[]; line_count?: number;
+  product_type_name?: string; app_id?: string;
+}
+
+export type KitStatus = 'open' | 'picking' | 'complete' | 'short' | 'cancelled';
+export type KitLineStatus = 'pending' | 'picked' | 'verified' | 'short';
+
+export interface KitLine {
+  id: string; kit_id: string; bom_line_id: string | null; item_id: string;
+  item_name: string; sku: string;
+  qty_required: number; qty_picked: number; unit: string;
+  scan_code: string; reference: string; step_id: string;
+  status: KitLineStatus;
+  picked_by: string; picked_at: string | null;
+  verified_by: string; verified_at: string | null;
+  short_reason: string; sort_order: number; notes: string;
+}
+
+export interface Kit {
+  id: string; work_order_id: string; bom_id: string | null; bom_version: number;
+  status: KitStatus; location_id: string | null;
+  created_by: string; verified_by: string; verified_at: string | null;
+  created_at: string; updated_at: string;
+  lines?: KitLine[];
+  // list rollups
+  n_verified?: number; n_total?: number; has_short?: number | boolean;
+  work_order_number?: string; part_name?: string;
+}
+
+// ── Structured completion values (completion_values table) ────────────────────
+
+export type CompletionValueType =
+  | 'text' | 'number' | 'boolean' | 'photo' | 'signature'
+  | 'scan' | 'timer' | 'pass_fail' | 'select';
+
+export interface CompletionValue {
+  id: string; completion_id: string; app_id: string;
+  step_id: string; widget_id: string; variable_name: string;
+  value_type: CompletionValueType;
+  value_text: string | null; value_number: number | null;
+  recorded_at: string;
+}
+
+/** Client-side buffered value flushed via PUT /api/completions/:id { values: [...] }. */
+export interface CompletionValueInput {
+  step_id: string; widget_id: string; variable_name: string;
+  value_type: CompletionValueType;
+  value_text?: string | null; value_number?: number | null;
 }
