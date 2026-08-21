@@ -107,10 +107,14 @@ function formatDate(iso: string) {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
+// Remaining-time estimate from the work order's takt time. With no takt set
+// there is nothing to project from, so it reports "—" instead of the invented
+// 15-minutes-per-unit assumption it used to fall back on.
 function calcETA(wo: WorkOrder): string {
   if (wo.quantity_completed >= wo.quantity) return 'Complete';
+  if (!wo.takt_time_minutes || wo.takt_time_minutes <= 0) return '—';
   const remaining = wo.quantity - wo.quantity_completed;
-  const etaMins = remaining * (wo.takt_time_minutes || 15);
+  const etaMins = remaining * wo.takt_time_minutes;
   if (etaMins < 60) return `~${Math.round(etaMins)}m`;
   return `~${(etaMins / 60).toFixed(1)}h`;
 }
@@ -182,10 +186,12 @@ function WorkOrderCard({ wo }: { wo: WorkOrder }) {
         <span className="text-xs text-gray-400">|</span>
         <span className="text-xs text-gray-600 flex items-center gap-1">
           <Clock size={10} className="flex-shrink-0" />
-          {wo.takt_time_minutes}m takt
+          {wo.takt_time_minutes > 0 ? `${wo.takt_time_minutes}m takt` : 'no takt set'}
         </span>
         <span className="text-xs text-gray-400">|</span>
-        <span className="text-xs text-gray-600">ETA: {calcETA(wo)}</span>
+        <span className="text-xs text-gray-600" title={wo.takt_time_minutes > 0 ? undefined : 'Set a takt time on this work order to estimate remaining time'}>
+          ETA: {calcETA(wo)}
+        </span>
       </div>
       <div className="flex items-center gap-1.5 text-xs text-gray-400">
         <ChevronRight size={10} />
@@ -400,9 +406,12 @@ export default function ManagerView() {
               <h2 className="text-base font-semibold text-gray-900 mb-3">Department Summary</h2>
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {deptStats.map(dept => {
+                  // null (not 0) when the department has no work orders — an
+                  // empty department isn't "0% on track", it has nothing to track.
                   const onTrackPct = dept.total_work_orders > 0
-                    ? Math.round((dept.on_track_count / dept.total_work_orders) * 100) : 0;
+                    ? Math.round((dept.on_track_count / dept.total_work_orders) * 100) : null;
                   const statusColor =
+                    onTrackPct === null ? 'text-gray-500 bg-gray-50 border-gray-200' :
                     onTrackPct >= 75 ? 'text-green-600 bg-green-50 border-green-200' :
                     onTrackPct >= 50 ? 'text-amber-600 bg-amber-50 border-amber-200' :
                     'text-red-600 bg-red-50 border-red-200';
@@ -438,12 +447,16 @@ export default function ManagerView() {
                         </div>
                       </div>
                       <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${onTrackPct >= 75 ? 'bg-green-500' : onTrackPct >= 50 ? 'bg-amber-500' : 'bg-red-500'}`}
-                          style={{ width: `${onTrackPct}%` }}
-                        />
+                        {onTrackPct !== null && (
+                          <div
+                            className={`h-full rounded-full ${onTrackPct >= 75 ? 'bg-green-500' : onTrackPct >= 50 ? 'bg-amber-500' : 'bg-red-500'}`}
+                            style={{ width: `${onTrackPct}%` }}
+                          />
+                        )}
                       </div>
-                      <div className="text-xs text-gray-400 mt-1 text-right">{onTrackPct}% on track</div>
+                      <div className="text-xs text-gray-400 mt-1 text-right">
+                        {onTrackPct === null ? 'No work orders assigned' : `${onTrackPct}% on track`}
+                      </div>
                       {dept.behind_count > 0 && (
                         <div className="flex items-center gap-1.5 mt-2 text-xs text-red-500">
                           <AlertTriangle size={11} />

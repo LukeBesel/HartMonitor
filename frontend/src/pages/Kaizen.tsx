@@ -790,8 +790,10 @@ export default function Kaizen() {
           icon={<CheckCircle2 className="w-5 h-5 text-green-400" />}
         />
         <SummaryCard
-          label="Total Savings"
-          value={summary?.total_savings ? formatCurrency(summary.total_savings) : '$0'}
+          // Sums the ACTUAL savings recorded on implemented ideas. With none
+          // recorded it shows "—", not a $0 that reads like "we saved nothing".
+          label="Savings Recorded"
+          value={summary?.total_savings ? formatCurrency(summary.total_savings) : '—'}
           color="text-green-400"
           icon={<DollarSign className="w-5 h-5 text-green-400" />}
         />

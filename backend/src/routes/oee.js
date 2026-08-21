@@ -9,6 +9,10 @@ const router = express.Router();
 
 // ─── OEE calculation helper ───────────────────────────────────────────────────
 
+// Returns the three OEE factors as percentages, or `null` for any factor the
+// station has no basis to measure. Nothing here is ever guessed: Performance
+// needs a configured ideal cycle time, Quality needs at least one run today,
+// and OEE itself is only reported when all three factors are real.
 function calcOEE(station) {
   const plannedMinutes = (station.planned_hours_per_day || 8) * 60;
 
@@ -39,26 +43,15 @@ function calcOEE(station) {
   `).get(station.id);
   const completionsToday = completionRow.c;
 
-  // Performance: actual vs ideal
-  let performance = 0;
-  if (station.ideal_cycle_seconds > 0 && uptimeMinutes > 0) {
-    performance = Math.min(1, (completionsToday * station.ideal_cycle_seconds) / (uptimeMinutes * 60));
-  } else if (completionsToday > 0 && uptimeMinutes > 0) {
-    // Estimate from actual avg cycle time
-    const ctRow = db.prepare(`
-      SELECT AVG((julianday(completed_at)-julianday(started_at))*24*3600) as avg_secs
-      FROM completions
-      WHERE station_id = ? AND status='completed' AND date(completed_at)=date('now') AND completed_at IS NOT NULL
-    `).get(station.id);
-    if (ctRow?.avg_secs) {
-      const actualRate = 1 / ctRow.avg_secs;
-      const idealRate = 1 / ctRow.avg_secs; // without ideal, use actual as 100%
-      performance = Math.min(1, idealRate / actualRate);
-    }
-    performance = performance || 0.9; // default assumption when no ideal cycle set
-  }
+  // Performance: actual output vs the ideal cycle time. Without a configured
+  // ideal cycle there is no yardstick, so Performance is reported as unknown
+  // rather than invented (this used to default to a made-up 90%).
+  const hasIdealCycle = (station.ideal_cycle_seconds || 0) > 0;
+  const performance = hasIdealCycle && uptimeMinutes > 0
+    ? Math.min(1, (completionsToday * station.ideal_cycle_seconds) / (uptimeMinutes * 60))
+    : null;
 
-  // Quality: pass rate today
+  // Quality: pass rate over today's runs. No runs today = nothing to measure.
   const todayRows = db.prepare(`
     SELECT data FROM completions
     WHERE station_id = ? AND status='completed' AND date(completed_at)=date('now')
@@ -69,15 +62,23 @@ function calcOEE(station) {
     const vals = Object.values(JSON.parse(row.data || '{}'));
     if (!vals.some(v => v === 'Fail')) pass++;
   }
-  const quality = todayRows.length > 0 ? pass / todayRows.length : 1;
+  const quality = todayRows.length > 0 ? pass / todayRows.length : null;
 
-  const oeeVal = availability * performance * quality;
+  const measurable = performance !== null && quality !== null;
+  const pct = v => (v === null ? null : Math.round(v * 100));
+
+  // What a supervisor must do to make this station's OEE real.
+  const missing = [];
+  if (!hasIdealCycle) missing.push('ideal cycle time');
+  if (quality === null) missing.push('runs completed today');
 
   return {
-    availability: Math.round(availability * 100),
-    performance: Math.round(performance * 100),
-    quality: Math.round(quality * 100),
-    oee: Math.round(oeeVal * 100),
+    availability: pct(availability),
+    performance: pct(performance),
+    quality: pct(quality),
+    oee: measurable ? Math.round(availability * performance * quality * 100) : null,
+    measurable,
+    missing,
     uptime_minutes: Math.round(uptimeMinutes),
     downtime_minutes: Math.round(downtimeMinutes),
     planned_minutes: Math.round(plannedMinutes),

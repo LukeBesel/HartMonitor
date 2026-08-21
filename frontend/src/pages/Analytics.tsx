@@ -86,9 +86,12 @@ export default function Analytics() {
   // When the department changes, reset the operation drill-down selection.
   useEffect(() => { setDrillAppId(''); }, [departmentId]);
 
-  const qualityPieData = overview ? [
-    { name: 'Pass', value: overview.passRate },
-    { name: 'Fail', value: 100 - overview.passRate },
+  // passRate is null until at least one run records a QC result — never chart a
+  // pass/fail split that no inspection produced.
+  const passRate: number | null = overview?.passRate ?? null;
+  const qualityPieData = passRate !== null ? [
+    { name: 'Pass', value: passRate },
+    { name: 'Fail', value: 100 - passRate },
   ] : [];
 
   return (
@@ -109,7 +112,7 @@ export default function Analytics() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Operation Analytics</h1>
-          <p className="text-gray-500 text-sm mt-0.5">Manufacturing performance metrics — pick a department and operation to drill into step timing</p>
+          <p className="text-gray-500 text-sm mt-0.5">Throughput, cycle time and quality across every operation — pick an operation below to drill into per-step timing</p>
         </div>
         <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
           {DAYS_OPTIONS.map(d => (
@@ -183,52 +186,55 @@ export default function Analytics() {
         </div>
       </div>
 
-      {/* ── Operation drill-down: department → operation → step metrics ── */}
-      {departmentId && (
-        <div className="card overflow-hidden">
-          <div className="flex flex-wrap items-center gap-3 p-4 border-b border-gray-100">
-            <div className="flex items-center gap-1.5 text-sm font-medium text-gray-700">
-              <Timer size={15} className="text-blue-600" /> Step Metrics
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="text-xs text-gray-500">Operation</label>
-              <select
-                className="input-field text-sm py-1.5 min-w-[14rem]"
-                value={drillAppId}
-                onChange={e => setDrillAppId(e.target.value)}
-              >
-                <option value="">Select an operation…</option>
-                {apps
-                  .filter((a: any) => a.status === 'published')
-                  .map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
-              </select>
-            </div>
-            <span className="text-xs text-gray-400">
-              for {departments.find((d: any) => d.id === departmentId)?.name ?? 'this department'}
-            </span>
-            {drillAppId && (
-              <button
-                onClick={() => setDrillOpen(o => !o)}
-                className="ml-auto flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800"
-              >
-                {drillOpen ? 'Hide' : 'Show'} detail
-                <ChevronDown size={14} className={`transition-transform ${drillOpen ? 'rotate-180' : ''}`} />
-              </button>
-            )}
+      {/* ── Operation drill-down: pick an operation → per-step timing ──
+          Step metrics are per-app, so this is NOT gated on picking a department
+          any more — that gate made the page's own "drill into step timing"
+          promise unreachable for anyone who never used departments. */}
+      <div className="card overflow-hidden">
+        <div className="flex flex-wrap items-center gap-3 p-4 border-b border-gray-100">
+          <div className="flex items-center gap-1.5 text-sm font-medium text-gray-700">
+            <Timer size={15} className="text-blue-600" /> Step Metrics
           </div>
-          {drillAppId ? (
-            drillOpen && (
-              <div className="p-4 bg-gray-50">
-                <StepMetricsPanel appId={drillAppId} days={days} />
-              </div>
-            )
-          ) : (
-            <div className="p-6 text-center text-sm text-gray-400">
-              Choose an operation above to see its per-step cycle times, takt adherence and trends.
-            </div>
+          <div className="flex items-center gap-2">
+            <label className="text-xs text-gray-500">Operation</label>
+            <select
+              className="input-field text-sm py-1.5 min-w-[14rem]"
+              value={drillAppId}
+              onChange={e => setDrillAppId(e.target.value)}
+            >
+              <option value="">Select an operation…</option>
+              {apps
+                .filter((a: any) => a.status === 'published')
+                .map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </div>
+          {departmentId && (
+            <span className="text-xs text-gray-400">
+              in {departments.find((d: any) => d.id === departmentId)?.name ?? 'this department'}
+            </span>
+          )}
+          {drillAppId && (
+            <button
+              onClick={() => setDrillOpen(o => !o)}
+              className="ml-auto flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800"
+            >
+              {drillOpen ? 'Hide' : 'Show'} detail
+              <ChevronDown size={14} className={`transition-transform ${drillOpen ? 'rotate-180' : ''}`} />
+            </button>
           )}
         </div>
-      )}
+        {drillAppId ? (
+          drillOpen && (
+            <div className="p-4 bg-gray-50">
+              <StepMetricsPanel appId={drillAppId} days={days} />
+            </div>
+          )
+        ) : (
+          <div className="p-6 text-center text-sm text-gray-400">
+            Choose an operation above to see its per-step cycle times, takt adherence and trends.
+          </div>
+        )}
+      </div>
 
       {error ? (
         <div className="card p-10 flex flex-col items-center gap-3 text-center">
@@ -264,7 +270,7 @@ export default function Analytics() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard icon={<CheckCircle size={18} className="text-green-600" />} bg="bg-green-50" label="Total Completions" value={overview?.totalCompletions ?? '—'} />
         <KPICard icon={<Clock size={18} className="text-blue-600" />} bg="bg-blue-50" label="Avg Cycle Time" value={overview ? `${overview.avgCycleTime}m` : '—'} />
-        <KPICard icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50" label="Pass Rate" value={overview ? `${overview.passRate}%` : '—'} />
+        <KPICard icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50" label="Pass Rate" value={passRate !== null ? `${passRate}%` : '—'} />
         <KPICard icon={<Activity size={18} className="text-orange-600" />} bg="bg-orange-50" label="Today" value={overview?.todayCompletions ?? '—'} />
       </div>
 
@@ -290,21 +296,33 @@ export default function Analytics() {
         </div>
         <div className="card p-5">
           <h3 className="font-semibold text-gray-900 mb-4">Quality Pass Rate</h3>
-          {qualityPieData.length > 0 && (
-            <ResponsiveContainer width="100%" height={140}>
-              <PieChart>
-                <Pie data={qualityPieData} cx="50%" cy="50%" innerRadius={45} outerRadius={65} paddingAngle={3} dataKey="value">
-                  <Cell fill="#22c55e" />
-                  <Cell fill="#ef4444" />
-                </Pie>
-                <Tooltip formatter={(v: any) => [`${v}%`]} />
-              </PieChart>
-            </ResponsiveContainer>
+          {qualityPieData.length > 0 ? (
+            <>
+              <ResponsiveContainer width="100%" height={140}>
+                <PieChart>
+                  <Pie data={qualityPieData} cx="50%" cy="50%" innerRadius={45} outerRadius={65} paddingAngle={3} dataKey="value">
+                    <Cell fill="#22c55e" />
+                    <Cell fill="#ef4444" />
+                  </Pie>
+                  <Tooltip formatter={(v: any) => [`${v}%`]} />
+                </PieChart>
+              </ResponsiveContainer>
+              <div className="flex justify-center gap-4 text-xs mt-2">
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-green-500 rounded-full inline-block" />Pass {passRate}%</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-red-500 rounded-full inline-block" />Fail {100 - (passRate ?? 0)}%</span>
+              </div>
+              {typeof overview?.qcSampleSize === 'number' && (
+                <div className="text-center text-[11px] text-gray-400 mt-1">
+                  from {overview.qcSampleSize} inspected run{overview.qcSampleSize === 1 ? '' : 's'}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="text-center py-10 text-sm text-gray-400">
+              No pass/fail results recorded yet
+              <div className="text-xs text-gray-300 mt-1">Add a Pass/Fail step to an app to track quality here</div>
+            </div>
           )}
-          <div className="flex justify-center gap-4 text-xs mt-2">
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-green-500 rounded-full inline-block" />Pass {overview?.passRate}%</span>
-            <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-red-500 rounded-full inline-block" />Fail {100 - (overview?.passRate ?? 100)}%</span>
-          </div>
         </div>
       </div>
 

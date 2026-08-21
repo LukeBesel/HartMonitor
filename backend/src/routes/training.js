@@ -128,10 +128,12 @@ router.get('/matrix', (req, res) => {
 
   const operators = db.prepare(opSql).all(...opParams);
 
-  let appSql = `SELECT id, name, category, department_id FROM apps WHERE company_id = ? AND status = 'published'`;
+  // NB: `apps` has no `category` column — selecting one made this endpoint 500
+  // for every company, which the Skills Matrix rendered as a false "no apps yet".
+  let appSql = `SELECT id, name, department_id FROM apps WHERE company_id = ? AND status = 'published'`;
   const appParams = [cid];
   if (department_id) { appSql += ' AND (department_id = ? OR department_id IS NULL)'; appParams.push(department_id); }
-  appSql += ' ORDER BY category, name';
+  appSql += ' ORDER BY name';
 
   const apps = db.prepare(appSql).all(...appParams);
 

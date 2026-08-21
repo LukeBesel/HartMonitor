@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import {
   Package, AlertTriangle, CheckCircle, ChevronDown, ChevronUp,
-  Download, Filter, RefreshCw, ClipboardList,
+  Download, Filter, RefreshCw, ClipboardList, ShoppingCart,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -208,6 +209,27 @@ function RequirementRow({ item }: { item: RequirementItem }) {
               </div>
             ))}
           </div>
+          {/* A shortage row is only useful if you can act on it — raising a PO
+              is the action, so it lives right next to the number. */}
+          {isShort && (
+            <div className="mt-3 pt-3 border-t border-gray-200 flex flex-wrap items-center gap-3">
+              <Link to="/purchasing" className="btn-primary text-xs py-1.5 px-3">
+                <ShoppingCart className="w-3.5 h-3.5" />
+                Raise a purchase order
+              </Link>
+              {item.item_id && (
+                <Link
+                  to={`/inventory/${item.item_id}`}
+                  className="text-xs text-blue-600 hover:text-blue-700"
+                >
+                  View stock and locations
+                </Link>
+              )}
+              <span className="text-xs text-gray-400">
+                Short {item.shortage}{item.unit ? ` ${item.unit}` : ''} for the work orders above
+              </span>
+            </div>
+          )}
         </div>
       )}
     </div>

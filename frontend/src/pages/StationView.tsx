@@ -21,7 +21,8 @@ interface StationViewData {
     started_at: string; work_order_number: string | null; part_name: string | null;
   } | null;
   oee: {
-    availability: number; performance: number; quality: number; oee: number;
+    availability: number | null; performance: number | null; quality: number | null; oee: number | null;
+    measurable?: boolean; missing?: string[];
     uptime_minutes: number; downtime_minutes: number; planned_minutes: number;
     completions_today: number;
   };
@@ -191,10 +192,13 @@ export default function StationView() {
 
       {/* OEE KPIs */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
-        <OEECard label="OEE" value={oee.oee} highlight />
+        <OEECard label="OEE" value={oee.oee} highlight
+          hint={oee.missing?.length ? `Needs ${oee.missing.join(' and ')}` : 'Not enough data yet'} />
         <OEECard label="Availability" value={oee.availability} />
-        <OEECard label="Performance" value={oee.performance} />
-        <OEECard label="Quality" value={oee.quality} />
+        <OEECard label="Performance" value={oee.performance}
+          hint="Set an ideal cycle time below" />
+        <OEECard label="Quality" value={oee.quality}
+          hint="Measured from today's runs" />
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
           <div className="w-9 h-9 bg-green-50 rounded-lg flex items-center justify-center mb-3">
             <CheckCircle2 size={18} className="text-green-600" />
@@ -276,16 +280,19 @@ export default function StationView() {
   );
 }
 
-function OEECard({ label, value: rawValue, highlight }: { label: string; value: number; highlight?: boolean }) {
-  const value = Number.isFinite(rawValue) ? rawValue : 0;
-  const color = value >= 80 ? 'text-green-600' : value >= 60 ? 'text-amber-600' : 'text-red-600';
+function OEECard({ label, value, highlight, hint }: { label: string; value: number | null; highlight?: boolean; hint?: string }) {
+  const known = value !== null && Number.isFinite(value);
+  const color = !known ? 'text-gray-400'
+    : (value as number) >= 80 ? 'text-green-600'
+    : (value as number) >= 60 ? 'text-amber-600' : 'text-red-600';
   return (
     <div className={`bg-white rounded-xl border shadow-sm p-5 ${highlight ? 'border-blue-200 ring-1 ring-blue-100' : 'border-gray-200'}`}>
       <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center mb-3">
         <Gauge size={18} className="text-blue-600" />
       </div>
-      <div className={`text-2xl font-bold ${color}`}>{value}%</div>
+      <div className={`text-2xl font-bold ${color}`}>{known ? `${value}%` : '—'}</div>
       <div className="text-xs text-gray-500 mt-0.5">{label}</div>
+      {!known && hint && <div className="text-[11px] text-gray-400 mt-1 leading-snug">{hint}</div>}
     </div>
   );
 }

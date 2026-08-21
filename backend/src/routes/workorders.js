@@ -103,7 +103,8 @@ router.get('/', (req, res) => {
   if (status)        { conditions.push('wo.status = ?');        params.push(status); }
   if (department_id) { conditions.push('wo.department_id = ?'); params.push(department_id); }
   if (priority)      { conditions.push('wo.priority = ?');      params.push(priority); }
-  if (site_id)       { conditions.push('wo.site_id = ?');       params.push(site_id); }
+  // Unassigned work orders stay visible under every site (see departments.js).
+  if (site_id)       { conditions.push('(wo.site_id = ? OR wo.site_id IS NULL)'); params.push(site_id); }
 
   query += ' WHERE ' + conditions.join(' AND ');
   query += ' ORDER BY wo.created_at DESC';

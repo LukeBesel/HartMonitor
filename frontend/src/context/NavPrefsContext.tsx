@@ -3,11 +3,9 @@ import type { SectionId } from '../config/navigation';
 
 const HIDDEN_KEY = 'hm_hidden_nav';
 const HIDDEN_SECTIONS_KEY = 'hm_hidden_sections';
-const FOCUS_KEY = 'hm_nav_focus';
 const ORDER_KEY = 'hm_nav_order';
 const PRO_SIDEBAR_KEY = 'hm_show_pro_sidebar';
 
-export type Focus = SectionId;
 
 function loadSet(key: string, fallback: string[] = []): Set<string> {
   try {
@@ -44,11 +42,6 @@ interface NavPrefsContextValue {
   hiddenSections: Set<string>;
   isSectionHidden: (id: SectionId) => boolean;
   toggleSection: (id: SectionId) => void;
-  // Persisted default-workspace preference (Settings). The LIVE focused
-  // workspace is derived from the current route in Layout (findSectionForPath),
-  // never from this value — it only survives as the Settings default selector.
-  focus: Focus;
-  setFocus: (f: Focus) => void;
   // Custom item ordering per section (developer-controlled). Maps sectionId →
   // an ordered list of item `to` paths. Items not listed keep their natural order.
   itemOrder: Record<string, string[]>;
@@ -71,13 +64,6 @@ export function NavPrefsProvider({ children }: { children: ReactNode }) {
   const [showProSidebar, setShowProSidebarState] = useState<boolean>(() => {
     try { return localStorage.getItem(PRO_SIDEBAR_KEY) === 'true'; } catch { return false; }
   });
-  const [focus, setFocusState] = useState<Focus>(() => {
-    try {
-      const stored = localStorage.getItem(FOCUS_KEY);
-      if (stored && stored !== 'all') return stored as Focus;
-    } catch { /* ignore */ }
-    return 'production';
-  });
 
   const toggleItem = (to: string) => {
     setHiddenItems(prev => {
@@ -97,11 +83,6 @@ export function NavPrefsProvider({ children }: { children: ReactNode }) {
       saveSet(HIDDEN_SECTIONS_KEY, next);
       return next;
     });
-  };
-
-  const setFocus = (f: Focus) => {
-    setFocusState(f);
-    try { localStorage.setItem(FOCUS_KEY, f); } catch { /* ignore */ }
   };
 
   const setShowProSidebar = (v: boolean) => {
@@ -132,11 +113,9 @@ export function NavPrefsProvider({ children }: { children: ReactNode }) {
     setHiddenItems(new Set());
     setHiddenSections(new Set());
     setItemOrder({});
-    setFocusState('production');
     saveSet(HIDDEN_KEY, new Set());
     saveSet(HIDDEN_SECTIONS_KEY, new Set());
     try {
-      localStorage.setItem(FOCUS_KEY, 'production');
       localStorage.removeItem(ORDER_KEY);
     } catch { /* ignore */ }
   };
@@ -150,8 +129,6 @@ export function NavPrefsProvider({ children }: { children: ReactNode }) {
         hiddenSections,
         isSectionHidden: (id) => hiddenSections.has(id),
         toggleSection,
-        focus,
-        setFocus,
         itemOrder,
         moveItem,
         showProSidebar,

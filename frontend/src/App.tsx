@@ -34,7 +34,6 @@ const ManagerView      = lazy(() => import('./pages/ManagerView'));
 const CompletionDetail = lazy(() => import('./pages/CompletionDetail'));
 const AppHistory       = lazy(() => import('./pages/AppHistory'));
 const AppAnalytics     = lazy(() => import('./pages/AppAnalytics'));
-const StepMetrics      = lazy(() => import('./pages/StepMetrics'));
 const CapacityPlanning = lazy(() => import('./pages/CapacityPlanning'));
 const OperatorPortal   = lazy(() => import('./pages/OperatorPortal'));
 const SettingsPage     = lazy(() => import('./pages/Settings'));
@@ -166,7 +165,9 @@ export default function App() {
                 <Route path="/departments" element={<Departments />} />
                 <Route path="/departments/:id" element={<DepartmentView />} />
                 <Route path="/manager" element={<ManagerView />} />
-                <Route path="/step-metrics" element={<StepMetrics />} />
+                {/* Step metrics live inside Operation Analytics — the old
+                    standalone page had no link into it from anywhere. */}
+                <Route path="/step-metrics" element={<Navigate to="/analytics" replace />} />
                 <Route path="/capacity" element={<CapacityPlanning />} />
                 <Route path="/completions/:id" element={<CompletionDetail />} />
                 <Route path="/oee" element={<OEETracker />} />
