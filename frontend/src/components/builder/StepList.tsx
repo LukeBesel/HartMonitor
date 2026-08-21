@@ -221,7 +221,8 @@ export default function StepList({ app, activeStepIdx, onSelectStep, onChangeApp
   const emptyGroups = groups.filter(g => !seenGroups.has(g.id)).sort((a, b) => a.order - b.order);
 
   return (
-    <div className="flex flex-col h-full w-[240px] flex-shrink-0 bg-surface-1 border-r border-border-subtle">
+    // Below lg the list becomes a capped-height strip above the canvas.
+    <div className="flex flex-col w-full max-h-40 border-b lg:h-full lg:w-[240px] lg:max-h-none lg:border-b-0 lg:border-r flex-shrink-0 bg-surface-1 border-border-subtle">
       <div className="px-3.5 pt-3 pb-2 flex-shrink-0">
         <span className="wb-label">Steps</span>
       </div>

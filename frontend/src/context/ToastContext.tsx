@@ -38,7 +38,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   return (
     <ToastContext.Provider value={{ addToast }}>
       {children}
-      <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2 max-w-sm">
+      {/* bottom-40 keeps transient toasts clear of the quick-create FAB
+          (bottom-5) and the alerts edge tab (bottom-24) in the corner. */}
+      <div className="fixed bottom-40 right-4 z-50 flex flex-col gap-2 max-w-sm">
         {toasts.map(toast => {
           const Icon = ICONS[toast.type];
           return (

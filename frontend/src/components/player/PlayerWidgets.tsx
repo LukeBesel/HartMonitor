@@ -11,9 +11,25 @@ import { CheckCircle, ScanLine, Camera, Search } from 'lucide-react';
 import type { Widget, Step, TableField } from '../../types';
 import { interpolate } from '../../engine';
 import { api } from '../../api/client';
-import { WidgetView, ShapeSVG, buttonAppearance, buttonVariantStyle } from '../app/WidgetView';
+import { WidgetView, ShapeSVG, buttonAppearance, buttonVariantStyle, ImgSafe } from '../app/WidgetView';
 import PhotoSheet from './PhotoSheet';
 import { formatDur, legacyKey } from './runtime';
+
+/** Authors pick text colors against the builder's LIGHT canvas; the player's
+ *  flow surface is DARK. Near-black desaturated inks (default #374151 /
+ *  #16233d navys and grays) become unreadable there, so they are remapped to
+ *  the player ink token. Saturated colors (reds, brand hues) pass through —
+ *  those are deliberate choices. */
+export function flowInkColor(color: string | undefined, fallback: string): string {
+  if (!color) return fallback;
+  const m = /^#([0-9a-fA-F]{6})$/.exec(color.trim());
+  if (!m) return color;
+  const n = parseInt(m[1], 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+  const saturationSpread = Math.max(r, g, b) - Math.min(r, g, b);
+  return luminance < 0.35 && saturationSpread < 60 ? fallback : color;
+}
 
 export interface PlayerWidgetProps {
   widget: Widget;
@@ -277,7 +293,7 @@ export default function PlayerWidget(props: PlayerWidgetProps) {
           fontWeight: config.fontWeight === 'bold' ? 700 : config.fontWeight === 'semibold' ? 600 : 400,
           fontStyle: config.fontStyle || 'normal',
           textAlign: config.textAlign || 'left',
-          color: config.color || 'var(--p-ink-2)',
+          color: flowInkColor(config.color, 'var(--p-ink)'),
           lineHeight: 1.5,
           whiteSpace: 'pre-wrap',
         }}>
@@ -299,13 +315,22 @@ export default function PlayerWidget(props: PlayerWidgetProps) {
 
     case 'image':
       return config.imageUrl
-        ? <img src={config.imageUrl} alt={config.imageAlt || ''} className="w-full rounded-xl max-h-72 object-contain p-2" style={{ background: 'var(--p-surface-1)' }} />
+        ? (
+          <ImgSafe
+            src={config.imageUrl}
+            alt={config.imageAlt || ''}
+            className="w-full rounded-xl max-h-72 object-contain p-2"
+            style={{ background: 'var(--p-surface-1)', minHeight: 96 }}
+          />
+        )
         : <div className="w-full h-32 rounded-xl flex items-center justify-center" style={{ background: 'var(--p-surface-1)', border: '1px dashed var(--p-border)', color: 'var(--p-muted)', fontSize: 14 }}>Image placeholder</div>;
 
     case 'video':
     case 'model-viewer':
       return (
-        <div style={{ height: widget.type === 'video' ? 320 : 380 }}>
+        // Black rounded stage behind the embed so the area reads as a video
+        // frame even before the third-party player paints.
+        <div className="rounded-xl overflow-hidden bg-black" style={{ height: widget.type === 'video' ? 320 : 380 }}>
           <WidgetView widget={widget} />
         </div>
       );
@@ -505,12 +530,12 @@ export default function PlayerWidget(props: PlayerWidgetProps) {
             <div style={{ fontSize: 11.5, fontWeight: 550, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--p-muted)' }}>
               {widget.label || name || 'Value'}
             </div>
-            <div className="tnum" style={{ fontSize: 30, fontWeight: 750, color: config.color || 'var(--p-ink)' }}>{display}</div>
+            <div className="tnum" style={{ fontSize: 30, fontWeight: 750, color: flowInkColor(config.color, 'var(--p-ink)') }}>{display}</div>
           </div>
         );
       }
       return (
-        <p style={{ fontSize: config.fontSize || 18, color: config.color || 'var(--p-ink)' }}>
+        <p style={{ fontSize: config.fontSize || 18, color: flowInkColor(config.color, 'var(--p-ink)') }}>
           {widget.label ? `${widget.label}: ` : ''}<span style={{ fontWeight: 650 }}>{display}</span>
         </p>
       );

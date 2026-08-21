@@ -482,10 +482,10 @@ export default function TriggerEditor({ app, attachment, initial, onSave, onDele
           </section>
         </div>
 
-        {/* Footer */}
-        <div className="flex items-center gap-2.5 px-5 py-3.5 border-t border-grid flex-shrink-0">
+        {/* Footer — wraps on narrow screens so Save never clips off-screen */}
+        <div className="flex items-center flex-wrap gap-2.5 px-5 py-3.5 border-t border-grid flex-shrink-0">
           <input
-            className="wb-input flex-1"
+            className="wb-input flex-1 min-w-[150px]"
             style={{ fontSize: 13 }}
             placeholder="Trigger name (optional)"
             value={draft.name ?? ''}

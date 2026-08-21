@@ -150,7 +150,7 @@ export default function AlertsBubble() {
         ref={buttonRef}
         onClick={toggleOpen}
         title="Alerts & Messages"
-        className={`fixed bottom-24 right-0 z-50 flex items-center gap-1.5 pl-2.5 pr-2 py-2.5 rounded-l-xl bg-gray-900 hover:bg-gray-800 text-white shadow-lg transition-all hover:pr-3 ${
+        className={`fixed bottom-24 right-0 z-40 flex items-center gap-1.5 pl-2.5 pr-2 py-2.5 rounded-l-xl bg-gray-900 hover:bg-gray-800 text-white shadow-lg transition-all hover:pr-3 ${
           pulse ? 'animate-pulse ring-2 ring-pink-400' : ''
         } ${open ? 'pr-3' : ''}`}
       >
@@ -175,7 +175,7 @@ export default function AlertsBubble() {
             bottom: dropdownBottom,
             width: DROPDOWN_WIDTH,
           }}
-          className="bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-50 max-h-[28rem] flex flex-col"
+          className="bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-40 max-h-[28rem] flex flex-col"
         >
           <div className="px-3 py-2.5 border-b border-gray-100 flex items-center justify-between flex-shrink-0">
             <div className="flex items-center gap-1.5">

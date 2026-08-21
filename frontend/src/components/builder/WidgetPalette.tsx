@@ -87,19 +87,18 @@ export default function WidgetPalette({ onAdd, disabled }: {
   onAdd: (type: WidgetType) => void;
   disabled?: boolean;
 }) {
+  // The full toolbar is wider than the center region on most screens, so it
+  // wraps instead of clipping at the right edge — every widget stays visible
+  // and reachable at any width (no hidden horizontal overflow).
   return (
-    <div
-      className="flex items-stretch gap-0 overflow-x-auto flex-shrink-0 bg-surface-1 border-b border-border-subtle"
-      style={{ scrollbarWidth: 'thin' }}
-    >
-      {PALETTE_GROUPS.map((group, gi) => {
+    <div className="flex flex-wrap items-center gap-x-0.5 gap-y-0 px-2.5 py-1 flex-shrink-0 bg-surface-1 border-b border-border-subtle">
+      {PALETTE_GROUPS.map(group => {
         const types = (Object.keys(WIDGET_META) as WidgetType[]).filter(t => WIDGET_META[t].group === group);
         return (
-          <div
-            key={group}
-            className={`flex items-center gap-0.5 px-2.5 py-1.5 ${gi > 0 ? 'border-l border-grid' : ''}`}
-          >
-            <span className="wb-label mr-1.5 select-none" style={{ fontSize: 10 }}>{group}</span>
+          // A fragment per group: the label and its buttons are individual
+          // flex items, so rows break wherever the width runs out.
+          <div key={group} className="contents">
+            <span className="wb-label mx-1.5 select-none" style={{ fontSize: 10 }}>{group}</span>
             {types.map(t => {
               const { icon: Icon, label } = WIDGET_META[t];
               return (

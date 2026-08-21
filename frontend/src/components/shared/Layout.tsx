@@ -470,12 +470,14 @@ export default function Layout() {
       {/* Floating alerts bubble — fixed bottom-right corner */}
       <AlertsBubble />
 
-      {/* Quick-create FAB — visible for manager+ roles */}
-      {user && ['manager', 'developer', 'supervisor'].includes(user.role) && (
+      {/* Quick-create FAB — visible for manager+ roles. Hidden in the app
+          builder, where it would cover the docked inspector on small screens. */}
+      {user && ['manager', 'developer', 'supervisor'].includes(user.role)
+        && !/^\/apps\/[^/]+\/build/.test(location.pathname) && (
         <button
           onClick={() => setQuickCreateOpen(true)}
           title="Quick-create work order"
-          className="fixed bottom-20 right-5 z-40 w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-95"
+          className="fixed bottom-5 right-5 z-40 w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-95"
           style={{ background: 'linear-gradient(135deg, #6366f1, #ec4899)' }}
         >
           <Plus size={22} className="text-white" strokeWidth={2.5} />

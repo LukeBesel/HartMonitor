@@ -64,8 +64,11 @@ export default {
         },
       },
       animation: {
-        'fade-in': 'fade-in 0.25s ease-out both',
-        'slide-up': 'slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1) both',
+        // No fill-mode: a retained ("both") opacity animation keeps the
+        // element a stacking context forever, which trapped page-level z-50
+        // modals below the app shell's floating chrome (toasts, FAB).
+        'fade-in': 'fade-in 0.25s ease-out',
+        'slide-up': 'slide-up 0.35s cubic-bezier(0.16, 1, 0.3, 1)',
       },
     }
   },

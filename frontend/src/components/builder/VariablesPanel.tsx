@@ -229,8 +229,8 @@ export default function VariablesPanel({ app, onChangeApp, onClose, canEdit }: {
           <button onClick={onClose} className="wb-btn-ghost !min-h-0 p-1.5" aria-label="Close"><X size={16} /></button>
         </div>
 
-        {/* Table */}
-        <div className="flex-1 overflow-y-auto">
+        {/* Table — overflow-x keeps narrow screens scrolling instead of crushing columns */}
+        <div className="flex-1 overflow-y-auto overflow-x-auto">
           {variables.length === 0 ? (
             <div className="py-12 text-center text-muted" style={{ fontSize: 13 }}>
               No variables yet. Create one below, or add an input widget — its variable registers automatically.
