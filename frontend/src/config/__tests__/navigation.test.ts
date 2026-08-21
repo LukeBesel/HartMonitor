@@ -4,7 +4,7 @@ import { SECTIONS, findSectionForPath, filterNavByModules } from '../navigation'
 describe('findSectionForPath (route → workspace derivation)', () => {
   it('maps top-level screens to their owning workspace', () => {
     expect(findSectionForPath('/dashboard')?.id).toBe('production');
-    expect(findSectionForPath('/schedule')?.id).toBe('production');
+    expect(findSectionForPath('/schedule')?.id).toBe('planning');
     expect(findSectionForPath('/inventory')?.id).toBe('inventory');
     expect(findSectionForPath('/quality')?.id).toBe('quality_ops');
     expect(findSectionForPath('/capa')?.id).toBe('quality_ops');
@@ -16,7 +16,7 @@ describe('findSectionForPath (route → workspace derivation)', () => {
 
   it('maps deep links (sub-routes) to the owning workspace', () => {
     expect(findSectionForPath('/quality/ncr-123')?.id).toBe('quality_ops');
-    expect(findSectionForPath('/apps/abc/build')?.id).toBe('production');
+    expect(findSectionForPath('/apps/abc/build')?.id).toBe('apps');
     expect(findSectionForPath('/departments/dept-1')?.id).toBe('production');
     expect(findSectionForPath('/maintenance/assets')?.id).toBe('maintenance_ops');
     expect(findSectionForPath('/dashboards/d1/edit')?.id).toBe('reporting');

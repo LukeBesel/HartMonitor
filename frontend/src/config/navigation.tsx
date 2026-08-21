@@ -4,7 +4,7 @@ import {
   Calendar, ClipboardList, Trophy,
   Users, Cpu, LayoutGrid,
   Package, ShoppingCart, ShieldCheck, Building2,
-  Factory, Layers, History, Tablet, Network, GitBranch,
+  Factory, CalendarRange, Layers, History, Tablet, Network, GitBranch,
   Boxes, PackageCheck, PackageOpen, Truck, ListChecks,
   GraduationCap,
   Bell, AlertTriangle, Wrench, ClipboardCheck, Lightbulb, BookOpen,
@@ -28,6 +28,8 @@ export type NavItem = {
 
 export type SectionId =
   | 'production'
+  | 'planning'
+  | 'apps'
   | 'inventory'
   | 'quality_ops'
   | 'kaizen'
@@ -58,19 +60,36 @@ export const SECTIONS: NavSection[] = [
     id: 'production',
     label: 'Production',
     icon: Factory,
-    description: 'Run the floor, schedule work and resources',
+    description: 'Run the floor day to day',
     items: [
       { to: '/dashboard',   icon: LayoutDashboard, label: 'Command Center', exact: true, module: 'production' },
-      { to: '/apps',        icon: AppWindow,  label: 'App Library',     module: 'apps' },
       { to: '/departments', icon: Building2,  label: 'Departments',     module: 'production' },
-      { to: '/schedule',    icon: Calendar,   label: 'Schedule',        module: 'production' },
-      { to: '/routings',    icon: GitBranch,  label: 'Routings',        proOnly: true, minRole: 'supervisor', module: 'production' },
-      { to: '/manager',     icon: ClipboardList, label: 'Manager View', minRole: 'manager', module: 'production' },
-      { to: '/capacity',    icon: Users,      label: 'Capacity Plan',   minRole: 'manager', module: 'analytics' },
       { to: '/andon',       icon: Bell,       label: 'Andon Board',     module: 'andon' },
       { to: '/shift-notes', icon: BookOpen,   label: 'Shift Notes',     module: 'shifts' },
-      { to: '/operator',    icon: Tablet,     label: 'Operator Portal', standalone: true, module: 'production' },
       { to: '/reports/production', icon: BarChart3, label: 'Reports',   module: 'production' },
+    ],
+  },
+  {
+    id: 'planning',
+    label: 'Planning',
+    icon: CalendarRange,
+    description: 'Schedule work and resources',
+    items: [
+      { to: '/schedule',    icon: Calendar,      label: 'Schedule',      module: 'production' },
+      { to: '/routings',    icon: GitBranch,     label: 'Routings',      proOnly: true, minRole: 'supervisor', module: 'production' },
+      { to: '/manager',     icon: ClipboardList, label: 'Manager View',  minRole: 'manager', module: 'production' },
+      { to: '/capacity',    icon: Users,         label: 'Capacity Plan', minRole: 'manager', module: 'analytics' },
+    ],
+  },
+  {
+    id: 'apps',
+    label: 'Apps',
+    icon: AppWindow,
+    description: 'Build guided processes and run them on the floor',
+    items: [
+      { to: '/apps',     icon: AppWindow, label: 'App Library',     module: 'apps' },
+      { to: '/tables',   icon: Database,  label: 'Tables',          minRole: 'supervisor', proOnly: true, module: 'apps' },
+      { to: '/operator', icon: Tablet,    label: 'Operator Portal', standalone: true, module: 'production' },
     ],
   },
   {
@@ -146,7 +165,6 @@ export const SECTIONS: NavSection[] = [
       { to: '/oee',              icon: Cpu,         label: 'OEE Tracker',      minRole: 'supervisor', proOnly: true, module: 'production' },
       { to: '/analytics',        icon: BarChart3,   label: 'Operation Analytics', module: 'analytics' },
       { to: '/facilities',       icon: Network,     label: 'Facilities',       minRole: 'manager', enterpriseOnly: true, module: 'production' },
-      { to: '/tables',           icon: Database,    label: 'Tables',           minRole: 'supervisor', proOnly: true, module: 'apps' },
       { to: '/transaction-log',  icon: History,     label: 'Transaction Log',  minRole: 'supervisor', module: 'analytics' },
       { to: '/audit-log',        icon: AlertTriangle, label: 'Audit Log',      minRole: 'supervisor' },
       { to: '/admin',            icon: ShieldCheck, label: 'Admin Dashboard',   minRole: 'developer' },
