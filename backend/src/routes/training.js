@@ -65,25 +65,39 @@ router.get('/summary', (req, res) => {
     return { id: op.id, display_name: op.display_name, certified_apps, total_apps: active_apps };
   }).filter(op => op.certified_apps < op.total_apps);
 
-  // Department coverage
+  // Department coverage. Department rows can be duplicated by name (e.g. two
+  // 'Assembly' rows from a double-seed) — merge same-named departments into a
+  // single entry so the coverage list shows each department exactly once.
   const departments = db.prepare(
-    `SELECT id, name FROM departments WHERE company_id = ?`
+    `SELECT id, name FROM departments WHERE company_id = ? ORDER BY name, id`
   ).all(cid);
 
-  const department_coverage = departments.map(dept => {
-    const operator_count = db.prepare(
-      `SELECT COUNT(*) as c FROM users WHERE company_id = ? AND department_id = ? AND role IN ('operator','supervisor') AND is_active = 1`
-    ).get(cid, dept.id).c;
-    const dept_certified = db.prepare(
-      `SELECT COUNT(*) as c FROM training_records tr
-       JOIN users u ON u.id = tr.user_id
-       WHERE tr.company_id = ? AND u.department_id = ? AND tr.status = 'certified'`
-    ).get(cid, dept.id).c;
+  const deptGroups = new Map();
+  for (const dept of departments) {
+    const key = (dept.name || '').trim().toLowerCase();
+    const group = deptGroups.get(key);
+    if (group) group.ids.push(dept.id);
+    else deptGroups.set(key, { id: dept.id, name: dept.name, ids: [dept.id] });
+  }
+
+  const department_coverage = [...deptGroups.values()].map(group => {
+    let operator_count = 0;
+    let dept_certified = 0;
+    for (const deptId of group.ids) {
+      operator_count += db.prepare(
+        `SELECT COUNT(*) as c FROM users WHERE company_id = ? AND department_id = ? AND role IN ('operator','supervisor') AND is_active = 1`
+      ).get(cid, deptId).c;
+      dept_certified += db.prepare(
+        `SELECT COUNT(*) as c FROM training_records tr
+         JOIN users u ON u.id = tr.user_id
+         WHERE tr.company_id = ? AND u.department_id = ? AND tr.status = 'certified'`
+      ).get(cid, deptId).c;
+    }
     const dept_possible = operator_count * active_apps;
     const dept_coverage_pct = dept_possible > 0
       ? Math.round((dept_certified / dept_possible) * 100 * 10) / 10
       : 0;
-    return { id: dept.id, name: dept.name, operator_count, coverage_pct: dept_coverage_pct };
+    return { id: group.id, name: group.name, operator_count, coverage_pct: dept_coverage_pct };
   });
 
   res.json({

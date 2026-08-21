@@ -4,9 +4,9 @@ import {
   Calendar, ClipboardList, Trophy,
   Users, Cpu, LayoutGrid,
   Package, ShoppingCart, ShieldCheck, Building2,
-  Factory, CalendarRange, Layers, History, Tablet, Network, GitBranch,
-  HeartPulse, Boxes, PackageCheck, PackageOpen, Truck, ListChecks,
-  GraduationCap, Award,
+  Factory, Layers, History, Tablet, Network, GitBranch,
+  Boxes, PackageCheck, PackageOpen, Truck, ListChecks,
+  GraduationCap,
   Bell, AlertTriangle, Wrench, ClipboardCheck, Lightbulb, BookOpen,
 } from 'lucide-react';
 import { useModules } from '../context/ModulesContext';
@@ -26,7 +26,14 @@ export type NavItem = {
   module?: string;
 };
 
-export type SectionId = 'production' | 'planning' | 'reporting' | 'inventory' | 'people' | 'quality_ops' | 'maintenance_ops';
+export type SectionId =
+  | 'production'
+  | 'inventory'
+  | 'quality_ops'
+  | 'kaizen'
+  | 'maintenance_ops'
+  | 'people'
+  | 'reporting';
 
 export type NavSection = {
   id: SectionId;
@@ -42,34 +49,28 @@ export type NavSection = {
 // Nothing is permanently pinned anymore — the Command Center lives in Production.
 export const PINNED_ITEMS: NavItem[] = [];
 
-// The app is organised into plain-language workspaces so a new user can pick the
-// one that matches their job instead of scanning every feature.
+// Two-level navigation: the sidebar (level 1) lists only these workspaces; the
+// content-header tab bar (level 2) lists the focused workspace's screens.
+// Multi-tab pages (Training, Maintenance/CMMS, Purchasing) get exactly ONE nav
+// item each — their page-internal tabs are the sub-navigation.
 export const SECTIONS: NavSection[] = [
   {
     id: 'production',
     label: 'Production',
     icon: Factory,
-    description: 'Run the floor day to day',
+    description: 'Run the floor, schedule work and resources',
     items: [
       { to: '/dashboard',   icon: LayoutDashboard, label: 'Command Center', exact: true, module: 'production' },
       { to: '/apps',        icon: AppWindow,  label: 'App Library',     module: 'apps' },
       { to: '/departments', icon: Building2,  label: 'Departments',     module: 'production' },
+      { to: '/schedule',    icon: Calendar,   label: 'Schedule',        module: 'production' },
+      { to: '/routings',    icon: GitBranch,  label: 'Routings',        proOnly: true, minRole: 'supervisor', module: 'production' },
+      { to: '/manager',     icon: ClipboardList, label: 'Manager View', minRole: 'manager', module: 'production' },
+      { to: '/capacity',    icon: Users,      label: 'Capacity Plan',   minRole: 'manager', module: 'analytics' },
       { to: '/andon',       icon: Bell,       label: 'Andon Board',     module: 'andon' },
       { to: '/shift-notes', icon: BookOpen,   label: 'Shift Notes',     module: 'shifts' },
       { to: '/operator',    icon: Tablet,     label: 'Operator Portal', standalone: true, module: 'production' },
-    ],
-  },
-  {
-    id: 'planning',
-    label: 'Planning',
-    icon: CalendarRange,
-    description: 'Schedule work and resources',
-    proOnly: true,
-    items: [
-      { to: '/schedule',   icon: Calendar,     label: 'Schedule',       module: 'production' },
-      { to: '/routings',   icon: GitBranch,    label: 'Routings',       proOnly: true, minRole: 'supervisor', module: 'production' },
-      { to: '/manager',    icon: ClipboardList, label: 'Manager View',  minRole: 'manager', module: 'production' },
-      { to: '/capacity',   icon: Users,        label: 'Capacity Plan',  minRole: 'manager', module: 'analytics' },
+      { to: '/reports/production', icon: BarChart3, label: 'Reports',   module: 'production' },
     ],
   },
   {
@@ -86,17 +87,28 @@ export const SECTIONS: NavSection[] = [
       { to: '/requirements',  icon: ListChecks,    label: 'Materials Required', proOnly: true, minRole: 'supervisor', module: 'inventory' },
       { to: '/shipments',     icon: Truck,         label: 'Shipments',          proOnly: true, module: 'inventory' },
       { to: '/purchasing',    icon: ShoppingCart,  label: 'Purchasing',         proOnly: true, minRole: 'supervisor', module: 'inventory' },
+      { to: '/reports/inventory', icon: BarChart3, label: 'Reports',            module: 'inventory' },
     ],
   },
   {
     id: 'quality_ops',
-    label: 'Quality & CI',
+    label: 'Quality',
     icon: ShieldCheck,
-    description: 'CAPA, NCR, and continuous improvement',
+    description: 'NCRs and corrective action',
     items: [
       { to: '/quality',  icon: ShieldCheck,   label: 'NCR / Quality',    proOnly: true, module: 'quality' },
       { to: '/capa',     icon: ClipboardCheck,label: 'CAPA Tracker',     proOnly: true, module: 'quality' },
-      { to: '/kaizen',   icon: Lightbulb,     label: 'Kaizen / CI Ideas', module: 'kaizen' },
+      { to: '/reports/quality', icon: BarChart3, label: 'Reports',       module: 'quality' },
+    ],
+  },
+  {
+    id: 'kaizen',
+    label: 'Kaizen / CI',
+    icon: Lightbulb,
+    description: 'Continuous improvement ideas',
+    items: [
+      { to: '/kaizen',         icon: Lightbulb, label: 'Kaizen / CI Ideas', module: 'kaizen' },
+      { to: '/reports/kaizen', icon: BarChart3, label: 'Reports',           module: 'kaizen' },
     ],
   },
   {
@@ -106,7 +118,8 @@ export const SECTIONS: NavSection[] = [
     description: 'Assets, PM schedules, maintenance work orders',
     proOnly: true,
     items: [
-      { to: '/maintenance',  icon: Wrench,        label: 'CMMS',           proOnly: true, module: 'maintenance' },
+      { to: '/maintenance',  icon: Wrench,    label: 'CMMS',    proOnly: true, module: 'maintenance' },
+      { to: '/reports/maintenance', icon: BarChart3, label: 'Reports', module: 'maintenance' },
     ],
   },
   {
@@ -116,9 +129,10 @@ export const SECTIONS: NavSection[] = [
     description: 'Training, skills, and certifications',
     proOnly: true,
     items: [
-      { to: '/training',      icon: GraduationCap, label: 'Skills Matrix',      proOnly: true, minRole: 'supervisor', module: 'training' },
-      { to: '/training/certs',icon: Award,         label: 'Certifications',     proOnly: true, minRole: 'supervisor', module: 'training' },
-      { to: '/training/plans',icon: ClipboardList, label: 'Training Plans',     proOnly: true, minRole: 'supervisor', module: 'training' },
+      // Training is one screen — its internal Overview/Skills/Certs/Plans tabs
+      // are the sub-navigation, so it gets a single nav item here.
+      { to: '/training',       icon: GraduationCap, label: 'Training', proOnly: true, minRole: 'supervisor', module: 'training' },
+      { to: '/reports/people', icon: BarChart3,     label: 'Reports',  module: 'training' },
     ],
   },
   {
@@ -158,6 +172,38 @@ export function filterNavByModules(
 export function useVisibleSections(): NavSection[] {
   const { isEnabled } = useModules();
   return useMemo(() => filterNavByModules(SECTIONS, isEnabled), [isEnabled]);
+}
+
+// ─── Route → workspace derivation ─────────────────────────────────────────────
+// The focused workspace is derived from the CURRENT ROUTE, never from manual
+// state, so deep links always highlight the right sidebar section and tab.
+// Longest-prefix wins so `/inventory/kitting/123` resolves via the Kitting item
+// rather than the Inventory Tracker item, and legacy deep links like
+// `/training/certs` still resolve to People through the `/training` item.
+
+/** True when `pathname` is `itemPath` itself or a sub-route of it. */
+function pathMatchesItem(pathname: string, itemPath: string): boolean {
+  return pathname === itemPath || pathname.startsWith(`${itemPath}/`);
+}
+
+/** The section that owns `pathname`, or null for routes outside the nav
+ *  (e.g. /settings). Pure — pass any section list (tests use SECTIONS,
+ *  Layout passes the module-filtered list). */
+export function findSectionForPath(
+  pathname: string,
+  sections: NavSection[] = SECTIONS,
+): NavSection | null {
+  let best: NavSection | null = null;
+  let bestLen = -1;
+  for (const section of sections) {
+    for (const item of section.items) {
+      if (pathMatchesItem(pathname, item.to) && item.to.length > bestLen) {
+        best = section;
+        bestLen = item.to.length;
+      }
+    }
+  }
+  return best;
 }
 
 export const ALL_SECTION_ITEMS: NavItem[] = SECTIONS.flatMap(s => s.items);
