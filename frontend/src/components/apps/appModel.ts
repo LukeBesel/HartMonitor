@@ -102,16 +102,26 @@ export function isCaptureWidget(type: WidgetType | string): boolean {
 
 // ── Formatting ───────────────────────────────────────────────────────────────
 
-/** "just now" / "12m ago" / "3d ago" / "Mar 4" — null-safe. */
-export function fmtRelative(iso: string | null | undefined): string {
-  if (!iso) return 'Never';
-  // SQLite hands back "YYYY-MM-DD HH:MM:SS" in UTC; make that explicit so the
-  // browser doesn't read it as local time and report a run from the future.
+/**
+ * Read a timestamp the way the server wrote it. SQLite hands back
+ * "YYYY-MM-DD HH:MM:SS" in UTC; make that explicit so the browser doesn't read
+ * it as local time and report a run from the future. Null for missing or
+ * unparseable input.
+ */
+export function parseServerTime(iso: string | null | undefined): Date | null {
+  if (!iso) return null;
   const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(iso)
     ? `${iso.replace(' ', 'T')}Z`
     : iso;
   const d = new Date(normalized);
-  if (isNaN(d.getTime())) return '—';
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/** "just now" / "12m ago" / "3d ago" / "Mar 4" — null-safe. */
+export function fmtRelative(iso: string | null | undefined): string {
+  if (!iso) return 'Never';
+  const d = parseServerTime(iso);
+  if (!d) return '—';
   const diffMs = Date.now() - d.getTime();
   const mins = Math.floor(diffMs / 60000);
   if (mins < 0) return 'just now';
@@ -126,12 +136,8 @@ export function fmtRelative(iso: string | null | undefined): string {
 
 /** Absolute date+time for tooltips and detail rows. */
 export function fmtDateTime(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  const normalized = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(iso)
-    ? `${iso.replace(' ', 'T')}Z`
-    : iso;
-  const d = new Date(normalized);
-  if (isNaN(d.getTime())) return '—';
+  const d = parseServerTime(iso);
+  if (!d) return '—';
   return d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
