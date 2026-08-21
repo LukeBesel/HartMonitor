@@ -1729,6 +1729,8 @@ db.exec(`
   if (!appCols.includes('site_id'))            db.exec('ALTER TABLE apps ADD COLUMN site_id TEXT REFERENCES sites(id) ON DELETE SET NULL');
   if (!appCols.includes('station_id'))         db.exec('ALTER TABLE apps ADD COLUMN station_id TEXT REFERENCES stations(id) ON DELETE SET NULL');
   if (!appCols.includes('show_takt_warnings')) db.exec('ALTER TABLE apps ADD COLUMN show_takt_warnings INTEGER DEFAULT 1');
+  // Nullable on purpose: absent = legacy behavior (player only enforces for v2 apps).
+  if (!appCols.includes('require_run_context')) db.exec('ALTER TABLE apps ADD COLUMN require_run_context INTEGER');
 }
 
 // ─── Public game leaderboard (no tenant scope) ────────────────────────────────

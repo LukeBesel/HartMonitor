@@ -395,7 +395,7 @@ router.get('/:id', (req, res) => {
 });
 
 router.put('/:id', (req, res) => {
-  const { name, description, steps, variables, status, department_id, site_id, station_id, show_takt_warnings, step_groups, schema_version } = req.body;
+  const { name, description, steps, variables, status, department_id, site_id, station_id, show_takt_warnings, step_groups, schema_version, require_run_context } = req.body;
   const app = db.prepare('SELECT * FROM apps WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!app) return res.status(404).json({ error: 'Not found' });
 
@@ -422,12 +422,13 @@ router.put('/:id', (req, res) => {
     site_id: site_id !== undefined ? (site_id || null) : app.site_id,
     station_id: station_id !== undefined ? (station_id || null) : app.station_id,
     show_takt_warnings: show_takt_warnings !== undefined ? (show_takt_warnings ? 1 : 0) : app.show_takt_warnings,
+    require_run_context: require_run_context !== undefined ? (require_run_context ? 1 : 0) : app.require_run_context,
     step_groups: step_groups !== undefined ? JSON.stringify(step_groups) : (app.step_groups ?? '[]'),
     schema_version: schema_version !== undefined ? schema_version : (app.schema_version ?? 1),
   };
 
-  db.prepare(`UPDATE apps SET name=?, description=?, steps=?, variables=?, status=?, department_id=?, site_id=?, station_id=?, show_takt_warnings=?, step_groups=?, schema_version=?, updated_at=datetime('now') WHERE id=?`)
-    .run(updates.name, updates.description, updates.steps, updates.variables, updates.status, updates.department_id, updates.site_id, updates.station_id, updates.show_takt_warnings, updates.step_groups, updates.schema_version, req.params.id);
+  db.prepare(`UPDATE apps SET name=?, description=?, steps=?, variables=?, status=?, department_id=?, site_id=?, station_id=?, show_takt_warnings=?, require_run_context=?, step_groups=?, schema_version=?, updated_at=datetime('now') WHERE id=?`)
+    .run(updates.name, updates.description, updates.steps, updates.variables, updates.status, updates.department_id, updates.site_id, updates.station_id, updates.show_takt_warnings, updates.require_run_context ?? null, updates.step_groups, updates.schema_version, req.params.id);
 
   const updated = db.prepare('SELECT * FROM apps WHERE id = ?').get(req.params.id);
   res.json({ ...updated, steps: JSON.parse(updated.steps), variables: JSON.parse(updated.variables), step_groups: JSON.parse(updated.step_groups || '[]') });
