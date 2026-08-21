@@ -7,6 +7,8 @@ import { api } from '../api/client';
 import { usePlan } from '../context/PlanContext';
 import { useAuth } from '../context/AuthContext';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
+import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
+import DepartmentFilter from '../components/shared/DepartmentFilter';
 
 interface RoutingStep {
   id: string;
@@ -51,8 +53,14 @@ export default function Routings() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [apps, setApps] = useState<any[]>([]);
-  const [departments, setDepartments] = useState<any[]>([]);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  // A routing itself has no department — the department lives on each step
+  // (routing_steps.department_id), so this narrows the step list of whichever
+  // routing is open, not the routing list on the left. It also supplies the
+  // department options for the step form, so the page has one department list.
+  const deptFilter = useDepartmentFilter('routings');
+  const departments = deptFilter.departments;
 
   // Create routing modal
   const [showCreate, setShowCreate] = useState(false);
@@ -77,11 +85,9 @@ export default function Routings() {
     Promise.all([
       api.getRoutings(),
       api.getApps(),
-      api.getDepartments(),
-    ]).then(([r, a, d]) => {
+    ]).then(([r, a]) => {
       setRoutings(Array.isArray(r) ? r : []);
       setApps(Array.isArray(a) ? a : []);
-      setDepartments(Array.isArray(d) ? d : []);
     }).catch((err: any) => {
       setLoadError(err?.message || 'Failed to load routings');
     }).finally(() => setLoading(false));
@@ -255,6 +261,13 @@ export default function Routings() {
   }
 
   const sortedSteps = selected?.steps ? [...selected.steps].sort((a, b) => a.step_number - b.step_number) : [];
+  // Step numbers are kept as-is so a filtered sequence still reads as part of
+  // the whole routing ("we do steps 3 and 7") rather than being renumbered.
+  const visibleSteps = sortedSteps.filter(deptFilter.matches);
+  // A remembered department id filters correctly from the first render, but its
+  // name only arrives with the departments fetch — so copy that would otherwise
+  // read "No steps in undefined" falls back to a generic phrase for that beat.
+  const deptName = deptFilter.selected?.name ?? 'this department';
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -342,20 +355,27 @@ export default function Routings() {
           </div>
         ) : (
           <div className="p-6 max-w-2xl">
-            <div className="flex items-start justify-between mb-6">
-              <div>
+            <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
+              <div className="min-w-0">
                 <h2 className="text-lg font-bold text-gray-900">{selected.name}</h2>
                 {selected.description && <p className="text-sm text-gray-500 mt-0.5">{selected.description}</p>}
               </div>
-              {canEdit && (
-                <button
-                  onClick={() => openAddStep()}
-                  className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-sm font-semibold transition-colors flex-shrink-0"
-                >
-                  <Plus size={14} />
-                  Add Step
-                </button>
-              )}
+              <div className="flex items-center gap-3 flex-shrink-0">
+                <DepartmentFilter
+                  filter={deptFilter}
+                  matchCount={visibleSteps.length}
+                  matchNoun={`of ${sortedSteps.length} step${sortedSteps.length !== 1 ? 's' : ''}`}
+                />
+                {canEdit && (
+                  <button
+                    onClick={() => openAddStep()}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-blue-500 hover:bg-blue-600 text-white text-sm font-semibold transition-colors flex-shrink-0"
+                  >
+                    <Plus size={14} />
+                    Add Step
+                  </button>
+                )}
+              </div>
             </div>
 
             {sortedSteps.length === 0 ? (
@@ -371,16 +391,43 @@ export default function Routings() {
                   </button>
                 )}
               </div>
+            ) : visibleSteps.length === 0 ? (
+              /* The routing has steps, just none in the chosen department —
+                 which is a fact about the routing, not an empty routing. */
+              <div className="text-center py-14 bg-white rounded-2xl border border-dashed border-gray-200">
+                <Users size={28} className="mx-auto mb-2 text-gray-300" />
+                <p className="text-sm text-gray-500 font-medium">
+                  No steps in {deptName}
+                </p>
+                <p className="text-xs text-gray-400 mt-1 mb-3">
+                  This routing's {sortedSteps.length} step{sortedSteps.length !== 1 ? 's' : ''} run through other departments.
+                </p>
+                <button
+                  onClick={deptFilter.clear}
+                  className="text-sm font-semibold text-blue-500 hover:text-blue-600"
+                >
+                  Show all departments
+                </button>
+              </div>
             ) : (
               <div className="space-y-3">
-                {sortedSteps.map((step, i) => (
+                {deptFilter.active && (
+                  <p className="text-xs text-gray-400">
+                    Showing {visibleSteps.length} of {sortedSteps.length} step{sortedSteps.length !== 1 ? 's' : ''} in {deptName}.
+                    {canEdit && ' Clear the department filter to reorder steps.'}
+                  </p>
+                )}
+                {visibleSteps.map((step, i) => (
                   <div key={step.id} className="bg-white rounded-xl border border-gray-200 p-4 flex gap-4">
                     {/* Step number */}
                     <div className="flex-shrink-0 flex flex-col items-center gap-1">
                       <div className="w-8 h-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-bold">
                         {step.step_number}
                       </div>
-                      {canEdit && (
+                      {/* Reordering is hidden while a department is selected:
+                          the neighbours a step would swap with are off-screen,
+                          so the arrows would look like they did nothing. */}
+                      {canEdit && !deptFilter.active && (
                         <div className="flex flex-col gap-0.5">
                           <button
                             onClick={() => handleMoveStep(step.id, 'up')}
@@ -391,7 +438,7 @@ export default function Routings() {
                           </button>
                           <button
                             onClick={() => handleMoveStep(step.id, 'down')}
-                            disabled={i === sortedSteps.length - 1}
+                            disabled={i === visibleSteps.length - 1}
                             className="p-0.5 text-gray-300 hover:text-gray-600 disabled:opacity-20 disabled:cursor-not-allowed transition-colors"
                           >
                             <ChevronDown size={14} />
