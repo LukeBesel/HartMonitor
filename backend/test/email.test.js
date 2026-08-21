@@ -3,17 +3,27 @@
 // Verifies that the email module works correctly in demo mode (no SMTP config)
 // without crashing. Uses Node built-ins only.
 
-const { describe, it, before } = require('node:test');
+const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 
-// Ensure demo mode — no SMTP env vars
-before(() => {
-  delete process.env.SMTP_HOST;
-  delete process.env.SMTP_USER;
-  delete process.env.SMTP_PASS;
-});
+// Force demo mode BEFORE src/email.js is ever required: the module picks its
+// delivery backend once, at load, from these vars. RESEND_API_KEY must be
+// cleared too — a developer (or CI) with the real key exported would otherwise
+// turn these six tests into live Resend deliveries to example.com addresses,
+// burning quota and coupling the suite to the network.
+delete process.env.SMTP_HOST;
+delete process.env.SMTP_USER;
+delete process.env.SMTP_PASS;
+delete process.env.RESEND_API_KEY;
 
 describe('Email service (demo mode)', () => {
+  it('never selects a live provider in the test suite', async () => {
+    const { sendWelcomeEmail } = require('../src/email');
+    const result = await sendWelcomeEmail({ to: 'test@example.com', name: 'T', companyName: 'Acme' });
+    assert.equal(result.provider, 'demo', 'tests must not perform real deliveries');
+    assert.equal(result.id, null);
+  });
+
   it('sendWelcomeEmail resolves without throwing', async () => {
     const { sendWelcomeEmail } = require('../src/email');
     await assert.doesNotReject(

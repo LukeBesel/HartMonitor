@@ -174,6 +174,8 @@ export default function App() {
                 <Route path="/dashboards/:id" element={<ModuleGate module="apps"><DashboardView /></ModuleGate>} />
                 <Route path="/dashboards/:id/:mode" element={<ModuleGate module="apps"><DashboardView /></ModuleGate>} />
                 <Route path="/reports/:category" element={<CategoryReports />} />
+                {/* Edit mode stays on the workspace route (DashboardView reads :mode). */}
+                <Route path="/reports/:category/:mode" element={<CategoryReports />} />
                 <Route path="/inventory" element={<ModuleGate module="inventory"><Inventory /></ModuleGate>} />
                 <Route path="/inventory/boms" element={<ModuleGate module="inventory"><BOMs /></ModuleGate>} />
                 <Route path="/inventory/kitting" element={<ModuleGate module="inventory"><Kitting /></ModuleGate>} />

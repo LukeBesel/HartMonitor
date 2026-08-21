@@ -2152,5 +2152,30 @@ db.exec(`
   if (!ncrCols.includes('step_name'))             db.exec("ALTER TABLE ncrs ADD COLUMN step_name TEXT DEFAULT ''");
 }
 
+// ─── Authorization grants: server-issued proof that a PIN was verified ───────
+// A supervisor sign-off is only worth anything if the server can prove it
+// happened. POST /operators/verify-authorizer mints one single-use, expiring
+// grant; the action that needs the sign-off (currently POST /quality/ncrs)
+// redeems it and copies the authorizer identity FROM THE GRANT — never from
+// client-supplied fields, which any authenticated caller could forge.
+// TTL is generous (12h) because the player queues NCRs while offline and
+// replays them when the tablet reconnects.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS authorization_grants (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    user_id TEXT NOT NULL REFERENCES users(id),
+    display_name TEXT NOT NULL DEFAULT '',
+    role TEXT NOT NULL DEFAULT '',
+    purpose TEXT NOT NULL DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    used_for TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_authorization_grants_company
+    ON authorization_grants(company_id, expires_at);
+`);
+
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;

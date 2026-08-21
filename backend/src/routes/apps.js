@@ -699,13 +699,11 @@ router.get('/:id/analytics', (req, res) => {
 
 // ─── GET /:id/export.csv — flattened per-run CSV with one column per widget ───
 
-// Same escaping conventions as backend/src/routes/export.js.
-function escapeCSV(val) {
-  if (val === null || val === undefined) return '';
-  const s = String(val);
-  if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`;
-  return s;
-}
+const { escapeCSV } = require('../csv');
+
+// The CSV row query and the value query MUST agree on how many runs they cover,
+// or the export ships rows with silently blank widget columns.
+const EXPORT_ROW_LIMIT = 10000;
 
 router.get('/:id/export.csv', (req, res) => {
   const app = db.prepare('SELECT id, name, steps FROM apps WHERE id = ? AND company_id = ?')
@@ -721,13 +719,20 @@ router.get('/:id/export.csv', (req, res) => {
     FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN product_types pt ON pt.id = c.product_type_id
-    WHERE ${where} ORDER BY c.started_at DESC LIMIT 10000
+    WHERE ${where} ORDER BY c.started_at DESC LIMIT ${EXPORT_ROW_LIMIT}
   `).all(...params);
 
+  // Values are scoped to EXACTLY the completions the rows above selected.
+  // (The previous independent `LIMIT 200000` silently dropped an arbitrary,
+  // unordered subset once an app accumulated enough captured fields, leaving
+  // exported rows with blank widget columns.)
   const values = db.prepare(`
     SELECT v.completion_id, v.widget_id, v.variable_name, v.value_type, v.value_text, v.value_number
-    FROM completion_values v JOIN completions c ON c.id = v.completion_id
-    WHERE ${where} LIMIT 200000
+    FROM completion_values v
+    WHERE v.completion_id IN (
+      SELECT c.id FROM completions c
+      WHERE ${where} ORDER BY c.started_at DESC LIMIT ${EXPORT_ROW_LIMIT}
+    )
   `).all(...params);
 
   // Widget columns: blob order first, then any captured widget no longer in the

@@ -491,9 +491,19 @@ function cleanupExpiredSandboxes() {
 }
 
 // Hourly sweep (also runs shortly after boot so restarts don't accumulate junk).
-// unref() so requiring this module (e.g. from tests/scripts) never keeps the
-// process alive; the HTTP server holds the event loop open in production.
-setTimeout(() => { try { cleanupExpiredSandboxes(); } catch (e) { console.error('[sandbox] sweep failed:', e.message); } }, 30 * 1000).unref();
-setInterval(() => { try { cleanupExpiredSandboxes(); } catch (e) { console.error('[sandbox] sweep failed:', e.message); } }, 60 * 60 * 1000).unref();
+// Started explicitly from index.js at listen() — NOT at module load, because
+// this module is required lazily by POST /auth/demo: a server that never gets a
+// demo request would otherwise never sweep, and 24h-expired sandbox orgs would
+// live forever. unref() so tests/scripts that require it aren't kept alive.
+let sweeperStarted = false;
+function startSandboxSweeper() {
+  if (sweeperStarted) return;
+  sweeperStarted = true;
+  const sweep = () => {
+    try { cleanupExpiredSandboxes(); } catch (e) { console.error('[sandbox] sweep failed:', e.message); }
+  };
+  setTimeout(sweep, 30 * 1000).unref();
+  setInterval(sweep, 60 * 60 * 1000).unref();
+}
 
-module.exports = { createSandbox, cleanupExpiredSandboxes, deleteSandboxOrg, SANDBOX_EMAIL_DOMAIN };
+module.exports = { createSandbox, cleanupExpiredSandboxes, deleteSandboxOrg, startSandboxSweeper, SANDBOX_EMAIL_DOMAIN };

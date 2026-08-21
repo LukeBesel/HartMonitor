@@ -5,6 +5,7 @@ const { logActivity } = require('../activity');
 const { notify } = require('../notifications');
 const { deliverWebhooks } = require('../webhooks');
 const { requireRole } = require('../middleware/auth');
+const { redeemGrant } = require('../authorization');
 
 const router = express.Router();
 
@@ -96,13 +97,37 @@ router.post('/ncrs', (req, res) => {
     app_id, completion_id, work_order_id, item_id,
     assigned_to = '', due_date,
     // In-run quality reports (player batch): supervisor authorization + step link.
-    authorized_by = '', authorized_by_user_id, step_name = '',
+    authorized_by = '', authorized_by_user_id, authorization_id, step_name = '',
   } = req.body;
   if (!title) return res.status(400).json({ error: 'title required' });
   if (!['minor', 'major', 'critical'].includes(severity)) {
     return res.status(400).json({ error: 'severity must be one of: minor, major, critical' });
   }
   const cid = req.companyId;
+
+  // ── Supervisor sign-off must be PROVEN, never asserted ─────────────────────
+  // The authorizer identity is copied from a server-issued grant that only
+  // POST /operators/verify-authorizer can mint (and only after a supervisor+
+  // PIN verifies). Whatever the client put in authorized_by* is discarded, so
+  // an operator can neither skip the PIN prompt nor forge a colleague's name.
+  let authorizer = null;
+  const claimsAuthorization = !!(authorization_id || authorized_by || authorized_by_user_id);
+  if (claimsAuthorization) {
+    if (!authorization_id) {
+      return res.status(400).json({
+        error: 'authorization_required',
+        message: 'Supervisor authorization must be obtained from /operators/verify-authorizer first.',
+      });
+    }
+    authorizer = redeemGrant(authorization_id, cid, 'ncr');
+    if (!authorizer) {
+      return res.status(403).json({
+        error: 'authorization_invalid',
+        message: 'That supervisor authorization is invalid, expired, or already used. Please re-enter the PIN.',
+      });
+    }
+  }
+
   const id = uuidv4();
   const ncr_number = nextNCRNumber(cid);
   db.prepare(`
@@ -115,8 +140,8 @@ router.post('/ncrs', (req, res) => {
     ownedOrNull('work_orders', work_order_id, cid),
     ownedOrNull('items', item_id, cid),
     assigned_to, due_date || null, cid,
-    String(authorized_by || ''),
-    ownedOrNull('users', authorized_by_user_id, cid),
+    authorizer ? String(authorizer.display_name || '') : '',
+    authorizer ? authorizer.user_id : null,
     String(step_name || '')
   );
   logActivity(cid, 'ncr', id, 'NCR created', req.user?.display_name);

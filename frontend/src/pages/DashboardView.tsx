@@ -338,8 +338,24 @@ function CardConfigForm({ card, apps, onSave, onCancel }: {
 
 const SIZE_COLS: Record<string, string> = { sm: 'col-span-1', md: 'col-span-2', lg: 'col-span-3', xl: 'col-span-full' };
 
-export default function DashboardView() {
-  const { id, mode } = useParams<{ id: string; mode?: string }>();
+interface DashboardViewProps {
+  /** Render a specific dashboard instead of reading :id from the route.
+   *  Used by the per-workspace Reports pages, which own their own URL. */
+  dashboardId?: string;
+  /** Route prefix for this view's own links (view / edit / back). Defaults to
+   *  the /dashboards route; Reports pages pass /reports/:category so the
+   *  workspace tabs and sidebar highlight stay on their workspace. */
+  basePath?: string;
+  /** Where the back chevron goes, with its accessible label. */
+  backTo?: { to: string; label: string };
+}
+
+export default function DashboardView({ dashboardId, basePath, backTo }: DashboardViewProps = {}) {
+  const params = useParams<{ id: string; mode?: string }>();
+  const id = dashboardId ?? params.id;
+  const mode = params.mode;
+  const base = basePath ?? '/dashboards';
+  const back = backTo ?? { to: '/dashboards', label: 'Back to Dashboards' };
   const navigate = useNavigate();
   const { canEdit } = useAuth();
   const isEditMode = mode === 'edit' && canEdit;
@@ -477,7 +493,7 @@ export default function DashboardView() {
         <p className="text-sm text-gray-400 mt-1">{loadError || 'Dashboard not found'}</p>
       </div>
       <button className="btn-secondary" onClick={loadAll}>Retry</button>
-      <Link to="/dashboards" className="text-blue-600 text-sm hover:underline">← Back to Dashboards</Link>
+      <Link to={back.to} className="text-blue-600 text-sm hover:underline">← {back.label}</Link>
     </div>
   );
 
@@ -488,7 +504,7 @@ export default function DashboardView() {
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
-          <Link to="/dashboards" className="p-1.5 hover:bg-gray-200 rounded-lg text-gray-400 hover:text-gray-600 transition-colors">
+          <Link to={back.to} aria-label={back.label} className="p-1.5 hover:bg-gray-200 rounded-lg text-gray-400 hover:text-gray-600 transition-colors">
             <ChevronLeft size={18} />
           </Link>
           {isEditMode ? (
@@ -515,11 +531,11 @@ export default function DashboardView() {
             Refresh
           </button>
           {isEditMode ? (
-            <Link to={`/dashboards/${id}`} className="btn-primary text-xs py-1.5 px-3">
+            <Link to={base} className="btn-primary text-xs py-1.5 px-3">
               Done Editing
             </Link>
           ) : canEdit ? (
-            <Link to={`/dashboards/${id}/edit`} className="btn-secondary text-xs py-1.5 px-3">
+            <Link to={`${base}/edit`} className="btn-secondary text-xs py-1.5 px-3">
               <Edit size={13} /> Edit
             </Link>
           ) : null}
@@ -572,7 +588,7 @@ export default function DashboardView() {
           <div className="text-gray-500 font-medium">No cards yet</div>
           <p className="text-gray-400 text-sm mt-1">Add KPI, chart and table widgets to bring this dashboard to life.</p>
           {canEdit && (
-            <Link to={`/dashboards/${id}/edit`} className="btn-primary mt-4 mx-auto text-sm">
+            <Link to={`${base}/edit`} className="btn-primary mt-4 mx-auto text-sm">
               <Settings size={14} /> Configure Dashboard
             </Link>
           )}

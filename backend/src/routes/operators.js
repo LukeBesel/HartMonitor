@@ -9,6 +9,7 @@
 const express = require('express');
 const db = require('../db');
 const { verifyPassword, ROLE_LEVELS } = require('../middleware/auth');
+const { issueGrant } = require('../authorization');
 
 const router = express.Router();
 
@@ -118,7 +119,20 @@ router.post('/verify-authorizer', (req, res) => {
   if (!authorizer) {
     return res.status(403).json({ error: 'Authorization requires a supervisor or above' });
   }
-  res.json({ user_id: authorizer.id, display_name: authorizer.display_name, role: authorizer.role });
+  // Mint a single-use, expiring grant. The endpoint that needs the sign-off
+  // redeems this id and takes the authorizer identity FROM the grant, so a
+  // client can't skip the PIN check and name any supervisor it likes.
+  const grantId = issueGrant({
+    companyId: req.companyId,
+    user: authorizer,
+    purpose: String(req.body?.purpose || 'ncr'),
+  });
+  res.json({
+    authorization_id: grantId,
+    user_id: authorizer.id,
+    display_name: authorizer.display_name,
+    role: authorizer.role,
+  });
 });
 
 module.exports = router;

@@ -1,12 +1,20 @@
 import { useEffect, useState } from 'react';
-import { useParams, Navigate, Link } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { AlertTriangle } from 'lucide-react';
+import DashboardView from './DashboardView';
 
 // Per-workspace Reports pages (/reports/:category). Each category resolves to
 // the company's dedicated report dashboard — auto-created server-side on first
 // visit with sensible defaults — then hands off to the existing DashboardView
 // experience (grid, card editor, persistence) rather than forking it.
+//
+// DashboardView is RENDERED HERE, never redirected to. Navigating to
+// /dashboards/:id would re-file the page under the Reporting workspace
+// (findSectionForPath matches the /dashboards nav item), so the Production /
+// Inventory / Quality screen tabs the user came from would vanish and the
+// sidebar would jump. Staying on /reports/:category keeps every workspace's
+// Reports tab where it belongs.
 
 const CATEGORY_LABELS: Record<string, string> = {
   production: 'Production Reports',
@@ -80,5 +88,11 @@ export default function CategoryReports() {
     );
   }
 
-  return <Navigate to={`/dashboards/${dashboardId}`} replace />;
+  return (
+    <DashboardView
+      dashboardId={dashboardId}
+      basePath={`/reports/${category}`}
+      backTo={{ to: '/dashboard', label: 'Back to Command Center' }}
+    />
+  );
 }
