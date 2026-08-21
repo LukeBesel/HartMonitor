@@ -34,6 +34,16 @@ export function hasSeenWalkthrough(moduleId: string): boolean {
   }
 }
 
+/** Mark a walkthrough as seen without showing it — used when another intro
+ *  (e.g. the first-run setup wizard) supersedes it so tours never stack. */
+export function markWalkthroughSeen(moduleId: string): void {
+  try {
+    localStorage.setItem(STORAGE_PREFIX + moduleId, '1');
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Clear the "seen" flag so a walkthrough auto-shows again. Optional helper. */
 export function resetWalkthrough(moduleId: string): void {
   try {

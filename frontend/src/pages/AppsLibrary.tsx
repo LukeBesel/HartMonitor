@@ -4,7 +4,8 @@ import { api } from '../api/client';
 import { App } from '../types';
 import {
   Plus, Play, Edit3, Trash2, Search, CheckCircle,
-  Clock, FileText, MoreVertical, Globe, Lock, Copy, Download, RefreshCw, Database, AppWindow, AlertTriangle
+  Clock, FileText, MoreVertical, Globe, Lock, Copy, Download, RefreshCw, Database, AppWindow, AlertTriangle,
+  BarChart2
 } from 'lucide-react';
 import UpgradeModal from '../components/shared/UpgradeModal';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
@@ -343,6 +344,13 @@ function AppCard({ app, canEdit, onDelete, onPublish }: { app: App; canEdit: boo
             <Edit3 size={12} /> Edit
           </Link>
         )}
+        <Link
+          to={`/apps/${app.id}/analytics`}
+          className="btn-secondary flex-1 justify-center text-xs"
+          title="View analytics and export data for this app"
+        >
+          <BarChart2 size={12} /> Analytics
+        </Link>
         {app.status === 'published' && (
           <Link
             to={`/play/${app.id}`}

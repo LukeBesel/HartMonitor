@@ -18,7 +18,11 @@ export function SetupChecklist() {
     { id: 'workorder', label: 'Create your first work order', done: false },
     { id: 'team', label: 'Invite a team member', done: false },
   ]);
-  const [expanded, setExpanded] = useState(true);
+  // Start collapsed on short (laptop) viewports so the checklist never crowds
+  // the nav — expanding is one tap away.
+  const [expanded, setExpanded] = useState(() => {
+    try { return window.innerHeight >= 800; } catch { return true; }
+  });
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
@@ -57,7 +61,9 @@ export function SetupChecklist() {
   };
 
   return (
-    <div className="mx-3 mb-3 bg-blue-950/60 border border-blue-700/40 rounded-lg overflow-hidden">
+    // flex-shrink-0 keeps the card its natural size; the nav above scrolls
+    // instead of the checklist being crushed into overlapping it.
+    <div className="mx-3 mb-3 flex-shrink-0 bg-blue-950/60 border border-blue-700/40 rounded-lg overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
         className="w-full flex items-center justify-between p-3 text-left"

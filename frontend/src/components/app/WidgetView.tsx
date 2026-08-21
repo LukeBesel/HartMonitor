@@ -176,6 +176,45 @@ export function ShapeSVG({ config }: { config: WidgetConfig }) {
   );
 }
 
+// ─── Image with graceful failure ──────────────────────────────────────────────
+// A dead URL (offline shop floor, moved file) renders a labeled placeholder
+// instead of the browser's broken-image glyph.
+export function ImgSafe({ src, alt, style, className }: {
+  src: string; alt: string; style?: React.CSSProperties; className?: string;
+}) {
+  const [failed, setFailed] = useState(false);
+  useEffect(() => { setFailed(false); }, [src]);
+  if (failed) {
+    return (
+      <div
+        className={`flex flex-col items-center justify-center gap-1 bg-gray-100 border border-dashed border-gray-300 text-gray-400 ${className ?? ''}`}
+        style={{ ...style, objectFit: undefined }}
+        title={alt || 'Image unavailable'}
+      >
+        <ImageIcon size={18} />
+        <span style={{ fontSize: 11 }}>{alt || 'Image unavailable'}</span>
+      </div>
+    );
+  }
+  return <img src={src} alt={alt} className={className} style={style} onError={() => setFailed(true)} />;
+}
+
+// ─── model-viewer lazy loader ─────────────────────────────────────────────────
+// The <model-viewer> web component ships from a CDN. Loading it eagerly from
+// index.html delayed EVERY page's load event (and logged console errors) on
+// networks that block the CDN — so it is injected on demand, only when a
+// 3D-model widget with a real URL first renders.
+let modelViewerRequested = false;
+export function ensureModelViewer(): void {
+  if (modelViewerRequested || typeof document === 'undefined') return;
+  if (window.customElements?.get('model-viewer')) { modelViewerRequested = true; return; }
+  modelViewerRequested = true;
+  const s = document.createElement('script');
+  s.type = 'module';
+  s.src = 'https://ajax.googleapis.com/ajax/libs/model-viewer/3.4.0/model-viewer.min.js';
+  document.head.appendChild(s);
+}
+
 // Tracks the uniform scale needed to fit a CANVAS_W-wide stage into `ref`'s width.
 export function useCanvasScale(ref: React.RefObject<HTMLElement>, logicalWidth = CANVAS_W) {
   const [scale, setScale] = useState(1);
@@ -237,6 +276,12 @@ export function WidgetView({ widget, value, onChange, onNext, onPrev, onComplete
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;
 
+  // Load the model-viewer web component only when a 3D widget actually needs it.
+  const needsModelViewer = widget.type === 'model-viewer' && !!config.modelUrl;
+  useEffect(() => {
+    if (needsModelViewer) ensureModelViewer();
+  }, [needsModelViewer]);
+
   useEffect(() => {
     if (timerRunning && timerLeft > 0) {
       timerRef.current = setInterval(() => setTimerLeft(t => {
@@ -293,7 +338,7 @@ export function WidgetView({ widget, value, onChange, onNext, onPrev, onComplete
 
     case 'image':
       return config.imageUrl
-        ? <img src={config.imageUrl} alt={config.imageAlt || ''} className="w-full h-full" style={{ objectFit: config.imageFit || 'contain', borderRadius: config.borderRadius ?? 8 }} />
+        ? <ImgSafe src={config.imageUrl} alt={config.imageAlt || ''} className="w-full h-full" style={{ objectFit: config.imageFit || 'contain', borderRadius: config.borderRadius ?? 8 }} />
         : <div className="w-full h-full bg-gray-100 rounded-lg flex flex-col items-center justify-center text-gray-400 text-xs border border-dashed border-gray-300"><ImageIcon size={20} className="mb-1" />Image</div>;
 
     case 'text-input':
@@ -449,10 +494,13 @@ export function WidgetView({ widget, value, onChange, onNext, onPrev, onComplete
         );
       }
       if (isYoutube) {
-        // Convert any YouTube URL to embed
+        // Convert any YouTube URL form (watch, youtu.be, embed, shorts, live)
+        // to the embeddable /embed/ URL — watch URLs refuse to render inside
+        // iframes, so this conversion is what makes the player integration work.
         let embedUrl = config.videoUrl;
-        const ytMatch = config.videoUrl.match(/(?:v=|youtu\.be\/|embed\/)([A-Za-z0-9_-]{11})/);
-        if (ytMatch) embedUrl = `https://www.youtube.com/embed/${ytMatch[1]}?rel=0${config.videoAutoplay ? '&autoplay=1' : ''}`;
+        const ytMatch = config.videoUrl.match(/(?:v=|youtu\.be\/|embed\/|shorts\/|live\/)([A-Za-z0-9_-]{11})/);
+        // Browsers only honor autoplay for muted embeds.
+        if (ytMatch) embedUrl = `https://www.youtube.com/embed/${ytMatch[1]}?rel=0${config.videoAutoplay ? '&autoplay=1&mute=1' : ''}`;
         return (
           <iframe
             src={embedUrl}

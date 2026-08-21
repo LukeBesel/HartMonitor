@@ -694,7 +694,8 @@ router.get('/completion/:id', (req, res) => {
 router.get('/daily-brief', (req, res) => {
   const cid = req.companyId;
   const planRow = db.prepare('SELECT tier FROM plan WHERE company_id = ?').get(cid);
-  const isPro = planRow && planRow.tier !== 'free';
+  const { config: appConfig } = require('../config');
+  const isPro = appConfig.earlyAccess || (planRow && planRow.tier !== 'free');
 
   // ── Needs attention: everything that should change someone's plan today
   const attention = [];

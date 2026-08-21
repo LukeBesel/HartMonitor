@@ -82,6 +82,64 @@ export interface CompletionFlushPayload {
   takt_exceeded_steps?: number[];
 }
 
+// ── App analytics (GET /api/apps/:id/analytics + /export.csv) ────────────────
+
+export interface AppAnalyticsParams {
+  days?: number;
+  operator?: string;
+  work_order_id?: string;
+  product_type_id?: string;
+}
+
+export type AppFieldKind = 'number' | 'boolean' | 'option' | 'text';
+
+export interface AppAnalyticsField {
+  widget_id: string;
+  label: string;
+  type: string;
+  step_name: string;
+  kind: AppFieldKind;
+  stats: {
+    avg?: number | null; min?: number | null; max?: number | null; count?: number;
+    pass?: number; fail?: number; yield_pct?: number | null;
+    options?: { value: string; count: number }[];
+  };
+  trend?: { date: string; avg: number }[];
+}
+
+export interface AppAnalyticsResponse {
+  app_id: string;
+  app_name: string;
+  days: number;
+  totals: {
+    runs: number; completed: number; abandoned: number;
+    avg_duration_s: number | null; first_pass_yield: number | null;
+  };
+  series: { date: string; completed: number; avg_duration_s: number | null }[];
+  by_operator: { operator_name: string; runs: number; avg_duration_s: number | null }[];
+  fields: AppAnalyticsField[];
+  filter_options: {
+    operators: string[];
+    work_orders: { id: string; work_order_number: string }[];
+    product_types: { id: string; name: string }[];
+  };
+  recent_runs: {
+    id: string; started_at: string; completed_at: string | null; status: string;
+    operator_name: string; duration_s: number | null;
+    work_order_number: string | null; product_type_name: string | null;
+  }[];
+}
+
+function appAnalyticsQS(params?: AppAnalyticsParams): string {
+  const qs = new URLSearchParams();
+  if (params?.days) qs.set('days', String(params.days));
+  if (params?.operator) qs.set('operator', params.operator);
+  if (params?.work_order_id) qs.set('work_order_id', params.work_order_id);
+  if (params?.product_type_id) qs.set('product_type_id', params.product_type_id);
+  const s = qs.toString();
+  return s ? `?${s}` : '';
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   // On native apps, send token as Authorization header (cookies don't cross origins in WebView)
@@ -149,6 +207,14 @@ export const api = {
   publishApp: (id: string) => request<any>(`/apps/${id}/publish`, { method: 'POST' }),
   deleteApp: (id: string) => request<any>(`/apps/${id}`, { method: 'DELETE' }),
   getAppCompletions: (id: string) => request<any[]>(`/apps/${id}/completions`),
+
+  // ── App analytics dashboard + exports
+  getAppAnalytics: (id: string, params?: AppAnalyticsParams) =>
+    request<AppAnalyticsResponse>(`/apps/${id}/analytics${appAnalyticsQS(params)}`),
+  downloadAppAnalyticsCsv: (id: string, params?: AppAnalyticsParams) =>
+    downloadBlob(`/apps/${id}/export.csv${appAnalyticsQS(params)}`, 'app-analytics-export.csv'),
+  downloadAllCompanyData: () =>
+    downloadBlob('/config/export-data', `hartmonitor-export-${new Date().toISOString().slice(0, 10)}.json`),
 
   // ── Completions
   getCompletions: (params?: { limit?: number; status?: string; operator_name?: string }) => {

@@ -20,7 +20,7 @@ import { ATTENTION_ICONS, ATTENTION_TYPE_LABELS } from '../config/attention';
 import { useDashboardPrefs, DASHBOARD_SECTIONS, DashboardSectionId } from '../hooks/useDashboardPrefs';
 import Toggle from '../components/shared/Toggle';
 import OnboardingWizard from '../components/shared/OnboardingWizard';
-import ModuleOnboarding from '../components/shared/ModuleOnboarding';
+import ModuleOnboarding, { markWalkthroughSeen } from '../components/shared/ModuleOnboarding';
 import PageHeader from '../components/shared/PageHeader';
 import StatCard from '../components/shared/StatCard';
 import EmptyState from '../components/shared/EmptyState';
@@ -265,7 +265,9 @@ export default function Dashboard() {
 
   return (
     <div className="p-4 sm:p-6 space-y-6 animate-fade-in">
-      <OnboardingWizard />
+      {/* One tour only: when the setup wizard shows, it permanently absorbs the
+          dashboard walkthrough so new users never get two popups in a row. */}
+      <OnboardingWizard onWillShow={() => markWalkthroughSeen('dashboard')} />
       <ModuleOnboarding
         moduleId="dashboard"
         title="Welcome to your MES"

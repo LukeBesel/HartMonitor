@@ -201,7 +201,7 @@ function Toast({ message, type = 'success', onDismiss }: {
 }) {
   return (
     <div
-      className={`fixed bottom-6 right-6 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-white text-sm font-medium transition-all ${
+      className={`fixed bottom-40 right-4 z-50 flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-white text-sm font-medium transition-all ${
         type === 'success' ? 'bg-emerald-600' : 'bg-red-600'
       }`}
     >

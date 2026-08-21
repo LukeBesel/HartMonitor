@@ -26,7 +26,7 @@ export type NavItem = {
   module?: string;
 };
 
-export type SectionId = 'production' | 'planning' | 'reporting' | 'inventory' | 'people' | 'quality_ops' | 'maintenance_ops';
+export type SectionId = 'production' | 'planning' | 'reporting' | 'inventory' | 'people' | 'quality_ops' | 'kaizen_ci' | 'maintenance_ops';
 
 export type NavSection = {
   id: SectionId;
@@ -90,12 +90,20 @@ export const SECTIONS: NavSection[] = [
   },
   {
     id: 'quality_ops',
-    label: 'Quality & CI',
+    label: 'Quality',
     icon: ShieldCheck,
-    description: 'CAPA, NCR, and continuous improvement',
+    description: 'NCRs, CAPA, and inspections',
     items: [
       { to: '/quality',  icon: ShieldCheck,   label: 'NCR / Quality',    proOnly: true, module: 'quality' },
       { to: '/capa',     icon: ClipboardCheck,label: 'CAPA Tracker',     proOnly: true, module: 'quality' },
+    ],
+  },
+  {
+    id: 'kaizen_ci',
+    label: 'Kaizen / CI',
+    icon: Lightbulb,
+    description: 'Continuous improvement ideas',
+    items: [
       { to: '/kaizen',   icon: Lightbulb,     label: 'Kaizen / CI Ideas', module: 'kaizen' },
     ],
   },

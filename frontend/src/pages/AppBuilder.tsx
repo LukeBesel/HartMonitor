@@ -17,7 +17,7 @@ import {
   Save, Trash2, Variable as VariableIcon, X, ZoomIn, ZoomOut, GripVertical,
 } from 'lucide-react';
 import CanvasEditor from '../components/app/CanvasEditor';
-import { defaultLayout, DEFAULT_CANVAS_H, ShapeSVG } from '../components/app/WidgetView';
+import { defaultLayout, DEFAULT_CANVAS_H, ImgSafe, ShapeSVG, WidgetView } from '../components/app/WidgetView';
 import WidgetPalette, { defaultWidget, WIDGET_META } from '../components/builder/WidgetPalette';
 import StepList from '../components/builder/StepList';
 import ContextPanel, { ContextTab, Field } from '../components/builder/ContextPanel';
@@ -339,14 +339,16 @@ export default function AppBuilder() {
       )}
 
       {/* ── Top bar ── */}
-      <div className="bg-surface-1 border-b border-border-subtle px-3.5 py-2 flex items-center gap-3 flex-shrink-0">
+      {/* flex-wrap: on narrow screens the action cluster drops to its own row
+          instead of pushing Save/Publish off-screen. */}
+      <div className="bg-surface-1 border-b border-border-subtle px-3.5 py-2 flex items-center gap-x-3 gap-y-1.5 flex-wrap flex-shrink-0">
         <Link to="/apps" className="wb-btn-ghost !min-h-0 p-1.5" title="Back to apps">
           <ChevronLeft size={18} />
         </Link>
-        <div className="flex-1 flex items-center gap-2.5 min-w-0">
+        <div className="flex-1 flex items-center gap-2.5 min-w-[180px]">
           <input
-            className="bg-transparent border-none outline-none hover:bg-surface-2 focus:bg-surface-2 px-2 py-0.5 rounded-ctrl min-w-0"
-            style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.01em', width: 'min(340px, 40vw)' }}
+            className="bg-transparent border-none outline-none hover:bg-surface-2 focus:bg-surface-2 px-2 py-0.5 rounded-ctrl min-w-0 flex-shrink"
+            style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.01em', width: 'min(340px, 40vw)', minWidth: 110 }}
             value={app.name}
             readOnly={!canEdit}
             onChange={e => updateApp(prev => ({ ...prev, name: e.target.value }))}
@@ -374,7 +376,7 @@ export default function AppBuilder() {
           )}
         </div>
 
-        <div className="flex items-center gap-1.5 flex-shrink-0">
+        <div className="flex items-center gap-1.5 flex-wrap">
           <button onClick={() => setShowVariables(true)} className="wb-btn !min-h-[34px] !text-[12.5px]" title="App variables">
             <VariableIcon size={13} /> Variables
             {variableCount > 0 && <span className="tnum rounded-full px-1.5 bg-accent-tint text-accent" style={{ fontSize: 10.5, fontWeight: 650 }}>{variableCount}</span>}
@@ -403,7 +405,9 @@ export default function AppBuilder() {
       )}
 
       {/* ── Four-region body ── */}
-      <div className="flex flex-1 overflow-hidden">
+      {/* Stacks vertically below lg: step strip on top, canvas in the middle,
+          inspector at the bottom — three fixed columns cannot fit a phone. */}
+      <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
         {/* Left — step list */}
         <StepList
           app={app}
@@ -414,7 +418,7 @@ export default function AppBuilder() {
         />
 
         {/* Center — widget toolbar + canvas */}
-        <div className="flex flex-col flex-1 overflow-hidden min-w-0">
+        <div className="flex flex-col flex-1 overflow-hidden min-w-0 min-h-0">
           <WidgetPalette onAdd={addWidget} disabled={!canEdit} />
 
           {/* Canvas scroller */}
@@ -718,12 +722,20 @@ function WidgetPreview({ widget }: { widget: Widget }) {
       return <div className="border-t border-border-subtle mt-1" />;
     case 'image':
       return config.imageUrl
-        ? <img src={config.imageUrl} alt={config.imageAlt || ''} className="max-h-20 rounded border border-border-subtle object-contain bg-surface-2" />
+        ? <ImgSafe src={config.imageUrl} alt={config.imageAlt || ''} className="max-h-20 h-16 rounded border border-border-subtle object-contain bg-surface-2" />
         : <div className="h-8 border border-dashed border-baseline rounded flex items-center justify-center text-xs text-muted"><Image size={12} className="mr-1" />Image placeholder</div>;
     case 'signature':
       return <div className="h-12 border border-dashed border-baseline rounded flex items-center justify-center text-xs text-muted"><PenTool size={12} className="mr-1" />Signature area</div>;
     case 'video':
-      return <div className="h-8 border border-dashed border-baseline rounded flex items-center justify-center text-xs text-muted">Video{config.videoUrl ? ' ✓' : ''}</div>;
+      // Live embed preview so the builder shows the actual video, not a stub.
+      // pointer-events-none keeps card clicks selecting the widget.
+      return config.videoUrl
+        ? (
+          <div className="h-36 rounded overflow-hidden pointer-events-none border border-border-subtle bg-black">
+            <WidgetView widget={widget} />
+          </div>
+        )
+        : <div className="h-8 border border-dashed border-baseline rounded flex items-center justify-center text-xs text-muted">Video — set a URL in the panel</div>;
     case 'model-viewer':
       return <div className="h-8 border border-dashed border-baseline rounded flex items-center justify-center text-xs text-muted">3D model{config.modelUrl ? ' ✓' : ''}</div>;
     case 'variable-display':

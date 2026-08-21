@@ -69,9 +69,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
 
+      // Only validate a session that plausibly exists (stored user on web,
+      // SSO-callback token marker, or saved token on native). Anonymous
+      // visitors on public pages otherwise fire a guaranteed-401 /auth/me
+      // probe that litters the console.
+      const hasStoredSession = (IS_NATIVE && tokenRef.current)
+        || !!localStorage.getItem('hm_user')
+        || !!localStorage.getItem('hm_token');
+      if (!hasStoredSession) { setLoading(false); return; }
+
       api.getMe()
         .then(u => { setUser(u); localStorage.setItem('hm_user', JSON.stringify(u)); })
-        .catch(() => { localStorage.removeItem('hm_user'); clearToken(); setUser(null); })
+        .catch((err: unknown) => {
+          // Only a real 401 invalidates the session. Transient failures
+          // (rate limit, offline, server hiccup) keep the stored user —
+          // logging people out on a network blip is worse than a stale name.
+          if ((err as { status?: number })?.status === 401) {
+            localStorage.removeItem('hm_user');
+            localStorage.removeItem('hm_token'); // stale SSO marker
+            clearToken();
+            setUser(null);
+          }
+        })
         .finally(() => setLoading(false));
     })();
   }, []);
@@ -107,6 +126,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     tokenRef.current = null;
     await clearToken();
     localStorage.removeItem('hm_user');
+    localStorage.removeItem('hm_token'); // SSO marker
     setUser(null);
   };
 

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Outlet, NavLink, Link, useNavigate, useLocation } from 'react-router-dom';
 import {
   Settings, Activity, ChevronLeft, ChevronRight,
@@ -50,25 +50,12 @@ function useIsDesktop() {
   return isDesktop;
 }
 
-function WorkspacePill({ label, icon: Icon, active, onClick }: {
-  label: string; icon: React.ElementType; active: boolean; onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`flex items-center justify-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-semibold whitespace-nowrap transition-all ${
-        active ? 'bg-white/15 text-white shadow-sm' : 'text-gray-400 hover:text-white hover:bg-white/8'
-      }`}
-    >
-      <Icon size={12} className="flex-shrink-0" />
-      <span>{label}</span>
-    </button>
-  );
-}
 
 export default function Layout() {
   const [collapsed, setCollapsed] = useState(() => localStorage.getItem('hm_sidebar') === 'collapsed');
   const [userMenuOpen, setUserMenuOpen] = useState(false);
+  const [wsMenuOpen, setWsMenuOpen] = useState(false);
+  const wsMenuRef = useRef<HTMLDivElement>(null);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [quickCreateOpen, setQuickCreateOpen] = useState(false);
   // Set to a feature label when a Free user clicks a locked Pro nav item.
@@ -88,6 +75,18 @@ export default function Layout() {
   // desktop-only "collapsed" preference.
   const effectiveCollapsed = collapsed && isDesktop;
 
+  // Close the workspace dropdown on outside click or Escape.
+  useEffect(() => {
+    if (!wsMenuOpen) return;
+    const onDown = (e: MouseEvent) => {
+      if (wsMenuRef.current && !wsMenuRef.current.contains(e.target as Node)) setWsMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setWsMenuOpen(false); };
+    document.addEventListener('mousedown', onDown);
+    document.addEventListener('keydown', onKey);
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey); };
+  }, [wsMenuOpen]);
+
   // Apply any developer-defined custom ordering to a section's items.
   const orderItems = (sectionId: string, items: NavItem[]): NavItem[] => {
     const order = itemOrder[sectionId];
@@ -101,20 +100,6 @@ export default function Layout() {
     });
   };
 
-  // Sections the user has kept enabled in Settings. Planning is off by default
-  // (see NavPrefsContext) but once a user enables it, the toggle reveals it
-  // regardless of plan tier — individual Pro items inside stay gated by canShow.
-  const moduleSections = useVisibleSections();
-  const enabledSections = moduleSections.filter(s => !isSectionHidden(s.id));
-
-  // Default to first enabled section if current focus is no longer valid
-  const effectiveFocus = enabledSections.some(s => s.id === focus)
-    ? focus
-    : (enabledSections[0]?.id ?? 'production');
-
-  // Always show only the focused section (no "all sections" view)
-  const visibleSections = enabledSections.filter(s => s.id === effectiveFocus);
-
   const canShow = (item: NavItem) => {
     if (!canShowNavItem(item)) return false;
     if (!item.pinned && isItemHidden(item.to)) return false;
@@ -123,6 +108,24 @@ export default function Layout() {
     // Pro-only items are always shown — clicking them opens the upgrade modal for free users.
     return true;
   };
+
+  // Sections the user has kept enabled in Settings. Planning is off by default
+  // (see NavPrefsContext) but once a user enables it, the toggle reveals it
+  // regardless of plan tier — individual Pro items inside stay gated by canShow.
+  // A section whose items ALL fall away (role/module/prefs) is dropped entirely —
+  // otherwise its switcher entry selects an empty nav and feels broken.
+  const moduleSections = useVisibleSections();
+  const enabledSections = moduleSections.filter(
+    s => !isSectionHidden(s.id) && s.items.some(canShow)
+  );
+
+  // Default to first enabled section if current focus is no longer valid
+  const effectiveFocus = enabledSections.some(s => s.id === focus)
+    ? focus
+    : (enabledSections[0]?.id ?? 'production');
+
+  // Always show only the focused section (no "all sections" view)
+  const visibleSections = enabledSections.filter(s => s.id === effectiveFocus);
 
   const renderItem = (item: NavItem) => {
     const { to, icon: Icon, label, exact, proOnly } = item;
@@ -266,20 +269,53 @@ export default function Layout() {
           )}
         </Link>
 
-        {/* Workspace switcher — only show when there are multiple enabled sections */}
+        {/* Workspace switcher — dropdown; only when there are multiple sections */}
         {!effectiveCollapsed && enabledSections.length > 1 && (
-          <div className="px-2 pt-2.5">
-            <div className="flex flex-wrap gap-1 bg-black/20 rounded-xl p-1">
-              {enabledSections.map(s => (
-                <WorkspacePill
-                  key={s.id}
-                  label={s.label}
-                  icon={s.icon}
-                  active={effectiveFocus === s.id}
-                  onClick={() => setFocus(s.id)}
-                />
-              ))}
-            </div>
+          <div className="px-2 pt-2.5 relative" ref={wsMenuRef}>
+            <button
+              onClick={() => setWsMenuOpen(o => !o)}
+              aria-haspopup="listbox"
+              aria-expanded={wsMenuOpen}
+              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl bg-black/25 hover:bg-black/35 text-left transition-colors"
+            >
+              {(() => {
+                const cur = enabledSections.find(s => s.id === effectiveFocus) ?? enabledSections[0];
+                const CurIcon = cur.icon;
+                return (
+                  <>
+                    <CurIcon size={15} className="shrink-0 text-blue-300" />
+                    <span className="flex-1 min-w-0">
+                      <span className="block text-sm font-semibold text-white truncate">{cur.label}</span>
+                      <span className="block text-[10px] text-gray-500 truncate">{cur.description}</span>
+                    </span>
+                    <ChevronDown size={14} className={`shrink-0 text-gray-400 transition-transform ${wsMenuOpen ? 'rotate-180' : ''}`} />
+                  </>
+                );
+              })()}
+            </button>
+            {wsMenuOpen && (
+              <div className="absolute left-2 right-2 top-full mt-1 z-50 rounded-xl bg-gray-900 border border-white/10 shadow-2xl shadow-black/50 overflow-hidden py-1" role="listbox">
+                {enabledSections.map(s => {
+                  const SIcon = s.icon;
+                  const active = effectiveFocus === s.id;
+                  return (
+                    <button
+                      key={s.id}
+                      role="option"
+                      aria-selected={active}
+                      onClick={() => { setFocus(s.id); setWsMenuOpen(false); }}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors ${
+                        active ? 'bg-white/10 text-white' : 'text-gray-300 hover:bg-white/5 hover:text-white'
+                      }`}
+                    >
+                      <SIcon size={14} className={`shrink-0 ${active ? 'text-blue-300' : 'text-gray-500'}`} />
+                      <span className="flex-1 text-sm font-medium truncate">{s.label}</span>
+                      {active && <span className="w-1.5 h-1.5 rounded-full bg-blue-400 shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
@@ -434,12 +470,14 @@ export default function Layout() {
       {/* Floating alerts bubble — fixed bottom-right corner */}
       <AlertsBubble />
 
-      {/* Quick-create FAB — visible for manager+ roles */}
-      {user && ['manager', 'developer', 'supervisor'].includes(user.role) && (
+      {/* Quick-create FAB — visible for manager+ roles. Hidden in the app
+          builder, where it would cover the docked inspector on small screens. */}
+      {user && ['manager', 'developer', 'supervisor'].includes(user.role)
+        && !/^\/apps\/[^/]+\/build/.test(location.pathname) && (
         <button
           onClick={() => setQuickCreateOpen(true)}
           title="Quick-create work order"
-          className="fixed bottom-20 right-5 z-40 w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-95"
+          className="fixed bottom-5 right-5 z-40 w-12 h-12 rounded-full shadow-lg flex items-center justify-center transition-all hover:scale-110 active:scale-95"
           style={{ background: 'linear-gradient(135deg, #6366f1, #ec4899)' }}
         >
           <Plus size={22} className="text-white" strokeWidth={2.5} />

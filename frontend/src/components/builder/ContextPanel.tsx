@@ -21,7 +21,7 @@ import type {
 } from '../../types';
 import { api } from '../../api/client';
 import TableImportModal from '../shared/TableImportModal';
-import { BUTTON_ICONS, defaultLayout } from '../app/WidgetView';
+import { BUTTON_ICONS, defaultLayout, ImgSafe, WidgetView } from '../app/WidgetView';
 import { WIDGET_META, INPUT_WIDGET_TYPES } from './WidgetPalette';
 import { inferVariableType, VARIABLE_NAME_RE } from './VariablesPanel';
 import { eventsFor, TriggerAttachment } from './TriggerEditor';
@@ -173,7 +173,8 @@ export default function ContextPanel(props: {
   ];
 
   return (
-    <div className="flex flex-col h-full w-[320px] flex-shrink-0 bg-surface-1 border-l border-border-subtle">
+    // Below lg the inspector docks under the canvas at a capped height.
+    <div className="flex flex-col w-full max-h-[45vh] border-t lg:h-full lg:w-[320px] lg:max-h-none lg:border-t-0 lg:border-l flex-shrink-0 bg-surface-1 border-border-subtle">
       <div className="flex border-b border-grid flex-shrink-0">
         {TABS.map(t => (
           <button
@@ -637,7 +638,7 @@ function WidgetTab({ app, widget, activeStepIdx, canEdit, onTab, onUpdateWidget,
             {uploadStatus}
             {config.imageUrl && (
               <div className="mt-1.5">
-                <img src={config.imageUrl} alt="" className="max-h-16 rounded-ctrl border border-border-subtle object-contain" />
+                <ImgSafe src={config.imageUrl} alt={config.imageAlt || 'Preview'} className="max-h-16 h-14 rounded-ctrl border border-border-subtle object-contain" />
               </div>
             )}
           </Field>
@@ -695,6 +696,14 @@ function WidgetTab({ app, widget, activeStepIdx, canEdit, onTab, onUpdateWidget,
           )}
           <Toggle checked={!!config.videoControls} onChange={v => setConfig({ videoControls: v })} label="Show controls" />
           <Toggle checked={!!config.videoAutoplay} onChange={v => setConfig({ videoAutoplay: v })} label="Autoplay" />
+          {config.videoUrl && (
+            <Field label="Preview">
+              {/* Live, playable embed — confirms the link resolves before publish. */}
+              <div className="rounded-ctrl overflow-hidden border border-border-subtle bg-black" style={{ aspectRatio: '16 / 9' }}>
+                <WidgetView widget={widget} />
+              </div>
+            </Field>
+          )}
         </>
       )}
 

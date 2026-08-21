@@ -44,7 +44,7 @@ const STEPS: Step[] = [
   { kind: 'finish', icon: CheckCircle2,    title: "You're all set!",            body: 'That’s the whole tour. You can replay it anytime from Settings → Help & Guides. Now go build something.' },
 ];
 
-export default function OnboardingWizard() {
+export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => void } = {}) {
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -64,6 +64,7 @@ export default function OnboardingWizard() {
       localStorage.removeItem(REPLAY_FLAG);
       setEligible(true);
       setReady(true);
+      onWillShow?.();
       return;
     }
     let cancelled = false;
@@ -73,6 +74,7 @@ export default function OnboardingWizard() {
         const completed = isTruthy(settings?.onboarding_completed);
         const roleOk = user?.role === 'manager' || user?.role === 'developer';
         setEligible(!completed && roleOk);
+        if (!completed && roleOk) onWillShow?.();
       })
       .catch(() => setEligible(false))
       .finally(() => { if (!cancelled) setReady(true); });

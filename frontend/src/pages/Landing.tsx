@@ -27,11 +27,12 @@ const FEATURES = [
   { icon: MessageSquare, title: 'Shift Management', body: 'Digital shift handoff notes and production summaries replace the clipboard. Every shift starts with full context.' },
 ];
 
+// Honest product facts only — no invented adoption or outcome claims.
 const STATS = [
-  { value: '2,400+', label: 'Work orders tracked daily' },
-  { value: '23%', label: 'Avg downtime reduction' },
-  { value: '< 5 min', label: 'Setup to first work order' },
-  { value: '99.9%', label: 'Platform uptime SLA' },
+  { value: '10', label: 'Modules — turn on exactly what you need' },
+  { value: 'Minutes', label: 'From signup to your first work order' },
+  { value: '100%', label: 'Free during early access, every module' },
+  { value: 'Yours', label: 'Export all of your data, anytime' },
 ];
 
 function ProductRow({ eyebrow, title, body, points, src, alt, phone = false, reverse = false }: {
@@ -364,7 +365,10 @@ export default function Landing() {
               <button
                 onClick={async () => {
                   try {
-                    await api.startDemo();
+                    const res = await api.startDemo();
+                    // Persist the sandbox user so AuthContext restores the session
+                    // after the hard redirect (the auth cookie alone isn't enough).
+                    if (res?.user) localStorage.setItem('hm_user', JSON.stringify(res.user));
                     window.location.href = '/dashboard';
                   } catch {
                     window.location.href = '/login?mode=signup';
@@ -394,7 +398,7 @@ export default function Landing() {
       <section className="border-y border-white/10 bg-white/[0.02]">
         <div className="max-w-6xl mx-auto px-6 py-14">
           <Reveal className="text-center mb-10">
-            <p className="text-sm font-semibold uppercase tracking-widest text-gray-500">Trusted by manufacturers worldwide</p>
+            <p className="text-sm font-semibold uppercase tracking-widest text-gray-500">Built for small manufacturers — in early access now</p>
           </Reveal>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
             {STATS.map((s, i) => (
