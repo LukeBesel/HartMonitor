@@ -2,6 +2,7 @@ const express = require('express');
 const db = require('../db');
 const { calcScheduleStatus } = require('./workorders');
 const { calcOEE } = require('./oee');
+const { teamOf: andonTeamOf, teamLabel: andonTeamLabel } = require('../andonTeams');
 
 const router = express.Router();
 
@@ -748,6 +749,52 @@ router.get('/daily-brief', (req, res) => {
     });
   }
 
+  // Open help requests (Andon) — someone on the floor is waiting for a person.
+  // These outrank most things: they are a human standing still.
+  const openCalls = db.prepare(`
+    SELECT a.id, a.team, a.type, a.target_type, a.status, a.title, a.step_name, a.created_by,
+           a.department_id, d.name AS department_name, s.name AS station_name,
+           wo.work_order_number, ap.name AS app_name, a.assigned_to, a.acknowledged_by,
+           CAST((julianday('now') - julianday(a.created_at)) * 86400 AS INTEGER) AS age_seconds
+    FROM andon_calls a
+    LEFT JOIN departments d  ON d.id  = a.department_id
+    LEFT JOIN stations s     ON s.id  = a.station_id
+    LEFT JOIN work_orders wo ON wo.id = a.work_order_id
+    LEFT JOIN apps ap        ON ap.id = a.app_id
+    WHERE a.company_id = ? AND a.status IN ('open', 'acknowledged')
+    ORDER BY a.created_at ASC LIMIT 20
+  `).all(cid);
+  for (const c of openCalls) {
+    const team = andonTeamOf(c);
+    const isDept = c.target_type === 'department' && !!c.department_name;
+    const targetLabel = isDept ? c.department_name : andonTeamLabel(team);
+    const mins = Math.max(0, Math.round((c.age_seconds ?? 0) / 60));
+    const location = c.station_name || (isDept ? '' : c.department_name) || '';
+    const responder = c.assigned_to || c.acknowledged_by || '';
+    attention.push({
+      type: 'andon_call',
+      severity: c.status === 'open' ? 'red' : 'amber',
+      label: `${targetLabel} needed${location ? ` · ${location}` : ''}`,
+      detail: [
+        c.status === 'open' ? `waiting ${mins}m` : `${responder || 'Someone'} on the way · ${mins}m`,
+        c.work_order_number && `WO ${c.work_order_number}`,
+        c.app_name && c.step_name ? `${c.app_name} · ${c.step_name}` : c.app_name,
+        c.created_by && `raised by ${c.created_by}`,
+      ].filter(Boolean).join(' · '),
+      link: isDept ? `/andon?department_id=${c.department_id}` : `/andon?team=${team}`,
+      team,
+      team_label: andonTeamLabel(team),
+      target_type: isDept ? 'department' : 'team',
+      target_label: targetLabel,
+      department_id: isDept ? c.department_id : null,
+      call_id: c.id,
+      call_status: c.status,
+      age_minutes: mins,
+      location,
+    });
+  }
+
+  // Capped and ordered: longest-down first, so the list stays a triage list.
   const downStations = db.prepare(`SELECT id, name, current_status, current_status_since FROM stations WHERE company_id = ? AND current_status = 'down' ORDER BY current_status_since ASC LIMIT 10`).all(cid);
   for (const st of downStations) {
     const mins = st.current_status_since ? Math.floor((Date.now() - new Date(st.current_status_since).getTime()) / 60000) : null;
@@ -814,7 +861,10 @@ router.get('/daily-brief', (req, res) => {
     }
   }
 
-  attention.sort((a, b) => (a.severity === 'red' ? 0 : 1) - (b.severity === 'red' ? 0 : 1));
+  // Red before amber; within a band, a team call outranks everything else —
+  // someone is standing at a machine waiting for a person.
+  const attnRank = i => (i.severity === 'red' ? 0 : 2) + (i.type === 'andon_call' ? 0 : 1);
+  attention.sort((a, b) => attnRank(a) - attnRank(b));
 
   // ── KPIs with deltas
   const completedToday = db.prepare("SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed' AND date(completed_at)=date('now')").get(cid).c;

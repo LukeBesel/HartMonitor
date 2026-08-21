@@ -4,12 +4,27 @@ const db = require('./db');
 // Map<companyId, Set<WebSocket>>
 const companyClients = new Map();
 
+// Browsers cannot set headers on a WebSocket handshake, so the web client relies
+// on the httpOnly `hm_token` cookie the browser sends automatically. Native
+// clients (no cookie jar) pass ?token= instead — both are accepted.
+function tokenFromCookie(header) {
+  if (!header) return null;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    if (part.slice(0, eq).trim() === 'hm_token') {
+      try { return decodeURIComponent(part.slice(eq + 1).trim()); } catch { return part.slice(eq + 1).trim(); }
+    }
+  }
+  return null;
+}
+
 function initWebSocketServer(server) {
   const wss = new WebSocketServer({ server, path: '/ws' });
 
   wss.on('connection', (ws, req) => {
     const url = new URL(req.url, 'http://localhost');
-    const token = url.searchParams.get('token');
+    const token = url.searchParams.get('token') || tokenFromCookie(req.headers.cookie);
     const row = token && db.prepare(`
       SELECT u.company_id, u.id AS user_id FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token = ? AND s.expires_at > datetime('now') AND u.is_active = 1

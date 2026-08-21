@@ -1,6 +1,8 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, ReactNode } from 'react';
 import { api } from '../api/client';
 import { useAuth } from './AuthContext';
+import { publishRealtime } from '../utils/realtime';
+import type { RealtimeEvent } from '../utils/realtime';
 import type { BroadcastMessage, MessageSeverity } from '../types';
 
 interface MessagesContextValue {
@@ -63,6 +65,9 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
         }
         if (!data || typeof data !== 'object') return;
         const d = data as Record<string, unknown>;
+        // Fan every frame out to the shared realtime bus first — Andon team
+        // calls and future push types ride the same socket as messages.
+        if (typeof d.type === 'string') publishRealtime(d as RealtimeEvent);
         if (d.type !== 'message' || !d.message) return;
         const incoming = d.message as BroadcastMessage;
         setMessages(prev => prev.some(m => m.id === incoming.id) ? prev : [incoming, ...prev].slice(0, MAX_HISTORY));

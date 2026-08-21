@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Bell, CheckCircle2, Send, Wifi, WifiOff, Lock } from 'lucide-react';
@@ -8,6 +8,7 @@ import { useAuth } from '../../context/AuthContext';
 import { timeAgo } from '../../utils/time';
 import type { AttentionItem, MessageSeverity } from '../../types';
 import { attentionIcon, attentionLabel } from '../../config/attention';
+import { subscribeRealtime, isAndonEvent } from '../../utils/realtime';
 
 const SEVERITY_DOT: Record<MessageSeverity, string> = {
   info: 'bg-blue-400',
@@ -50,12 +51,22 @@ export default function AlertsBell({ collapsed }: { collapsed: boolean }) {
     }
   }, [composing, users.length, user?.id]);
 
+  const loadAlerts = useCallback(
+    () => api.getDailyBrief().then(b => setItems(b.attention ?? [])).catch(() => {}),
+    [],
+  );
+
   useEffect(() => {
-    const load = () => api.getDailyBrief().then(b => setItems(b.attention ?? [])).catch(() => {});
-    load();
-    const t = setInterval(load, 60000);
+    loadAlerts();
+    const t = setInterval(loadAlerts, 60000);
     return () => clearInterval(t);
-  }, []);
+  }, [loadAlerts]);
+
+  // A help request raised anywhere on the floor bumps the badge immediately,
+  // over the same socket that carries messages — no waiting for the next poll.
+  useEffect(() => subscribeRealtime(evt => {
+    if (isAndonEvent(evt)) void loadAlerts();
+  }), [loadAlerts]);
 
   useEffect(() => {
     const onClick = (e: MouseEvent) => {
@@ -247,7 +258,11 @@ export default function AlertsBell({ collapsed }: { collapsed: boolean }) {
                     {attentionIcon(row.item.type)}
                   </span>
                   <div className="min-w-0">
-                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{attentionLabel(row.item.type)}</div>
+                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                      {row.item.type === 'andon_call'
+                        ? `${row.item.target_label ?? row.item.team_label ?? 'Help'} needed`
+                        : attentionLabel(row.item.type)}
+                    </div>
                     <div className="text-xs font-medium text-gray-800 truncate">{row.item.label}</div>
                     {row.item.detail && <div className="text-[11px] text-gray-400 truncate">{row.item.detail}</div>}
                   </div>

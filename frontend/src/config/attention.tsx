@@ -1,4 +1,7 @@
-import { CalendarCheck, Wrench, ShieldCheck, Package, ShoppingCart, MoreHorizontal, AlertCircle } from 'lucide-react';
+import {
+  CalendarCheck, Wrench, ShieldCheck, Package, ShoppingCart,
+  MoreHorizontal, AlertCircle, BellRing,
+} from 'lucide-react';
 import type { AttentionType } from '../types';
 
 const ICONS: Record<AttentionType, React.ReactNode> = {
@@ -8,6 +11,8 @@ const ICONS: Record<AttentionType, React.ReactNode> = {
   ncr_critical: <ShieldCheck size={15} />,
   stock_low:    <Package size={15} />,
   po_late:      <ShoppingCart size={15} />,
+  // A help request notifies people — it does not dial anyone, so no phone imagery.
+  andon_call:   <BellRing size={15} />,
   more:         <MoreHorizontal size={15} />,
 };
 
@@ -18,13 +23,17 @@ const TYPE_LABELS: Record<AttentionType, string> = {
   ncr_critical: 'Critical NCR',
   stock_low:    'Low stock',
   po_late:      'Late delivery',
+  andon_call:   'Help requested',
   more:         'And more',
 };
+
+/** Fallbacks so an item type this build doesn't know about still renders. */
+export const ATTENTION_ICON_FALLBACK = <AlertCircle size={15} />;
 
 // Every enum rendered through a page config map needs a fallback, so an
 // attention type this build doesn't know about still renders a usable row.
 export function attentionIcon(type: string): React.ReactNode {
-  return ICONS[type as AttentionType] ?? <AlertCircle size={15} />;
+  return ICONS[type as AttentionType] ?? ATTENTION_ICON_FALLBACK;
 }
 
 export function attentionLabel(type: string): string {

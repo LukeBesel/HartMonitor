@@ -157,10 +157,40 @@ async function sendSubscriptionCancelledEmail({ to, name }) {
   });
 }
 
+// Someone on the floor needs this person. Everything they need to decide
+// whether to walk over is above the fold: who was alerted, what was said, and
+// exactly where it came from.
+async function sendAndonAlertEmail({ to, name, who, title, context, note, raisedBy, priority }) {
+  const urgent = priority === 'critical' || priority === 'high';
+  const html = baseTemplate(`
+    <h2>${who} needed${urgent ? ` &mdash; ${priority}` : ''}</h2>
+    <p>${name ? `Hi ${name}, s` : 'S'}omeone on the floor has asked for ${who}.</p>
+    <p style="font-size:17px;font-weight:600;color:#f8fafc;margin:16px 0 4px">${title}</p>
+    ${context ? `<p style="color:#94a3b8;margin:0 0 12px">${context}</p>` : ''}
+    ${note ? `<p style="background:#0f172a;border-left:3px solid #2563eb;padding:12px 16px;border-radius:6px">${note}</p>` : ''}
+    ${raisedBy ? `<p style="color:#94a3b8;font-size:13px">Raised by ${raisedBy}</p>` : ''}
+    <a href="${APP_URL}/andon" class="btn">Open the Andon Board &rarr;</a>
+    <p style="color:#94a3b8;font-size:13px">Tap &ldquo;On my way&rdquo; there so the operator knows help is coming.</p>
+  `);
+  await sendEmail({
+    to,
+    subject: `${APP_NAME}: ${who} needed — ${title}`,
+    html,
+    text: [
+      `${who} has been alerted${raisedBy ? ` by ${raisedBy}` : ''}.`,
+      title,
+      context,
+      note && `Note: ${note}`,
+      `Open the Andon Board: ${APP_URL}/andon`,
+    ].filter(Boolean).join('\n'),
+  });
+}
+
 module.exports = {
   sendWelcomeEmail,
   sendTrialEndingEmail,
   sendPaymentFailedEmail,
   sendPasswordResetEmail,
   sendSubscriptionCancelledEmail,
+  sendAndonAlertEmail,
 };
