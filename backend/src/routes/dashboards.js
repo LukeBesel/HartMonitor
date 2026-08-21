@@ -86,71 +86,202 @@ router.delete('/:id', (req, res) => {
   res.json({ success: true });
 });
 
+// ─── Page-level filters ───────────────────────────────────────────────────────
+// GET /:id/data accepts optional `department_id`, `app_id` and `site_id` query
+// params. Each is validated against the caller's OWN rows: an id that belongs
+// to another tenant, or no longer exists, is dropped (and reported back in
+// `ignored_filters`) rather than rejected — a stale bookmark degrades to
+// "unfiltered" instead of a 500, and tenant scoping is untouched either way.
+//
+// WHICH FILTER APPLIES WHERE  (· = ignored: the underlying data has no
+// meaningful join to that dimension, so filtering it would invent a number)
+//
+//   card / metric                    department_id            app_id       site_id
+//   ────────────────────────────────────────────────────────────────────────────
+//   metric: total/today/active/       ✓ COALESCE(wo,st)        ✓            ✓ COALESCE(wo,st)
+//     period_completions,
+//     pass_rate, avg_cycle
+//   metric: open_ncrs                 ✓ via work order         ✓ ncr.app_id ✓ via work order
+//   metric: low_stock_items           ·                        ·            ·  (stock is
+//                                       company-wide; a per-site on-hand sum would
+//                                       flag items that are stocked elsewhere)
+//   metric: open_maintenance_wos      ✓ mwo.department_id      ·            ·
+//   metric: pm_due                    ✓ via asset              ·            ·
+//   metric: training_coverage         ✓ via user               ✓            ·
+//   time_series: throughput,          ✓ COALESCE(wo,st)        ✓            ✓ COALESCE(wo,st)
+//     cycle_time, quality
+//   time_series: ncr_trend            ✓ via work order         ✓            ✓ via work order
+//   time_series: stock_movements      ·                        ·            ✓ via location
+//   distribution: operator, app,      ✓ COALESCE(wo,st)        ✓            ✓ COALESCE(wo,st)
+//     quality, department
+//   distribution: station_status      ✓ station.department_id  ·            ✓ station.site_id
+//   distribution: kaizen_status       ✓ idea.department_id     ·            ·
+//   distribution: training_status     ✓ via user               ✓            ·
+//   leaderboard: completions,         ✓ COALESCE(wo,st)        ✓            ✓ COALESCE(wo,st)
+//     cycle_time
+//   wo_status                         ✓ wo.department_id       ✓ wo.app_id  ✓ wo.site_id
+//   table (recent runs)               ✓ COALESCE(wo,st)        ✓            ✓ COALESCE(wo,st)
+
+const FILTER_SOURCES = {
+  department_id: 'departments',
+  app_id: 'apps',
+  site_id: 'sites',
+};
+
+/** Keep only filter ids the company actually owns; report the rest as ignored. */
+function resolveFilters(query, companyId) {
+  const applied = {};
+  const ignored = [];
+  for (const [key, table] of Object.entries(FILTER_SOURCES)) {
+    const raw = typeof query[key] === 'string' ? query[key].trim() : '';
+    if (!raw) continue;
+    // `table` is a literal from FILTER_SOURCES — never user input.
+    const row = db.prepare(`SELECT id FROM ${table} WHERE id = ? AND company_id = ?`).get(raw, companyId);
+    if (row) applied[key] = row.id;
+    else ignored.push(key);
+  }
+  return { applied, ignored };
+}
+
+// A card pinned to one app plus a page filter for a different app is an empty
+// intersection. A sentinel id that matches no row keeps every query shape and
+// parameter binding identical instead of special-casing each card type.
+const NO_MATCH = ' no-match';
+
+function effectiveAppId(card, filters) {
+  if (card.app_id && filters.app_id && card.app_id !== filters.app_id) return NO_MATCH;
+  return filters.app_id || card.app_id || null;
+}
+
+/**
+ * Filter fragment for queries rooted at `completions c`. Department and site
+ * resolve through the run's work order first, then the station it ran at — the
+ * same COALESCE the analytics endpoints use, so runs stay attributed the way
+ * the rest of the app attributes them.
+ */
+function completionScope(appId, filters) {
+  const needsJoin = !!(filters.department_id || filters.site_id);
+  const join = needsJoin
+    ? ' LEFT JOIN work_orders wo ON wo.id = c.work_order_id LEFT JOIN stations st ON st.id = c.station_id'
+    : '';
+  const clauses = [];
+  const params = [];
+  if (appId)                 { clauses.push('c.app_id = ?');                              params.push(appId); }
+  if (filters.department_id) { clauses.push('COALESCE(wo.department_id, st.department_id) = ?'); params.push(filters.department_id); }
+  if (filters.site_id)       { clauses.push('COALESCE(wo.site_id, st.site_id) = ?');       params.push(filters.site_id); }
+  return { join, where: clauses.length ? ` AND ${clauses.join(' AND ')}` : '', params };
+}
+
+/** Filter fragment for queries rooted at `ncrs n` (department/site via the WO). */
+function ncrScope(appId, filters) {
+  const needsJoin = !!(filters.department_id || filters.site_id);
+  const join = needsJoin ? ' LEFT JOIN work_orders wo ON wo.id = n.work_order_id' : '';
+  const clauses = [];
+  const params = [];
+  if (appId)                 { clauses.push('n.app_id = ?');          params.push(appId); }
+  if (filters.department_id) { clauses.push('wo.department_id = ?');  params.push(filters.department_id); }
+  if (filters.site_id)       { clauses.push('wo.site_id = ?');        params.push(filters.site_id); }
+  return { join, where: clauses.length ? ` AND ${clauses.join(' AND ')}` : '', params };
+}
+
+/** Filter fragment for queries rooted at `training_records tr` (dept via user). */
+function trainingScope(appId, filters) {
+  const join = filters.department_id ? ' LEFT JOIN users u ON u.id = tr.user_id' : '';
+  const clauses = [];
+  const params = [];
+  if (appId)                 { clauses.push('tr.app_id = ?');       params.push(appId); }
+  if (filters.department_id) { clauses.push('u.department_id = ?'); params.push(filters.department_id); }
+  return { join, where: clauses.length ? ` AND ${clauses.join(' AND ')}` : '', params };
+}
+
 // ─── GET /:id/data - compute all card data ────────────────────────────────────
 
 router.get('/:id/data', (req, res) => {
   const d = db.prepare('SELECT * FROM dashboards WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!d) return res.status(404).json({ error: 'Not found' });
 
+  const { applied: filters, ignored } = resolveFilters(req.query, req.companyId);
+
   const cards = JSON.parse(d.cards || '[]');
   const results = cards.map(card => {
     try {
-      return { card_id: card.id, data: computeCardData(card, req.companyId) };
+      return { card_id: card.id, data: computeCardData(card, req.companyId, filters) };
     } catch (e) {
       return { card_id: card.id, data: null, error: e.message };
     }
   });
 
-  res.json({ dashboard_id: req.params.id, cards: results });
+  res.json({
+    dashboard_id: req.params.id,
+    filters,
+    ignored_filters: ignored,
+    cards: results,
+  });
 });
 
 // ─── Card data computation ────────────────────────────────────────────────────
 
-function computeCardData(card, companyId) {
+function computeCardData(card, companyId, filters = {}) {
   const days = card.period_days || 30;
-  const appFilter = card.app_id ? ' AND app_id = ?' : '';
-  const appParams = card.app_id ? [card.app_id] : [];
+  const appId = effectiveAppId(card, filters);
+  const scope = completionScope(appId, filters);
 
   switch (card.type) {
 
     case 'metric': {
       switch (card.metric_key) {
         case 'total_completions':
-          return { value: db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed'${appFilter}`).get(companyId, ...appParams).c };
+          return { value: db.prepare(`SELECT COUNT(*) as c FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed'${scope.where}`).get(companyId, ...scope.params).c };
         case 'today_completions':
-          return { value: db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed' AND date(completed_at)=date('now')${appFilter}`).get(companyId, ...appParams).c };
+          return { value: db.prepare(`SELECT COUNT(*) as c FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND date(c.completed_at)=date('now')${scope.where}`).get(companyId, ...scope.params).c };
         case 'active_runs':
-          return { value: db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='in_progress'${appFilter}`).get(companyId, ...appParams).c };
+          return { value: db.prepare(`SELECT COUNT(*) as c FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='in_progress'${scope.where}`).get(companyId, ...scope.params).c };
         case 'pass_rate': {
-          const rows = db.prepare(`SELECT data FROM completions WHERE company_id = ? AND status='completed'${appFilter} LIMIT 500`).all(companyId, ...appParams);
+          const rows = db.prepare(`SELECT c.data FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed'${scope.where} LIMIT 500`).all(companyId, ...scope.params);
           let pass = 0, total = 0;
           for (const r of rows) { const v = Object.values(JSON.parse(r.data||'{}')); total++; if (!v.some(x => x==='Fail')) pass++; }
           return { value: total > 0 ? Math.round((pass/total)*100) : 100, suffix: '%' };
         }
         case 'avg_cycle': {
-          const row = db.prepare(`SELECT AVG((julianday(completed_at)-julianday(started_at))*24*60) as v FROM completions WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL${appFilter}`).get(companyId, ...appParams);
+          const row = db.prepare(`SELECT AVG((julianday(c.completed_at)-julianday(c.started_at))*24*60) as v FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND c.completed_at IS NOT NULL${scope.where}`).get(companyId, ...scope.params);
           return { value: row?.v ? Math.round(row.v * 10) / 10 : 0, suffix: 'm' };
         }
         case 'period_completions':
-          return { value: db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed' AND completed_at >= date('now','-'||?||' days')${appFilter}`).get(companyId, days, ...appParams).c };
+          return { value: db.prepare(`SELECT COUNT(*) as c FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND c.completed_at >= date('now','-'||?||' days')${scope.where}`).get(companyId, days, ...scope.params).c };
         // Workspace-report metrics (seeded by the /category/:category endpoint)
         case 'low_stock_items':
+          // Deliberately unfiltered: reorder points are company-wide, so slicing
+          // on-hand by site would report items as short that are stocked elsewhere.
           return { value: db.prepare(`
             SELECT COUNT(*) as c FROM items i
             WHERE i.company_id = ? AND i.is_active = 1 AND i.reorder_point > 0
               AND COALESCE((SELECT SUM(sl.quantity) FROM stock_levels sl WHERE sl.item_id = i.id), 0) <= i.reorder_point
           `).get(companyId).c };
-        case 'open_ncrs':
-          return { value: db.prepare(`SELECT COUNT(*) as c FROM ncrs WHERE company_id = ? AND status NOT IN ('resolved','closed')`).get(companyId).c };
-        case 'open_maintenance_wos':
-          return { value: db.prepare(`SELECT COUNT(*) as c FROM maintenance_work_orders WHERE company_id = ? AND status IN ('open','in_progress','on_hold')`).get(companyId).c };
-        case 'pm_due':
-          return { value: db.prepare(`SELECT COUNT(*) as c FROM pm_schedules WHERE company_id = ? AND next_due_at IS NOT NULL AND date(next_due_at) <= date('now','+7 days')`).get(companyId).c };
+        case 'open_ncrs': {
+          const n = ncrScope(appId, filters);
+          return { value: db.prepare(`SELECT COUNT(*) as c FROM ncrs n${n.join} WHERE n.company_id = ? AND n.status NOT IN ('resolved','closed')${n.where}`).get(companyId, ...n.params).c };
+        }
+        case 'open_maintenance_wos': {
+          const where = filters.department_id ? ' AND department_id = ?' : '';
+          const params = filters.department_id ? [filters.department_id] : [];
+          return { value: db.prepare(`SELECT COUNT(*) as c FROM maintenance_work_orders WHERE company_id = ? AND status IN ('open','in_progress','on_hold')${where}`).get(companyId, ...params).c };
+        }
+        case 'pm_due': {
+          const join = filters.department_id ? ' LEFT JOIN assets a ON a.id = p.asset_id' : '';
+          const where = filters.department_id ? ' AND a.department_id = ?' : '';
+          const params = filters.department_id ? [filters.department_id] : [];
+          return { value: db.prepare(`
+            SELECT COUNT(*) as c FROM pm_schedules p${join}
+            WHERE p.company_id = ? AND p.next_due_at IS NOT NULL
+              AND date(p.next_due_at) <= date('now','+7 days')${where}
+          `).get(companyId, ...params).c };
+        }
         case 'training_coverage': {
+          const t = trainingScope(appId, filters);
           const row = db.prepare(`
-            SELECT COUNT(*) as total, COALESCE(SUM(CASE WHEN status = 'certified' THEN 1 ELSE 0 END), 0) as certified
-            FROM training_records WHERE company_id = ?
-          `).get(companyId);
+            SELECT COUNT(*) as total, COALESCE(SUM(CASE WHEN tr.status = 'certified' THEN 1 ELSE 0 END), 0) as certified
+            FROM training_records tr${t.join} WHERE tr.company_id = ?${t.where}
+          `).get(companyId, ...t.params);
           return { value: row.total > 0 ? Math.round((row.certified / row.total) * 100) : 0, suffix: '%' };
         }
         default:
@@ -162,30 +293,30 @@ function computeCardData(card, companyId) {
       const metric = card.series || 'throughput';
       if (metric === 'throughput') {
         const rows = db.prepare(`
-          SELECT date(completed_at) as date, COUNT(*) as count
-          FROM completions WHERE company_id = ? AND status='completed'
-            AND completed_at >= date('now','-'||?||' days')${appFilter}
-          GROUP BY date(completed_at) ORDER BY date ASC
-        `).all(companyId, days, ...appParams);
+          SELECT date(c.completed_at) as date, COUNT(*) as count
+          FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed'
+            AND c.completed_at >= date('now','-'||?||' days')${scope.where}
+          GROUP BY date(c.completed_at) ORDER BY date ASC
+        `).all(companyId, days, ...scope.params);
         return { series: [{ name: 'Completions', data: rows.map(r => ({ date: r.date, value: r.count })) }] };
       }
       if (metric === 'cycle_time') {
         const rows = db.prepare(`
-          SELECT date(completed_at) as date,
-            ROUND(AVG((julianday(completed_at)-julianday(started_at))*24*60),1) as value
-          FROM completions WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL
-            AND completed_at >= date('now','-'||?||' days')${appFilter}
-          GROUP BY date(completed_at) ORDER BY date ASC
-        `).all(companyId, days, ...appParams);
+          SELECT date(c.completed_at) as date,
+            ROUND(AVG((julianday(c.completed_at)-julianday(c.started_at))*24*60),1) as value
+          FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND c.completed_at IS NOT NULL
+            AND c.completed_at >= date('now','-'||?||' days')${scope.where}
+          GROUP BY date(c.completed_at) ORDER BY date ASC
+        `).all(companyId, days, ...scope.params);
         return { series: [{ name: 'Avg Cycle (min)', data: rows }] };
       }
       if (metric === 'quality') {
         const rows = db.prepare(`
-          SELECT date(completed_at) as date, data
-          FROM completions WHERE company_id = ? AND status='completed'
-            AND completed_at >= date('now','-'||?||' days')${appFilter}
-          ORDER BY completed_at ASC
-        `).all(companyId, days, ...appParams);
+          SELECT date(c.completed_at) as date, c.data
+          FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed'
+            AND c.completed_at >= date('now','-'||?||' days')${scope.where}
+          ORDER BY c.completed_at ASC
+        `).all(companyId, days, ...scope.params);
         const byDate = {};
         for (const r of rows) {
           const d = r.date; if (!byDate[d]) byDate[d] = { pass: 0, total: 0 };
@@ -199,20 +330,26 @@ function computeCardData(card, companyId) {
       }
       // Workspace-report series (seeded by the /category/:category endpoint)
       if (metric === 'ncr_trend') {
+        const n = ncrScope(appId, filters);
         const rows = db.prepare(`
-          SELECT date(created_at) as date, COUNT(*) as value
-          FROM ncrs WHERE company_id = ? AND created_at >= date('now','-'||?||' days')
-          GROUP BY date(created_at) ORDER BY date ASC
-        `).all(companyId, days);
+          SELECT date(n.created_at) as date, COUNT(*) as value
+          FROM ncrs n${n.join}
+          WHERE n.company_id = ? AND n.created_at >= date('now','-'||?||' days')${n.where}
+          GROUP BY date(n.created_at) ORDER BY date ASC
+        `).all(companyId, days, ...n.params);
         return { series: [{ name: 'NCRs Opened', data: rows }] };
       }
       if (metric === 'stock_movements') {
+        // Movements carry a location, so only site is meaningful here.
+        const join = filters.site_id ? ' LEFT JOIN locations l ON l.id = m.location_id' : '';
+        const where = filters.site_id ? ' AND l.site_id = ?' : '';
+        const params = filters.site_id ? [filters.site_id] : [];
         const rows = db.prepare(`
           SELECT date(m.created_at) as date, COUNT(*) as value
-          FROM stock_movements m JOIN items i ON i.id = m.item_id
-          WHERE i.company_id = ? AND m.created_at >= date('now','-'||?||' days')
+          FROM stock_movements m JOIN items i ON i.id = m.item_id${join}
+          WHERE i.company_id = ? AND m.created_at >= date('now','-'||?||' days')${where}
           GROUP BY date(m.created_at) ORDER BY date ASC
-        `).all(companyId, days);
+        `).all(companyId, days, ...params);
         return { series: [{ name: 'Stock Movements', data: rows }] };
       }
       return { series: [] };
@@ -222,59 +359,74 @@ function computeCardData(card, companyId) {
       const groupBy = card.group_by || 'operator';
       if (groupBy === 'operator') {
         const rows = db.prepare(`
-          SELECT operator_name as label, COUNT(*) as value FROM completions
-          WHERE company_id = ? AND status='completed'${appFilter}
-          GROUP BY operator_name ORDER BY value DESC LIMIT 10
-        `).all(companyId, ...appParams);
+          SELECT c.operator_name as label, COUNT(*) as value FROM completions c${scope.join}
+          WHERE c.company_id = ? AND c.status='completed'${scope.where}
+          GROUP BY c.operator_name ORDER BY value DESC LIMIT 10
+        `).all(companyId, ...scope.params);
         return { data: rows };
       }
       if (groupBy === 'app') {
         const rows = db.prepare(`
-          SELECT app_name as label, COUNT(*) as value FROM completions
-          WHERE company_id = ? AND status='completed'${appFilter}
-          GROUP BY app_name ORDER BY value DESC LIMIT 10
-        `).all(companyId, ...appParams);
+          SELECT c.app_name as label, COUNT(*) as value FROM completions c${scope.join}
+          WHERE c.company_id = ? AND c.status='completed'${scope.where}
+          GROUP BY c.app_name ORDER BY value DESC LIMIT 10
+        `).all(companyId, ...scope.params);
         return { data: rows };
       }
       if (groupBy === 'quality') {
-        const rows = db.prepare(`SELECT data FROM completions WHERE company_id = ? AND status='completed'${appFilter} LIMIT 500`).all(companyId, ...appParams);
+        const rows = db.prepare(`SELECT c.data FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed'${scope.where} LIMIT 500`).all(companyId, ...scope.params);
         let pass = 0, fail = 0;
         for (const r of rows) { const vals = Object.values(JSON.parse(r.data||'{}')); if (vals.some(v=>v==='Fail')) fail++; else pass++; }
         return { data: [{ label: 'Pass', value: pass }, { label: 'Fail', value: fail }] };
       }
       if (groupBy === 'department') {
-        const appFilterC = card.app_id ? ' AND c.app_id = ?' : '';
+        // Rooted at the work order, so `wo` is always joined here — the shared
+        // completion scope would duplicate it.
+        const clauses = [];
+        const params = [];
+        if (appId)                 { clauses.push('c.app_id = ?');         params.push(appId); }
+        if (filters.department_id) { clauses.push('wo.department_id = ?'); params.push(filters.department_id); }
+        if (filters.site_id)       { clauses.push('wo.site_id = ?');       params.push(filters.site_id); }
+        const where = clauses.length ? ` AND ${clauses.join(' AND ')}` : '';
         const rows = db.prepare(`
           SELECT d.name as label, COUNT(c.id) as value
           FROM completions c
           JOIN work_orders wo ON wo.id = c.work_order_id AND wo.company_id = c.company_id
           JOIN departments d ON d.id = wo.department_id AND d.company_id = c.company_id
-          WHERE c.company_id = ? AND c.status='completed'${appFilterC}
+          WHERE c.company_id = ? AND c.status='completed'${where}
           GROUP BY d.name ORDER BY value DESC
-        `).all(companyId, ...appParams);
+        `).all(companyId, ...params);
         return { data: rows };
       }
       // Workspace-report groupings (seeded by the /category/:category endpoint)
       if (groupBy === 'station_status') {
+        const clauses = [];
+        const params = [];
+        if (filters.department_id) { clauses.push('department_id = ?'); params.push(filters.department_id); }
+        if (filters.site_id)       { clauses.push('site_id = ?');       params.push(filters.site_id); }
+        const where = clauses.length ? ` AND ${clauses.join(' AND ')}` : '';
         const rows = db.prepare(`
           SELECT COALESCE(NULLIF(current_status, ''), 'idle') as label, COUNT(*) as value
-          FROM stations WHERE company_id = ?
+          FROM stations WHERE company_id = ?${where}
           GROUP BY label ORDER BY value DESC
-        `).all(companyId);
+        `).all(companyId, ...params);
         return { data: rows };
       }
       if (groupBy === 'kaizen_status') {
+        const where = filters.department_id ? ' AND department_id = ?' : '';
+        const params = filters.department_id ? [filters.department_id] : [];
         const rows = db.prepare(`
           SELECT status as label, COUNT(*) as value FROM kaizen_ideas
-          WHERE company_id = ? GROUP BY status ORDER BY value DESC
-        `).all(companyId);
+          WHERE company_id = ?${where} GROUP BY status ORDER BY value DESC
+        `).all(companyId, ...params);
         return { data: rows };
       }
       if (groupBy === 'training_status') {
+        const t = trainingScope(appId, filters);
         const rows = db.prepare(`
-          SELECT status as label, COUNT(*) as value FROM training_records
-          WHERE company_id = ? GROUP BY status ORDER BY value DESC
-        `).all(companyId);
+          SELECT tr.status as label, COUNT(*) as value FROM training_records tr${t.join}
+          WHERE tr.company_id = ?${t.where} GROUP BY tr.status ORDER BY value DESC
+        `).all(companyId, ...t.params);
         return { data: rows };
       }
       return { data: [] };
@@ -286,44 +438,60 @@ function computeCardData(card, companyId) {
       const limit = Math.min(Math.max(parseInt(card.limit, 10) || 10, 1), 100);
       if (metric === 'completions') {
         const rows = db.prepare(`
-          SELECT operator_name as name, COUNT(*) as value
-          FROM completions WHERE company_id = ? AND status='completed'${appFilter}
-          GROUP BY operator_name ORDER BY value DESC LIMIT ?
-        `).all(companyId, ...appParams, limit);
+          SELECT c.operator_name as name, COUNT(*) as value
+          FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed'${scope.where}
+          GROUP BY c.operator_name ORDER BY value DESC LIMIT ?
+        `).all(companyId, ...scope.params, limit);
         return { rows, label: 'Completions' };
       }
       if (metric === 'cycle_time') {
         const rows = db.prepare(`
-          SELECT operator_name as name,
-            ROUND(AVG((julianday(completed_at)-julianday(started_at))*24*60),1) as value
-          FROM completions WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL${appFilter}
-          GROUP BY operator_name HAVING COUNT(*) >= 3 ORDER BY value ASC LIMIT ?
-        `).all(companyId, ...appParams, limit);
+          SELECT c.operator_name as name,
+            ROUND(AVG((julianday(c.completed_at)-julianday(c.started_at))*24*60),1) as value
+          FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND c.completed_at IS NOT NULL${scope.where}
+          GROUP BY c.operator_name HAVING COUNT(*) >= 3 ORDER BY value ASC LIMIT ?
+        `).all(companyId, ...scope.params, limit);
         return { rows, label: 'Avg Cycle (min)', lower_is_better: true };
       }
       return { rows: [] };
     }
 
     case 'wo_status': {
+      // Work orders carry all three dimensions directly.
+      const clauses = [];
+      const params = [];
+      if (appId)                 { clauses.push('app_id = ?');        params.push(appId); }
+      if (filters.department_id) { clauses.push('department_id = ?'); params.push(filters.department_id); }
+      if (filters.site_id)       { clauses.push('site_id = ?');       params.push(filters.site_id); }
+      const where = clauses.length ? ` AND ${clauses.join(' AND ')}` : '';
       const statuses = ['pending','in_progress','completed','overdue','cancelled'];
       const counts = {};
+      const stmt = db.prepare(`SELECT COUNT(*) as c FROM work_orders WHERE company_id = ? AND status=?${where}`);
       for (const s of statuses) {
-        counts[s] = db.prepare(`SELECT COUNT(*) as c FROM work_orders WHERE company_id = ? AND status=?`).get(companyId, s).c;
+        counts[s] = stmt.get(companyId, s, ...params).c;
       }
       return { counts };
     }
 
     case 'table': {
       const limit = Math.min(Math.max(parseInt(card.limit, 10) || 10, 1), 100);
-      const appFilterC = card.app_id ? ' AND c.app_id = ?' : '';
+      // Always joins the work order for its number; add the station only when a
+      // department/site filter needs the fallback attribution.
+      const stJoin = (filters.department_id || filters.site_id) ? ' LEFT JOIN stations st ON st.id = c.station_id' : '';
+      const clauses = [];
+      const params = [];
+      if (appId)                 { clauses.push('c.app_id = ?');                                    params.push(appId); }
+      if (filters.department_id) { clauses.push('COALESCE(w.department_id, st.department_id) = ?');  params.push(filters.department_id); }
+      if (filters.site_id)       { clauses.push('COALESCE(w.site_id, st.site_id) = ?');              params.push(filters.site_id); }
+      const where = clauses.length ? ` AND ${clauses.join(' AND ')}` : '';
       const rows = db.prepare(`
         SELECT c.id, c.app_name, c.operator_name, c.started_at, c.completed_at,
           c.status, c.work_order_id, w.work_order_number
         FROM completions c
-        LEFT JOIN work_orders w ON w.id = c.work_order_id
-        WHERE c.company_id = ?${appFilterC}
+        LEFT JOIN work_orders w ON w.id = c.work_order_id${stJoin}
+        WHERE c.company_id = ?${where}
         ORDER BY c.started_at DESC LIMIT ?
-      `).all(companyId, ...appParams, limit);
+      `).all(companyId, ...params, limit);
       return { rows };
     }
 

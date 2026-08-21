@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import {
@@ -6,6 +6,8 @@ import {
   ArrowLeft, Monitor, User, ChevronRight, Calendar, AlertTriangle
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
+import LastRefreshed from '../components/shared/LastRefreshed';
 
 interface DeptViewData {
   department: { id: string; name: string; color: string; manager_name: string; description: string; headcount: number };
@@ -85,17 +87,14 @@ export default function DepartmentView() {
       setError('');
     } catch (err: any) {
       setError(err?.message || 'Failed to load department');
+      throw err;
     } finally {
       setLoading(false);
     }
   }, [id]);
 
-  useEffect(() => {
-    setLoading(true);
-    load();
-    const interval = setInterval(load, 30000);
-    return () => clearInterval(interval);
-  }, [load]);
+  // Live department board — 30s while the tab is visible.
+  const auto = useAutoRefresh(load, 30_000);
 
   if (loading && !data) return (
     <div className="flex items-center justify-center h-64">
@@ -110,7 +109,7 @@ export default function DepartmentView() {
         <p className="font-medium text-gray-500">Couldn't load this department</p>
         <p className="text-sm text-gray-400 mt-1">{error || 'Department not found'}</p>
       </div>
-      <button className="btn-secondary" onClick={() => { setLoading(true); load(); }}>Retry</button>
+      <button className="btn-secondary" onClick={() => { setLoading(true); void auto.refresh(); }}>Retry</button>
       <Link to="/dashboard" className="text-blue-600 text-sm hover:underline">← Back to Command Center</Link>
     </div>
   );
@@ -138,9 +137,11 @@ export default function DepartmentView() {
             </p>
           </div>
         </div>
-        <button onClick={load} className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 shadow-sm">
-          <RefreshCw size={14} /> Refresh
-        </button>
+        <LastRefreshed
+          at={auto.lastRefreshed}
+          refreshing={auto.refreshing}
+          onRefresh={() => { void auto.refresh(); }}
+        />
       </div>
 
       {/* KPIs */}

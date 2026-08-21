@@ -7,6 +7,11 @@ import { AlertTriangle } from 'lucide-react';
 // the company's dedicated report dashboard — auto-created server-side on first
 // visit with sensible defaults — then hands off to the existing DashboardView
 // experience (grid, card editor, persistence) rather than forking it.
+//
+// That hand-off is also what puts the department/app/site filter bar and the
+// live freshness stamp on these pages: DashboardView owns both, and because the
+// filter selection is keyed by dashboard id, each workspace's Reports page
+// remembers its own scope independently of the custom dashboards.
 
 const CATEGORY_LABELS: Record<string, string> = {
   production: 'Production Reports',

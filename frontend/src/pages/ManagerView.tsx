@@ -1,10 +1,12 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import {
   Users, Clock, CheckCircle2, AlertTriangle, Activity,
   RefreshCw, ChevronRight, Zap, Timer, Package, TrendingUp, TrendingDown
 } from 'lucide-react';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
+import LastRefreshed from '../components/shared/LastRefreshed';
 
 // ── Types matching actual API response ────────────────────────────────────────
 
@@ -224,12 +226,9 @@ export default function ManagerView() {
   const [data, setData] = useState<ManagerViewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
   const [activeDept, setActiveDept] = useState(ALL_DEPARTMENTS);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const load = useCallback(async (showSpinner = false) => {
-    if (showSpinner) setRefreshing(true);
+  const load = useCallback(async () => {
     try {
       const mvData = await api.getManagerView();
       setData(mvData);
@@ -237,17 +236,14 @@ export default function ManagerView() {
     } catch (err: any) {
       // keep stale data if we have it; surface the error otherwise
       setError(err.message || 'Failed to load operations data');
+      throw err;
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   }, []);
 
-  useEffect(() => {
-    load(true);
-    intervalRef.current = setInterval(() => load(false), 15000);
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, [load]);
+  // The floor moves minute to minute — 15s while the tab is visible.
+  const auto = useAutoRefresh(load, 15_000);
 
   const workOrders: WorkOrder[] = data?.work_orders ?? [];
   const activeCompletions: ActiveCompletion[] = data?.active_completions ?? [];
@@ -274,14 +270,11 @@ export default function ManagerView() {
           </div>
           <p className="text-gray-500 text-sm mt-0.5">Live production floor view — auto-refreshes every 15s</p>
         </div>
-        <button
-          onClick={() => load(true)}
-          disabled={refreshing}
-          className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 transition-colors shadow-sm disabled:opacity-60"
-        >
-          <RefreshCw size={14} className={refreshing ? 'animate-spin text-blue-500' : ''} />
-          Refresh
-        </button>
+        <LastRefreshed
+          at={auto.lastRefreshed}
+          refreshing={auto.refreshing}
+          onRefresh={() => { void auto.refresh(); }}
+        />
       </div>
 
       {loading ? (
@@ -296,7 +289,7 @@ export default function ManagerView() {
           <AlertTriangle size={32} className="text-red-400 mb-3" />
           <p className="text-gray-500 font-medium">Couldn't load operations data</p>
           <p className="text-gray-400 text-sm mt-1">{error}</p>
-          <button onClick={() => load(true)} className="btn-secondary mt-4">
+          <button onClick={() => { void auto.refresh(); }} className="btn-secondary mt-4">
             <RefreshCw size={14} /> Retry
           </button>
         </div>

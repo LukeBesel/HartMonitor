@@ -1,6 +1,7 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
+import type { DashboardFilters } from '../api/client';
 import { Dashboard, DashboardCard } from '../types';
 import {
   ResponsiveContainer, LineChart, Line, BarChart, Bar, PieChart, Pie, Cell,
@@ -12,6 +13,9 @@ import {
 } from 'lucide-react';
 import { v4 as uuidv4 } from '../utils/uuid';
 import { useAuth } from '../context/AuthContext';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
+import LastRefreshed from '../components/shared/LastRefreshed';
+import DashboardFilterBar, { FilterOption } from '../components/shared/DashboardFilterBar';
 
 // ── Card palette config ───────────────────────────────────────────────────────
 
@@ -338,6 +342,36 @@ function CardConfigForm({ card, apps, onSave, onCancel }: {
 
 const SIZE_COLS: Record<string, string> = { sm: 'col-span-1', md: 'col-span-2', lg: 'col-span-3', xl: 'col-span-full' };
 
+// Page filters are remembered per dashboard, so a plant manager who always
+// looks at Weld gets Weld back tomorrow without re-picking it.
+const filtersKey = (id: string) => `hm_dashboard_filters_${id}`;
+
+function loadStoredFilters(id: string | undefined): DashboardFilters {
+  if (!id) return {};
+  try {
+    const raw = localStorage.getItem(filtersKey(id));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const out: DashboardFilters = {};
+    for (const k of ['department_id', 'app_id', 'site_id'] as const) {
+      if (typeof parsed[k] === 'string' && parsed[k]) out[k] = parsed[k];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function storeFilters(id: string, filters: DashboardFilters) {
+  try {
+    if (Object.keys(filters).length === 0) localStorage.removeItem(filtersKey(id));
+    else localStorage.setItem(filtersKey(id), JSON.stringify(filters));
+  } catch {
+    // Private mode / quota — filtering still works for this session.
+  }
+}
+
 export default function DashboardView() {
   const { id, mode } = useParams<{ id: string; mode?: string }>();
   const navigate = useNavigate();
@@ -348,70 +382,78 @@ export default function DashboardView() {
   const [cardData, setCardData] = useState<Record<string, any>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
   const [apps, setApps] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<FilterOption[]>([]);
+  const [sites, setSites] = useState<FilterOption[]>([]);
+  const [filters, setFilters] = useState<DashboardFilters>(() => loadStoredFilters(id));
   const [addingCard, setAddingCard] = useState(false);
   const [selectedType, setSelectedType] = useState<string>('');
   const [editingCard, setEditingCard] = useState<DashboardCard | null>(null);
   const [savingTitle, setSavingTitle] = useState(false);
   const [title, setTitle] = useState('');
 
-  const loadData = useCallback(async (showSpin = false) => {
+  // Card data is fetched on its own so a filter change reloads only the cards,
+  // never the whole page. A new `filters` object changes this callback's
+  // identity, which is what makes useAutoRefresh refetch immediately.
+  const loadCards = useCallback(async () => {
     if (!id) return;
-    if (showSpin) setRefreshing(true);
-    try {
-      const [d, dd] = await Promise.all([
-        dashboard ? Promise.resolve(dashboard) : api.getDashboard(id),
-        api.getDashboardData(id),
-      ]);
-      if (!dashboard) { setDashboard(d); setTitle(d.name); }
-      const map: Record<string, any> = {};
-      for (const c of dd.cards ?? []) { if (c.data) map[c.card_id] = c.data; }
-      setCardData(map);
-    } catch (err: any) {
-      // Keep showing existing data on background-refresh failures.
-      if (!dashboard) setLoadError(err?.message || 'Failed to load dashboard');
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, [id, dashboard]);
+    const dd = await api.getDashboardData(id, filters);
+    const map: Record<string, any> = {};
+    for (const c of dd.cards ?? []) { if (c.data) map[c.card_id] = c.data; }
+    setCardData(map);
+  }, [id, filters]);
 
-  const loadAll = useCallback(() => {
+  // No polling while editing — a background reload would fight the card editor.
+  const auto = useAutoRefresh(loadCards, 30_000, { enabled: !isEditMode });
+
+  // The page shell (dashboard definition + filter option lists) loads once per
+  // dashboard; it does not depend on the filters.
+  const loadShell = useCallback(() => {
     if (!id) return;
     setLoading(true);
     setLoadError('');
-    Promise.all([api.getDashboard(id), api.getDashboardData(id), api.getApps()])
-      .then(([d, dd, appList]) => {
+    Promise.all([
+      api.getDashboard(id),
+      api.getApps(),
+      api.getDepartments().catch(() => []),
+      api.getSites().catch(() => []),
+    ])
+      .then(([d, appList, deptList, siteList]) => {
         setDashboard(d);
         setTitle(d.name);
         setApps(appList);
-        const map: Record<string, any> = {};
-        for (const c of dd.cards ?? []) { if (c.data) map[c.card_id] = c.data; }
-        setCardData(map);
+        setDepartments((deptList ?? []).map((x: any) => ({ id: x.id, name: x.name })));
+        // A single-site company has nothing to choose between — hide the select.
+        const siteOptions = (siteList ?? []).map((x: any) => ({ id: x.id, name: x.name }));
+        setSites(siteOptions.length > 1 ? siteOptions : []);
       })
       .catch((err: any) => setLoadError(err?.message || 'Failed to load dashboard'))
       .finally(() => setLoading(false));
   }, [id]);
 
-  useEffect(() => { loadAll(); }, [loadAll]);
+  useEffect(() => { loadShell(); }, [loadShell]);
 
+  // Switching dashboards restores that dashboard's own saved scope. Guarded so
+  // the first render doesn't re-set (and therefore re-fetch) what useState
+  // already read from storage.
+  const lastIdRef = useRef(id);
   useEffect(() => {
-    if (!isEditMode) {
-      const t = setInterval(() => loadData(false), 30000);
-      return () => clearInterval(t);
-    }
-  }, [isEditMode, loadData]);
+    if (lastIdRef.current === id) return;
+    lastIdRef.current = id;
+    setFilters(loadStoredFilters(id));
+  }, [id]);
+
+  const applyFilters = (next: DashboardFilters) => {
+    setFilters(next);
+    if (id) storeFilters(id, next);
+  };
 
   const saveCards = async (cards: DashboardCard[]) => {
     if (!id || !dashboard) return;
     const updated = await api.updateDashboard(id, { cards });
     setDashboard(updated);
-    // Re-fetch data for new cards
-    const dd = await api.getDashboardData(id);
-    const map: Record<string, any> = {};
-    for (const c of dd.cards ?? []) { if (c.data) map[c.card_id] = c.data; }
-    setCardData(map);
+    // Re-fetch data for new cards (respecting the current page filters).
+    await auto.refresh();
   };
 
   const addCard = async (cfg: DashboardCard) => {
@@ -476,7 +518,7 @@ export default function DashboardView() {
         <p className="font-medium text-gray-500">Couldn't load this dashboard</p>
         <p className="text-sm text-gray-400 mt-1">{loadError || 'Dashboard not found'}</p>
       </div>
-      <button className="btn-secondary" onClick={loadAll}>Retry</button>
+      <button className="btn-secondary" onClick={loadShell}>Retry</button>
       <Link to="/dashboards" className="text-blue-600 text-sm hover:underline">← Back to Dashboards</Link>
     </div>
   );
@@ -506,14 +548,12 @@ export default function DashboardView() {
           )}
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => loadData(true)}
-            disabled={refreshing}
-            className="btn-secondary text-xs py-1.5 px-3"
-          >
-            <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
-            Refresh
-          </button>
+          <LastRefreshed
+            at={auto.lastRefreshed}
+            refreshing={auto.refreshing}
+            onRefresh={() => { void auto.refresh(); }}
+            className="mr-1"
+          />
           {isEditMode ? (
             <Link to={`/dashboards/${id}`} className="btn-primary text-xs py-1.5 px-3">
               Done Editing
@@ -525,6 +565,16 @@ export default function DashboardView() {
           ) : null}
         </div>
       </div>
+
+      {/* Page scope — applies to every card that has the dimension */}
+      <DashboardFilterBar
+        departments={departments}
+        apps={apps.map(a => ({ id: a.id, name: a.name }))}
+        sites={sites}
+        value={filters}
+        onChange={applyFilters}
+        refreshing={auto.refreshing}
+      />
 
       {/* Edit mode: add card UI */}
       {isEditMode && (

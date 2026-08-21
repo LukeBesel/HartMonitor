@@ -5,6 +5,8 @@ import type { Kit, KitLine, KitLineStatus, KitStatus } from '../types';
 import { useToast } from '../context/ToastContext';
 import PageHeader from '../components/shared/PageHeader';
 import EmptyState from '../components/shared/EmptyState';
+import LastRefreshed from '../components/shared/LastRefreshed';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import {
   PackageOpen, ArrowLeft, Check, CheckCircle, Flag, RotateCcw,
   AlertTriangle, X, MapPin, ChevronRight,
@@ -385,12 +387,14 @@ function KitListView({ onOpen }: { onOpen: (id: string) => void }) {
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load kits');
+      throw e;
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  // Shortages appear as soon as material moves — 30s while the tab is visible.
+  const auto = useAutoRefresh(load, 30_000);
 
   const filtered = useMemo(
     () => statusFilter === 'all' ? kits : kits.filter(k => k.status === statusFilter),
@@ -410,14 +414,14 @@ function KitListView({ onOpen }: { onOpen: (id: string) => void }) {
         <AlertTriangle size={28} className="text-red-400" />
         <p className="text-gray-500 font-medium">Couldn't load kits</p>
         <p className="text-xs text-gray-400">{error}</p>
-        <button onClick={() => { setLoading(true); load(); }} className="btn-secondary">Retry</button>
+        <button onClick={() => { setLoading(true); void auto.refresh(); }} className="btn-secondary">Retry</button>
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      {/* Status filter chips */}
+      {/* Status filter chips + freshness */}
       <div className="flex items-center gap-2 flex-wrap">
         {KIT_STATUS_FILTERS.map(s => (
           <button
@@ -435,6 +439,12 @@ function KitListView({ onOpen }: { onOpen: (id: string) => void }) {
             </span>
           </button>
         ))}
+        <LastRefreshed
+          at={auto.lastRefreshed}
+          refreshing={auto.refreshing}
+          onRefresh={() => { void auto.refresh(); }}
+          className="ml-auto"
+        />
       </div>
 
       {filtered.length === 0 ? (

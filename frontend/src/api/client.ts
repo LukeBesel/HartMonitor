@@ -23,6 +23,13 @@ export interface AnalyticsFilters {
   department_id?: string;
 }
 
+/** Page-level filters for dashboard / report card data. Empty = unfiltered. */
+export interface DashboardFilters {
+  department_id?: string;
+  app_id?: string;
+  site_id?: string;
+}
+
 // Build a query string from analytics filters plus any extra params, omitting
 // empty values. Returns e.g. "?days=30&app_id=abc" or "" when nothing is set.
 function filterQS(f?: AnalyticsFilters, extra?: Record<string, string | number>): string {
@@ -383,7 +390,16 @@ export const api = {
   createDashboard: (data: any) => request<any>('/dashboards', { method: 'POST', body: JSON.stringify(data) }),
   updateDashboard: (id: string, data: any) => request<any>(`/dashboards/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteDashboard: (id: string) => request<any>(`/dashboards/${id}`, { method: 'DELETE' }),
-  getDashboardData: (id: string) => request<any>(`/dashboards/${id}/data`),
+  // Card data honours optional page-level filters; the server applies each one
+  // to the card types it is meaningful for and ignores unknown ids.
+  getDashboardData: (id: string, filters?: DashboardFilters) => {
+    const qs = new URLSearchParams();
+    if (filters?.department_id) qs.set('department_id', filters.department_id);
+    if (filters?.app_id)        qs.set('app_id', filters.app_id);
+    if (filters?.site_id)       qs.set('site_id', filters.site_id);
+    const s = qs.toString();
+    return request<any>(`/dashboards/${id}/data${s ? `?${s}` : ''}`);
+  },
 
   // ── Inventory
   getInventoryItems: (params?: { category?: string; search?: string; low_stock?: boolean }) => {

@@ -1,10 +1,12 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import {
   RefreshCw, ArrowLeft, Monitor, MapPin, User, Play, Clock,
   Gauge, CheckCircle2, Wrench, AlertTriangle, Activity
 } from 'lucide-react';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
+import LastRefreshed from '../components/shared/LastRefreshed';
 
 interface StationViewData {
   station: {
@@ -80,17 +82,14 @@ export default function StationView() {
       setError('');
     } catch (err: any) {
       setError(err?.message || 'Failed to load station');
+      throw err;
     } finally {
       setLoading(false);
     }
   }, [id]);
 
-  useEffect(() => {
-    setLoading(true);
-    load();
-    const interval = setInterval(load, 30000);
-    return () => clearInterval(interval);
-  }, [load]);
+  // Live machine state — 30s while the tab is visible.
+  const auto = useAutoRefresh(load, 30_000);
 
   if (loading && !data) return (
     <div className="flex items-center justify-center h-64">
@@ -105,7 +104,7 @@ export default function StationView() {
         <p className="font-medium text-gray-500">Couldn't load this station</p>
         <p className="text-sm text-gray-400 mt-1">{error || 'Station not found'}</p>
       </div>
-      <button className="btn-secondary" onClick={() => { setLoading(true); load(); }}>Retry</button>
+      <button className="btn-secondary" onClick={() => { setLoading(true); void auto.refresh(); }}>Retry</button>
       <Link to="/stations" className="text-blue-600 text-sm hover:underline">← Back to Stations</Link>
     </div>
   );
@@ -146,9 +145,11 @@ export default function StationView() {
             {ms.label}
             {st.current_status_since && <span className="font-normal opacity-70">for {elapsedSince(st.current_status_since)}</span>}
           </span>
-          <button onClick={load} className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 shadow-sm">
-            <RefreshCw size={14} /> Refresh
-          </button>
+          <LastRefreshed
+            at={auto.lastRefreshed}
+            refreshing={auto.refreshing}
+            onRefresh={() => { void auto.refresh(); }}
+          />
         </div>
       </div>
 

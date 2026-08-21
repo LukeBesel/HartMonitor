@@ -1,10 +1,12 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import {
-  Activity, RefreshCw, AlertTriangle, CheckCircle, Clock,
+  Activity, RefreshCw, AlertTriangle, CheckCircle,
   Plus, X, ChevronDown, ChevronUp, Cpu, TrendingUp, Circle,
   Play, Pause, Wrench, Monitor,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
+import LastRefreshed from '../components/shared/LastRefreshed';
 
 interface OEEData {
   availability: number;
@@ -233,36 +235,28 @@ export default function OEETracker() {
   const [machines, setMachines] = useState<OEEMachine[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setRefreshing(true);
+  const load = useCallback(async () => {
     try {
       const data = await api.getOEE();
       setMachines(Array.isArray(data) ? data : []);
-      setLastUpdated(new Date());
       setLoadError(null);
     } catch (err: any) {
       console.error('Failed to load OEE data', err);
       setLoadError(err?.message || 'Failed to load OEE data');
+      throw err;
     } finally {
       setLoading(false);
-      setRefreshing(false);
     }
   }, []);
 
-  useEffect(() => {
-    load();
-    const interval = setInterval(() => load(), 30000);
-    return () => clearInterval(interval);
-  }, [load]);
+  // Machine state turns over fast on the floor — poll every 30s while visible.
+  const auto = useAutoRefresh(load, 30_000);
 
   const handleLogEvent = async (id: string, data: { event_type: string; reason: string }) => {
     const updated = await api.logOEEEvent(id, data);
     setMachines(prev => prev.map(m => (m.id === id && updated ? updated : m)));
-    setLastUpdated(new Date());
   };
 
   // KPI aggregates
@@ -272,10 +266,6 @@ export default function OEETracker() {
   const plantOEE = totalMachines > 0
     ? machines.reduce((sum, m) => sum + (m.oee?.oee ?? 0), 0) / totalMachines
     : 0;
-
-  const formattedLastUpdated = lastUpdated
-    ? lastUpdated.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-    : null;
 
   return (
     <div className="p-6 space-y-6">
@@ -292,20 +282,11 @@ export default function OEETracker() {
           <p className="text-sm text-gray-500 mt-0.5">Overall Equipment Effectiveness — auto-refresh every 30s</p>
         </div>
         <div className="flex items-center gap-3">
-          {formattedLastUpdated && (
-            <div className="flex items-center gap-1.5 text-xs text-gray-400">
-              <Clock size={12} />
-              Updated {formattedLastUpdated}
-            </div>
-          )}
-          <button
-            onClick={() => load(true)}
-            disabled={refreshing}
-            className="btn-secondary"
-          >
-            <RefreshCw size={14} className={refreshing ? 'animate-spin' : ''} />
-            Refresh
-          </button>
+          <LastRefreshed
+            at={auto.lastRefreshed}
+            refreshing={auto.refreshing}
+            onRefresh={() => { void auto.refresh(); }}
+          />
         </div>
       </div>
 
@@ -352,7 +333,7 @@ export default function OEETracker() {
           <AlertTriangle size={28} className="text-red-400" />
           <p className="text-gray-500 font-medium">Couldn't load machines</p>
           <p className="text-sm text-gray-400">{loadError}</p>
-          <button onClick={() => load(true)} className="btn-secondary">
+          <button onClick={() => { void auto.refresh(); }} className="btn-secondary">
             <RefreshCw size={14} /> Retry
           </button>
         </div>

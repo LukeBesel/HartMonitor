@@ -665,3 +665,21 @@ textarea.wb-input { min-height: 0; }
 @media (prefers-reduced-motion: reduce) {
   .check-pop, .live-pulse { animation: none; }
 }
+
+/* ── Live-data freshness stamp (LastRefreshed) ──────────────────────────────
+   Token-only so the same element reads correctly in the light workbench and,
+   via the `dark` class the component scopes to itself, on permanently dark
+   surfaces (Andon board, TV boards, player). */
+.hm-freshness { color: var(--muted); }
+.hm-freshness-btn {
+  color: var(--muted);
+  transition: color 0.12s ease, background-color 0.12s ease;
+}
+.hm-freshness-btn:hover:not(:disabled) {
+  color: var(--ink);
+  background-color: var(--surface-2);
+}
+.hm-freshness-btn:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}

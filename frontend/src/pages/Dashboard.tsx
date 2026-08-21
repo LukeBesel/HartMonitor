@@ -18,6 +18,8 @@ import {
 import type { DailyBrief } from '../types';
 import { ATTENTION_ICONS, ATTENTION_TYPE_LABELS } from '../config/attention';
 import { useDashboardPrefs, DASHBOARD_SECTIONS, DashboardSectionId } from '../hooks/useDashboardPrefs';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
+import LastRefreshed from '../components/shared/LastRefreshed';
 import Toggle from '../components/shared/Toggle';
 import OnboardingWizard from '../components/shared/OnboardingWizard';
 import ModuleOnboarding, { markWalkthroughSeen } from '../components/shared/ModuleOnboarding';
@@ -172,7 +174,6 @@ export default function Dashboard() {
   const [brief, setBrief] = useState<DailyBrief | null>(null);
   const [companyName, setCompanyName] = useState('');
   const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
   const { isHidden, toggleSection, resetSections } = useDashboardPrefs();
   const [showCustomize, setShowCustomize] = useState(false);
   const customizeRef = useRef<HTMLDivElement>(null);
@@ -195,8 +196,7 @@ export default function Dashboard() {
     });
   };
 
-  const loadData = useCallback(async (isRefresh = false) => {
-    if (isRefresh) setRefreshing(true);
+  const loadData = useCallback(async () => {
     const [briefRes, cfgRes] = await Promise.allSettled([
       api.getDailyBrief(),
       api.getCompanySettings(),
@@ -204,7 +204,6 @@ export default function Dashboard() {
     if (briefRes.status === 'fulfilled') setBrief(briefRes.value);
     if (cfgRes.status === 'fulfilled') setCompanyName(cfgRes.value?.company_name ?? '');
     setLoading(false);
-    setRefreshing(false);
   }, []);
 
   const loadPlantData = useCallback(async () => {
@@ -218,17 +217,11 @@ export default function Dashboard() {
     }
   }, [selectedSiteId]);
 
-  useEffect(() => {
-    loadData();
-    const interval = setInterval(() => loadData(), 60000);
-    return () => clearInterval(interval);
-  }, [loadData]);
-
-  useEffect(() => {
-    loadPlantData();
-    const interval = setInterval(() => loadPlantData(), 30000);
-    return () => clearInterval(interval);
-  }, [loadPlantData]);
+  // Live data: the brief moves slowly (60s), the floor moves fast (30s). Both
+  // pause while the tab is hidden and catch up the moment it comes back.
+  const briefRefresh = useAutoRefresh(loadData, 60_000);
+  const plantRefresh = useAutoRefresh(loadPlantData, 30_000);
+  const refreshAll = () => { void briefRefresh.refresh(); void plantRefresh.refresh(); };
 
   useEffect(() => {
     if (!showCustomize) return;
@@ -255,7 +248,7 @@ export default function Dashboard() {
     setSampleError('');
     try {
       await api.loadSampleData();
-      await Promise.all([loadData(), loadPlantData()]);
+      await Promise.all([briefRefresh.refresh(), plantRefresh.refresh()]);
     } catch (err: any) {
       setSampleError(err?.message || 'Failed to load sample data');
     } finally {
@@ -301,13 +294,12 @@ export default function Dashboard() {
         subtitle={<>{formatDate()}{companyName ? ` · ${companyName}` : ''}</>}
         actions={
           <>
-            <button
-              onClick={() => loadData(true)}
-              className="btn-secondary"
-            >
-              <RefreshCw size={14} className={refreshing ? 'animate-spin text-blue-500' : ''} />
-              Refresh
-            </button>
+            <LastRefreshed
+              at={briefRefresh.lastRefreshed}
+              refreshing={briefRefresh.refreshing || plantRefresh.refreshing}
+              onRefresh={refreshAll}
+              className="mr-1"
+            />
             <div className="relative" ref={customizeRef}>
               <button
                 onClick={() => setShowCustomize(o => !o)}

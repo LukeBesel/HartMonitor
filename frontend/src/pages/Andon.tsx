@@ -1,10 +1,12 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import {
   Siren, HelpCircle, ShieldAlert, Package, Wrench, AlertTriangle,
-  CheckCircle, X, ChevronDown, RefreshCw, Plus, Loader2,
+  CheckCircle, X, ChevronDown, Plus, Loader2,
   type LucideIcon,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { useAutoRefresh } from '../hooks/useAutoRefresh';
+import LastRefreshed from '../components/shared/LastRefreshed';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -310,8 +312,7 @@ export default function Andon() {
 
   // ── Data loading ─────────────────────────────────────────────────────────
 
-  const load = useCallback(async (silent = false) => {
-    if (!silent) setLoading(true);
+  const load = useCallback(async () => {
     setError('');
     try {
       const params: { status?: string; type?: string } = {};
@@ -328,20 +329,16 @@ export default function Andon() {
       setDepartments(depsData);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load Andon data.');
+      throw err;
     } finally {
-      if (!silent) setLoading(false);
+      setLoading(false);
     }
   }, [statusFilter, typeFilter]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  // Auto-refresh every 30 seconds
-  useEffect(() => {
-    const interval = setInterval(() => load(true), 30_000);
-    return () => clearInterval(interval);
-  }, [load]);
+  // Live board: loads on mount, whenever a filter moves, and every 20s while
+  // the tab is visible. The skeleton only shows for the very first load —
+  // after that the freshness stamp carries the "we're reloading" signal.
+  const auto = useAutoRefresh(load, 20_000);
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
@@ -349,7 +346,7 @@ export default function Andon() {
     setActionLoading(prev => ({ ...prev, [id]: true }));
     try {
       await api.acknowledgeAndonCall(id);
-      await load(true);
+      await auto.refresh();
     } catch (err) {
       console.error('Acknowledge failed:', err);
     } finally {
@@ -363,7 +360,7 @@ export default function Andon() {
       await api.resolveAndonCall(id, resolutionText.trim() || undefined);
       setResolveCardId(null);
       setResolutionText('');
-      await load(true);
+      await auto.refresh();
     } catch (err) {
       console.error('Resolve failed:', err);
     } finally {
@@ -394,14 +391,12 @@ export default function Andon() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => load()}
-              className="btn-ghost flex items-center gap-2"
-              title="Refresh"
-            >
-              <RefreshCw size={16} />
-              <span className="hidden sm:inline">Refresh</span>
-            </button>
+            <LastRefreshed
+              at={auto.lastRefreshed}
+              refreshing={auto.refreshing}
+              onRefresh={() => { void auto.refresh(); }}
+              onDark
+            />
             <button
               onClick={() => setShowCreate(true)}
               className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-xl flex items-center gap-2 transition-colors w-full sm:w-auto justify-center"
@@ -419,7 +414,7 @@ export default function Andon() {
               <AlertTriangle size={18} className="text-red-400 shrink-0" />
               <p className="text-red-300 text-sm">{error}</p>
             </div>
-            <button onClick={() => load()} className="btn-secondary text-sm shrink-0">
+            <button onClick={() => { void auto.refresh(); }} className="btn-secondary text-sm shrink-0">
               Retry
             </button>
           </div>
@@ -647,7 +642,7 @@ export default function Andon() {
         <RaiseCallModal
           departments={departments}
           onClose={() => setShowCreate(false)}
-          onCreated={() => load()}
+          onCreated={() => { void auto.refresh(); }}
         />
       )}
     </div>
