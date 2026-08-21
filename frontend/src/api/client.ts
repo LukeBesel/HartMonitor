@@ -7,6 +7,7 @@ import type {
   App, Step, StepGroup, AppVariable,
   BOM, BOMLine, Kit, KitLine, KitLineStatus,
   CompletionValue, CompletionValueInput,
+  MESTable,
 } from '../types';
 
 const BASE = '/api';
@@ -59,6 +60,14 @@ export interface KitLineUpdate {
   qty_picked?: number;
   short_reason?: string;
   actor?: string;
+}
+
+/** Body for POST /api/tables/import — `data` is the base64-encoded .xlsx/.csv.
+ *  First sheet only; first row = headers; server caps 50 cols / 5000 rows / 10 MB. */
+export interface TableImportPayload {
+  name: string;
+  data: string;
+  filename: string;
 }
 
 /** Flush payload for PUT /api/completions/:id — dual-writes legacy data/
@@ -205,6 +214,9 @@ export const api = {
 
   // ── Tables
   getTables: () => request<any[]>('/tables'),
+  /** Import an .xlsx/.csv (base64) as a new table — first sheet, first row = headers. */
+  importTable: (payload: TableImportPayload) =>
+    request<MESTable>('/tables/import', { method: 'POST', body: JSON.stringify(payload) }),
   getTable: (id: string) => request<any>(`/tables/${id}`),
   createTable: (data: any) => request<any>('/tables', { method: 'POST', body: JSON.stringify(data) }),
   updateTable: (id: string, data: any) => request<any>(`/tables/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
