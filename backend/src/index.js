@@ -58,6 +58,8 @@ const maintenanceRouter  = require('./routes/maintenance');
 const shiftsRouter       = require('./routes/shifts');
 const kaizenRouter       = require('./routes/kaizen');
 const modulesRouter      = require('./routes/modules');
+const bomsRouter         = require('./routes/boms');
+const kitsRouter         = require('./routes/kits');
 const { requireAuth }    = require('./middleware/auth');
 const { requirePlan }    = require('./middleware/plan');
 const { apiKeyAuth }     = require('./middleware/apiKeyAuth');
@@ -220,6 +222,11 @@ app.use('/api/maintenance',   requirePlan('pro'), writeRole('supervisor'), maint
 app.use('/api/shifts',        writeRole('operator'),   shiftsRouter);
 app.use('/api/kaizen',        writeRole('operator'),   kaizenRouter);
 app.use('/api/modules',       modulesRouter);
+// BOM/kitting — reads open to any authenticated member; writes role-gated
+// per-route inside the routers (supervisor for BOM edits / kit generation,
+// operator for kit-line picking from the floor, manager for BOM deletion).
+app.use('/api/boms',          bomsRouter);
+app.use('/api/kits',          kitsRouter);
 
 // Unknown API routes return JSON 404 (not the SPA shell).
 app.use('/api', (_req, res) => res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' }));

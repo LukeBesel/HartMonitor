@@ -71,6 +71,17 @@ function ownedOrNull(table, id, companyId) {
   return row ? id : null;
 }
 
+// A product type must belong to this company AND to the work order's app —
+// otherwise BOM resolution at run start could join across apps (or tenants).
+function ownedProductTypeOrNull(productTypeId, appId, companyId) {
+  if (!productTypeId) return null;
+  const pt = db.prepare('SELECT id, app_id FROM product_types WHERE id = ? AND company_id = ?')
+    .get(productTypeId, companyId);
+  if (!pt) return null;
+  if (!appId || pt.app_id !== appId) return null;
+  return productTypeId;
+}
+
 // ─── Reusable enriched-fetch query ───────────────────────────────────────────
 
 const ENRICHED_SELECT = `
@@ -118,6 +129,7 @@ router.post('/', (req, res) => {
     notes             = '',
     work_order_number,
     site_id           = null,
+    product_type_id   = null,
   } = req.body;
 
   if (!part_number)              return res.status(400).json({ error: 'part_number is required' });
@@ -131,18 +143,19 @@ router.post('/', (req, res) => {
   const safeAppId  = ownedOrNull('apps', app_id, req.companyId);
   const safeDeptId = ownedOrNull('departments', department_id, req.companyId);
   const safeSiteId = ownedOrNull('sites', site_id, req.companyId);
+  const safeProductTypeId = ownedProductTypeOrNull(product_type_id, safeAppId, req.companyId);
 
   db.prepare(`
     INSERT INTO work_orders
       (id, work_order_number, part_number, part_name, quantity, quantity_completed,
        app_id, department_id, scheduled_start, scheduled_end, takt_time_minutes,
-       status, priority, notes, company_id, site_id, updated_at)
-    VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+       status, priority, notes, company_id, site_id, product_type_id, updated_at)
+    VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
   `).run(
     id, woNumber, part_number, part_name, quantity,
     safeAppId, safeDeptId,
     scheduled_start || null, scheduled_end || null,
-    takt_time_minutes, status, priority, notes, req.companyId, safeSiteId
+    takt_time_minutes, status, priority, notes, req.companyId, safeSiteId, safeProductTypeId
   );
 
   const wo = db.prepare(ENRICHED_SELECT + ' WHERE wo.id = ?').get(id);
@@ -153,7 +166,16 @@ router.post('/', (req, res) => {
 // ─── GET /:id - single work order with completion history count ───────────────
 
 router.get('/:id', (req, res) => {
-  const wo = db.prepare(ENRICHED_SELECT + ' WHERE wo.id = ? AND wo.company_id = ?').get(req.params.id, req.companyId);
+  const wo = db.prepare(`
+    SELECT wo.*, d.name AS department_name, d.color AS department_color, a.name AS app_name,
+           pt.name AS product_type_name, k.id AS kit_id, k.status AS kit_status
+    FROM work_orders wo
+    LEFT JOIN departments d ON d.id = wo.department_id
+    LEFT JOIN apps        a ON a.id = wo.app_id
+    LEFT JOIN product_types pt ON pt.id = wo.product_type_id
+    LEFT JOIN kits        k ON k.work_order_id = wo.id AND k.status != 'cancelled'
+    WHERE wo.id = ? AND wo.company_id = ?
+  `).get(req.params.id, req.companyId);
   if (!wo) return res.status(404).json({ error: 'Work order not found' });
 
   const historyCount = db.prepare(
@@ -173,7 +195,7 @@ router.put('/:id', (req, res) => {
     'part_number', 'part_name', 'quantity', 'quantity_completed',
     'app_id', 'department_id', 'scheduled_start', 'scheduled_end',
     'takt_time_minutes', 'status', 'priority', 'notes', 'work_order_number',
-    'site_id',
+    'site_id', 'product_type_id',
   ];
 
   const updates = {};
@@ -193,19 +215,22 @@ router.put('/:id', (req, res) => {
   if (req.body.app_id !== undefined)        updates.app_id        = ownedOrNull('apps', updates.app_id, req.companyId);
   if (req.body.department_id !== undefined) updates.department_id = ownedOrNull('departments', updates.department_id, req.companyId);
   if (req.body.site_id !== undefined)       updates.site_id       = ownedOrNull('sites', updates.site_id, req.companyId);
+  if (req.body.product_type_id !== undefined) {
+    updates.product_type_id = ownedProductTypeOrNull(updates.product_type_id, updates.app_id, req.companyId);
+  }
 
   db.prepare(`
     UPDATE work_orders SET
       part_number=?, part_name=?, quantity=?, quantity_completed=?,
       app_id=?, department_id=?, scheduled_start=?, scheduled_end=?,
       takt_time_minutes=?, status=?, priority=?, notes=?, work_order_number=?,
-      site_id=?, updated_at=datetime('now')
+      site_id=?, product_type_id=?, updated_at=datetime('now')
     WHERE id=?
   `).run(
     updates.part_number, updates.part_name, updates.quantity, updates.quantity_completed,
     updates.app_id, updates.department_id, updates.scheduled_start, updates.scheduled_end,
     updates.takt_time_minutes, updates.status, updates.priority, updates.notes,
-    updates.work_order_number, updates.site_id, req.params.id
+    updates.work_order_number, updates.site_id, updates.product_type_id, req.params.id
   );
 
   // ─── Activity log: describe what changed ──────────────────────────────────

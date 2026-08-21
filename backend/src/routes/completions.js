@@ -34,7 +34,7 @@ router.get('/', (req, res) => {
 });
 
 router.post('/', (req, res) => {
-  const { app_id, station_id, operator_name = 'Unknown', work_order_id, product_type_id } = req.body;
+  const { app_id, station_id, operator_name = 'Unknown', work_order_id, product_type_id, operator_user_id } = req.body;
   if (!app_id) return res.status(400).json({ error: 'app_id required' });
   const app = db.prepare('SELECT name FROM apps WHERE id = ? AND company_id = ?').get(app_id, req.companyId);
   if (!app) return res.status(404).json({ error: 'App not found' });
@@ -49,9 +49,18 @@ router.post('/', (req, res) => {
   const safeStationId = ownedOrNull('stations', station_id);
   const safeWorkOrderId = ownedOrNull('work_orders', work_order_id);
   const safeProductTypeId = ownedOrNull('product_types', product_type_id);
+  // Verified operator identity (badge/PIN login) — must be a user in this company.
+  const safeOperatorUserId = ownedOrNull('users', operator_user_id);
+  // Auto-attach the work order's kit (if one was generated) for genealogy-lite.
+  let kitId = null;
+  if (safeWorkOrderId) {
+    const kit = db.prepare(`SELECT id FROM kits WHERE work_order_id = ? AND company_id = ? AND status != 'cancelled'`)
+      .get(safeWorkOrderId, req.companyId);
+    kitId = kit ? kit.id : null;
+  }
   const id = uuidv4();
-  db.prepare('INSERT INTO completions (id, app_id, app_name, station_id, operator_name, work_order_id, product_type_id, company_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-    .run(id, app_id, app.name, safeStationId, operator_name, safeWorkOrderId, safeProductTypeId, req.companyId);
+  db.prepare('INSERT INTO completions (id, app_id, app_name, station_id, operator_name, work_order_id, product_type_id, operator_user_id, kit_id, company_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .run(id, app_id, app.name, safeStationId, operator_name, safeWorkOrderId, safeProductTypeId, safeOperatorUserId, kitId, req.companyId);
   const completion = db.prepare('SELECT * FROM completions WHERE id = ?').get(id);
 
   // Production advance: an operator started a job. Logged so the Transaction Log
@@ -64,25 +73,85 @@ router.post('/', (req, res) => {
   res.status(201).json({ ...completion, data: JSON.parse(completion.data), step_times: JSON.parse(completion.step_times) });
 });
 
+// Structured per-widget capture: value types accepted into completion_values.
+const VALUE_TYPES = ['text', 'number', 'boolean', 'photo', 'signature', 'scan', 'timer', 'pass_fail', 'select'];
+
+// Upsert a batch of CompletionValueInput rows for one completion. The
+// UNIQUE(completion_id, widget_id) constraint makes autosave idempotent —
+// the latest value wins per widget.
+const upsertValueStmt = () => db.prepare(`
+  INSERT INTO completion_values (id, completion_id, company_id, app_id, step_id, widget_id, variable_name, value_type, value_text, value_number, recorded_at)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  ON CONFLICT(completion_id, widget_id) DO UPDATE SET
+    step_id = excluded.step_id,
+    variable_name = excluded.variable_name,
+    value_type = excluded.value_type,
+    value_text = excluded.value_text,
+    value_number = excluded.value_number,
+    recorded_at = excluded.recorded_at
+`);
+
+function validateValues(values) {
+  if (!Array.isArray(values)) return 'values must be an array';
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i];
+    if (!v || typeof v !== 'object') return `values[${i}] must be an object`;
+    if (!v.widget_id || typeof v.widget_id !== 'string') return `values[${i}].widget_id required`;
+    if (v.value_type !== undefined && !VALUE_TYPES.includes(v.value_type)) {
+      return `values[${i}].value_type must be one of: ${VALUE_TYPES.join(', ')}`;
+    }
+    if (v.value_number !== undefined && v.value_number !== null && !Number.isFinite(Number(v.value_number))) {
+      return `values[${i}].value_number must be a number`;
+    }
+  }
+  return null;
+}
+
 router.put('/:id', (req, res) => {
-  const { status, data, step_times, takt_exceeded_steps } = req.body;
+  const { status, data, step_times, takt_exceeded_steps, values, partial } = req.body;
   const completion = db.prepare('SELECT * FROM completions WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!completion) return res.status(404).json({ error: 'Not found' });
 
+  if (values !== undefined) {
+    const problem = validateValues(values);
+    if (problem) return res.status(400).json({ error: problem });
+  }
+
+  // partial:true = autosave flush — it must never flip the run's status.
+  const effectiveStatus = partial === true ? completion.status : status;
+
   const updates = {
-    status: status ?? completion.status,
+    status: effectiveStatus ?? completion.status,
     data: data !== undefined ? JSON.stringify(data) : completion.data,
     step_times: step_times !== undefined ? JSON.stringify(step_times) : completion.step_times,
     takt_exceeded_steps: takt_exceeded_steps !== undefined ? JSON.stringify(takt_exceeded_steps) : completion.takt_exceeded_steps,
-    completed_at: status === 'completed' ? new Date().toISOString() : completion.completed_at,
+    completed_at: effectiveStatus === 'completed' ? new Date().toISOString() : completion.completed_at,
   };
 
-  db.prepare('UPDATE completions SET status=?, data=?, step_times=?, takt_exceeded_steps=?, completed_at=? WHERE id=?')
-    .run(updates.status, updates.data, updates.step_times, updates.takt_exceeded_steps, updates.completed_at, req.params.id);
+  // Legacy blob update (dual-write — byte-identical to the pre-v2 behavior)
+  // plus the structured completion_values upsert, atomically.
+  const applyUpdate = db.transaction(() => {
+    db.prepare('UPDATE completions SET status=?, data=?, step_times=?, takt_exceeded_steps=?, completed_at=? WHERE id=?')
+      .run(updates.status, updates.data, updates.step_times, updates.takt_exceeded_steps, updates.completed_at, req.params.id);
+
+    if (Array.isArray(values) && values.length > 0) {
+      const upsert = upsertValueStmt();
+      for (const v of values) {
+        upsert.run(
+          uuidv4(), completion.id, req.companyId, completion.app_id,
+          String(v.step_id ?? ''), String(v.widget_id), String(v.variable_name ?? ''),
+          v.value_type || 'text',
+          v.value_text !== undefined && v.value_text !== null ? String(v.value_text) : null,
+          v.value_number !== undefined && v.value_number !== null ? Number(v.value_number) : null
+        );
+      }
+    }
+  });
+  applyUpdate();
 
   // A run transitioning to 'completed' is a production advance: log the job
   // finish and (when linked) the unit counted against its work order.
-  const justFinished = status === 'completed' && completion.status !== 'completed';
+  const justFinished = effectiveStatus === 'completed' && completion.status !== 'completed';
   if (justFinished) {
     const departmentId = resolveDepartmentId(completion);
     logActivity(req.companyId, 'completion', req.params.id, `Finished ${completion.app_name}`, completion.operator_name, {
@@ -110,6 +179,22 @@ router.put('/:id', (req, res) => {
 
   const updated = db.prepare('SELECT * FROM completions WHERE id = ?').get(req.params.id);
   res.json({ ...updated, data: JSON.parse(updated.data), step_times: JSON.parse(updated.step_times) });
+});
+
+// ─── GET /:id/values — structured per-widget values for one run ───────────────
+// Powers the AppHistory detail view and the CSV v2 export. Read-only, so any
+// authenticated member (viewer+) may call it; company-scoped like everything else.
+
+router.get('/:id/values', (req, res) => {
+  const completion = db.prepare('SELECT id FROM completions WHERE id = ? AND company_id = ?')
+    .get(req.params.id, req.companyId);
+  if (!completion) return res.status(404).json({ error: 'Not found' });
+  const rows = db.prepare(`
+    SELECT * FROM completion_values
+    WHERE completion_id = ? AND company_id = ?
+    ORDER BY recorded_at ASC, step_id ASC, widget_id ASC
+  `).all(req.params.id, req.companyId);
+  res.json(rows);
 });
 
 module.exports = router;

@@ -1961,5 +1961,126 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_sso_state_expires ON sso_state(expires_at);
 `);
 
+// ─── Migrations: app-platform v2 (step groups, schema version) ────────────────
+{
+  const appCols = db.prepare('PRAGMA table_info(apps)').all().map(r => r.name);
+  if (!appCols.includes('step_groups'))    db.exec("ALTER TABLE apps ADD COLUMN step_groups TEXT DEFAULT '[]'");
+  if (!appCols.includes('schema_version')) db.exec('ALTER TABLE apps ADD COLUMN schema_version INTEGER DEFAULT 1');
+}
+// ─── Migrations: work_orders (product type for BOM resolution) ────────────────
+{
+  const woCols = db.prepare('PRAGMA table_info(work_orders)').all().map(r => r.name);
+  if (!woCols.includes('product_type_id'))
+    db.exec('ALTER TABLE work_orders ADD COLUMN product_type_id TEXT REFERENCES product_types(id) ON DELETE SET NULL');
+}
+// ─── Migrations: completions (verified operator identity, kit link) ───────────
+{
+  const cCols = db.prepare('PRAGMA table_info(completions)').all().map(r => r.name);
+  if (!cCols.includes('operator_user_id'))
+    db.exec('ALTER TABLE completions ADD COLUMN operator_user_id TEXT REFERENCES users(id) ON DELETE SET NULL');
+  if (!cCols.includes('kit_id'))
+    db.exec('ALTER TABLE completions ADD COLUMN kit_id TEXT');
+}
+
+// ─── BOM / Kitting / structured completion capture (app-platform v2) ─────────
+
+db.exec(`
+  -- ─── BOMs: per product type, versioned ────────────────────────────────────────
+  CREATE TABLE IF NOT EXISTS boms (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    product_type_id TEXT NOT NULL REFERENCES product_types(id) ON DELETE CASCADE,
+    version INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','active','superseded')),
+    notes TEXT DEFAULT '',
+    created_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(company_id, product_type_id, version)
+  );
+  CREATE INDEX IF NOT EXISTS idx_boms_product_type ON boms(company_id, product_type_id, status);
+
+  CREATE TABLE IF NOT EXISTS bom_lines (
+    id TEXT PRIMARY KEY,
+    bom_id TEXT NOT NULL REFERENCES boms(id) ON DELETE CASCADE,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    item_id TEXT NOT NULL REFERENCES items(id),
+    qty_per REAL NOT NULL DEFAULT 1,          -- qty per finished unit
+    unit TEXT DEFAULT 'ea',
+    reference TEXT DEFAULT '',                -- reference designator / note (e.g. "R12, R14")
+    step_id TEXT DEFAULT '',                  -- point of use: app step id ('' = whole process)
+    scan_code TEXT DEFAULT '',                -- barcode override; '' = fall back to items.sku
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    notes TEXT DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_bom_lines_bom ON bom_lines(bom_id, sort_order);
+  CREATE INDEX IF NOT EXISTS idx_bom_lines_company ON bom_lines(company_id);
+
+  -- ─── Kits: one per work order (v1), generated from the active BOM ─────────────
+  CREATE TABLE IF NOT EXISTS kits (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    work_order_id TEXT NOT NULL REFERENCES work_orders(id) ON DELETE CASCADE,
+    bom_id TEXT REFERENCES boms(id) ON DELETE SET NULL,
+    bom_version INTEGER DEFAULT 1,            -- snapshot: which version generated it
+    status TEXT NOT NULL DEFAULT 'open'
+      CHECK(status IN ('open','picking','complete','short','cancelled')),
+    location_id TEXT REFERENCES locations(id) ON DELETE SET NULL,  -- pick-from location
+    created_by TEXT DEFAULT '',
+    verified_by TEXT DEFAULT '',
+    verified_at TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(company_id, work_order_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_kits_wo ON kits(company_id, work_order_id);
+
+  CREATE TABLE IF NOT EXISTS kit_lines (
+    id TEXT PRIMARY KEY,
+    kit_id TEXT NOT NULL REFERENCES kits(id) ON DELETE CASCADE,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    bom_line_id TEXT REFERENCES bom_lines(id) ON DELETE SET NULL,
+    item_id TEXT NOT NULL REFERENCES items(id),
+    item_name TEXT DEFAULT '',                -- denormalized for display (audit pattern: completions.app_name)
+    sku TEXT DEFAULT '',
+    qty_required REAL NOT NULL,               -- wo.quantity × bom_line.qty_per (snapshot)
+    qty_picked REAL NOT NULL DEFAULT 0,
+    unit TEXT DEFAULT 'ea',
+    scan_code TEXT DEFAULT '',                -- resolved at generation: bom_line.scan_code || items.sku
+    reference TEXT DEFAULT '',
+    step_id TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'pending'
+      CHECK(status IN ('pending','picked','verified','short')),
+    picked_by TEXT DEFAULT '',
+    picked_at TEXT,
+    verified_by TEXT DEFAULT '',
+    verified_at TEXT,
+    short_reason TEXT DEFAULT '',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    notes TEXT DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_kit_lines_kit ON kit_lines(kit_id, sort_order);
+  CREATE INDEX IF NOT EXISTS idx_kit_lines_company ON kit_lines(company_id, status);
+
+  -- ─── Structured per-widget completion capture ─────────────────────────────────
+  CREATE TABLE IF NOT EXISTS completion_values (
+    id TEXT PRIMARY KEY,
+    completion_id TEXT NOT NULL REFERENCES completions(id) ON DELETE CASCADE,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    app_id TEXT NOT NULL,
+    step_id TEXT NOT NULL DEFAULT '',
+    widget_id TEXT NOT NULL DEFAULT '',
+    variable_name TEXT NOT NULL DEFAULT '',
+    value_type TEXT NOT NULL DEFAULT 'text'
+      CHECK(value_type IN ('text','number','boolean','photo','signature','scan','timer','pass_fail','select')),
+    value_text TEXT,                          -- text / photo URL / signature / scan / select / 'pass'|'fail'
+    value_number REAL,                        -- number / timer seconds / boolean as 0|1
+    recorded_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(completion_id, widget_id)          -- upsert target: latest value wins per widget
+  );
+  CREATE INDEX IF NOT EXISTS idx_completion_values_completion ON completion_values(completion_id);
+  CREATE INDEX IF NOT EXISTS idx_completion_values_var ON completion_values(company_id, app_id, variable_name, recorded_at);
+`);
+
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;
