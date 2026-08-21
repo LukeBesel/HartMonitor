@@ -3,34 +3,45 @@ import { usePlan } from '../../context/PlanContext';
 import { api } from '../../api/client';
 import { AlertTriangle, Zap, X } from 'lucide-react';
 import { useState } from 'react';
+import { ClaimSandboxModal } from './ClaimSandboxModal';
 
 export function BillingBanner() {
   const { user } = useAuth();
   const { isOnTrial, trialDaysRemaining, isPastDue } = usePlan();
   const [dismissed, setDismissed] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [claiming, setClaiming] = useState(false);
 
   if (!user || dismissed) return null;
 
   // Throwaway sandbox workspace — steer visitors toward keeping their work.
+  // "Keep my work" opens the claim dialog, which promotes THIS workspace into a
+  // real account. It used to link to plain signup, which started an empty
+  // organisation and left everything the visitor built to be swept in 24 hours.
   if (user.email?.endsWith('@sandbox.hartmonitor.local')) {
     return (
-      <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 sm:py-2 bg-amber-50 dark:bg-amber-500/15 border-b border-amber-300 dark:border-amber-500/30 text-amber-900 dark:text-amber-200 text-xs sm:text-sm">
-        <Zap size={14} className="shrink-0 text-amber-400" />
-        <span className="flex-1 min-w-0 truncate">
-          <span className="sm:hidden"><strong>Demo</strong> — resets in 24h</span>
-          <span className="hidden sm:inline">
-            You're in a <strong>demo workspace</strong> — explore everything freely. It resets after 24 hours.
+      <>
+        <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 sm:py-2 bg-amber-50 dark:bg-amber-500/15 border-b border-amber-300 dark:border-amber-500/30 text-amber-900 dark:text-amber-200 text-xs sm:text-sm">
+          <Zap size={14} className="shrink-0 text-amber-400" />
+          <span className="flex-1 min-w-0 truncate">
+            <span className="sm:hidden"><strong>Demo</strong> — resets in 24h</span>
+            <span className="hidden sm:inline">
+              You're in a <strong>demo workspace</strong> — explore everything freely. It resets after 24 hours.
+            </span>
           </span>
-        </span>
-        <a href="/login?mode=signup" className="shrink-0 px-2.5 sm:px-3 py-1 rounded-lg bg-amber-500 text-gray-900 font-semibold text-xs hover:bg-amber-400 transition-colors whitespace-nowrap">
-          <span className="sm:hidden">Keep my work</span>
-          <span className="hidden sm:inline">Keep my work — create a free account</span>
-        </a>
-        <button onClick={() => setDismissed(true)} className="shrink-0 p-1 text-amber-400/70 hover:text-amber-200" aria-label="Dismiss">
-          <X size={14} />
-        </button>
-      </div>
+          <button
+            onClick={() => setClaiming(true)}
+            className="shrink-0 px-2.5 sm:px-3 py-1 rounded-lg bg-amber-500 text-gray-900 font-semibold text-xs hover:bg-amber-400 transition-colors whitespace-nowrap"
+          >
+            <span className="sm:hidden">Keep my work</span>
+            <span className="hidden sm:inline">Keep my work — create a free account</span>
+          </button>
+          <button onClick={() => setDismissed(true)} className="shrink-0 p-1 text-amber-400/70 hover:text-amber-200" aria-label="Dismiss">
+            <X size={14} />
+          </button>
+        </div>
+        {claiming && <ClaimSandboxModal onClose={() => setClaiming(false)} />}
+      </>
     );
   }
 

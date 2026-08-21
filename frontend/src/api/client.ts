@@ -564,6 +564,13 @@ export const api = {
       if (!res.ok) throw Object.assign(new Error(data.error || 'Signup failed'), { status: res.status });
       return data;
     }),
+  /** Promote the CURRENT demo sandbox into a real free account, keeping every
+   *  row already in the workspace (same company_id). Sandbox session only. */
+  claimSandbox: (company_name: string, display_name: string, email: string, password: string) =>
+    request<{ token: string; user: any; claimed: true }>('/auth/claim-sandbox', {
+      method: 'POST',
+      body: JSON.stringify({ company_name, display_name, email, password }),
+    }),
   logout: () => request<any>('/auth/logout', { method: 'POST' }),
   getMe: () => request<any>('/auth/me'),
   changePassword: (current_password: string, new_password: string) =>

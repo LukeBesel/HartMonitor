@@ -168,6 +168,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use('/api/auth/login',           authLimiter);
 app.use('/api/auth/signup',          authLimiter);
 app.use('/api/auth/demo',            authLimiter);   // sandbox creation is write-heavy — same throttle
+app.use('/api/auth/claim-sandbox',   authLimiter);   // creates a real account — same throttle as signup
 app.use('/api/auth/change-password', authLimiter);
 app.use('/api', generalLimiter);
 
