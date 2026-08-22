@@ -725,3 +725,91 @@ textarea.wb-input { min-height: 0; }
   outline: none;
   box-shadow: var(--focus-ring);
 }
+
+/* ── Builder WYSIWYG stage ──────────────────────────────────────────────────
+   The builder canvas renders the operator player's own widgets on the player's
+   own dark ground (the region carries [data-player], so every --p-* token
+   resolves exactly as it does in a run). Editing chrome is drawn AROUND the
+   real widget on overlay layers — a ring and a floating tool chip — so nothing
+   the author sees is a stand-in for the thing being built. */
+.wb-stage {
+  background: var(--page);
+  color: var(--p-ink);
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* The player runs under `.dark` on <html>, which carries color-scheme: dark;
+     the builder root deliberately stays light. Without this the browser's OWN
+     rendering inside the stage — number-input spinners, scrollbars, a failed
+     <iframe>'s error page — comes out light and the canvas stops matching. */
+  color-scheme: dark;
+}
+
+/* Selection / hover ring — inset outside the widget box so it never nudges
+   layout or paints over content. */
+.wb-stage-ring {
+  position: absolute;
+  inset: -7px;
+  border-radius: 16px;
+  border: 2px solid transparent;
+  pointer-events: none;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+.wb-stage-item:hover > .wb-stage-ring { border-color: rgb(var(--p-accent-rgb) / 0.45); }
+.wb-stage-item.is-selected > .wb-stage-ring {
+  border-color: var(--p-accent);
+  box-shadow: 0 0 0 4px var(--p-accent-tint);
+}
+
+/* Floating tool chip (drag grip · type name · trigger count · delete). */
+.wb-stage-tools {
+  position: absolute;
+  top: -14px;
+  right: 4px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: 999px;
+  background: var(--p-surface-2);
+  border: 1px solid var(--p-border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.wb-stage-item:hover > .wb-stage-tools,
+.wb-stage-item.is-selected > .wb-stage-tools,
+.wb-stage-tools:focus-within { opacity: 1; }
+
+.wb-stage-tool {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  color: var(--p-muted);
+  transition: color 0.12s ease, background-color 0.12s ease;
+}
+.wb-stage-tool:hover { color: var(--p-ink); background: var(--p-surface-1); }
+.wb-stage-tool-danger:hover { color: #fff; background: var(--p-bad-strong); }
+
+/* Builder chrome that sits ON the stage (the canvas-mode zoom control) borrows
+   the player's tokens so it reads as chrome on the dark ground instead of a
+   light workbench control dropped onto it. */
+.wb-stage .seg {
+  background: var(--p-surface-2);
+  border-color: var(--p-border);
+}
+.wb-stage .seg > button { color: var(--p-muted); }
+.wb-stage .seg > button:hover:not(:disabled) { color: var(--p-ink); }
+.wb-stage .seg > button.is-active {
+  background: var(--p-surface-1);
+  border-color: var(--p-border);
+  color: var(--p-ink);
+  box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wb-stage-ring, .wb-stage-tools, .wb-stage-tool { transition: none; }
+}
