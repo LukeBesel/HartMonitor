@@ -20,6 +20,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import type { App, Step, StepGroup, Trigger, Widget } from '../../types';
 import { v4 as uuidv4 } from '../../utils/uuid';
+import { stepTaktSeconds } from '../player/runtime';
 
 /** Authored (non-synthesized) trigger count for a step, widgets included. */
 export function stepTriggerCount(step: Step): number {
@@ -356,6 +357,7 @@ function StepRow({ step, idx, grouped, active, canEdit, canDelete, groups, menuO
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: step.id, disabled: !canEdit });
   const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.45 : 1 };
   const triggers = stepTriggerCount(step);
+  const takt = stepTaktSeconds(step);
 
   return (
     <div ref={setNodeRef} style={style} className="relative">
@@ -379,15 +381,19 @@ function StepRow({ step, idx, grouped, active, canEdit, canDelete, groups, menuO
           <div className={`truncate ${active ? 'text-ink' : 'text-ink-2'}`} style={{ fontSize: 13, fontWeight: active ? 650 : 550 }}>
             {step.name || `Step ${idx + 1}`}
           </div>
-          {(triggers > 0 || step.step_type === 'kit' || step.takt_time_seconds) ? (
+          {/* stepTaktSeconds, not step.takt_time_seconds: the seed and older
+              apps store the legacy `takt_time` key, so reading only the new one
+              left this list showing no takt while the canvas and the player both
+              showed it for the same step. */}
+          {(triggers > 0 || step.step_type === 'kit' || takt) ? (
             <div className="flex items-center gap-1 mt-0.5">
               {step.step_type === 'kit' && (
                 <span title="Kit verification step" className="inline-flex items-center text-accent"><PackageCheck size={11} /></span>
               )}
               {triggers > 0 && <span className="trigger-pill" style={{ fontSize: 9.5, padding: '0 5px' }}>⚡ {triggers}</span>}
-              {!!step.takt_time_seconds && (
+              {!!takt && (
                 <span className="tnum inline-flex items-center gap-0.5 text-muted" style={{ fontSize: 10 }}>
-                  <Clock3 size={9} /> {fmtTakt(step.takt_time_seconds)}
+                  <Clock3 size={9} /> {fmtTakt(takt)}
                 </span>
               )}
             </div>
