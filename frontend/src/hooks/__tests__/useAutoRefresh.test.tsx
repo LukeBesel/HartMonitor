@@ -162,6 +162,50 @@ describe('useAutoRefresh', () => {
     expect(result.current.lastRefreshed).toBeInstanceOf(Date);
   });
 
+  it('re-asks for a filter change made while a fetch was in flight', async () => {
+    // The gap this closes: someone moves a filter mid-poll, the call is dropped,
+    // and the controls sit there describing a slice the numbers are not from
+    // until the next tick — up to a minute on some screens.
+    const releases: Array<() => void> = [];
+    const fetchFn = vi.fn(() => new Promise<void>(resolve => { releases.push(resolve); }));
+    const { result } = renderHook(() => useAutoRefresh(fetchFn, 10_000));
+
+    await flush();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    // Two filter changes land while the first fetch is still open. They coalesce
+    // into ONE re-ask, not two.
+    await act(async () => { void result.current.refresh(); void result.current.refresh(); });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    await act(async () => { releases[0](); await Promise.resolve(); });
+    await flush();
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+
+    await act(async () => { releases[1](); await Promise.resolve(); });
+    await flush();
+    expect(result.current.refreshing).toBe(false);
+    expect(result.current.lastRefreshed).toBeInstanceOf(Date);
+  });
+
+  it('still drops timer ticks that land mid-fetch, so slow fetches never pile up', async () => {
+    const releases: Array<() => void> = [];
+    const fetchFn = vi.fn(() => new Promise<void>(resolve => { releases.push(resolve); }));
+    renderHook(() => useAutoRefresh(fetchFn, 10_000));
+
+    await flush();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    // Five intervals pass while one slow fetch is open. A queued tick per
+    // interval would fire a burst of catch-up polls the moment it lands.
+    await act(async () => { await vi.advanceTimersByTimeAsync(50_000); });
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    await act(async () => { releases[0](); await Promise.resolve(); });
+    await flush();
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
   it('leaves the stamp alone when a fetch fails, and keeps polling', async () => {
     const fetchFn = vi.fn()
       .mockRejectedValueOnce(new Error('network down'))

@@ -21,6 +21,7 @@ import AppTrainingCoach from './components/apps/AppTrainingCoach';
 // Code-split the rest of the pages so the initial load only ships the shell,
 // login, and landing dashboard. Heavy chart pages load on demand.
 const AppsLibrary      = lazy(() => import('./pages/AppsLibrary'));
+const AppsDashboard    = lazy(() => import('./pages/AppsDashboard'));
 const AppDetail        = lazy(() => import('./pages/AppDetail'));
 const AppBuilder       = lazy(() => import('./pages/AppBuilder'));
 const AppPlayer        = lazy(() => import('./pages/AppPlayer'));
@@ -158,6 +159,9 @@ export default function App() {
                     — see FirstRunLanding for the (one question, once per tab) rule. */}
                 <Route path="/dashboard" element={<FirstRunLanding><Dashboard /></FirstRunLanding>} />
                 <Route path="/apps" element={<ModuleGate module="apps"><AppsLibrary /></ModuleGate>} />
+                {/* Static segment, so it must out-rank /apps/:id — declared first
+                    for readers; the router ranks it above the param either way. */}
+                <Route path="/apps/dashboard" element={<ModuleGate module="apps"><AppsDashboard /></ModuleGate>} />
                 <Route path="/apps/:id" element={<ModuleGate module="apps"><AppDetail /></ModuleGate>} />
                 <Route path="/apps/:id/build" element={<ModuleGate module="apps"><AppBuilder /></ModuleGate>} />
                 <Route path="/apps/:id/history" element={<ModuleGate module="apps"><AppHistory /></ModuleGate>} />

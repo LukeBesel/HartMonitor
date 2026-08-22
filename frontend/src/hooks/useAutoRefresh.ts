@@ -60,14 +60,28 @@ export function useAutoRefresh(
 
   const mountedRef = useRef(true);
   const inFlightRef = useRef(false);
+  // A refresh asked for while one is already running is almost always a NEW
+  // question — someone changed a filter. Dropping it left the controls
+  // describing a slice the numbers on screen were not from, for up to a whole
+  // poll interval. Remember it instead and re-ask once the current fetch lands.
+  // Coalescing (a flag, not a queue) means ten rapid changes cost one re-run.
+  const pendingRef = useRef(false);
+  const runRef = useRef<(queueIfBusy: boolean) => Promise<void>>();
 
   useEffect(() => {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
 
-  const refresh = useCallback(async () => {
-    if (inFlightRef.current) return;
+  // `queueIfBusy` splits the two reasons a refresh gets asked for while another
+  // is running. A TIMER tick is stale by definition — drop it, the next tick
+  // covers it, and queuing them piles up catch-up polls behind a slow fetch.
+  // An EXPLICIT call is a new question (a filter moved), so it must not be lost.
+  const run = useCallback(async (queueIfBusy: boolean) => {
+    if (inFlightRef.current) {
+      if (queueIfBusy) pendingRef.current = true;
+      return;
+    }
     inFlightRef.current = true;
     if (mountedRef.current) {
       setRefreshing(true);
@@ -82,8 +96,19 @@ export function useAutoRefresh(
     } finally {
       inFlightRef.current = false;
       if (mountedRef.current) setRefreshing(false);
+      // Re-ask for whatever was requested mid-flight. Cleared first, so a change
+      // arriving during THIS re-run schedules one more and no further.
+      const queued = pendingRef.current;
+      pendingRef.current = false;
+      // Cleared first, so a change arriving during THIS re-run schedules one
+      // more and no further.
+      if (queued && mountedRef.current) void runRef.current?.(true);
     }
   }, []);
+
+  runRef.current = run;
+  const refresh = useCallback(() => run(true), [run]);
+  const tick = useCallback(() => run(false), [run]);
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | null = null;
@@ -96,17 +121,17 @@ export function useAutoRefresh(
       stop();
       if (!enabled || intervalMs <= 0) return;
       if (typeof document !== 'undefined' && document.hidden) return;
-      timer = setInterval(() => { void refresh(); }, intervalMs);
+      timer = setInterval(() => { void tick(); }, intervalMs);
     };
 
     const onVisibilityChange = () => {
       if (document.hidden) { stop(); return; }
       if (!enabled) return;
-      void refresh();
+      void tick();
       start();
     };
 
-    if (immediate) void refresh();
+    if (immediate) void tick();
     start();
     document.addEventListener('visibilitychange', onVisibilityChange);
 

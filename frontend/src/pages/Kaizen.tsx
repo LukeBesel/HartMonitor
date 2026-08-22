@@ -17,7 +17,10 @@ interface KaizenIdea {
   description: string;
   category: 'safety' | 'quality' | 'delivery' | 'cost' | 'morale' | 'environment';
   type: 'improvement' | 'problem' | 'suggestion';
-  status: 'submitted' | 'reviewing' | 'approved' | 'in_progress' | 'implemented' | 'rejected' | 'on_hold';
+  // Exactly the stored vocabulary (a DB CHECK). The page used to offer
+  // 'reviewing' and 'on_hold', neither of which the column accepts, so moving
+  // an idea to Reviewing — the page's own word — failed with a 500.
+  status: 'submitted' | 'under_review' | 'approved' | 'in_progress' | 'implemented' | 'rejected';
   // GET /kaizen selects k.* plus a joined d.name, so rows carry both the id and
   // the display name of the department.
   department_id?: string;
@@ -58,15 +61,16 @@ const CATEGORY_CONFIG = {
   environment: { label: 'Environment', color: 'text-cyan-700',   bg: 'bg-cyan-50',   border: 'border-cyan-200',   icon: Leaf },
 } as const;
 
+// Keys are what the database stores; labels are what a person reads. Keeping
+// the two separate is what lets the chip say "Reviewing" while the column holds
+// 'under_review'.
 const STATUS_CONFIG = {
-  submitted:   { label: 'Submitted',   color: 'text-gray-700',   bg: 'bg-gray-100' },
-  reviewing:   { label: 'Reviewing',   color: 'text-amber-700', bg: 'bg-amber-50' },
-  under_review:{ label: 'Reviewing',   color: 'text-amber-700', bg: 'bg-amber-50' }, // DB CHECK vocab alias
-  approved:    { label: 'Approved',    color: 'text-blue-700',   bg: 'bg-blue-50' },
-  in_progress: { label: 'In Progress', color: 'text-amber-700',  bg: 'bg-amber-50' },
-  implemented: { label: 'Implemented', color: 'text-emerald-700',  bg: 'bg-emerald-50' },
-  rejected:    { label: 'Rejected',    color: 'text-red-700',    bg: 'bg-red-50' },
-  on_hold:     { label: 'On Hold',     color: 'text-gray-500',   bg: 'bg-gray-100' },
+  submitted:   { label: 'Submitted',   color: 'text-gray-700',    bg: 'bg-gray-100' },
+  under_review:{ label: 'Reviewing',   color: 'text-amber-700',   bg: 'bg-amber-50' },
+  approved:    { label: 'Approved',    color: 'text-blue-700',    bg: 'bg-blue-50' },
+  in_progress: { label: 'In Progress', color: 'text-amber-700',   bg: 'bg-amber-50' },
+  implemented: { label: 'Implemented', color: 'text-emerald-700', bg: 'bg-emerald-50' },
+  rejected:    { label: 'Rejected',    color: 'text-red-700',     bg: 'bg-red-50' },
 } as const;
 
 // Unknown category/status values (older data, imports, seeds) must degrade to a
@@ -82,7 +86,7 @@ function statusOf(status: string): StatusCfg {
   return (STATUS_CONFIG as unknown as Record<string, StatusCfg>)[status] ?? FALLBACK_STATUS;
 }
 
-const STATUS_FILTERS = ['All', 'submitted', 'reviewing', 'approved', 'in_progress', 'implemented', 'rejected'] as const;
+const STATUS_FILTERS = ['All', 'submitted', 'under_review', 'approved', 'in_progress', 'implemented', 'rejected'] as const;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
