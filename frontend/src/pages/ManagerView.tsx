@@ -9,6 +9,8 @@ import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
 import DepartmentFilter from '../components/shared/DepartmentFilter';
 import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
+import { tintedChipStyle } from '../utils/contrast';
+import { useIsDark } from '../utils/useIsDark';
 
 // ── Types matching actual API response ────────────────────────────────────────
 
@@ -161,6 +163,7 @@ function ActiveRunCard({ run }: { run: ActiveCompletion }) {
 }
 
 function WorkOrderCard({ wo }: { wo: WorkOrder }) {
+  const darkMode = useIsDark();
   const pct = wo.completion_pct ?? (wo.quantity > 0 ? Math.round((wo.quantity_completed / wo.quantity) * 100) : 0);
   const schedStatus = SCHEDULE_STATUS[wo.schedule_status] ?? SCHEDULE_STATUS.not_started;
   const priorityInfo = PRIORITY[wo.priority] ?? PRIORITY.low;
@@ -209,7 +212,7 @@ function WorkOrderCard({ wo }: { wo: WorkOrder }) {
         {wo.department_name && (
           <span
             className="ml-auto text-xs font-medium px-2 py-0.5 rounded-full"
-            style={{ backgroundColor: (wo.department_color || '#6b7280') + '22', color: wo.department_color || '#6b7280' }}
+            style={tintedChipStyle(wo.department_color, darkMode)}
           >
             {wo.department_name}
           </span>

@@ -239,7 +239,13 @@ app.use('/api/messages',      messagesRouter);
 app.use('/api/sites',         sitesRouter);
 app.use('/api/permissions',   permissionsRouter);
 app.use('/api/developer',     developerRouter);
-app.use('/api/admin',         requireRole('developer'), adminRouter);
+// No role gate on the mount. The router carries its own: requirePlatformStaff
+// answers 404 for anyone who is not HartMonitor staff, so a customer never
+// learns this console exists. A `requireRole('developer')` here ran FIRST and
+// answered 403 "Requires developer role" — which tells a curious manager both
+// that the endpoint is real and what unlocks it. The one customer-facing route
+// in that file, GET /pending-resets, carries the developer gate itself.
+app.use('/api/admin',         adminRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/routings',      requirePlan('pro'), routingsRouter);
 app.use('/api/upload',        uploadRouter);

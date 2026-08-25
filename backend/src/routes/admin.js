@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { config } = require('../config');
 const { PRICING } = require('../pricing');
-const { requirePlatformStaff } = require('../middleware/auth');
+const { requirePlatformStaff, requireRole } = require('../middleware/auth');
 const { logActivity } = require('../activity');
 
 const router = express.Router();
@@ -29,13 +29,15 @@ function smtpConfigured() {
 
 // ─── GET /pending-resets — the one customer-facing route here ────────────────
 // Deliberately registered ABOVE requirePlatformStaff, and it is the only route
-// in this file that is. Self-hosted deployments often run without SMTP, and
+// in this file that is. It carries the 'developer' role gate itself, because
+// the mount in index.js deliberately has none: a role gate there would answer
+// 403 for the whole console and tell a customer it exists. Self-hosted deployments often run without SMTP, and
 // then the only way a locked-out user gets back in is for their own company's
 // admin to read the reset link and hand it over. That is a customer's job, not
 // HartMonitor's, and the query is scoped to req.companyId like every other
 // tenant query — it never shows one company another company's resets.
 
-router.get('/pending-resets', (req, res) => {
+router.get('/pending-resets', requireRole('developer'), (req, res) => {
   // When SMTP is configured, emails go out automatically — no need to expose links here.
   if (smtpConfigured()) {
     return res.json([]);

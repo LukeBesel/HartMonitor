@@ -191,6 +191,34 @@ describe('Platform admin console access', () => {
     assert.ok(Array.isArray(res.json));
   });
 
+  it('tells a customer nothing about the console, not even what would unlock it', async () => {
+    // A role gate on the MOUNT answered 403 "Requires developer role or higher"
+    // before the platform-staff check ever ran, which tells a curious manager
+    // both that the endpoint is real and what it wants. The console must be
+    // indistinguishable from a URL that does not exist.
+    const created = await api('POST', '/api/users', {
+      token: ownerA,
+      body: { email: 'curious@reaper-a.test', display_name: 'Curious', password: 'SecretPass9', role: 'manager' },
+    });
+    assert.ok([200, 201].includes(created.status), `creating a manager: ${JSON.stringify(created.json)}`);
+    const login = await api('POST', '/api/auth/login', {
+      body: { email: 'curious@reaper-a.test', password: 'SecretPass9' },
+    });
+    assert.equal(login.status, 200, `manager login: ${JSON.stringify(login.json)}`);
+
+    const res = await api('GET', '/api/admin/stats', { token: login.json.token });
+    assert.equal(res.status, 404, 'the console must answer 404 for a customer, never 403');
+    const body = JSON.stringify(res.json);
+    for (const leak of ['developer', 'role', 'platform', 'staff', 'admin']) {
+      assert.ok(!body.toLowerCase().includes(leak), `the refusal leaked "${leak}": ${body}`);
+    }
+
+    // …but the one genuine customer route in this file still gates on role, and
+    // saying so there is fine: that feature is one the customer knows about.
+    const resets = await api('GET', '/api/admin/pending-resets', { token: login.json.token });
+    assert.equal(resets.status, 403, 'password-reset links are not a manager-level thing');
+  });
+
   it('the flag cannot be set through the API', async () => {
     // The obvious attempts: hand it to the user-update route, and hand it to
     // signup. Neither may move the column.
