@@ -243,11 +243,19 @@
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { @apply bg-transparent; }
+/* Literal colours rather than `@apply bg-gray-200`. `@apply` makes Tailwind copy
+   every rule whose selector mentions that class onto this one, substituting the
+   class name — and the contrast rules further down name .bg-gray-200 in a long
+   selector list. A pseudo-element has no class to substitute, so the copy came
+   out as `.bg-gray-100,,.bg-slate-100`, a malformed list that a browser drops
+   whole. Same reason the hover uses a literal. */
 ::-webkit-scrollbar-thumb {
-  @apply bg-gray-200 rounded-full hover:bg-gray-300;
+  background-color: #e5e7eb;   /* gray-200 */
+  border-radius: 9999px;
   border: 1px solid transparent;
   background-clip: padding-box;
 }
+::-webkit-scrollbar-thumb:hover { background-color: #d1d5db; }  /* gray-300 */
 ::-webkit-scrollbar-corner { background: transparent; }
 
 /* Respect users who prefer less motion */
