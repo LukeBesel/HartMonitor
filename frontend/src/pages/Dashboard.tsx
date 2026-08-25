@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
@@ -16,6 +16,7 @@ import {
   BarChart, Bar, PieChart, Pie, Cell,
 } from 'recharts';
 import type { AndonTeam, AttentionItem, DailyBrief } from '../types';
+import type { DashboardFilters } from '../api/client';
 import { attentionIcon, attentionLabel } from '../config/attention';
 import { ANDON_TEAMS, ANDON_TEAM_ORDER, teamConfig } from '../config/andonTeams';
 import { subscribeRealtime, isAndonEvent } from '../utils/realtime';
@@ -27,6 +28,7 @@ import OnboardingWizard from '../components/shared/OnboardingWizard';
 import ModuleOnboarding, { markWalkthroughSeen } from '../components/shared/ModuleOnboarding';
 import PageHeader from '../components/shared/PageHeader';
 import StatCard from '../components/shared/StatCard';
+import DashboardFilterBar, { FilterOption } from '../components/shared/DashboardFilterBar';
 import EmptyState from '../components/shared/EmptyState';
 import {
   LayoutDashboard, Tablet, AppWindow, CalendarRange,
@@ -41,7 +43,8 @@ interface PlantViewData {
     active_now: number;
     /** null when no run has recorded a QC result. */
     pass_rate: number | null;
-    avg_cycle_time: number;
+    /** null when nothing in scope has finished — render '—', never 0. */
+    avg_cycle_time: number | null;
     /** % of open work orders on track — null when there are none. */
     schedule_adherence: number | null;
     work_orders_on_track: number;
@@ -133,6 +136,48 @@ function SkeletonBox({ className = '' }: { className?: string }) {
   return <div className={`bg-gray-200 animate-pulse rounded ${className}`} />;
 }
 
+// ─── Page scope ───────────────────────────────────────────────────────────────
+// The Command Center's department / app filter — the same bar the workspace
+// Reports pages use, so the two screens feel like one product.
+//
+// Remembered per user rather than per browser: two supervisors sharing the
+// office terminal must not inherit each other's scope. Site is deliberately NOT
+// offered here — the app-wide site switcher already owns that choice, and a
+// second control for it would let the two disagree.
+const scopeKey = (userId?: string) => `hm_command_center_filters_${userId ?? 'anon'}`;
+
+/** The brief, plus the two fields the server adds to explain what a narrowed
+ *  scope could not account for. */
+type ScopedBrief = DailyBrief & {
+  attention_plant_wide_hidden?: number;
+  attention_plant_wide_kinds?: string[];
+};
+
+function loadStoredScope(userId?: string): DashboardFilters {
+  try {
+    const raw = localStorage.getItem(scopeKey(userId));
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return {};
+    const out: DashboardFilters = {};
+    for (const k of ['department_id', 'app_id'] as const) {
+      if (typeof parsed[k] === 'string' && parsed[k]) out[k] = parsed[k];
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+function storeScope(userId: string | undefined, filters: DashboardFilters) {
+  try {
+    if (Object.keys(filters).length === 0) localStorage.removeItem(scopeKey(userId));
+    else localStorage.setItem(scopeKey(userId), JSON.stringify(filters));
+  } catch {
+    // Private mode / quota — the scope still works for this session.
+  }
+}
+
 // ─── Customize panel ──────────────────────────────────────────────────────────
 
 function CustomizePanel({
@@ -178,7 +223,7 @@ function CustomizePanel({
 export default function Dashboard() {
   const { user, isAtLeast } = useAuth();
   const { selectedSiteId } = useSite();
-  const [brief, setBrief] = useState<DailyBrief | null>(null);
+  const [brief, setBrief] = useState<ScopedBrief | null>(null);
   const [companyName, setCompanyName] = useState('');
   const [loading, setLoading] = useState(true);
   const { isHidden, toggleSection, resetSections } = useDashboardPrefs();
@@ -186,6 +231,64 @@ export default function Dashboard() {
   const customizeRef = useRef<HTMLDivElement>(null);
   const [loadingSample, setLoadingSample] = useState(false);
   const [sampleError, setSampleError] = useState('');
+
+  // ── Page scope: department + app. Every section below is fetched with it.
+  const [filters, setFilters] = useState<DashboardFilters>(() => loadStoredScope(user?.id));
+  const [departments, setDepartments] = useState<FilterOption[]>([]);
+  const [apps, setApps] = useState<FilterOption[]>([]);
+  const filtersActive = !!(filters.department_id || filters.app_id);
+
+  const applyFilters = useCallback((next: DashboardFilters) => {
+    setFilters(next);
+    storeScope(user?.id, next);
+  }, [user?.id]);
+
+  // Signing in as someone else restores THEIR scope, not the previous person's.
+  const lastUserRef = useRef(user?.id);
+  useEffect(() => {
+    if (lastUserRef.current === user?.id) return;
+    lastUserRef.current = user?.id;
+    setFilters(loadStoredScope(user?.id));
+  }, [user?.id]);
+
+  // Options for the bar. Departments follow the active site, so the picker never
+  // offers a department that belongs to a plant the user isn't looking at.
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      api.getDepartments(selectedSiteId ? { site_id: selectedSiteId } : undefined).catch(() => []),
+      api.getApps().catch(() => []),
+    ]).then(([deptList, appList]: [FilterOption[], FilterOption[]]) => {
+      if (cancelled) return;
+      setDepartments((deptList ?? []).map(d => ({ id: d.id, name: d.name })));
+      setApps((appList ?? []).map(a => ({ id: a.id, name: a.name })));
+    });
+    return () => { cancelled = true; };
+  }, [selectedSiteId]);
+
+  // A remembered department that belongs to another site — or an app that has
+  // since been deleted — would scope every card to nothing and read as an empty
+  // plant. Drop it as soon as the option lists say it no longer exists.
+  useEffect(() => {
+    const next = { ...filters };
+    let changed = false;
+    if (next.department_id && departments.length > 0 && !departments.some(d => d.id === next.department_id)) {
+      delete next.department_id; changed = true;
+    }
+    if (next.app_id && apps.length > 0 && !apps.some(a => a.id === next.app_id)) {
+      delete next.app_id; changed = true;
+    }
+    if (changed) applyFilters(next);
+  }, [departments, apps, filters, applyFilters]);
+
+  const scopeLabel = useMemo(() => [
+    filters.department_id ? departments.find(d => d.id === filters.department_id)?.name : null,
+    filters.app_id ? apps.find(a => a.id === filters.app_id)?.name : null,
+  ].filter(Boolean).join(' · '), [filters, departments, apps]);
+
+  /** "in Welding · Weld Check" — appended to every "no data" reason so a dash
+   *  always says WHY it is a dash rather than implying a zero. */
+  const inScope = filtersActive ? ` in ${scopeLabel || 'this filter'}` : '';
 
   // Help-request routing: filter the attention list to one team's queue, and
   // acknowledge / resolve a request without leaving the Command Center.
@@ -210,26 +313,30 @@ export default function Dashboard() {
     });
   };
 
+  // Both loaders take the page scope, so a filter change re-fetches EVERY
+  // section rather than narrowing one card and leaving the rest plant-wide. A
+  // new `filters` object changes these callbacks' identity, which is what makes
+  // useAutoRefresh refetch immediately.
   const loadData = useCallback(async () => {
     const [briefRes, cfgRes] = await Promise.allSettled([
-      api.getDailyBrief(),
+      api.getDailyBrief(filters),
       api.getCompanySettings(),
     ]);
     if (briefRes.status === 'fulfilled') setBrief(briefRes.value);
     if (cfgRes.status === 'fulfilled') setCompanyName(cfgRes.value?.company_name ?? '');
     setLoading(false);
-  }, []);
+  }, [filters]);
 
   const loadPlantData = useCallback(async () => {
     try {
-      const result = await api.getPlantView({ site_id: selectedSiteId || undefined });
+      const result = await api.getPlantView({ ...filters, site_id: selectedSiteId || undefined });
       setPlantData(result);
     } catch {
       // keep stale data
     } finally {
       setPlantLoading(false);
     }
-  }, [selectedSiteId]);
+  }, [selectedSiteId, filters]);
 
   // Live data: the brief moves slowly (60s), the floor moves fast (30s). Both
   // pause while the tab is hidden and catch up the moment it comes back.
@@ -290,7 +397,9 @@ export default function Dashboard() {
 
   // A brand-new workspace: nothing has ever been scheduled, run, or flagged.
   // The CTA disappears the moment sample data (which creates work orders) loads.
-  const isEmptyWorkspace = !loading && !!brief
+  // Never shown while a filter is on — an empty DEPARTMENT is not an empty
+  // company, and "build your first app" would be a lie on a running plant.
+  const isEmptyWorkspace = !loading && !!brief && !filtersActive
     && brief.kpis.work_orders_total === 0
     && brief.kpis.completed_today === 0
     && brief.kpis.active_now === 0
@@ -375,6 +484,17 @@ export default function Dashboard() {
             </div>
           </>
         }
+      />
+
+      {/* Page scope. Every section below is fetched with these values — there is
+          no card on this page that quietly stays plant-wide. */}
+      <DashboardFilterBar
+        departments={departments}
+        apps={apps}
+        sites={[]}
+        value={filters}
+        onChange={applyFilters}
+        refreshing={briefRefresh.refreshing || plantRefresh.refreshing}
       />
 
       {/* First-run empty state — offer to populate a realistic starter dataset */}
@@ -475,6 +595,30 @@ export default function Dashboard() {
           <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{callError}</p>
         )}
 
+        {/* Some alerts have no department and no app — low stock and late POs
+            never do. They are set aside rather than filed under whatever is on
+            screen, and said out loud rather than silently dropped. */}
+        {filtersActive && (brief?.attention_plant_wide_hidden ?? 0) > 0 && (
+          <p
+            data-testid="attention-plant-wide-note"
+            className="text-[11px] text-gray-500 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 mb-3"
+          >
+            {brief!.attention_plant_wide_hidden} plant-wide alert
+            {brief!.attention_plant_wide_hidden === 1 ? '' : 's'}
+            {(brief!.attention_plant_wide_kinds ?? []).length > 0
+              ? ` (${brief!.attention_plant_wide_kinds!.join(', ')})`
+              : ''}
+            {' '}can't be tied to {scopeLabel || 'this filter'}, so they are not counted above.{' '}
+            <button
+              type="button"
+              onClick={() => applyFilters({})}
+              className="font-semibold text-blue-600 hover:text-blue-700 underline"
+            >
+              Show the whole plant
+            </button>
+          </p>
+        )}
+
         {loading ? (
           <div className="space-y-2">
             {[1, 2, 3].map(i => <SkeletonBox key={i} className="h-12 w-full" />)}
@@ -483,8 +627,10 @@ export default function Dashboard() {
           <EmptyState
             compact
             icon={CheckCircle2}
-            title="All good right now"
-            description="Nothing is behind, down, short or overdue. Check back when something changes."
+            title={filtersActive ? `All good${inScope}` : 'All good right now'}
+            description={filtersActive
+              ? `Nothing is behind, down or overdue${inScope}. Clear the filter to see the whole plant.`
+              : 'Nothing is behind, down, short or overdue. Check back when something changes.'}
           />
         ) : (
           <div className="space-y-2">
@@ -595,7 +741,7 @@ export default function Dashboard() {
               label="Completed Today"
               value={kpis?.completed_today ?? 0}
               delta={kpis?.vs_7day_avg_pct}
-              deltaLabel="vs 7-day avg"
+              deltaLabel={`vs 7-day avg${inScope}`}
               icon={<CheckCircle size={18} />} iconBg="bg-green-50" iconColor="text-green-600"
             />
             {/* Not "schedule adherence" (an on-time-delivery measure) — this is
@@ -604,20 +750,22 @@ export default function Dashboard() {
               label="Open WOs On Track"
               value={kpis?.schedule_adherence != null ? `${kpis.schedule_adherence}%` : '—'}
               deltaLabel={(kpis?.work_orders_total ?? 0) > 0
-                ? `${kpis?.work_orders_on_track ?? 0} of ${kpis?.work_orders_total} open work orders`
-                : 'No open work orders'}
+                ? `${kpis?.work_orders_on_track ?? 0} of ${kpis?.work_orders_total} open work orders${inScope}`
+                : `No open work orders${inScope}`}
               icon={<CalendarCheck size={18} />} iconBg="bg-teal-50" iconColor="text-teal-600"
             />
             <StatCard
               label="Pass Rate (7 days)"
               value={kpis?.pass_rate_7d != null ? `${kpis.pass_rate_7d}%` : '—'}
-              deltaLabel={kpis?.pass_rate_7d != null ? 'from QC results' : 'No QC results recorded yet'}
+              deltaLabel={kpis?.pass_rate_7d != null
+                ? `from QC results${inScope}`
+                : `No QC results recorded${inScope}`}
               icon={<TrendingUp size={18} />} iconBg="bg-purple-50" iconColor="text-purple-600"
             />
             <StatCard
               label="Active Now"
               value={kpis?.active_now ?? 0}
-              deltaLabel="processes running"
+              deltaLabel={`processes running${inScope}`}
               icon={<Activity size={18} />} iconBg="bg-blue-50" iconColor="text-blue-600"
               pulse={(kpis?.active_now ?? 0) > 0}
             />
@@ -633,6 +781,7 @@ export default function Dashboard() {
         <div className="card p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-gray-900">Due in the Next 48 Hours</h2>
+            {filtersActive && <span className="text-[11px] text-gray-400 truncate">{scopeLabel}</span>}
             <Link to="/schedule" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
               View schedule <ChevronRight size={12} />
             </Link>
@@ -642,8 +791,10 @@ export default function Dashboard() {
           ) : (brief?.due_soon ?? []).length === 0 ? (
             <EmptyState
               icon={CalendarCheck}
-              title="Nothing due in the next two days"
-              description="Scheduled work orders will show up here as their due dates approach."
+              title={`Nothing due in the next two days${inScope}`}
+              description={filtersActive
+                ? 'Clear the filter to see what the rest of the plant owes this week.'
+                : 'Scheduled work orders will show up here as their due dates approach.'}
             />
           ) : (
             <div className="space-y-2.5">
@@ -685,7 +836,10 @@ export default function Dashboard() {
         {!isHidden('output') && (
         <div className="card p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-gray-900">Output — Last 7 Days</h2>
+            <h2 className="font-semibold text-gray-900">
+              Output — Last 7 Days
+              {filtersActive && <span className="ml-2 text-[11px] font-normal text-gray-400">{scopeLabel}</span>}
+            </h2>
             <Link to="/analytics" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
               Analytics <ChevronRight size={12} />
             </Link>
@@ -740,6 +894,7 @@ export default function Dashboard() {
             {plantData && (
               <span className="text-xs text-gray-400 font-normal">
                 {plantData.kpis.active_now} active · {plantData.kpis.total_completed_today} done today
+                {filtersActive ? ` · ${scopeLabel}` : ''}
               </span>
             )}
           </div>
@@ -766,7 +921,10 @@ export default function Dashboard() {
                   {[
                     {
                       label: 'Avg Cycle (all runs)',
-                      value: plantData.kpis.avg_cycle_time > 0 ? fmtDuration(plantData.kpis.avg_cycle_time) : '—',
+                      // null (not 0) when nothing in scope has finished — a dash
+                      // with a reason, never a zero that reads as "instant".
+                      value: (plantData.kpis.avg_cycle_time ?? 0) > 0 ? fmtDuration(plantData.kpis.avg_cycle_time!) : '—',
+                      note: (plantData.kpis.avg_cycle_time ?? 0) > 0 ? null : `no completed runs${inScope}`,
                       icon: <Clock size={15} className="text-orange-600" />, bg: 'bg-orange-50',
                     },
                     {
@@ -774,19 +932,22 @@ export default function Dashboard() {
                       value: plantData.kpis.work_orders_total > 0
                         ? `${plantData.kpis.work_orders_on_track}/${plantData.kpis.work_orders_total}`
                         : '—',
+                      note: plantData.kpis.work_orders_total > 0 ? null : `no open work orders${inScope}`,
                       icon: <Package size={15} className="text-indigo-600" />, bg: 'bg-indigo-50',
                     },
                     {
                       label: 'Behind or Overdue',
                       value: plantData.active_alerts.length,
+                      note: null,
                       icon: <AlertTriangle size={15} className="text-red-500" />, bg: 'bg-red-50',
                     },
                   ].map(k => (
                     <div key={k.label} className="bg-gray-50 rounded-xl p-3 flex items-center gap-2.5">
                       <div className={`w-8 h-8 ${k.bg} rounded-lg flex items-center justify-center flex-shrink-0`}>{k.icon}</div>
-                      <div>
+                      <div className="min-w-0">
                         <div className="text-base font-bold text-gray-900 leading-tight">{k.value}</div>
                         <div className="text-[11px] text-gray-500">{k.label}</div>
+                        {k.note && <div className="text-[10px] text-gray-400 truncate">{k.note}</div>}
                       </div>
                     </div>
                   ))}
@@ -850,8 +1011,10 @@ export default function Dashboard() {
                           compact
                           className="col-span-2"
                           icon={BarChart2}
-                          title="No departments set up yet"
-                          description="Create departments to see per-area output and schedule status here."
+                          title={filtersActive ? `No department data${inScope}` : 'No departments set up yet'}
+                          description={filtersActive
+                            ? 'That department is no longer available for the selected site — clear the filter to see them all.'
+                            : 'Create departments to see per-area output and schedule status here.'}
                         />
                       )}
                     </div>
@@ -877,7 +1040,10 @@ export default function Dashboard() {
                 )}
 
                 {/* Active Alerts */}
-                {!isHidden('floor_activity') && (plantData.active_alerts.length > 0 || plantData.recent_completions.length > 0) && (
+                {/* Kept on screen whenever a filter is active even if it is
+                    empty: a section that silently vanishes leaves the manager
+                    guessing whether the scope has no runs or the card is gone. */}
+                {!isHidden('floor_activity') && (filtersActive || plantData.active_alerts.length > 0 || plantData.recent_completions.length > 0) && (
                   <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
                     {plantData.active_alerts.length > 0 && (
                       <div className="lg:col-span-2">
@@ -929,7 +1095,7 @@ export default function Dashboard() {
                               </tr>
                             ))}
                             {plantData.recent_completions.length === 0 && (
-                              <tr><td colSpan={5} className="text-center py-4 text-gray-400">No recent completions</td></tr>
+                              <tr><td colSpan={5} className="text-center py-4 text-gray-400">{`No recent completions${inScope}`}</td></tr>
                             )}
                           </tbody>
                         </table>
