@@ -14,7 +14,37 @@ const router = express.Router();
 // needs a configured ideal cycle time, Quality needs at least one run today,
 // and OEE itself is only reported when all three factors are real.
 function calcOEE(station) {
-  const plannedMinutes = (station.planned_hours_per_day || 8) * 60;
+  const fullDayMinutes = (station.planned_hours_per_day || 8) * 60;
+
+  // Planned time ELAPSED SO FAR today, not the whole shift. Dividing today's
+  // output by a full eight hours at ten in the morning reports a station
+  // running perfectly as roughly 25% — the number only becomes meaningful once
+  // the shift is over, which is the one time nobody is watching it. Every
+  // morning reading was structurally wrong in the same way.
+  //
+  // The window opens at the first thing that actually happened on this station
+  // today — a machine event or a run being started — because a shift start time
+  // is not something every company has told us. It is capped at the planned day
+  // so a station left running past its shift cannot inflate its own denominator,
+  // and floored at one minute so the first run of the day is not divided by zero.
+  const firstActivity = db.prepare(`
+    SELECT MIN(t) AS t FROM (
+      SELECT MIN(started_at) AS t FROM machine_events
+       WHERE station_id = ? AND started_at >= date('now')
+      UNION ALL
+      SELECT MIN(started_at) AS t FROM completions
+       WHERE station_id = ? AND started_at >= date('now')
+    )
+  `).get(station.id, station.id);
+
+  const startedMs = firstActivity?.t ? new Date(firstActivity.t).getTime() : null;
+  const elapsedMinutes = startedMs === null
+    ? 0
+    : Math.max(1, Math.min(fullDayMinutes, (Date.now() - startedMs) / 60000));
+
+  // Nothing has happened on this station today: there is no window to measure
+  // against, so the factors below come back unmeasured rather than invented.
+  const plannedMinutes = elapsedMinutes;
 
   // Sum all downtime/maintenance events today that have ended
   const downtimeRows = db.prepare(`
@@ -34,7 +64,10 @@ function calcOEE(station) {
 
   const downtimeMinutes = (downtimeRows.total || 0) + ongoingDowntime;
   const uptimeMinutes = Math.max(0, plannedMinutes - downtimeMinutes);
-  const availability = plannedMinutes > 0 ? uptimeMinutes / plannedMinutes : 0;
+  // Nothing has run today, so there is no planned window yet and no
+  // availability to state. This used to report 0%, which reads as "the machine
+  // was down all day" rather than "the day has not started".
+  const availability = plannedMinutes > 0 ? uptimeMinutes / plannedMinutes : null;
 
   // Completions today for this station
   const completionRow = db.prepare(`
@@ -70,13 +103,14 @@ function calcOEE(station) {
   }
   const quality = inspected > 0 ? pass / inspected : null;
 
-  const measurable = performance !== null && quality !== null;
+  const measurable = availability !== null && performance !== null && quality !== null;
   const pct = v => (v === null ? null : Math.round(v * 100));
 
   // What a supervisor must do to make this station's OEE real.
   const missing = [];
   if (!hasIdealCycle) missing.push('ideal cycle time');
   if (quality === null) missing.push('an inspected run today');
+  if (availability === null) missing.push('any activity today');
 
   return {
     availability: pct(availability),
@@ -87,7 +121,10 @@ function calcOEE(station) {
     missing,
     uptime_minutes: Math.round(uptimeMinutes),
     downtime_minutes: Math.round(downtimeMinutes),
+    /** Planned time elapsed so far today — the denominator actually used. */
     planned_minutes: Math.round(plannedMinutes),
+    /** The whole configured shift, for a screen that wants to say "of 8h". */
+    planned_day_minutes: Math.round(fullDayMinutes),
     completions_today: completionsToday,
   };
 }

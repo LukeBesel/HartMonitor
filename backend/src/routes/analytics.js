@@ -402,7 +402,12 @@ router.get('/plant-view', (req, res) => {
     FROM completions ${siteJoin}
     WHERE completions.company_id = ? AND completions.status='completed' AND completions.completed_at IS NOT NULL${siteClause}${cf.clause}
   `).get(cid, ...siteParams, ...cf.params);
-  const avgCycleTime = ctRow?.avg_minutes ? Math.round(ctRow.avg_minutes) : null;
+  // Seconds, for the same reason as /overview: rounding to whole minutes first
+  // renders every sub-30-second operation as "0m", and a press, a pick-place or
+  // a visual check is routinely under a minute. `avg_cycle_time` stays on the
+  // payload in minutes for anything already reading it; nothing should render it.
+  const avgCycleSeconds = ctRow?.avg_minutes != null ? Math.round(ctRow.avg_minutes * 60) : null;
+  const avgCycleTime = avgCycleSeconds === null ? null : Math.round(ctRow.avg_minutes);
 
   // Pass rate over the last 7 days, counting only completions with explicit QC results
   const pfRows = db.prepare(`
@@ -573,6 +578,7 @@ router.get('/plant-view', (req, res) => {
       active_now:            activeNow,
       pass_rate:             passRate,
       avg_cycle_time:        avgCycleTime,
+      avg_cycle_seconds:     avgCycleSeconds,
       schedule_adherence:    scheduleAdherence,
       work_orders_on_track:  woSummary.on_track,
       work_orders_total:     allWOs.length,
@@ -1321,7 +1327,9 @@ router.get('/department/:id', (req, res) => {
     SELECT AVG((julianday(c.completed_at) - julianday(c.started_at)) * 24 * 60) as avg_minutes
     ${DEPT_COMPLETION_JOIN} AND c.status='completed' AND c.completed_at IS NOT NULL
   `).get(cid, dept.id);
-  const avgCycleTime = ctRow?.avg_minutes ? Math.round(ctRow.avg_minutes) : null;
+  // Seconds, for the same reason as /overview — see the note there.
+  const avgCycleSeconds = ctRow?.avg_minutes != null ? Math.round(ctRow.avg_minutes * 60) : null;
+  const avgCycleTime = avgCycleSeconds === null ? null : Math.round(ctRow.avg_minutes);
 
   const pfRows = db.prepare(`SELECT c.data ${DEPT_COMPLETION_JOIN} AND c.status='completed' AND c.completed_at >= datetime('now', '-7 days')`).all(cid, dept.id);
   let pass = 0, fail = 0;
@@ -1425,6 +1433,7 @@ router.get('/department/:id', (req, res) => {
       active_now:      activeNow,
       pass_rate:       passRate,
       avg_cycle_time:  avgCycleTime,
+      avg_cycle_seconds: avgCycleSeconds,
       wos_on_track:    wosOnTrack,
       wos_total:       workOrders.length,
     },

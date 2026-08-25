@@ -43,8 +43,10 @@ interface PlantViewData {
     active_now: number;
     /** null when no run has recorded a QC result. */
     pass_rate: number | null;
-    /** null when nothing in scope has finished — render '—', never 0. */
+    /** Whole minutes, so 0 for anything under 30 seconds. Do not render it. */
     avg_cycle_time: number | null;
+    /** The one to render. null when nothing in scope has finished — '—', never 0. */
+    avg_cycle_seconds: number | null;
     /** % of open work orders on track — null when there are none. */
     schedule_adherence: number | null;
     work_orders_on_track: number;
@@ -925,10 +927,15 @@ export default function Dashboard() {
                   {[
                     {
                       label: 'Avg Cycle (all runs)',
-                      // null (not 0) when nothing in scope has finished — a dash
-                      // with a reason, never a zero that reads as "instant".
-                      value: (plantData.kpis.avg_cycle_time ?? 0) > 0 ? fmtDuration(plantData.kpis.avg_cycle_time!) : '—',
-                      note: (plantData.kpis.avg_cycle_time ?? 0) > 0 ? null : `no completed runs${inScope}`,
+                      // Seconds, not minutes. `avg_cycle_time` is whole minutes,
+                      // and fmtDuration takes SECONDS — feeding it minutes read a
+                      // seven-minute cycle back as "7s". It also rounded every
+                      // sub-30-second operation to zero, which the old `> 0` guard
+                      // then reported as "no completed runs" — a wrong reason,
+                      // which is its own kind of made-up number. null (not 0) is
+                      // now the only thing that means nothing has finished.
+                      value: plantData.kpis.avg_cycle_seconds != null ? fmtDuration(plantData.kpis.avg_cycle_seconds) : '—',
+                      note: plantData.kpis.avg_cycle_seconds != null ? null : `no completed runs${inScope}`,
                       icon: <Clock size={15} className="text-orange-600" />, bg: 'bg-orange-50',
                     },
                     {
