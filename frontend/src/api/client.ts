@@ -745,7 +745,10 @@ export const api = {
   getSSOProviders: () => request<SSOProviderInfo[]>('/auth/sso/providers'),
 
   // ── Product Routings
-  getRoutings: () => request<any[]>('/routings'),
+  getRoutings: (params?: { department_id?: string }) => {
+    const qs = params?.department_id ? `?department_id=${encodeURIComponent(params.department_id)}` : '';
+    return request<any[]>(`/routings${qs}`);
+  },
   getRouting: (id: string) => request<any>(`/routings/${id}`),
   createRouting: (data: any) => request<any>('/routings', { method: 'POST', body: JSON.stringify(data) }),
   updateRouting: (id: string, data: any) => request<any>(`/routings/${id}`, { method: 'PUT', body: JSON.stringify(data) }),

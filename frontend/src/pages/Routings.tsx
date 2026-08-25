@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   GitBranch, Plus, Trash2, Edit2, ChevronUp, ChevronDown, X,
   Check, AlertCircle, AppWindow, Users, Clock, ArrowRight, Star,
@@ -79,11 +79,14 @@ export default function Routings() {
     setTimeout(() => setToast(null), 3000);
   };
 
+  // The department filter is page-wide: it narrows the routing LIST server-side
+  // (routings with a step in that department) and the open routing's step list.
   const loadAll = () => {
     setLoading(true);
     setLoadError(null);
+    const deptId = deptFilter.departmentId;
     Promise.all([
-      api.getRoutings(),
+      api.getRoutings(deptId ? { department_id: deptId } : undefined),
       api.getApps(),
     ]).then(([r, a]) => {
       setRoutings(Array.isArray(r) ? r : []);
@@ -98,6 +101,22 @@ export default function Routings() {
     loadAll();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isFree]);
+
+  // Quietly re-fetch just the list when the department filter changes (after the
+  // initial load) — no full-page skeleton, so the picker the user just used stays
+  // on screen. The mount guard keeps this from double-fetching alongside loadAll.
+  const lastDeptRef = useRef(deptFilter.departmentId);
+  useEffect(() => {
+    if (isFree) return;
+    if (lastDeptRef.current === deptFilter.departmentId) return;
+    lastDeptRef.current = deptFilter.departmentId;
+    const deptId = deptFilter.departmentId;
+    let cancelled = false;
+    api.getRoutings(deptId ? { department_id: deptId } : undefined)
+      .then(r => { if (!cancelled) setRoutings(Array.isArray(r) ? r : []); })
+      .catch(() => { /* keep the current list on a transient error */ });
+    return () => { cancelled = true; };
+  }, [isFree, deptFilter.departmentId]);
 
   const loadRouting = async (id: string) => {
     try {
@@ -286,27 +305,53 @@ export default function Routings() {
       />
       {/* Left panel — routing list */}
       <div className="w-72 flex-shrink-0 border-r border-gray-200 bg-white flex flex-col">
-        <div className="p-4 border-b border-gray-100 flex items-center justify-between">
-          <div>
-            <h1 className="text-base font-bold text-gray-900 flex items-center gap-2">
-              <GitBranch size={16} className="text-blue-500" />
-              Routings
-            </h1>
-            <p className="text-xs text-gray-400 mt-0.5">{routings.length} routing{routings.length !== 1 ? 's' : ''}</p>
+        <div className="p-4 border-b border-gray-100">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                <GitBranch size={16} className="text-blue-500" />
+                Routings
+              </h1>
+              <p className="text-xs text-gray-400 mt-0.5">{routings.length} routing{routings.length !== 1 ? 's' : ''}</p>
+            </div>
+            {canEdit && (
+              <button
+                onClick={() => setShowCreate(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold transition-colors"
+              >
+                <Plus size={13} />
+                New
+              </button>
+            )}
           </div>
-          {canEdit && (
-            <button
-              onClick={() => setShowCreate(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500 hover:bg-blue-600 text-white text-xs font-semibold transition-colors"
-            >
-              <Plus size={13} />
-              New
-            </button>
+          {/* Page-wide department filter — narrows the list (server-side) to
+              routings with a step in the chosen department. */}
+          {departments.length > 0 && (
+            <div className="mt-3">
+              <DepartmentFilter
+                filter={deptFilter}
+                matchCount={routings.length}
+                matchNoun={`routing${routings.length !== 1 ? 's' : ''}`}
+              />
+            </div>
           )}
         </div>
 
         <div className="flex-1 overflow-y-auto p-2 space-y-1">
-          {routings.length === 0 && (
+          {routings.length === 0 && deptFilter.active && (
+            <div className="text-center py-10 px-4">
+              <GitBranch size={28} className="mx-auto mb-2 text-gray-300" />
+              <p className="text-sm text-gray-500 font-medium">No routings in {deptFilter.selected?.name ?? 'this department'}</p>
+              <p className="text-xs text-gray-400 mt-1">No routing has a step in this department.</p>
+              <button
+                onClick={deptFilter.clear}
+                className="mt-3 text-sm font-semibold text-blue-500 hover:text-blue-600"
+              >
+                Show all departments
+              </button>
+            </div>
+          )}
+          {routings.length === 0 && !deptFilter.active && (
             <div className="text-center py-10 px-4">
               <GitBranch size={28} className="mx-auto mb-2 text-gray-300" />
               <p className="text-sm text-gray-500 font-medium">No routings yet</p>
@@ -361,11 +406,13 @@ export default function Routings() {
                 {selected.description && <p className="text-sm text-gray-500 mt-0.5">{selected.description}</p>}
               </div>
               <div className="flex items-center gap-3 flex-shrink-0">
-                <DepartmentFilter
-                  filter={deptFilter}
-                  matchCount={visibleSteps.length}
-                  matchNoun={`of ${sortedSteps.length} step${sortedSteps.length !== 1 ? 's' : ''}`}
-                />
+                {/* Steps are narrowed by the page-wide department picker in the
+                    routing-list header; the count and empty states below reflect it. */}
+                {deptFilter.active && (
+                  <span className="text-xs text-gray-500 tabular-nums whitespace-nowrap">
+                    {visibleSteps.length} of {sortedSteps.length} step{sortedSteps.length !== 1 ? 's' : ''}
+                  </span>
+                )}
                 {canEdit && (
                   <button
                     onClick={() => openAddStep()}
