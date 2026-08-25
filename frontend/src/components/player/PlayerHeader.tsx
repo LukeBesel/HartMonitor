@@ -49,7 +49,7 @@ function TaktRing({ taktSeconds, elapsed, isOver }: { taktSeconds: number; elaps
   const cls = isOver ? 'p-takt-over' : warn ? 'p-takt-warn' : 'p-takt-normal';
   return (
     <div className="flex items-center gap-3">
-      <div className="relative" style={{ width: 56, height: 56 }}>
+      <div className="relative p-takt-ringviz" style={{ width: 56, height: 56 }}>
         <svg width="56" height="56" viewBox="0 0 56 56" aria-hidden="true">
           <circle cx="28" cy="28" r={r} fill="none" stroke="var(--p-surface-2)" strokeWidth="5" />
           <circle
@@ -66,7 +66,7 @@ function TaktRing({ taktSeconds, elapsed, isOver }: { taktSeconds: number; elaps
         )}
       </div>
       <div>
-        <div className={`tnum ${cls}`} style={{ fontSize: 30, fontWeight: 750, lineHeight: 1 }}>
+        <div className={`tnum p-takt-num ${cls}`}>
           {isOver ? `+${formatDur(elapsed - taktSeconds)}` : formatDur(taktSeconds - elapsed)}
         </div>
         <div style={{ fontSize: 11, fontWeight: 550, color: 'var(--p-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
@@ -108,10 +108,11 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
       className="flex-shrink-0"
       style={{ background: 'var(--p-surface-1)', borderBottom: '1px solid var(--p-border)' }}
     >
-      <div className="flex items-center gap-3 px-4 sm:px-6 py-2.5 flex-wrap">
-        {/* App name + chips */}
-        <div className="flex items-center gap-2.5 min-w-0 flex-wrap">
-          <span style={{ fontSize: 16, fontWeight: 650, color: 'var(--p-ink)' }} className="truncate">
+      <div className="flex items-center gap-2.5 sm:gap-3 px-4 sm:px-6 py-2 sm:py-2.5 flex-wrap">
+        {/* App name + chips. On phones this strip takes its own thin row and
+            side-scrolls instead of wrapping the header four rows deep. */}
+        <div className="p-hdr-ctx flex items-center gap-2.5 min-w-0 flex-wrap">
+          <span style={{ fontSize: 16, fontWeight: 650, color: 'var(--p-ink)' }} className="p-hdr-appname truncate whitespace-nowrap">
             {appName}
           </span>
           {preview && (
@@ -152,15 +153,16 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
           <TaktRing taktSeconds={taktSeconds} elapsed={stepElapsed} isOver={isOverTakt} />
         )}
 
-        {/* Operator chip */}
-        <span className="p-chip" style={{ paddingLeft: 4, minHeight: 36 }}>
+        {/* Operator chip — phones show the avatar only; the name still reads
+            out via the title/aria-label. */}
+        <span className="p-chip" style={{ paddingLeft: 4, minHeight: 36 }} title={operatorName || 'Operator'} aria-label={`Operator ${operatorName || 'Operator'}`}>
           <span
             className="flex items-center justify-center rounded-full"
             style={{ width: 28, height: 28, background: 'var(--p-accent-tint)', color: 'var(--p-accent)', fontWeight: 750, fontSize: 13 }}
           >
             {initial}
           </span>
-          <span className="max-w-[120px] truncate">{operatorName || 'Operator'}</span>
+          <span className="max-w-[120px] truncate hidden sm:inline">{operatorName || 'Operator'}</span>
           {operatorVerified && <ShieldCheck size={14} style={{ color: 'var(--p-good)' }} />}
         </span>
 

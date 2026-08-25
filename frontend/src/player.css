@@ -56,6 +56,25 @@
   -webkit-font-smoothing: antialiased;
 }
 
+/* Running shell: a DEFINITE height so the flex column actually pins the header
+   and footer and the step canvas scrolls inside <main>. With min-height alone
+   the container's auto height grows to its content, pushing the footer below
+   the fold on phones (the whole page scrolled instead of the canvas). dvh keeps
+   the footer above the on-screen keyboard / collapsing browser chrome. */
+.p-root-run {
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/* The scroll region must be allowed to shrink below its content height —
+   without an explicit min-height the flex item refuses to go smaller than the
+   step content and the footer is pushed off-screen. */
+.p-main {
+  min-height: 0;
+  min-width: 0;
+}
+
 .p-card {
   background: var(--p-surface-1);
   border: 1px solid var(--p-border);
@@ -66,6 +85,38 @@
   background: var(--p-surface-2);
   border: 1px solid var(--p-border);
   border-radius: var(--p-r-ctrl);
+}
+
+/* ── Header (compact phone layout) ──────────────────────────────────────── */
+
+/* Takt countdown number in the header ring cluster. */
+.p-takt-num {
+  font-size: 30px;
+  font-weight: 750;
+  line-height: 1;
+}
+
+/* Below 640px the header condenses to two rows: a thin context strip (app
+   name + chips, one line, side-scrollable) and the status row (step, takt,
+   operator, help, menu). The 56px takt ring gives way to the numeric readout —
+   the slim takt bar under the header still shows the drain at a glance. */
+@media (max-width: 639px) {
+  .p-hdr-ctx {
+    flex-basis: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .p-hdr-ctx::-webkit-scrollbar { display: none; }
+  .p-hdr-ctx > * { flex-shrink: 0; }
+  .p-hdr-appname {
+    max-width: 45vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .p-takt-ringviz { display: none; }
+  .p-takt-num { font-size: 22px; }
 }
 
 /* ── Chips & pills ──────────────────────────────────────────────────────── */
@@ -146,6 +197,14 @@
   border-color: var(--p-border);
 }
 .p-btn-ghost:hover:not(:disabled) { background: var(--p-surface-2); color: var(--p-ink); }
+
+/* Phones: 200px minimum buttons don't fit a 360px footer next to Back + the
+   step dots — targets stay ≥56px tall, just narrower. */
+@media (max-width: 479px) {
+  .p-btn { padding: 0 16px; font-size: 17px; }
+  .p-btn-primary,
+  .p-btn-good { min-width: 132px; }
+}
 
 /* ── Inputs ─────────────────────────────────────────────────────────────── */
 
@@ -286,7 +345,8 @@
   font-weight: 550;
   box-shadow: var(--p-shadow-pop);
   animation: p-toast-in 0.2s ease-out;
-  max-width: 420px;
+  /* Never wider than the phone viewport (fixed stack sits 16px from the edge). */
+  max-width: min(420px, calc(100vw - 32px));
 }
 .p-toast-info    { background: var(--p-surface-2); border: 1px solid var(--p-border); color: var(--p-ink); }
 .p-toast-warning { background: #3a2f10; border: 1px solid rgba(251, 191, 36, 0.5); color: var(--p-warn-ink); }
@@ -319,6 +379,12 @@
   box-shadow: var(--p-shadow-pop);
   padding: 20px 20px calc(20px + env(safe-area-inset-bottom));
   animation: p-sheet-in 0.22s ease-out;
+  /* Tall sheets (help tiles + note, NCR form) scroll inside themselves instead
+     of running past the visible viewport. dvh tracks the keyboard / browser
+     chrome; the vh line is the fallback. */
+  max-height: 90vh;
+  max-height: 90dvh;
+  overflow-y: auto;
 }
 
 @keyframes p-sheet-in {
@@ -350,7 +416,7 @@
   position: fixed;
   right: 12px;
   bottom: 88px;
-  width: 340px;
+  width: min(340px, calc(100vw - 24px));
   max-height: 40vh;
   overflow-y: auto;
   z-index: 70;

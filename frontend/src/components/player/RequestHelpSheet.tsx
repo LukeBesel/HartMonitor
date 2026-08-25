@@ -64,7 +64,6 @@ export default function RequestHelpSheet({
         onClick={e => e.stopPropagation()}
         role="dialog"
         aria-label="Request help"
-        style={{ maxHeight: '88vh', overflowY: 'auto' }}
       >
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2" style={{ fontSize: 20, fontWeight: 750, color: 'var(--p-ink)' }}>

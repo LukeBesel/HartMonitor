@@ -372,6 +372,9 @@ export default function PlayerWidget(props: PlayerWidgetProps) {
     case 'number-input': {
       const decimals = config.decimals;
       const stepAttr = config.step ?? (decimals !== undefined && decimals > 0 ? Math.pow(10, -decimals) : undefined);
+      // Whole-number fields get the digits-only phone keypad; anything that can
+      // take a fraction keeps the decimal-point layout.
+      const wantsInteger = decimals === 0 || (decimals === undefined && config.step !== undefined && Number.isInteger(config.step));
       return withError(
         <div>
           {widget.label && (
@@ -379,7 +382,7 @@ export default function PlayerWidget(props: PlayerWidgetProps) {
           )}
           <input
             type="number"
-            inputMode="decimal"
+            inputMode={wantsInteger ? 'numeric' : 'decimal'}
             className={`p-input tnum ${invalid ? 'p-input-invalid' : ''}`}
             placeholder={config.placeholder}
             value={value === undefined || value === null ? '' : String(value)}
