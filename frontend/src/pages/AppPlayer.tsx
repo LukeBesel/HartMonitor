@@ -12,6 +12,7 @@ import {
   Hash, Loader2, Lock, MessageSquare, Package, ScanLine, ShieldCheck, Tag, X, Zap,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { setRunActive } from '../utils/staleChunk';
 import type { CompletionFlushPayload, CompletionSession, JobInProgress, KitLineUpdate } from '../api/client';
 import type {
   App, Step, Widget, WorkOrder, ProductType, Station,
@@ -392,6 +393,7 @@ export default function AppPlayer() {
     return () => clearInterval(iv);
   }, [status, previewMode, flushValues]);
 
+
   // ── Effect application ─────────────────────────────────────────────────────
 
   const handleEnqueueEffect = useCallback((eff: Extract<TriggerEffect, { kind: 'enqueue' }>) => {
@@ -487,6 +489,61 @@ export default function AppPlayer() {
     stepStartTimeRef.current = Date.now();
     stepElapsedRef.current = 0;
   }, []);
+
+  // ── Last flush before the page goes away ───────────────────────────────────
+  // Autosave banks every 20s and step navigation banks the rest, so anything
+  // entered since the last of those lives only in this tab. A closed tab, a
+  // browser Back, an OS-killed tab on a shop-floor tablet — or the automatic
+  // reload the stale-chunk recovery can trigger — all took it with them.
+  //
+  // Worse than the values: `step_times` only banks a stint on step CHANGE, so
+  // an operator eight minutes into a step lost all eight minutes, quietly
+  // understating cycle time and takt history. Bank the in-flight stint first,
+  // then send with keepalive so the request outlives the document.
+  //
+  // `pagehide` is the reliable signal (mobile Safari often skips `beforeunload`),
+  // and hidden-visibility covers the tablet being backgrounded mid-shift.
+  useEffect(() => {
+    if (status !== 'running' || previewMode) return;
+
+    const flushNow = () => {
+      const cid = completionIdRef.current;
+      if (!cid) return;
+      recordStepTime(stepIdxRef.current);   // bank the stint in progress
+      const values = [...valuesBufferRef.current.values()]
+        .filter((v): v is NonNullable<typeof v> => v !== null);
+      if (!dirtyRef.current && values.length === 0) {
+        // Nothing new to send, but the stint we just banked still matters.
+        api.flushCompletionOnUnload(cid, {
+          data: { ...formDataRef.current }, step_times: { ...stepTimesRef.current },
+          values: [], partial: true,
+        }).catch(() => { /* the tab is going away; the outbox replays on return */ });
+        return;
+      }
+      api.flushCompletionOnUnload(cid, {
+        data: { ...formDataRef.current }, step_times: { ...stepTimesRef.current },
+        values, partial: true,
+      }).catch(() => { /* same */ });
+    };
+
+    const onPageHide = () => flushNow();
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flushNow(); };
+    window.addEventListener('pagehide', onPageHide);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [status, previewMode, recordStepTime]);
+
+  // Tell the stale-chunk recovery that a run is live, so it never reloads out
+  // from under an operator mid-job — it falls back to the boundary's visible
+  // "A new version is available" screen and lets them pick the moment.
+  useEffect(() => {
+    if (status !== 'running' || previewMode) return;
+    setRunActive(true);
+    return () => setRunActive(false);
+  }, [status, previewMode]);
 
   const captureStepExitValues = useCallback((step: Step | undefined) => {
     if (!step) return;

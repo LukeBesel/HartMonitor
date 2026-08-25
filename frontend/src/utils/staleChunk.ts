@@ -12,6 +12,20 @@
 // through to the boundary where a person can see it.
 
 const KEY = 'hm_stale_chunk_reload';
+// One claim per page load. The same vanished chunk surfaces twice — once as the
+// preload error, once as the boundary catching React.lazy's failure — and
+// without this the pair would spend two units of a two-unit budget on a single
+// deploy, leaving nothing for the next one.
+let claimedThisLoad = false;
+
+// The player sets this while an operator has a live run on screen. Reloading
+// out from under them mid-job is exactly the data loss this recovery is meant
+// to avoid causing, so during a run we decline the automatic reload and let the
+// error boundary show its visible "A new version is available" screen instead —
+// the operator chooses the moment.
+let runActive = false;
+export function setRunActive(active: boolean): void { runActive = active; }
+export function isRunActive(): boolean { return runActive; }
 /** Two reloads inside this window is a loop, not a deploy. */
 const WINDOW_MS = 60_000;
 const MAX_RELOADS = 2;
@@ -49,11 +63,14 @@ export function isStaleChunkError(reason: unknown): boolean {
  * instead of spinning the tab.
  */
 export function takeStaleChunkReload(): boolean {
+  if (runActive) return false;
+  if (claimedThisLoad) return false;
   const now = Date.now();
   const prev = read();
   const withinWindow = now - prev.at < WINDOW_MS;
   const count = withinWindow ? prev.count + 1 : 1;
   if (count > MAX_RELOADS) return false;
+  claimedThisLoad = true;
   try {
     sessionStorage.setItem(KEY, JSON.stringify({ at: now, count }));
   } catch {

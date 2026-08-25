@@ -248,6 +248,11 @@ export const api = {
   // Flush the player's values buffer (autosave / step change / complete).
   flushCompletion: (id: string, data: CompletionFlushPayload) =>
     request<any>(`/completions/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  /** Same PUT, but survives the page going away — for a last flush on unload.
+   *  `keepalive` lets the browser finish the request after the document is
+   *  gone, which a normal fetch would abandon. */
+  flushCompletionOnUnload: (id: string, data: CompletionFlushPayload) =>
+    request<any>(`/completions/${id}`, { method: 'PUT', body: JSON.stringify(data), keepalive: true }),
   getCompletionValues: (id: string) =>
     request<CompletionValue[]>(`/completions/${id}/values`),
 
