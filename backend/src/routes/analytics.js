@@ -147,7 +147,18 @@ router.get('/overview', (req, res) => {
     SELECT AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60) as avg_minutes
     FROM completions WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL${f.clause}
   `).get(cid, ...f.params);
-  const avgCycleTime = cycleTimeResult?.avg_minutes ? Math.round(cycleTimeResult.avg_minutes) : null;
+  // Report the average in SECONDS. Rounding to whole minutes here threw away
+  // the only precision a short operation has: a press, a pick-and-place or a
+  // visual check averaging twelve seconds came back as 0 and the page printed
+  // "0m" for a run that plainly took time. The client picks the unit.
+  //
+  // `avgCycleTime` (whole minutes) stays on the payload for anything already
+  // reading it, but nothing should render it — it is 0 for every sub-30-second
+  // operation, which is exactly the lie above.
+  const avgCycleSeconds = cycleTimeResult?.avg_minutes != null
+    ? Math.round(cycleTimeResult.avg_minutes * 60)
+    : null;
+  const avgCycleTime = avgCycleSeconds === null ? null : Math.round(cycleTimeResult.avg_minutes);
 
   // Pass rate over every completed run that recorded a QC result (a run with
   // both a Pass and a Fail counts once, as a fail). No QC results = null, so
@@ -162,7 +173,7 @@ router.get('/overview', (req, res) => {
   const totalQC  = passCount + failCount;
   const passRate = totalQC > 0 ? Math.round((passCount / totalQC) * 100) : null;
 
-  res.json({ totalCompletions, todayCompletions, inProgress, totalApps, publishedApps, activeStations, avgCycleTime, passRate, qcSampleSize: totalQC });
+  res.json({ totalCompletions, todayCompletions, inProgress, totalApps, publishedApps, activeStations, avgCycleTime, avgCycleSeconds, passRate, qcSampleSize: totalQC });
 });
 
 // ─── GET /throughput ──────────────────────────────────────────────────────────
@@ -210,7 +221,8 @@ router.get('/operator-performance', (req, res) => {
     SELECT
       operator_name,
       COUNT(*) as completions,
-      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_cycle_minutes
+      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_cycle_minutes,
+      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 86400)) as avg_cycle_seconds
     FROM completions
     WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL${f.clause}
     GROUP BY operator_name
@@ -230,6 +242,7 @@ router.get('/app-performance', (req, res) => {
       app_name,
       COUNT(*) as completions,
       ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_cycle_minutes,
+      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 86400)) as avg_cycle_seconds,
       COUNT(CASE WHEN status='abandoned' THEN 1 END) as abandoned_count
     FROM completions
     WHERE company_id = ?${f.clause}

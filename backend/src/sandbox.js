@@ -86,21 +86,85 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   db.prepare(`INSERT INTO apps (id, name, description, status, steps, company_id) VALUES (?, ?, ?, 'published', ?, ?)`)
     .run(appId, 'Bracket Assembly', 'A sample guided work instruction — open it in the App Builder or run it in the Player.', JSON.stringify(steps), orgId);
 
+  // ── The demo factory's day, and the arithmetic behind its OEE ───────────────
+  // /oee computes OEE = Availability × Performance × Quality over TODAY only,
+  // and Performance divides today's output by the station's whole planned day
+  // (see calcOEE in routes/oee.js). So the seed has to put a real day's work on
+  // the board: three hours of "running" with two finished units used to leave
+  // the public demo advertising a factory at 1% OEE.
+  //
+  // Nothing here hard-codes an OEE figure. These are the inputs; the page still
+  // does the multiplying, so the number on screen stays a measurement.
+  //
+  //   ideal cycle   420 s — the sample app's own step takts, 60 + 240 + 120
+  //   shift         the whole hours of today that have ALREADY happened, capped
+  //                 at 8. Every timestamp in this app is UTC, so "today" is the
+  //                 UTC day; seeding work into hours the clock has not reached
+  //                 would be inventing output, and measuring a full 8-hour plan
+  //                 against a morning that is three hours old can never look
+  //                 healthy. The station's planned_hours_per_day is set to the
+  //                 same window so plan and reality describe one shift.
+  //   runs          floor(shift_seconds / 420 × 0.79)
+  //                   → Performance = runs × 420 / shift_seconds ≈ 79 %
+  //   the other 21% each run's step timers land near takt; the bench then idles
+  //                 ~80 s before the next run starts. Seeding the loss as gaps
+  //                 between runs rather than as slow work makes it the classic
+  //                 OEE "small stops and idling" story, and keeps the per-step
+  //                 chart honest instead of uniformly red.
+  //   scrap         2 runs per full shift fail final inspection → Quality ≈ 96 %
+  //   downtime      none logged at Station 1 today          → Availability 100 %
+  //   OEE           1.00 × 0.79 × 0.96 ≈ 76 % — a good plant, neither a crisis
+  //                 nor a world-class number nobody would believe.
+  //
+  // Change one of these and change the others with it: more runs in the same
+  // shift pushes Performance toward the 100 % clamp, fewer sinks it.
+  const IDEAL_CYCLE_S = 420;
+  const TARGET_PERF   = 0.79;
+  const stepTakts     = steps.map(st => Number(st.takt_time) || 0);
+
+  const minutesToday = db.prepare(
+    `SELECT CAST((julianday('now') - julianday(date('now'))) * 1440 AS INTEGER) AS m`
+  ).get().m;
+  const shiftHours = Math.min(8, Math.max(1, Math.floor(minutesToday / 60)));
+  const shiftMin   = shiftHours * 60;
+  // Between midnight and 01:00 UTC there is less than an hour of "today" to
+  // work with, so the shift's runs pack into whatever exists rather than
+  // spilling into yesterday (where they would stop counting toward today's
+  // OEE). Every other hour of the day they tile the shift exactly.
+  const todayWindowMin = Math.min(shiftMin, Math.max(10, minutesToday));
+  const runsInShift  = mins => Math.max(1, Math.floor((mins * 60) / IDEAL_CYCLE_S * TARGET_PERF));
+  const RUNS_TODAY   = runsInShift(shiftMin);
+  const RUNS_PER_DAY = runsInShift(480);   // a full shift on each previous day
+  const HISTORY_DAYS = 4;
+  // Scrap enough to move Quality off 100 % without pretending a short shift had
+  // a bad day: a full shift loses two units, a short one loses one, and a shift
+  // barely underway loses none (there is then simply nothing to report).
+  const scrapIn = runs => (runs >= 30 ? 2 : runs >= 12 ? 1 : 0);
+
   const deptA = uuidv4(), deptB = uuidv4();
   db.prepare(`INSERT INTO departments (id, name, description, color, company_id) VALUES (?, 'Assembly', 'Main assembly line', '#3b82f6', ?)`).run(deptA, orgId);
   db.prepare(`INSERT INTO departments (id, name, description, color, company_id) VALUES (?, 'Packaging', 'Pack-out and shipping prep', '#8b5cf6', ?)`).run(deptB, orgId);
 
   // ── Stations: Station 1 is running; Station 2 is DOWN (conveyor jam) ────────
+  // Both stations plan the same shift, and Station 1 has been up for all of it —
+  // that is what makes its Availability an honest 100 %. Station 2's jam is
+  // sized as a share of the shift (~9 %) so its Availability lands near 91 %
+  // whatever time of day the sandbox is created, instead of swallowing a short
+  // morning whole.
+  const downMin = Math.max(3, Math.round(shiftMin * 0.094));
+  const downFrac = f => Math.max(1, Math.round(downMin * f));
   const st1 = uuidv4(), st2 = uuidv4();
-  db.prepare(`INSERT INTO stations (id, name, description, location, status, current_app_id, company_id, department_id, current_status, current_status_since, ideal_cycle_seconds)
-              VALUES (?, 'Station 1', 'Bracket assembly bench', 'Line A', 'active', ?, ?, ?, 'running', datetime('now', '-180 minutes'), 420)`).run(st1, appId, orgId, deptA);
-  db.prepare(`INSERT INTO stations (id, name, description, location, status, company_id, department_id, current_status, current_status_since)
-              VALUES (?, 'Station 2', 'Pack-out bench', 'Line A', 'active', ?, ?, 'down', datetime('now', '-45 minutes'))`).run(st2, orgId, deptB);
+  db.prepare(`INSERT INTO stations (id, name, description, location, status, current_app_id, company_id, department_id, current_status, current_status_since, ideal_cycle_seconds, planned_hours_per_day)
+              VALUES (?, 'Station 1', 'Bracket assembly bench', 'Line A', 'active', ?, ?, ?, 'running', datetime('now', ?), ?, ?)`)
+    .run(st1, appId, orgId, deptA, `-${todayWindowMin} minutes`, IDEAL_CYCLE_S, shiftHours);
+  db.prepare(`INSERT INTO stations (id, name, description, location, status, company_id, department_id, current_status, current_status_since, planned_hours_per_day)
+              VALUES (?, 'Station 2', 'Pack-out bench', 'Line A', 'active', ?, ?, 'down', datetime('now', ?), ?)`)
+    .run(st2, orgId, deptB, `-${downMin} minutes`, shiftHours);
 
   const insEvent = db.prepare(`INSERT INTO machine_events (id, station_id, event_type, reason, started_at, ended_at, duration_minutes) VALUES (?, ?, ?, ?, datetime('now', ?), ?, ?)`);
-  insEvent.run(uuidv4(), st1, 'up', '', '-180 minutes', null, null);
-  insEvent.run(uuidv4(), st2, 'up', '', '-300 minutes', db.prepare(`SELECT datetime('now', '-45 minutes') AS t`).get().t, 255);
-  insEvent.run(uuidv4(), st2, 'down', 'Conveyor drive jam', '-45 minutes', null, null);
+  insEvent.run(uuidv4(), st1, 'up', '', `-${todayWindowMin} minutes`, null, null);
+  insEvent.run(uuidv4(), st2, 'up', '', `-${downMin + 255} minutes`, db.prepare(`SELECT datetime('now', ?) AS t`).get(`-${downMin} minutes`).t, 255);
+  insEvent.run(uuidv4(), st2, 'down', 'Conveyor drive jam', `-${downMin} minutes`, null, null);
 
   // ── Product types ───────────────────────────────────────────────────────────
   const ptStd = uuidv4(), ptHd = uuidv4();
@@ -136,10 +200,22 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   insStock.run(uuidv4(), itemId.foam,    locWh, 55);
 
   // ── Work orders ─────────────────────────────────────────────────────────────
-  const wo1001 = uuidv4(), wo1002 = uuidv4();
-  db.prepare(`INSERT INTO work_orders (id, work_order_number, part_number, part_name, quantity, quantity_completed, app_id, department_id, product_type_id, status, priority, scheduled_start, scheduled_end, company_id, site_id)
-              VALUES (?, ?, 'BRKT-100', 'Standard Bracket', 25, 8, ?, ?, ?, 'in_progress', 'high', datetime('now', '-3 days'), datetime('now', '+2 days'), ?, ?)`)
-    .run(wo1001, `${tag}-WO-1001`, appId, deptA, ptStd, orgId, siteId);
+  // Quantities follow the runs rather than the other way round: WO-0998 holds
+  // the four previous shifts and is closed, WO-1001 holds today's and is still
+  // open. A 25-piece order with 8 built next to a station that finished fifty
+  // units today is the kind of arithmetic a prospect checks.
+  const HISTORY_QTY  = RUNS_PER_DAY * HISTORY_DAYS;
+  const WO_REMAINING = Math.max(4, Math.round(RUNS_TODAY * 0.26));
+  const WO_QTY       = RUNS_TODAY + WO_REMAINING;
+  const IDEAL_CYCLE_MIN = IDEAL_CYCLE_S / 60;
+
+  const wo0998 = uuidv4(), wo1001 = uuidv4(), wo1002 = uuidv4();
+  db.prepare(`INSERT INTO work_orders (id, work_order_number, part_number, part_name, quantity, quantity_completed, app_id, department_id, product_type_id, status, priority, takt_time_minutes, scheduled_start, scheduled_end, company_id, site_id)
+              VALUES (?, ?, 'BRKT-100', 'Standard Bracket', ?, ?, ?, ?, ?, 'completed', 'medium', ?, datetime('now', ?), datetime('now', '-1 days'), ?, ?)`)
+    .run(wo0998, `${tag}-WO-0998`, HISTORY_QTY, HISTORY_QTY, appId, deptA, ptStd, IDEAL_CYCLE_MIN, `-${HISTORY_DAYS + 1} days`, orgId, siteId);
+  db.prepare(`INSERT INTO work_orders (id, work_order_number, part_number, part_name, quantity, quantity_completed, app_id, department_id, product_type_id, status, priority, takt_time_minutes, scheduled_start, scheduled_end, company_id, site_id)
+              VALUES (?, ?, 'BRKT-100', 'Standard Bracket', ?, ?, ?, ?, ?, 'in_progress', 'high', ?, datetime('now', ?), datetime('now', '+1 days'), ?, ?)`)
+    .run(wo1001, `${tag}-WO-1001`, WO_QTY, RUNS_TODAY, appId, deptA, ptStd, IDEAL_CYCLE_MIN, `-${todayWindowMin} minutes`, orgId, siteId);
   db.prepare(`INSERT INTO work_orders (id, work_order_number, part_number, part_name, quantity, quantity_completed, app_id, department_id, product_type_id, status, priority, scheduled_start, scheduled_end, company_id, site_id)
               VALUES (?, ?, 'BRKT-200', 'Heavy Duty Bracket', 10, 0, ?, ?, ?, 'pending', 'medium', datetime('now', '+2 days'), datetime('now', '+7 days'), ?, ?)`)
     .run(wo1002, `${tag}-WO-1002`, appId, deptA, ptHd, orgId, siteId);
@@ -200,21 +276,27 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   }
 
   // ── Kit for WO-1001: mostly picked/verified, bolt kits SHORT ────────────────
+  // The shortage is the reason WO-1001 cannot finish, so the numbers have to
+  // line up: exactly enough bolt kits were picked to build what the line has
+  // already built today, and the units still owed are the ones with no bolts.
+  // `kitT` places a pick this many minutes AFTER the shift started, expressed
+  // (as everything else here is) in minutes ago.
+  const kitT = afterStart => Math.max(2, todayWindowMin - afterStart);
   const kitId = uuidv4();
   db.prepare(`INSERT INTO kits (id, company_id, work_order_id, bom_id, bom_version, status, location_id, created_by, created_at, updated_at)
-              VALUES (?, ?, ?, ?, 2, 'short', ?, 'Maria Lopez', datetime('now', '-150 minutes'), datetime('now', '-110 minutes'))`)
-    .run(kitId, orgId, wo1001, bomStdV2, locLine);
+              VALUES (?, ?, ?, ?, 2, 'short', ?, 'Maria Lopez', datetime('now', ?), datetime('now', ?))`)
+    .run(kitId, orgId, wo1001, bomStdV2, locLine, `-${todayWindowMin} minutes`, `-${kitT(30)} minutes`);
 
   const insKitLine = db.prepare(`INSERT INTO kit_lines (id, kit_id, company_id, bom_line_id, item_id, item_name, sku, qty_required, qty_picked, unit, scan_code, reference, step_id, status, picked_by, picked_at, verified_by, verified_at, short_reason, sort_order)
     VALUES (?, ?, ?, ?, ?, ?, (SELECT sku FROM items WHERE id = ?), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const t = m => db.prepare(`SELECT datetime('now', ?) AS t`).get(`-${m} minutes`).t;
   const kitLine = {};
   const kitLines = [
-    // key,      name,             qty, picked, scan,               status,    pickedBy,      pickedAt, verBy,          verAt, shortReason
-    ['bracket', 'Base Bracket',    25,  25, '',                  'verified', 'Maria Lopez', 130, 'Bob Operator', 125, ''],
-    ['boltkit', 'M6 Bolt Kit',     25,  13, `${tag}-M6KIT-BAG`,  'short',    'Maria Lopez', 120, '',             0,   'Bin empty after 13 kits — stockout, awaiting PO ' + tag + '-PO-2001'],
-    ['board',   'Control Board',   25,  25, '',                  'picked',   'Maria Lopez', 115, '',             0,   ''],
-    ['harness', 'Wire Harness',    25,  25, '',                  'verified', 'Maria Lopez', 112, 'Bob Operator', 110, ''],
+    // key,      name,             qty,     picked,      scan,               status,    pickedBy,      pickedAt,  verBy,          verAt,     shortReason
+    ['bracket', 'Base Bracket',    WO_QTY,  WO_QTY,      '',                  'verified', 'Maria Lopez', kitT(8),  'Bob Operator', kitT(13), ''],
+    ['boltkit', 'M6 Bolt Kit',     WO_QTY,  RUNS_TODAY,  `${tag}-M6KIT-BAG`,  'short',    'Maria Lopez', kitT(18), '',             0,        `Bin empty after ${RUNS_TODAY} kits — stockout, awaiting PO ${tag}-PO-2001`],
+    ['board',   'Control Board',   WO_QTY,  WO_QTY,      '',                  'picked',   'Maria Lopez', kitT(23), '',             0,        ''],
+    ['harness', 'Wire Harness',    WO_QTY,  WO_QTY,      '',                  'verified', 'Maria Lopez', kitT(26), 'Bob Operator', kitT(28), ''],
   ];
   for (const [i, [key, name, req, picked, scanOverride, status, pickedBy, pickedMin, verBy, verMin, shortReason]] of kitLines.entries()) {
     kitLine[key] = uuidv4();
@@ -231,18 +313,21 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
 
   // Consume movements mirroring the picks (marker matches kits.js exactly-once pattern).
   const insMove = db.prepare(`INSERT INTO stock_movements (id, item_id, location_id, movement_type, quantity, unit_cost, reference_type, reference_id, notes, operator_name, created_by, created_at) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, datetime('now', ?))`);
-  insMove.run(uuidv4(), itemId.bracket, locWh, 'receive', 200, '', '', 'Weekly stock replenishment', 'Demo Visitor', 'Demo Visitor', '-7 days');
-  for (const [key, qty, min] of [['bracket', 25, 130], ['boltkit', 13, 120], ['board', 25, 115], ['harness', 25, 112]]) {
+  insMove.run(uuidv4(), itemId.bracket, locWh, 'receive', HISTORY_QTY + WO_QTY, '', '', 'Weekly stock replenishment', 'Demo Visitor', 'Demo Visitor', '-7 days');
+  for (const [key, qty, min] of [['bracket', WO_QTY, kitT(8)], ['boltkit', RUNS_TODAY, kitT(18)], ['board', WO_QTY, kitT(23)], ['harness', WO_QTY, kitT(26)]]) {
     insMove.run(uuidv4(), itemId[key], locLine, 'consume', -qty, 'kit', kitId, `kit_line:${kitLine[key]}`, 'Maria Lopez', 'Maria Lopez', `-${min} minutes`);
   }
 
   // ── Completions with structured per-widget capture ──────────────────────────
-  // 8 completed runs (matches WO-1001's quantity_completed) + 1 in progress.
+  // Five shifts on Station 1: today's (still running) plus the four before it,
+  // each laid out from the arithmetic at the top of this function. Timestamps
+  // are seconds-precise because a whole-minute grid would hand every screen the
+  // same suspiciously round cycle time.
   const insCompletion = db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, operator_user_id, work_order_id, product_type_id, kit_id, started_at, completed_at, status, data, step_times, takt_exceeded_steps, company_id)
     VALUES (?, ?, 'Bracket Assembly', ?, ?, ?, ?, ?, ?, datetime('now', ?), datetime('now', ?), ?, ?, ?, ?, ?)`);
   const insValue = db.prepare(`INSERT INTO completion_values (id, completion_id, company_id, app_id, step_id, widget_id, variable_name, value_type, value_text, value_number, recorded_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?))`);
 
-  function addValues(completionId, offsetMin, data) {
+  function addValues(completionId, offsetSec, data) {
     for (const [varName, raw] of Object.entries(data)) {
       const w = widgets[varName];
       if (!w) continue;
@@ -251,58 +336,118 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
       else if (w.type === 'number-input') { type = 'number';    num = raw; }
       else if (w.type === 'pass-fail')    { type = 'pass_fail'; text = String(raw).toLowerCase(); }
       else                                { type = 'text';      text = String(raw); }
-      insValue.run(uuidv4(), completionId, orgId, appId, w.step_id, w.widget_id, varName, type, text, num, `-${offsetMin} minutes`);
+      insValue.run(uuidv4(), completionId, orgId, appId, w.step_id, w.widget_id, varName, type, text, num, `-${Math.round(offsetSec)} seconds`);
     }
   }
 
   const ops = [[opId.bob, 'Bob Operator'], [opId.maria, 'Maria Lopez'], [opId.priya, 'Priya Shah']];
-  //           minutes-ago, duration, torque, step1 seconds, over-takt?, visual
-  const runs = [
-    [5760, 9,  15.1, 212, false, 'Pass'],
-    [4320, 8,  14.9, 205, false, 'Pass'],
-    [4260, 10, 15.3, 231, false, 'Pass'],
-    [2880, 12, 15.0, 262, true,  'Pass'],   // step 1 blew its 240s takt
-    [2820, 8,  14.8, 208, false, 'Pass'],
-    [1440, 9,  15.2, 219, false, 'Pass'],
-    [90,   11, 15.4, 226, false, 'Fail'],   // today's reject — raised the critical NCR
-    [30,   8,  15.0, 210, false, 'Pass'],
-  ];
-  let failedCompletionId = null;
-  runs.forEach(([end, dur, torque, s1, overTakt, visual], i) => {
-    const cid = uuidv4();
-    const [operatorUserId, operatorName] = ops[i % 3];
-    const data = {
-      ppe_worn: true, area_clear: true,
-      torque_value: torque, serial_number: `${tag}-SN-${1001 + i}`,
-      visual_ok: visual, function_ok: visual === 'Fail' ? 'Fail' : 'Pass',
-      notes: visual === 'Fail' ? 'Solder bridging on U3 — raised NCR' : '',
-    };
-    insCompletion.run(
-      cid, appId, st1, operatorName, operatorUserId, wo1001, ptStd, kitId,
-      `-${end + dur} minutes`, `-${end} minutes`, 'completed',
-      JSON.stringify(data),
-      JSON.stringify({ 0: 45 + (i % 3) * 4, 1: s1, 2: 88 + (i % 4) * 6 }),
-      JSON.stringify(overTakt ? [1] : []),
-      orgId
-    );
-    if (visual === 'Fail') failedCompletionId = cid;
-    addValues(cid, end, data);
-  });
+
+  // One shift's worth of runs, tiled evenly across `spanMin` minutes ending
+  // `endsAgoS` seconds ago. Run 0 is the most recent.
+  //
+  // Step timers sit around each step's takt (60 / 240 / 120 s) and total ~7 min
+  // of hands-on work; wall clock adds the seconds an operator loses mid-run, and
+  // the slot adds the idle before the next unit starts. Those are three
+  // different, genuinely different numbers — which is why /apps/:id/history
+  // (step timers) and /apps/:id/analytics (start → finish) do not, and should
+  // not, agree to the second.
+  function layOutShift(count, spanMin, endsAgoS, tailS, scrap) {
+    // Runs tile the shift: `tailS` is the quiet bit at the end (today the bench
+    // is three minutes into the next unit), the rest divides evenly.
+    const slotS = Math.max(1, ((spanMin * 60) - tailS) / count);
+    // Spread the scrap through the shift rather than clustering it at one end.
+    const scrapAt = new Set();
+    for (let n = 0; n < scrap; n++) scrapAt.add(Math.floor(count * (0.28 + n * 0.42)) % count);
+    const out = [];
+    for (let k = 0; k < count; k++) {
+      const stepTimes = stepTakts.map((takt, idx) => {
+        if (idx === 0) return 55 + (k % 4) * 6;    // Safety Check      (takt 60)
+        if (idx === 1) return 218 + (k % 5) * 13;  // Assembly          (takt 240)
+        return 108 + (k % 3) * 11;                 // Final Inspection  (takt 120)
+      });
+      const handsOnS = stepTimes.reduce((a, b) => a + b, 0);
+      const wallS = handsOnS + 20 + (k % 3) * 9;
+      const endedAgoS = endsAgoS + k * slotS;
+      out.push({
+        endedAgoS,
+        startedAgoS: endedAgoS + wallS,
+        stepTimes,
+        exceeded: stepTimes.map((v, i) => (stepTakts[i] > 0 && v > stepTakts[i] ? i : -1)).filter(i => i >= 0),
+        visual: scrapAt.has(k) ? 'Fail' : 'Pass',
+      });
+    }
+    return out;
+  }
+
+  // Today's shift ends three minutes ago (the bench is mid-run right now);
+  // each earlier day ran 08:00–16:00 UTC, which is `minutesToday` plus whole
+  // days back from this instant.
+  const shiftPlan = [{ runs: RUNS_TODAY, spanMin: todayWindowMin, endsAgoS: 180, tailS: 180, woId: wo1001, kit: kitId }];
+  for (let d = 1; d <= HISTORY_DAYS; d++) {
+    shiftPlan.push({
+      runs: RUNS_PER_DAY,
+      spanMin: 480,
+      endsAgoS: (minutesToday + d * 1440 - 960) * 60,
+      tailS: 0,
+      woId: wo0998,
+      kit: null,
+    });
+  }
+
+  let failedCompletionId = null, failedSerial = null, failedAgoS = null, failedWoId = null;
+  let serial = 1001;
+  for (const plan of shiftPlan) {
+    for (const run of layOutShift(plan.runs, plan.spanMin, plan.endsAgoS, plan.tailS, scrapIn(plan.runs))) {
+      const cid = uuidv4();
+      const i = serial - 1001;
+      const [operatorUserId, operatorName] = ops[i % 3];
+      const torque = Number((14.6 + (i % 9) * 0.1).toFixed(1));
+      const data = {
+        ppe_worn: true, area_clear: true,
+        torque_value: torque, serial_number: `${tag}-SN-${serial}`,
+        visual_ok: run.visual, function_ok: run.visual,
+        notes: run.visual === 'Fail' ? 'Solder bridging on U3 — raised NCR' : '',
+      };
+      insCompletion.run(
+        cid, appId, st1, operatorName, operatorUserId, plan.woId, ptStd, plan.kit,
+        `-${Math.round(run.startedAgoS)} seconds`, `-${Math.round(run.endedAgoS)} seconds`, 'completed',
+        JSON.stringify(data),
+        JSON.stringify(Object.fromEntries(run.stepTimes.map((v, idx) => [idx, v]))),
+        JSON.stringify(run.exceeded),
+        orgId
+      );
+      // The critical NCR hangs off the most recent reject, whenever that was —
+      // a shift too short to have scrapped anything yet still gets a real
+      // completion to point at rather than an invented one.
+      if (run.visual === 'Fail' && (failedAgoS === null || run.endedAgoS < failedAgoS)) {
+        failedCompletionId = cid; failedSerial = `${tag}-SN-${serial}`;
+        failedAgoS = run.endedAgoS; failedWoId = plan.woId;
+      }
+      addValues(cid, run.endedAgoS, data);
+      serial++;
+    }
+  }
 
   // A live in-progress run for the "active now" tiles.
   const liveId = uuidv4();
   db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, operator_user_id, work_order_id, product_type_id, kit_id, started_at, status, data, step_times, company_id)
-              VALUES (?, ?, 'Bracket Assembly', ?, 'Maria Lopez', ?, ?, ?, ?, datetime('now', '-12 minutes'), 'in_progress', ?, '{}', ?)`)
+              VALUES (?, ?, 'Bracket Assembly', ?, 'Maria Lopez', ?, ?, ?, ?, datetime('now', '-140 seconds'), 'in_progress', ?, '{}', ?)`)
     .run(liveId, appId, st1, opId.maria, wo1001, ptStd, kitId, JSON.stringify({ ppe_worn: true, area_clear: true }), orgId);
-  addValues(liveId, 10, { ppe_worn: true, area_clear: true });
+  addValues(liveId, 120, { ppe_worn: true, area_clear: true });
 
   // ── Quality: NCRs (one open critical, one resolved) + a receiving minor ─────
   const ncr1 = uuidv4(), ncr2 = uuidv4(), ncr3 = uuidv4();
   const insNcr = db.prepare(`INSERT INTO ncrs (id, ncr_number, title, description, severity, status, source, app_id, completion_id, work_order_id, item_id, assigned_to, root_cause, corrective_action, due_date, resolved_at, created_at, company_id)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?), ?)`);
-  insNcr.run(ncr1, `${tag}-NCR-101`, 'Solder bridging on control board', 'Visual inspection failed on unit SN-1007 — solder bridge across U3 pins 4-5.', 'critical', 'open', 'production',
-    appId, failedCompletionId, wo1001, itemId.board, 'Demo Visitor', '', '',
-    db.prepare(`SELECT date('now', '+3 days') AS d`).get().d, null, '-80 minutes', orgId);
+  // Raised a few minutes after the reject it is about, and it names that run's
+  // real serial and work order — the NCR detail page links straight back to the
+  // completion, so an invented serial would contradict the row it opens.
+  const ncrAgoS = failedAgoS === null ? 4800 : Math.max(120, Math.round(failedAgoS - 240));
+  insNcr.run(ncr1, `${tag}-NCR-101`, 'Solder bridging on control board',
+    `Visual inspection failed on unit ${failedSerial ?? 'under review'} — solder bridge across U3 pins 4-5.`,
+    'critical', 'open', 'production',
+    appId, failedCompletionId, failedWoId ?? wo1001, itemId.board, 'Demo Visitor', '', '',
+    db.prepare(`SELECT date('now', '+3 days') AS d`).get().d, null, `-${ncrAgoS} seconds`, orgId);
   insNcr.run(ncr2, `${tag}-NCR-102`, 'Wire harness pin misalignment', 'Pin 7 seated half-depth on three units; caught at functional test.', 'major', 'resolved', 'production',
     appId, null, wo1001, itemId.harness, 'Demo Visitor', 'Crimp die worn past service limit', 'Die replaced; first-article check added to setup sheet',
     db.prepare(`SELECT date('now', '-1 days') AS d`).get().d,
@@ -310,7 +455,8 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   insNcr.run(ncr3, `${tag}-NCR-103`, 'M6 bolt kits under-count in bags', 'Two receiving samples contained 3 bolts instead of 4.', 'minor', 'open', 'receiving',
     null, null, null, itemId.boltkit, 'Bob Operator', '', '',
     db.prepare(`SELECT date('now', '+7 days') AS d`).get().d, null, '-1 days', orgId);
-  db.prepare(`INSERT INTO ncr_comments (id, ncr_id, author, body, created_at) VALUES (?, ?, 'Demo Visitor', 'Quarantined remaining WO-1001 boards pending rework instructions.', datetime('now', '-60 minutes'))`).run(uuidv4(), ncr1);
+  db.prepare(`INSERT INTO ncr_comments (id, ncr_id, author, body, created_at) VALUES (?, ?, 'Demo Visitor', 'Quarantined remaining WO-1001 boards pending rework instructions.', datetime('now', ?))`)
+    .run(uuidv4(), ncr1, `-${Math.max(30, Math.round(ncrAgoS * 0.6))} seconds`);
 
   // ── CAPA: one actively in work (with actions), one open preventive ──────────
   // Enum-safe values only: the CAPA page's maps know status open | root_cause |
@@ -336,7 +482,7 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   }
   insCapa.run(capa2, orgId, `${tag}-CAPA-002`, 'Prevent conveyor drive jams at pack-out', 'andon', 'preventive', 'medium', 'open', deptB, 'Demo Visitor', 'Demo Visitor',
     db.prepare(`SELECT date('now', '+14 days') AS d`).get().d,
-    'Station 2 conveyor jammed twice this quarter; PM interval may be too long.', '', '', '', '', '', 'Shorten belt inspection PM from monthly to biweekly', '-40 minutes', '-40 minutes');
+    'Station 2 conveyor jammed twice this quarter; PM interval may be too long.', '', '', '', '', '', 'Shorten belt inspection PM from monthly to biweekly', `-${downFrac(0.89)} minutes`, `-${downFrac(0.89)} minutes`);
 
   const insCapaAction = db.prepare(`INSERT INTO capa_actions (id, capa_id, description, assigned_to, owner_name, due_date, status, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', ?), ?)`);
   insCapaAction.run(uuidv4(), capa1, 'Corrected stencil ordered from supplier — awaiting delivery', 'Demo Visitor', 'Demo Visitor',
@@ -344,7 +490,7 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   insCapaAction.run(uuidv4(), capa1, 'Requalify reflow profile with new stencil', 'Maria Lopez', 'Maria Lopez',
     db.prepare(`SELECT date('now', '+4 days') AS d`).get().d, 'open', '-3 days', null);
   insCapaAction.run(uuidv4(), capa2, 'Draft biweekly belt inspection checklist', 'Priya Shah', 'Priya Shah',
-    db.prepare(`SELECT date('now', '+10 days') AS d`).get().d, 'open', '-40 minutes', null);
+    db.prepare(`SELECT date('now', '+10 days') AS d`).get().d, 'open', `-${downFrac(0.89)} minutes`, null);
 
   // ── Maintenance: assets, PM schedules (one due soon), open MWO ──────────────
   const asset1 = uuidv4(), asset2 = uuidv4();
@@ -357,13 +503,14 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   insPm.run(uuidv4(), orgId, asset2, 'Belt & roller inspection', 'Check belt tracking, tension and roller bearings.', 1, 'months', '-9 days', '+21 days', 'Priya Shah', 1.5);
 
   db.prepare(`INSERT INTO maintenance_work_orders (id, company_id, number, wo_number, title, type, priority, status, asset_id, department_id, assigned_to, description, estimated_hours, requested_by, due_date, created_at, updated_at)
-              VALUES (?, ?, ?, ?, 'Conveyor drive jam — Station 2 stopped', 'emergency', 'critical', 'open', ?, ?, 'Demo Visitor', 'Pack-out conveyor jammed mid-cycle; Station 2 down until the drive belt is replaced.', 2, 'Priya Shah', date('now', '+1 days'), datetime('now', '-40 minutes'), datetime('now', '-40 minutes'))`)
-    .run(uuidv4(), orgId, `${tag}-MWO-100`, `${tag}-MWO-100`, asset2, deptB);
+              VALUES (?, ?, ?, ?, 'Conveyor drive jam — Station 2 stopped', 'emergency', 'critical', 'open', ?, ?, 'Demo Visitor', 'Pack-out conveyor jammed mid-cycle; Station 2 down until the drive belt is replaced.', 2, 'Priya Shah', date('now', '+1 days'), datetime('now', ?), datetime('now', ?))`)
+    .run(uuidv4(), orgId, `${tag}-MWO-100`, `${tag}-MWO-100`, asset2, deptB, `-${downFrac(0.89)} minutes`, `-${downFrac(0.89)} minutes`);
 
   // ── Andon: resolved call, consistent with Station 2's downtime ──────────────
   db.prepare(`INSERT INTO andon_calls (id, company_id, department_id, station_id, type, priority, status, description, raised_by, acknowledged_by, acknowledged_at, resolved_by, resolved_at, resolution, created_at)
-              VALUES (?, ?, ?, ?, 'maintenance', 'high', 'resolved', 'Conveyor stopped mid-cycle at pack-out', 'Priya Shah', 'Demo Visitor', datetime('now', '-42 minutes'), 'Demo Visitor', datetime('now', '-35 minutes'), ?, datetime('now', '-45 minutes'))`)
-    .run(uuidv4(), orgId, deptB, st2, `Escalated to maintenance — ${tag}-MWO-100 opened; station stays down pending drive belt`);
+              VALUES (?, ?, ?, ?, 'maintenance', 'high', 'resolved', 'Conveyor stopped mid-cycle at pack-out', 'Priya Shah', 'Demo Visitor', datetime('now', ?), 'Demo Visitor', datetime('now', ?), ?, datetime('now', ?))`)
+    .run(uuidv4(), orgId, deptB, st2, `-${downFrac(0.93)} minutes`, `-${downFrac(0.78)} minutes`,
+      `Escalated to maintenance — ${tag}-MWO-100 opened; station stays down pending drive belt`, `-${downMin} minutes`);
 
   // ── Training: mixed levels for the three operators ──────────────────────────
   const insTraining = db.prepare(`INSERT INTO training_records (id, company_id, user_id, app_id, status, certified_date, expiry_date, certified_by, score, attempts, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
@@ -399,8 +546,8 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   insKaizen.run(uuidv4(), orgId, `${tag}-KZ-3`, `${tag}-KZ-3`, 'Vacuum lifter for heavy-duty brackets', 'BRKT-200 brackets are 14 kg — a vacuum lifter at pack-out would cut strain and drops.', 'cost', 'approved', deptB, 'Priya Shah', 'Demo Visitor', 3500, 0, '-12 days', null);
 
   // ── Shift handoff note (yesterday, tells the same downtime story) ───────────
-  db.prepare(`INSERT INTO shift_notes (id, company_id, department_id, shift_name, shift_date, supervisor, good_count, scrap_count, downtime_minutes, notes, status, created_by) VALUES (?, ?, ?, 'Day', date('now', '-1 days'), 'Demo Visitor', 120, 3, 25, 'Pack-out conveyor squealing near the drive end — maintenance notified, keep an eye on it.', 'submitted', 'Demo Visitor')`)
-    .run(uuidv4(), orgId, deptB);
+  db.prepare(`INSERT INTO shift_notes (id, company_id, department_id, shift_name, shift_date, supervisor, good_count, scrap_count, downtime_minutes, notes, status, created_by) VALUES (?, ?, ?, 'Day', date('now', '-1 days'), 'Demo Visitor', ?, ?, 25, 'Pack-out conveyor squealing near the drive end — maintenance notified, keep an eye on it.', 'submitted', 'Demo Visitor')`)
+    .run(uuidv4(), orgId, deptB, RUNS_PER_DAY - scrapIn(RUNS_PER_DAY), scrapIn(RUNS_PER_DAY));
 
   // ── A SECOND published app, so the App Dashboard picker shows more than one ──
   // Final QC on the pack-out line: a torque re-check plus a visual pass/fail.
@@ -424,9 +571,12 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   const insQcCompletion = db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, operator_user_id, started_at, completed_at, status, data, step_times, takt_exceeded_steps, company_id)
     VALUES (?, ?, 'Final QC Inspection', ?, ?, ?, datetime('now', ?), datetime('now', ?), 'completed', ?, ?, '[]', ?)`);
   // end-minutes-ago, duration, torque, result — spread across ~4 days and 3 operators.
+  // The last one has to fall inside today or Station 2 reports no inspected run
+  // today at all — which is true, but only because the seed put it in yesterday.
+  const qcToday = Math.max(5, Math.min(120, minutesToday - 10));
   const qcRuns = [
     [5730, 4, 15.1, 'Pass'], [4290, 5, 14.9, 'Pass'], [2850, 4, 15.2, 'Pass'],
-    [1400, 6, 14.6, 'Fail'], [1380, 4, 15.0, 'Pass'], [120, 5, 15.3, 'Pass'],
+    [1400, 6, 14.6, 'Fail'], [1380, 4, 15.0, 'Pass'], [qcToday, 5, 15.3, 'Pass'],
   ];
   qcRuns.forEach(([end, dur, torque, result], i) => {
     const cid = uuidv4();
