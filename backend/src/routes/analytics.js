@@ -188,8 +188,12 @@ router.get('/quality', (req, res) => {
     const data = JSON.parse(row.data);
     if (!byDate[row.date]) byDate[row.date] = { date: row.date, pass: 0, fail: 0 };
     const vals = Object.values(data);
+    // Only count a run that actually recorded a QC result. A run with no
+    // Pass/Fail step was never inspected — counting it as a pass (the old
+    // `else pass++`) invented an 87% chart next to an 80% KPI, and drew
+    // "100% pass" bars for departments that inspect nothing.
     if (vals.some(v => v === 'Fail')) byDate[row.date].fail++;
-    else byDate[row.date].pass++;
+    else if (vals.some(v => v === 'Pass')) byDate[row.date].pass++;
   }
   res.json(Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date)));
 });

@@ -822,7 +822,11 @@ router.get('/:id/analytics', (req, res) => {
   `).all(...params);
 
   // ── Per-field stats over completion_values ──
-  const vJoin = `FROM completion_values v JOIN completions c ON c.id = v.completion_id WHERE ${where}`;
+  // Completed runs only. An abandoned or in-progress run may have captured a
+  // value or two before it stopped; folding those into the per-field average
+  // and count made the field stats (e.g. count=11) disagree with totals.completed
+  // (=10) and avg_duration_s on the same payload, which only count finished runs.
+  const vJoin = `FROM completion_values v JOIN completions c ON c.id = v.completion_id WHERE ${where} AND c.status = 'completed'`;
 
   const numberRows = db.prepare(`
     SELECT v.widget_id, v.value_type, COUNT(v.value_number) AS count,
