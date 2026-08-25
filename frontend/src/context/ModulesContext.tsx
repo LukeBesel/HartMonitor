@@ -3,7 +3,7 @@ import {
   Factory, ShieldCheck, Boxes, Wrench, Siren, Lightbulb,
   GraduationCap, ClipboardList, BarChart3, AppWindow,
 } from 'lucide-react';
-import { useAuth } from './AuthContext';
+import { useAuthUserId } from './AuthContext';
 
 // ─── Composable MES: module registry ─────────────────────────────────────────
 // Mirrors backend/src/routes/modules.js — the module KEYS must stay identical.
@@ -80,7 +80,7 @@ async function moduleRequest<T>(path: string, options?: RequestInit): Promise<T>
 }
 
 export function ModulesProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const userId = useAuthUserId();
   const [modules, setModules] = useState<ModuleState[]>(defaultModules);
   const [loading, setLoading] = useState(true);
 
@@ -102,9 +102,9 @@ export function ModulesProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (user) { setLoading(true); refresh(); }
+    if (userId) { setLoading(true); refresh(); }
     else { setModules(defaultModules()); setLoading(false); }
-  }, [user, refresh]);
+  }, [userId, refresh]);
 
   const isEnabled = useCallback((key: string) => {
     const def = REGISTRY_MAP.get(key as ModuleKey);
