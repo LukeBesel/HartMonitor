@@ -9,7 +9,7 @@ import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
 import { useSite } from '../context/SiteContext';
 import { useAuth } from '../context/AuthContext';
 import { tintedChipStyle } from '../utils/contrast';
-import { useTheme } from '../context/ThemeContext';
+import { useIsDark } from '../utils/useIsDark';
 
 const STATUS_COLORS: Record<Station['status'], string> = {
   active: 'bg-green-100 text-green-700',
@@ -22,7 +22,7 @@ function Skeleton({ className }: { className?: string }) {
 }
 
 export default function Stations() {
-  const { darkMode } = useTheme();
+  const darkMode = useIsDark();
   const { selectedSiteId } = useSite();
   const { canEdit } = useAuth();
   // Narrows the whole page — cards AND the status tally above them — to one

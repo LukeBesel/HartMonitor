@@ -10,7 +10,7 @@ import LastRefreshed from '../components/shared/LastRefreshed';
 import DepartmentFilter from '../components/shared/DepartmentFilter';
 import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
 import { tintedChipStyle } from '../utils/contrast';
-import { useTheme } from '../context/ThemeContext';
+import { useIsDark } from '../utils/useIsDark';
 
 // ── Types matching actual API response ────────────────────────────────────────
 
@@ -163,7 +163,7 @@ function ActiveRunCard({ run }: { run: ActiveCompletion }) {
 }
 
 function WorkOrderCard({ wo }: { wo: WorkOrder }) {
-  const { darkMode } = useTheme();
+  const darkMode = useIsDark();
   const pct = wo.completion_pct ?? (wo.quantity > 0 ? Math.round((wo.quantity_completed / wo.quantity) * 100) : 0);
   const schedStatus = SCHEDULE_STATUS[wo.schedule_status] ?? SCHEDULE_STATUS.not_started;
   const priorityInfo = PRIORITY[wo.priority] ?? PRIORITY.low;

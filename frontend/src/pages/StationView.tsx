@@ -8,7 +8,7 @@ import {
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
 import { tintedChipStyle } from '../utils/contrast';
-import { useTheme } from '../context/ThemeContext';
+import { useIsDark } from '../utils/useIsDark';
 
 interface StationViewData {
   station: {
@@ -73,7 +73,7 @@ function formatTimeAgo(iso: string) {
 }
 
 export default function StationView() {
-  const { darkMode } = useTheme();
+  const darkMode = useIsDark();
   const { id } = useParams<{ id: string }>();
   const [data, setData] = useState<StationViewData | null>(null);
   const [loading, setLoading] = useState(true);

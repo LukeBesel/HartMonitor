@@ -11,7 +11,7 @@ import {
   CheckCircle2, ChevronDown, ChevronUp, Pencil, Check, X, Building2
 } from 'lucide-react';
 import { tintedChipStyle } from '../utils/contrast';
-import { useTheme } from '../context/ThemeContext';
+import { useIsDark } from '../utils/useIsDark';
 
 interface WOCapacity {
   id: string;
@@ -76,7 +76,7 @@ const PRIORITY_COLORS: Record<string, string> = {
 };
 
 export default function CapacityPlanning() {
-  const { darkMode } = useTheme();
+  const darkMode = useIsDark();
   const { canEdit } = useAuth();
   // GET /analytics/capacity takes no parameters and always returns the whole
   // company, so the narrowing happens here — over the work orders, the
