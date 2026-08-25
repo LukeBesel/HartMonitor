@@ -2377,6 +2377,71 @@ db.exec(`
     ON department_members(company_id, department_id);
 `);
 
+// ─── CI Projects: where a Kaizen idea gets EXECUTED ───────────────────────────
+// An idea is where improvement work starts; a project is where it gets planned,
+// scheduled and tracked to a close. ci_projects.kaizen_idea_id is the (nullable)
+// link back to the idea that spawned it — nullable because a CI manager may also
+// stand a project up directly, without an idea ever having been filed.
+//
+// The status vocabularies below are the ONLY words these columns accept. The
+// Projects screen keys off exactly these strings and keeps its human labels in a
+// separate map — a page that offers a word the CHECK forbids saves with a 500,
+// and one that writes 'in-progress' but reads 'in_progress' creates rows it can
+// never find again. Both have shipped here before.
+//
+// Additive and guarded: CREATE TABLE / CREATE INDEX IF NOT EXISTS only.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS ci_projects (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    number TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'planning'
+      CHECK(status IN ('planning','active','on_hold','complete','cancelled')),
+    department_id TEXT REFERENCES departments(id) ON DELETE SET NULL,
+    owner_name TEXT DEFAULT '',
+    kaizen_idea_id TEXT REFERENCES kaizen_ideas(id) ON DELETE SET NULL,
+    start_date TEXT,
+    target_date TEXT,
+    completed_at TEXT,
+    estimated_savings REAL DEFAULT 0,
+    actual_savings REAL DEFAULT 0,
+    created_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_ci_projects_lookup
+    ON ci_projects(company_id, status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ci_projects_number
+    ON ci_projects(company_id, number);
+  CREATE INDEX IF NOT EXISTS idx_ci_projects_idea
+    ON ci_projects(company_id, kaizen_idea_id);
+  CREATE INDEX IF NOT EXISTS idx_ci_projects_department
+    ON ci_projects(company_id, department_id);
+
+  CREATE TABLE IF NOT EXISTS ci_project_tasks (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    project_id TEXT NOT NULL REFERENCES ci_projects(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'not_started'
+      CHECK(status IN ('not_started','in_progress','blocked','done')),
+    assignee_name TEXT DEFAULT '',
+    start_date TEXT,
+    end_date TEXT,
+    progress INTEGER NOT NULL DEFAULT 0 CHECK(progress >= 0 AND progress <= 100),
+    depends_on TEXT REFERENCES ci_project_tasks(id) ON DELETE SET NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_ci_project_tasks_project
+    ON ci_project_tasks(company_id, project_id, sort_order);
+  CREATE INDEX IF NOT EXISTS idx_ci_project_tasks_depends
+    ON ci_project_tasks(depends_on);
+`);
+
 // ─── Analytics / perf indexes (run last, after every additive column migration) ─
 // Placed here on purpose: some of these columns (e.g. completions.company_id)
 // are added by guarded ALTERs above, so an index referencing them earlier in the

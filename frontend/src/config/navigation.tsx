@@ -8,6 +8,7 @@ import {
   Boxes, PackageCheck, PackageOpen, Truck, ListChecks,
   GraduationCap,
   Bell, AlertTriangle, Wrench, ClipboardCheck, Lightbulb, BookOpen,
+  FolderKanban,
 } from 'lucide-react';
 import { useModules } from '../context/ModulesContext';
 
@@ -161,10 +162,13 @@ export const SECTIONS: NavSection[] = [
     secondary: true,
     label: 'Kaizen / CI',
     icon: Lightbulb,
-    description: 'Continuous improvement ideas',
+    description: 'Improvement ideas and projects',
     items: [
-      { to: '/kaizen',         icon: Lightbulb, label: 'Kaizen / CI Ideas', module: 'kaizen' },
-      { to: '/reports/kaizen', icon: BarChart3, label: 'Reports',           module: 'kaizen' },
+      { to: '/kaizen',         icon: Lightbulb,   label: 'Kaizen / CI Ideas', module: 'kaizen' },
+      // Ideas are where improvement work starts; projects are where it gets
+      // scheduled, tracked and closed out — same workspace, same module gate.
+      { to: '/ci-projects',    icon: FolderKanban, label: 'Projects',          module: 'kaizen' },
+      { to: '/reports/kaizen', icon: BarChart3,    label: 'Reports',           module: 'kaizen' },
     ],
   },
   {

@@ -72,6 +72,7 @@ const CAPA                 = lazy(() => import('./pages/CAPA'));
 const Maintenance          = lazy(() => import('./pages/Maintenance'));
 const ShiftNotes           = lazy(() => import('./pages/ShiftNotes'));
 const Kaizen               = lazy(() => import('./pages/Kaizen'));
+const CIProjects           = lazy(() => import('./pages/CIProjects'));
 const Admin                = lazy(() => import('./pages/Admin'));
 
 function Spinner() {
@@ -216,6 +217,8 @@ export default function App() {
                 <Route path="/maintenance/:tab" element={<ModuleGate module="maintenance"><Maintenance /></ModuleGate>} />
                 <Route path="/shift-notes" element={<ModuleGate module="shifts"><ShiftNotes /></ModuleGate>} />
                 <Route path="/kaizen" element={<ModuleGate module="kaizen"><Kaizen /></ModuleGate>} />
+                <Route path="/ci-projects" element={<ModuleGate module="kaizen"><CIProjects /></ModuleGate>} />
+                <Route path="/ci-projects/:id" element={<ModuleGate module="kaizen"><CIProjects /></ModuleGate>} />
                 <Route path="/admin" element={<Admin />} />
                 <Route path="*" element={<Navigate to="/dashboard" replace />} />
               </Route>

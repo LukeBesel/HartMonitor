@@ -10,6 +10,7 @@ import type {
   MESTable,
   AndonCall, AndonCallInput, AndonSummary, AndonTeam,
   DepartmentMember, DepartmentMemberInput, DepartmentTeamRole,
+  CIProject, CIProjectTask, CIProjectSummary,
 } from '../types';
 
 const BASE = '/api';
@@ -929,6 +930,34 @@ export const api = {
   updateKaizenIdea: (id: string, data: any) => request<any>(`/kaizen/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   deleteKaizenIdea: (id: string) => request<any>(`/kaizen/${id}`, { method: 'DELETE' }),
   getKaizenSummary: () => request<any>('/kaizen/summary'),
+
+  // ── CI Projects (Kaizen / CI workspace)
+  // A project is where an idea gets executed. Task endpoints are nested under
+  // their project so the server can prove ownership of both ids in one place.
+  getCIProjects: (params?: { status?: string; department_id?: string; kaizen_idea_id?: string; search?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.status)         qs.set('status', params.status);
+    if (params?.department_id)  qs.set('department_id', params.department_id);
+    if (params?.kaizen_idea_id) qs.set('kaizen_idea_id', params.kaizen_idea_id);
+    if (params?.search)         qs.set('search', params.search);
+    const s = qs.toString();
+    return request<CIProject[]>(`/ci-projects${s ? `?${s}` : ''}`);
+  },
+  getCIProject: (id: string) => request<CIProject>(`/ci-projects/${id}`),
+  getCIProjectSummary: () => request<CIProjectSummary>('/ci-projects/summary'),
+  createCIProject: (data: Partial<CIProject>) =>
+    request<CIProject>('/ci-projects', { method: 'POST', body: JSON.stringify(data) }),
+  updateCIProject: (id: string, data: Partial<CIProject>) =>
+    request<CIProject>(`/ci-projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCIProject: (id: string) => request<{ ok: boolean }>(`/ci-projects/${id}`, { method: 'DELETE' }),
+
+  getCIProjectTasks: (projectId: string) => request<CIProjectTask[]>(`/ci-projects/${projectId}/tasks`),
+  createCIProjectTask: (projectId: string, data: Partial<CIProjectTask>) =>
+    request<CIProjectTask>(`/ci-projects/${projectId}/tasks`, { method: 'POST', body: JSON.stringify(data) }),
+  updateCIProjectTask: (projectId: string, taskId: string, data: Partial<CIProjectTask>) =>
+    request<CIProjectTask>(`/ci-projects/${projectId}/tasks/${taskId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCIProjectTask: (projectId: string, taskId: string) =>
+    request<{ ok: boolean }>(`/ci-projects/${projectId}/tasks/${taskId}`, { method: 'DELETE' }),
 
   // ─── Admin (developer-only) ────────────────────────────────────────────────
   getAdminStats: () => request<any>('/admin/stats'),

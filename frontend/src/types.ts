@@ -890,3 +890,74 @@ export interface CompletionValueInput {
   value_type: CompletionValueType;
   value_text?: string | null; value_number?: number | null;
 }
+
+// ── CI Projects (Kaizen / CI workspace) ──────────────────────────────────────
+// These string unions are EXACTLY the CHECK constraints on ci_projects.status
+// and ci_project_tasks.status. Human labels live in a separate map on the page,
+// so the screen can read "On Hold" while the column keeps 'on_hold' — offering a
+// word the column rejects is a 500 on save, and writing one word while reading
+// another creates rows the page can never find.
+
+export type CIProjectStatus = 'planning' | 'active' | 'on_hold' | 'complete' | 'cancelled';
+export type CITaskStatus = 'not_started' | 'in_progress' | 'blocked' | 'done';
+
+export interface CIProjectTask {
+  id: string;
+  company_id?: string;
+  project_id: string;
+  name: string;
+  status: CITaskStatus;
+  assignee_name: string;
+  start_date: string | null;
+  end_date: string | null;
+  progress: number;
+  /** Simple finish-to-start predecessor, always a task in the same project. */
+  depends_on: string | null;
+  depends_on_name?: string | null;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CIProject {
+  id: string;
+  number: string;
+  name: string;
+  description: string;
+  status: CIProjectStatus;
+  department_id: string | null;
+  department_name?: string | null;
+  owner_name: string;
+  /** The Kaizen idea this project was started from, when there was one. */
+  kaizen_idea_id: string | null;
+  kaizen_idea_number?: string | null;
+  kaizen_idea_title?: string | null;
+  start_date: string | null;
+  target_date: string | null;
+  completed_at: string | null;
+  estimated_savings: number;
+  actual_savings: number;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+  // Server rollups over the task list.
+  task_count: number;
+  done_count: number;
+  blocked_count: number;
+  /** null — never 0 — when the project has no tasks to roll up. */
+  progress: number | null;
+  first_task_start?: string | null;
+  last_task_end?: string | null;
+  tasks?: CIProjectTask[];
+}
+
+export interface CIProjectSummary {
+  total: number;
+  by_status: Record<CIProjectStatus, number>;
+  active: number;
+  complete: number;
+  overdue: number;
+  from_ideas: number;
+  estimated_savings: number;
+  actual_savings: number;
+}
