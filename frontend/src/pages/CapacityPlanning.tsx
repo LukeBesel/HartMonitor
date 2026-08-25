@@ -33,6 +33,7 @@ interface WOCapacity {
 }
 
 interface DeptSummary {
+  department_id: string | null;
   name: string;
   color: string;
   headcount: number;
@@ -309,7 +310,7 @@ export default function CapacityPlanning() {
               </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-                {depts.map(dept => <DeptCapacityCard key={dept.name} dept={dept} onSaved={load} canEdit={canEdit} />)}
+                {depts.map(dept => <DeptCapacityCard key={dept.department_id ?? dept.name} dept={dept} onSaved={load} canEdit={canEdit} />)}
               </div>
             )}
           </div>
@@ -336,7 +337,7 @@ export default function CapacityPlanning() {
                 />
                 <Legend wrapperStyle={{ fontSize: 11 }} />
                 {depts.filter(d => d.work_order_count > 0).map(d => (
-                  <Bar key={d.name} dataKey={d.name} stackId="demand" fill={d.color || '#3b82f6'} radius={[0, 0, 0, 0]} />
+                  <Bar key={d.department_id ?? d.name} dataKey={d.department_id ?? d.name} name={d.name} stackId="demand" fill={d.color || '#3b82f6'} radius={[0, 0, 0, 0]} />
                 ))}
                 {totals.availablePerDay > 0 && (
                   <ReferenceLine
@@ -488,7 +489,7 @@ export default function CapacityPlanning() {
               <TrendingUp size={13} /> Calculation Assumptions
             </div>
             <ul className="list-disc list-inside space-y-0.5 text-blue-600">
-              <li>Hours required = remaining quantity × average cycle time (from actual completions, or takt time if no history yet)</li>
+              <li>Hours required = remaining quantity × average cycle time — from actual completions, the work order's takt time when there's no history, or a 20-minute-per-unit estimate when neither is known</li>
               <li>Each work order's hours are spread evenly across the days until its due date; overdue work lands entirely on today</li>
               <li>Available hours = department headcount × 8h shifts — set headcount on each department card above</li>
             </ul>
@@ -504,16 +505,22 @@ function DeptCapacityCard({ dept, onSaved, canEdit }: { dept: DeptSummary; onSav
   const [value, setValue] = useState(String(dept.headcount));
   const [saving, setSaving] = useState(false);
 
+  // Only a real department (one with an id) can have headcount written back.
+  // The "Unassigned" roll-up has no row to save to, so it stays read-only.
+  const editable = canEdit && dept.department_id != null;
+
   const utilization = dept.peak_utilization_pct;
   const barPct = utilization === null ? 100 : Math.min(100, utilization);
   const barColor = dept.status === 'over' ? 'bg-red-500' : dept.status === 'tight' ? 'bg-amber-500' : 'bg-green-500';
 
+  // Write headcount straight to this card's department by id. Resolving by name
+  // (the old behaviour) wrote to the wrong row when two departments shared a name
+  // and silently to none after a rename; the id the endpoint now emits is exact.
   const save = async () => {
+    if (!dept.department_id) return;   // the id-less "Unassigned" bucket is not a real department
     setSaving(true);
     try {
-      const depts = await api.getDepartments();
-      const match = depts.find((d: any) => d.name === dept.name);
-      if (match) await api.updateDepartment(match.id, { headcount: Math.max(0, parseInt(value) || 0) });
+      await api.updateDepartment(dept.department_id, { headcount: Math.max(0, parseInt(value) || 0) });
       setEditing(false);
       onSaved();
     } catch (err: any) {
@@ -534,7 +541,7 @@ function DeptCapacityCard({ dept, onSaved, canEdit }: { dept: DeptSummary; onSav
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {!canEdit ? (
+          {!editable ? (
             <div className="flex items-center gap-1.5 text-sm text-gray-700 px-2 py-1">
               <Users size={13} className="text-gray-400" />
               <span className="font-semibold">{dept.headcount}</span>

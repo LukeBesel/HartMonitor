@@ -210,13 +210,11 @@ router.get('/manager-view', (req, res) => {
     SELECT
       c.id, c.app_id, c.app_name, c.station_id, c.operator_name,
       c.started_at, c.status, c.work_order_id,
-      a.name AS app_name_joined,
       wo.work_order_number, wo.part_name, wo.part_number,
       wo.quantity, wo.quantity_completed, wo.status AS wo_status,
       wo.priority, wo.department_id,
       d.name AS department_name, d.color AS department_color
     FROM completions c
-    LEFT JOIN apps        a  ON a.id  = c.app_id
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN stations    st ON st.id = c.station_id
     LEFT JOIN departments d  ON d.id  = wo.department_id
@@ -344,27 +342,41 @@ router.get('/plant-view', (req, res) => {
   // Department performance. A completion belongs to its work order's department,
   // falling back to its station's department when it ran without a work order.
   const depts = db.prepare(`SELECT * FROM departments WHERE company_id = ?${site_id ? ' AND (site_id = ? OR site_id IS NULL)' : ''}`).all(cid, ...siteParams);
+
+  // Per-department completion stats, computed in two grouped passes instead of
+  // two queries per department (an N+1 that scaled with the department count).
+  // A completion attributes to its work order's department, falling back to its
+  // station's department; runs belonging to no department group under a NULL key
+  // that no real department id ever reads.
+  const todayCountByDept = {};
+  for (const r of db.prepare(`
+    SELECT COALESCE(wo.department_id, st.department_id) AS dept_id, COUNT(*) AS c
+    FROM completions c
+    LEFT JOIN work_orders wo ON wo.id = c.work_order_id
+    LEFT JOIN stations st    ON st.id = c.station_id
+    WHERE c.company_id = ? AND c.status = 'completed' AND date(c.completed_at) = date('now')
+    GROUP BY COALESCE(wo.department_id, st.department_id)
+  `).all(cid)) {
+    if (r.dept_id != null) todayCountByDept[r.dept_id] = r.c;
+  }
+  const avgCycleByDept = {};
+  for (const r of db.prepare(`
+    SELECT COALESCE(wo.department_id, st.department_id) AS dept_id,
+           AVG((julianday(c.completed_at) - julianday(c.started_at)) * 24 * 60) AS avg_minutes
+    FROM completions c
+    LEFT JOIN work_orders wo ON wo.id = c.work_order_id
+    LEFT JOIN stations st    ON st.id = c.station_id
+    WHERE c.company_id = ? AND c.status = 'completed' AND c.completed_at IS NOT NULL
+    GROUP BY COALESCE(wo.department_id, st.department_id)
+  `).all(cid)) {
+    if (r.dept_id != null) avgCycleByDept[r.dept_id] = r.avg_minutes;
+  }
+
   const departmentPerformance = depts.map(dept => {
     const deptWOs = allWOs.filter(wo => wo.department_id === dept.id);
 
-    const completionCountToday = db.prepare(`
-      SELECT COUNT(*) as c
-      FROM completions c
-      LEFT JOIN work_orders wo ON wo.id = c.work_order_id
-      LEFT JOIN stations st    ON st.id = c.station_id
-      WHERE c.company_id = ? AND COALESCE(wo.department_id, st.department_id) = ?
-        AND c.status = 'completed' AND date(c.completed_at) = date('now')
-    `).get(cid, dept.id).c;
-
-    const ctDept = db.prepare(`
-      SELECT AVG((julianday(c.completed_at) - julianday(c.started_at)) * 24 * 60) as avg_minutes
-      FROM completions c
-      LEFT JOIN work_orders wo ON wo.id = c.work_order_id
-      LEFT JOIN stations st    ON st.id = c.station_id
-      WHERE c.company_id = ? AND COALESCE(wo.department_id, st.department_id) = ?
-        AND c.status = 'completed' AND c.completed_at IS NOT NULL
-    `).get(cid, dept.id);
-    const avgCycleDept = ctDept?.avg_minutes ? Math.round(ctDept.avg_minutes) : 0;
+    const completionCountToday = todayCountByDept[dept.id] || 0;
+    const avgCycleDept = avgCycleByDept[dept.id] ? Math.round(avgCycleByDept[dept.id]) : 0;
 
     const onTrack = deptWOs.filter(wo => wo.schedule_status === 'on_track' || wo.schedule_status === 'completed').length;
     const onTrackPct = deptWOs.length > 0 ? Math.round((onTrack / deptWOs.length) * 100) : null;
@@ -475,10 +487,10 @@ router.get('/step-metrics/:appId', (req, res) => {
   const rows = db.prepare(`
     SELECT step_times, takt_exceeded_steps, date(completed_at) as date
     FROM completions
-    WHERE app_id = ? AND status = 'completed' AND completed_at IS NOT NULL
+    WHERE company_id = ? AND app_id = ? AND status = 'completed' AND completed_at IS NOT NULL
       AND completed_at >= date('now', '-' || ? || ' days')
     ORDER BY completed_at ASC
-  `).all(appId, days);
+  `).all(req.companyId, appId, days);
 
   const stepStats = steps.map((step, idx) => {
     const times = [];
@@ -549,15 +561,25 @@ router.get('/capacity', (req, res) => {
     ORDER BY wo.priority DESC, wo.scheduled_end ASC
   `).all(req.companyId);
 
-  const enriched = workOrders.map(wo => {
-    const ctRow = db.prepare(`
-      SELECT AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60) AS avg_minutes
-      FROM completions
-      WHERE work_order_id = ? AND status = 'completed' AND completed_at IS NOT NULL
-    `).get(wo.id);
+  // Average cycle time per work order, computed in one grouped pass instead of a
+  // query per work order (an N+1 that scaled with the open-work-order count).
+  const avgCycleByWO = {};
+  for (const r of db.prepare(`
+    SELECT work_order_id,
+           AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60) AS avg_minutes
+    FROM completions
+    WHERE company_id = ? AND status = 'completed' AND completed_at IS NOT NULL
+      AND work_order_id IS NOT NULL
+    GROUP BY work_order_id
+  `).all(req.companyId)) {
+    avgCycleByWO[r.work_order_id] = r.avg_minutes;
+  }
 
-    const avgCycleMinutes = ctRow?.avg_minutes
-      ? Math.round(ctRow.avg_minutes * 10) / 10
+  const enriched = workOrders.map(wo => {
+    const avgMinutes = avgCycleByWO[wo.id];
+
+    const avgCycleMinutes = avgMinutes
+      ? Math.round(avgMinutes * 10) / 10
       : (wo.takt_time_minutes || 20);
 
     const remaining = Math.max(0, wo.quantity - wo.quantity_completed);
@@ -593,6 +615,7 @@ router.get('/capacity', (req, res) => {
       scheduled_end: wo.scheduled_end,
       priority: wo.priority,
       status: wo.status,
+      department_id: wo.department_id || null,
       department_name: wo.department_name || 'Unassigned',
       department_color: wo.department_color || '#6b7280',
     };
@@ -609,23 +632,33 @@ router.get('/capacity', (req, res) => {
     days.push(d.toISOString().slice(0, 10));
   }
 
+  // Aggregate demand by department *id*, not by name. Two departments can share
+  // a name (or one can be renamed between a page load and a save), so a name key
+  // would merge their loads into one card and — worse — leave the frontend no way
+  // to write headcount back to the right row. Each card therefore carries its
+  // own department_id; work orders with no department fold into one id-less
+  // "Unassigned" bucket that is never editable.
   const allDepts = db.prepare('SELECT * FROM departments WHERE company_id = ? ORDER BY name').all(req.companyId);
+  const blankDept = (department_id, name, color, headcount) => ({
+    department_id, name, color,
+    headcount: headcount || 0,
+    hours_required: 0,
+    work_order_count: 0,
+    demand_by_day: Object.fromEntries(days.map(d => [d, 0])),
+  });
   const deptMap = {};
-  const ensureDept = (name, color, headcount) => {
-    if (!deptMap[name]) deptMap[name] = {
-      name, color,
-      headcount: headcount || 0,
-      hours_required: 0,
-      work_order_count: 0,
-      demand_by_day: Object.fromEntries(days.map(d => [d, 0])),
-    };
-    return deptMap[name];
-  };
-  for (const d of allDepts) ensureDept(d.name, d.color, d.headcount);
+  for (const d of allDepts) deptMap[d.id] = blankDept(d.id, d.name, d.color, d.headcount);
+  let unassigned = null;
 
   for (const wo of enriched) {
     if (wo.hours_required <= 0) continue;
-    const dept = ensureDept(wo.department_name, wo.department_color, 0);
+    let dept;
+    if (wo.department_id && deptMap[wo.department_id]) {
+      dept = deptMap[wo.department_id];
+    } else {
+      if (!unassigned) unassigned = blankDept(null, 'Unassigned', '#6b7280', 0);
+      dept = unassigned;
+    }
     dept.hours_required += wo.hours_required;
     dept.work_order_count += 1;
 
@@ -634,7 +667,7 @@ router.get('/capacity', (req, res) => {
     for (let i = 0; i < spreadDays; i++) dept.demand_by_day[days[i]] += perDay;
   }
 
-  const departments = Object.values(deptMap)
+  const departments = [...Object.values(deptMap), ...(unassigned ? [unassigned] : [])]
     .filter(d => d.work_order_count > 0 || d.headcount > 0)
     .map(d => {
       const availablePerDay = d.headcount * 8;
@@ -646,6 +679,7 @@ router.get('/capacity', (req, res) => {
         (availablePerDay === 0 && peakHours > 0) || (peakUtilization !== null && peakUtilization > 100) ? 'over' :
         peakUtilization !== null && peakUtilization >= 85 ? 'tight' : 'ok';
       return {
+        department_id: d.department_id,
         name: d.name,
         color: d.color,
         headcount: d.headcount,
@@ -660,12 +694,16 @@ router.get('/capacity', (req, res) => {
       };
     });
 
-  // Plant-wide demand timeline, one stacked segment per department
+  // Plant-wide demand timeline, one stacked segment per department. The segment
+  // is keyed by department_id (falling back to the name for the id-less
+  // Unassigned bucket) so two same-named departments stay distinct series
+  // instead of one overwriting the other.
   const timeline = days.map(day => {
     const row = { date: day };
     for (const d of departments) {
+      const segKey = d.department_id || d.name;
       const hours = d.demand_by_day.find(x => x.date === day)?.hours ?? 0;
-      if (hours > 0 || d.work_order_count > 0) row[d.name] = hours;
+      if (hours > 0 || d.work_order_count > 0) row[segKey] = hours;
     }
     return row;
   });
@@ -1043,36 +1081,61 @@ router.get('/department/:id', (req, res) => {
     SELECT wo.*, a.name AS app_name
     FROM work_orders wo
     LEFT JOIN apps a ON a.id = wo.app_id
-    WHERE wo.department_id = ? AND wo.status != 'cancelled'
+    WHERE wo.company_id = ? AND wo.department_id = ? AND wo.status != 'cancelled'
     ORDER BY wo.scheduled_end ASC
-  `).all(dept.id).map(wo => ({
+  `).all(cid, dept.id).map(wo => ({
     ...wo,
     schedule_status: calcScheduleStatus(wo),
     completion_pct: wo.quantity > 0 ? Math.round((wo.quantity_completed / wo.quantity) * 100) : 0,
   }));
   const wosOnTrack = workOrders.filter(wo => ['on_track', 'completed'].includes(wo.schedule_status)).length;
 
-  // Stations in this department with live state
-  const stations = db.prepare('SELECT * FROM stations WHERE department_id = ? ORDER BY name').all(dept.id).map(st => {
-    const activeCompletion = db.prepare(`
-      SELECT id, operator_name, app_name, started_at
-      FROM completions WHERE station_id = ? AND status = 'in_progress'
-      ORDER BY datetime(started_at) DESC LIMIT 1
-    `).get(st.id) || null;
-    const currentApp = st.current_app_id ? db.prepare('SELECT name FROM apps WHERE id = ?').get(st.current_app_id) : null;
-    return {
-      id: st.id,
-      name: st.name,
-      location: st.location,
-      status: st.status,
-      current_status: st.current_status || 'idle',
-      current_status_since: st.current_status_since,
-      current_app_id: st.current_app_id,
-      current_app_name: currentApp?.name || null,
-      active_completion: activeCompletion,
-      oee: calcOEE(st),
-    };
-  });
+  // Stations in this department with live state. The per-station "active run"
+  // and "current app name" lookups are done in one grouped pass each rather than
+  // two queries per station (an N+1); calcOEE stays per-station as it reads that
+  // station's own live event/completion history.
+  const stationRows = db.prepare('SELECT * FROM stations WHERE company_id = ? AND department_id = ? ORDER BY name').all(cid, dept.id);
+  const stationIds = stationRows.map(s => s.id);
+
+  const activeByStation = {};
+  if (stationIds.length) {
+    const ph = stationIds.map(() => '?').join(',');
+    // Ordered newest-first; the first row seen per station is its latest run.
+    for (const r of db.prepare(`
+      SELECT id, station_id, operator_name, app_name, started_at
+      FROM completions
+      WHERE company_id = ? AND status = 'in_progress' AND station_id IN (${ph})
+      ORDER BY datetime(started_at) DESC
+    `).all(cid, ...stationIds)) {
+      if (!activeByStation[r.station_id]) {
+        activeByStation[r.station_id] = {
+          id: r.id, operator_name: r.operator_name, app_name: r.app_name, started_at: r.started_at,
+        };
+      }
+    }
+  }
+
+  const currentAppIds = [...new Set(stationRows.map(s => s.current_app_id).filter(Boolean))];
+  const appNameById = {};
+  if (currentAppIds.length) {
+    const ph = currentAppIds.map(() => '?').join(',');
+    for (const a of db.prepare(`SELECT id, name FROM apps WHERE company_id = ? AND id IN (${ph})`).all(cid, ...currentAppIds)) {
+      appNameById[a.id] = a.name;
+    }
+  }
+
+  const stations = stationRows.map(st => ({
+    id: st.id,
+    name: st.name,
+    location: st.location,
+    status: st.status,
+    current_status: st.current_status || 'idle',
+    current_status_since: st.current_status_since,
+    current_app_id: st.current_app_id,
+    current_app_name: st.current_app_id ? (appNameById[st.current_app_id] || null) : null,
+    active_completion: activeByStation[st.id] || null,
+    oee: calcOEE(st),
+  }));
 
   const hourlyThroughput = db.prepare(`
     SELECT strftime('%Y-%m-%dT%H:00:00', c.completed_at) as hour, COUNT(*) as count
