@@ -261,6 +261,17 @@ router.post('/orders/:id/receive', (req, res) => {
   const now = new Date().toISOString();
   const receivedDescriptions = [];
 
+  // Pre-fetch this PO's line item names once (they don't change mid-receive)
+  // instead of a per-receipt SELECT inside the loop.
+  const itemNameByLine = new Map();
+  for (const row of db.prepare(`
+    SELECT pl.id AS line_id, i.name AS item_name
+    FROM po_lines pl JOIN items i ON i.id = pl.item_id
+    WHERE pl.po_id = ?
+  `).all(req.params.id)) {
+    itemNameByLine.set(row.line_id, row.item_name);
+  }
+
   for (const r of receipts) {
     if (!r.line_id || !r.quantity_received) continue;
     const line = db.prepare('SELECT * FROM po_lines WHERE id = ? AND po_id = ?').get(r.line_id, req.params.id);
@@ -271,7 +282,7 @@ router.post('/orders/:id/receive', (req, res) => {
 
     db.prepare('UPDATE po_lines SET quantity_received = quantity_received + ? WHERE id = ?').run(qty, r.line_id);
 
-    const itemName = db.prepare('SELECT name FROM items WHERE id = ?').get(line.item_id)?.name || 'item';
+    const itemName = itemNameByLine.get(line.id) || 'item';
     receivedDescriptions.push(`${qty} × ${itemName}`);
 
     const locId = r.location_id || location_id;

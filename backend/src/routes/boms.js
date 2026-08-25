@@ -51,12 +51,15 @@ router.get('/', (req, res) => {
   if (product_type_id) { conditions.push('b.product_type_id = ?'); params.push(product_type_id); }
   if (app_id)          { conditions.push('pt.app_id = ?');         params.push(app_id); }
 
+  // One grouped join instead of a correlated COUNT subquery per BOM header.
   const rows = db.prepare(`
     SELECT b.*, pt.name AS product_type_name, pt.app_id,
-           (SELECT COUNT(*) FROM bom_lines bl WHERE bl.bom_id = b.id) AS line_count
+           COUNT(bl.id) AS line_count
     FROM boms b
     JOIN product_types pt ON pt.id = b.product_type_id
+    LEFT JOIN bom_lines bl ON bl.bom_id = b.id
     WHERE ${conditions.join(' AND ')}
+    GROUP BY b.id
     ORDER BY pt.name ASC, b.version DESC
   `).all(...params);
   res.json(rows);

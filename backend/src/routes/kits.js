@@ -144,15 +144,19 @@ router.get('/', requireRole('operator'), (req, res) => {
   if (work_order_id) { conditions.push('k.work_order_id = ?'); params.push(work_order_id); }
   if (status)        { conditions.push('k.status = ?');        params.push(status); }
 
+  // One grouped join over kit_lines instead of four correlated COUNT subqueries
+  // per kit row — the status rollup falls out of conditional aggregation.
   const rows = db.prepare(`
     SELECT k.*, wo.work_order_number, wo.part_name, wo.part_number,
-           (SELECT COUNT(*) FROM kit_lines kl WHERE kl.kit_id = k.id) AS n_total,
-           (SELECT COUNT(*) FROM kit_lines kl WHERE kl.kit_id = k.id AND kl.status = 'verified') AS n_verified,
-           (SELECT COUNT(*) FROM kit_lines kl WHERE kl.kit_id = k.id AND kl.status = 'picked') AS n_picked,
-           (SELECT COUNT(*) FROM kit_lines kl WHERE kl.kit_id = k.id AND kl.status = 'short') AS n_short
+           COUNT(kl.id) AS n_total,
+           COALESCE(SUM(CASE WHEN kl.status = 'verified' THEN 1 ELSE 0 END), 0) AS n_verified,
+           COALESCE(SUM(CASE WHEN kl.status = 'picked'   THEN 1 ELSE 0 END), 0) AS n_picked,
+           COALESCE(SUM(CASE WHEN kl.status = 'short'    THEN 1 ELSE 0 END), 0) AS n_short
     FROM kits k
     JOIN work_orders wo ON wo.id = k.work_order_id
+    LEFT JOIN kit_lines kl ON kl.kit_id = k.id
     WHERE ${conditions.join(' AND ')}
+    GROUP BY k.id
     ORDER BY k.created_at DESC
   `).all(...params);
   res.json(rows.map(r => ({ ...r, has_short: r.n_short > 0 })));
