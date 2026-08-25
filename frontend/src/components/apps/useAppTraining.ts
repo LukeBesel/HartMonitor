@@ -102,7 +102,11 @@ export interface AppTrainingState {
 interface Prefs { dismissed: boolean; collapsed: boolean; dataSeen: boolean }
 
 const DEFAULT_PREFS: Prefs = { dismissed: false, collapsed: false, dataSeen: false };
-const PREFS_EVENT = 'hm:app-training-prefs';
+
+/** Fired whenever a user's training preferences change, so every mounted
+ *  reader — the coach, and the sidebar checklist that stands down while the
+ *  coach is running — reacts in the same tick. */
+export const TRAINING_PREFS_EVENT = 'hm:app-training-prefs';
 
 function prefsKey(userId: string | undefined): string {
   return `hm_app_training_${userId || 'anon'}`;
@@ -130,10 +134,34 @@ function writePrefs(userId: string | undefined, prefs: Prefs): void {
     /* private mode — training still works, it just won't remember */
   }
   try {
-    window.dispatchEvent(new CustomEvent(PREFS_EVENT));
+    window.dispatchEvent(new CustomEvent(TRAINING_PREFS_EVENT));
   } catch {
     /* older browsers — the local component state already updated */
   }
+}
+
+/** This user's training preferences. Exported for the sidebar setup checklist,
+ *  which needs to know whether the coach has been dismissed. */
+export { readPrefs as readTrainingPrefs };
+
+/** The six milestones, derived from account data. Pure, so anything holding the
+ *  same apps/completions can ask the same question without a second fetch. */
+export function trainingMilestones(
+  apps: App[],
+  hasCompletions: boolean,
+  dataSeen: boolean,
+): TrainingMilestone[] {
+  const shapes = apps.map(a => appShape(a));
+  const doneById: Record<TrainingStepId, boolean> = {
+    create: apps.length > 0,
+    steps: shapes.some(s => s.stepCount >= 2),
+    widgets: shapes.some(s => s.widgetCount >= 1),
+    publish: apps.some(a => a.status === 'published'),
+    run: hasCompletions,
+    // Only truthful once there is data to have looked at.
+    data: hasCompletions && dataSeen,
+  };
+  return TRAINING_STEPS.map(def => ({ def, done: doneById[def.id] }));
 }
 
 /** Called by the analytics / run-history surfaces: the user has now seen the
@@ -173,10 +201,10 @@ export function useAppTraining(
   // Keep multiple mounted readers (coach + any page badge) in sync.
   useEffect(() => {
     const sync = () => setPrefs(readPrefs(userId));
-    window.addEventListener(PREFS_EVENT, sync);
+    window.addEventListener(TRAINING_PREFS_EVENT, sync);
     window.addEventListener('storage', sync);
     return () => {
-      window.removeEventListener(PREFS_EVENT, sync);
+      window.removeEventListener(TRAINING_PREFS_EVENT, sync);
       window.removeEventListener('storage', sync);
     };
   }, [userId]);
@@ -199,23 +227,7 @@ export function useAppTraining(
     return () => { cancelled = true; };
   }, [userId, watchKey, nonce, enabled, prefs.dismissed]);
 
-  const shapes = apps.map(a => appShape(a));
-  const hasApp = apps.length > 0;
-  const hasSteps = shapes.some(s => s.stepCount >= 2);
-  const hasWidgets = shapes.some(s => s.widgetCount >= 1);
-  const hasPublished = apps.some(a => a.status === 'published');
-
-  const doneById: Record<TrainingStepId, boolean> = {
-    create: hasApp,
-    steps: hasSteps,
-    widgets: hasWidgets,
-    publish: hasPublished,
-    run: hasCompletions,
-    // Only truthful once there is data to have looked at.
-    data: hasCompletions && prefs.dataSeen,
-  };
-
-  const milestones = TRAINING_STEPS.map(def => ({ def, done: doneById[def.id] }));
+  const milestones = trainingMilestones(apps, hasCompletions, prefs.dataSeen);
   const doneCount = milestones.filter(m => m.done).length;
   const activeIndex = milestones.findIndex(m => !m.done);
 

@@ -460,10 +460,6 @@ export default function ShipmentTracker() {
   const [deleting, setDeleting] = useState<Shipment | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    document.title = 'Shipment Tracker';
-  }, []);
-
   const loadData = async () => {
     try {
       const [shipmentsData, posData] = await Promise.all([

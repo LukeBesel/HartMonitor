@@ -11,28 +11,48 @@ export default function PWAUpdatePrompt() {
 
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return;
+    const sw = navigator.serviceWorker;
+
+    // Read this before awaiting `ready`: a page that loaded without a
+    // controller is either a first-ever install or a hard reload that bypassed
+    // the worker. In both cases the worker claiming the page fires
+    // `controllerchange` even though nothing was updated — there is no earlier
+    // version to move off — so the banner would greet a brand new visitor with
+    // "Update available". A page that was already controlled when it loaded is
+    // the only one where a controller swap really means new code arrived.
+    const wasControlled = !!sw.controller;
+
+    let cancelled = false;
+
+    const onControllerChange = () => {
+      if (wasControlled) setNeedsUpdate(true);
+    };
+    sw.addEventListener('controllerchange', onControllerChange);
 
     // Listen for the controlling SW to change — that's when an update has been
     // applied and the page needs a reload to use the new version.
-    navigator.serviceWorker.ready.then(reg => {
+    sw.ready.then(reg => {
+      if (cancelled) return;
       setRegistration(reg);
 
-      // The SW can signal us via postMessage when it has finished installing.
-      navigator.serviceWorker.addEventListener('controllerchange', () => {
-        setNeedsUpdate(true);
-      });
-
-      // Also watch for an updatefound event — new SW is installing.
+      // Also watch for an updatefound event — new SW is installing. The
+      // controller check is the same idea as above: on a first install there is
+      // no controller yet, so an install is just an install.
       reg.addEventListener('updatefound', () => {
         const newSW = reg.installing;
         if (!newSW) return;
         newSW.addEventListener('statechange', () => {
-          if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+          if (newSW.state === 'installed' && sw.controller) {
             setNeedsUpdate(true);
           }
         });
       });
     });
+
+    return () => {
+      cancelled = true;
+      sw.removeEventListener('controllerchange', onControllerChange);
+    };
   }, []);
 
   function reload() {

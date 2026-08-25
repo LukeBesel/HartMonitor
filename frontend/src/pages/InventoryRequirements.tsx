@@ -246,10 +246,6 @@ export default function InventoryRequirements() {
   const [showShortagesOnly, setShowShortagesOnly] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    document.title = 'Materials Required';
-  }, []);
-
   const loadData = async () => {
     try {
       const result = await api.getInventoryRequirements();

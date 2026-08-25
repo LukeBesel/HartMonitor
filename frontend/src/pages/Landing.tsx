@@ -313,7 +313,6 @@ export default function Landing() {
 
   useEffect(() => {
     api.getPublicPricing().then(setPricing).catch(() => {});
-    document.title = 'HartMonitor — Manufacturing Execution System';
   }, []);
 
   const fmt = (p: number | null) => (p === null ? 'Custom' : p === 0 ? '$0' : `$${p}`);
