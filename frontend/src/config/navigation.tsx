@@ -25,6 +25,12 @@ export type NavItem = {
   /** Composable-MES module this item belongs to (key from the module registry
    *  in ModulesContext). Items without a module are always shown. */
   module?: string;
+  /** HartMonitor's own operator tooling — never a customer's to see, whatever
+   *  role their workspace gave them. Gated on the user's is_platform_staff
+   *  flag, deliberately not on `minRole`: 'developer' is the role every brand
+   *  new signup's first user gets, so a role gate would show this to every
+   *  customer owner on their first visit. */
+  platformStaffOnly?: boolean;
 };
 
 // Listed in sidebar order: the five primary workspaces, then the four that sit
@@ -190,7 +196,7 @@ export const SECTIONS: NavSection[] = [
       { to: '/facilities',       icon: Network,     label: 'Facilities',       minRole: 'manager', enterpriseOnly: true, module: 'production' },
       { to: '/transaction-log',  icon: History,     label: 'Transaction Log',  minRole: 'supervisor', module: 'analytics' },
       { to: '/audit-log',        icon: AlertTriangle, label: 'Audit Log',      minRole: 'supervisor' },
-      { to: '/admin',            icon: ShieldCheck, label: 'Admin Dashboard',   minRole: 'developer' },
+      { to: '/admin',            icon: ShieldCheck, label: 'Admin Dashboard',   platformStaffOnly: true },
     ],
   },
 ];
@@ -247,7 +253,13 @@ export function findSectionForPath(
   return best;
 }
 
-export const ALL_SECTION_ITEMS: NavItem[] = SECTIONS.flatMap(s => s.items);
+// Every nav item a CUSTOMER can be given, which is what the per-role permission
+// grid in Settings edits. Platform-staff items are excluded on purpose: no role
+// permission can grant HartMonitor's own tooling, so offering a toggle for it
+// would be a lie — and putting the row on screen at all would tell every
+// customer that the console exists.
+export const ALL_SECTION_ITEMS: NavItem[] =
+  SECTIONS.flatMap(s => s.items).filter(i => !i.platformStaffOnly);
 
 // Icon used for the "All" workspace option (kept for backwards compatibility but not used in UI).
 export const ALL_WORKSPACE_ICON = Layers;

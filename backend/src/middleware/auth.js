@@ -35,7 +35,8 @@ function requireAuth(req, res, next) {
   }
   const row = db.prepare(`
     SELECT s.id as session_id, s.user_id, s.expires_at,
-           u.email, u.display_name, u.role, u.is_active, u.company_id
+           u.email, u.display_name, u.role, u.is_active, u.company_id,
+           u.is_platform_staff
     FROM sessions s JOIN users u ON u.id = s.user_id
     WHERE s.token = ? AND s.expires_at > datetime('now') AND u.is_active = 1
   `).get(token);
@@ -51,6 +52,7 @@ function requireAuth(req, res, next) {
   req.user = {
     id: row.user_id, email: row.email, display_name: row.display_name,
     role: row.role, session_id: row.session_id, company_id: row.company_id,
+    is_platform_staff: row.is_platform_staff === 1,
   };
   req.companyId = row.company_id;
   next();
@@ -72,4 +74,21 @@ function requireRole(minRole) {
   };
 }
 
-module.exports = { requireAuth, requireRole, hashPassword, verifyPassword, generateToken, ROLE_LEVELS };
+// ─── Platform-staff guard ─────────────────────────────────────────────────────
+// Guards the cross-tenant operator console. Deliberately NOT a role check: the
+// highest company role ('developer') is what every brand-new signup gets, so
+// gating on it would hand the console to every customer owner. Answers 404
+// rather than 403 — a customer poking at /api/admin should learn nothing about
+// whether platform tooling exists, and the shape of the reply matches any other
+// unrouted path.
+
+function requirePlatformStaff(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
+  if (!req.user.is_platform_staff) return res.status(404).json({ error: 'Not found' });
+  next();
+}
+
+module.exports = {
+  requireAuth, requireRole, requirePlatformStaff,
+  hashPassword, verifyPassword, generateToken, ROLE_LEVELS,
+};

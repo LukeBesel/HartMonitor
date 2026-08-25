@@ -578,6 +578,41 @@ db.exec(`
   if (!ssoCols.includes('sso_provider')) db.exec("ALTER TABLE users ADD COLUMN sso_provider TEXT DEFAULT ''");
 }
 
+// ─── Migrations: platform-staff flag on users ─────────────────────────────
+// `role` says what someone may do INSIDE their own company, and the first user
+// of a brand-new signup is given 'developer' so they can configure their own
+// workspace. That word used to double as "HartMonitor employee", which meant
+// every new customer owner was quietly handed the cross-tenant operator
+// console. The two ideas are separate now: is_platform_staff marks a
+// HartMonitor operator, is never writable through any API, and no signup or
+// invite path touches it. See applyPlatformStaffRoster() below.
+{
+  const staffCols = db.prepare('PRAGMA table_info(users)').all().map(r => r.name);
+  if (!staffCols.includes('is_platform_staff')) {
+    db.exec('ALTER TABLE users ADD COLUMN is_platform_staff INTEGER NOT NULL DEFAULT 0');
+  }
+}
+
+// The only way in is the deployment's own environment: PLATFORM_STAFF_EMAILS is
+// a comma-separated allowlist that only whoever controls the server can set. It
+// is authoritative when present — emails on it are granted, everyone else is
+// revoked — so removing a departed operator from the list actually takes the
+// access away on the next restart. When the variable is absent we leave the
+// column untouched, which keeps a hand-set flag working for self-hosters who
+// would rather manage it in the database.
+function applyPlatformStaffRoster() {
+  const raw = process.env.PLATFORM_STAFF_EMAILS;
+  if (raw === undefined || raw === null) return;
+  const emails = String(raw).split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+  const sync = db.transaction(() => {
+    db.prepare('UPDATE users SET is_platform_staff = 0 WHERE is_platform_staff = 1').run();
+    const grant = db.prepare('UPDATE users SET is_platform_staff = 1 WHERE email = ?');
+    for (const email of emails) grant.run(email);
+  });
+  sync();
+}
+applyPlatformStaffRoster();
+
 // ─── Migrations: company_id on every directly-scoped table ────────────────────
 // Child tables (table_records, machine_events, stock_levels, stock_movements,
 // po_lines, ncr_comments, sessions) scope through their parent instead.
@@ -2178,7 +2213,29 @@ db.exec(`
     db.exec('ALTER TABLE completions ADD COLUMN operator_user_id TEXT REFERENCES users(id) ON DELETE SET NULL');
   if (!cCols.includes('kit_id'))
     db.exec('ALTER TABLE completions ADD COLUMN kit_id TEXT');
+  // Last time anyone touched this run — set on every autosave flush, step
+  // change and status change, including the keepalive flush the player fires
+  // on pagehide. `started_at` alone cannot answer "is this run still alive?":
+  // a job legitimately worked for ten hours and a job abandoned ten hours ago
+  // look identical by start time. NULL on rows written before this column
+  // existed, so every reader falls back to started_at.
+  if (!cCols.includes('last_activity_at'))
+    db.exec('ALTER TABLE completions ADD COLUMN last_activity_at TEXT');
+  // Why a run ended up 'abandoned'. The status column's CHECK allows exactly
+  // three words and a CHECK cannot be altered in place, so the reaper cannot
+  // invent a fourth status — it writes 'abandoned' and records the reason
+  // here instead. '' on legacy rows (we genuinely do not know), 'operator'
+  // when a person pressed Abandon, 'stale_timeout' when the sweeper closed it.
+  if (!cCols.includes('abandoned_reason'))
+    db.exec("ALTER TABLE completions ADD COLUMN abandoned_reason TEXT NOT NULL DEFAULT ''");
 }
+
+// The reaper scans for open runs by age; without this the sweep is a full table
+// scan on every pass.
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_completions_open
+    ON completions(status, last_activity_at);
+`);
 
 // ─── BOM / Kitting / structured completion capture (app-platform v2) ─────────
 

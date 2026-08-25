@@ -15,6 +15,16 @@ import type {
 
 const BASE = '/api';
 
+/** An unused password-reset link an admin can hand to a locked-out user when
+ *  the deployment has no SMTP configured. */
+export interface PendingReset {
+  id: string;
+  user_email: string;
+  reset_url: string;
+  expires_at: string;
+  created_at: string;
+}
+
 // On native (iOS/Android), cookies don't work across origins so we inject
 // the token as an Authorization header instead. Set by AuthContext after login.
 let _nativeToken: string | null = null;
@@ -970,6 +980,9 @@ export const api = {
     request<{ ok: boolean }>(`/ci-projects/${projectId}/tasks/${taskId}`, { method: 'DELETE' }),
 
   // ─── Admin (developer-only) ────────────────────────────────────────────────
+  /** Reset links for THIS company, for self-hosted recovery when SMTP is off.
+   *  Company-scoped on the server; returns [] when email is configured. */
+  getPendingResets: () => request<PendingReset[]>('/admin/pending-resets'),
   getAdminStats: () => request<any>('/admin/stats'),
   getAdminCompanies: (params?: { search?: string; plan?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams();
