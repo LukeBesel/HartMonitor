@@ -84,7 +84,12 @@ function requireRole(minRole) {
 
 function requirePlatformStaff(req, res, next) {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });
-  if (!req.user.is_platform_staff) return res.status(404).json({ error: 'Not found' });
+  // Byte-for-byte the catch-all 404 in index.js, `code` included. A refusal
+  // that is merely a 404 but shaped differently from a genuinely unrouted path
+  // still tells a prober that something is there — the point is that the
+  // console must be indistinguishable from a URL that does not exist. Keep
+  // these two responses identical if either ever changes.
+  if (!req.user.is_platform_staff) return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
   next();
 }
 

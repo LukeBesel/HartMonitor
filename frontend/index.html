@@ -26,6 +26,26 @@
         if (localStorage.getItem('hm_dark_mode') === 'true') {
           document.documentElement.classList.add('dark');
         }
+        // The tenant's brand colours, for the same reason. These are applied by
+        // a React effect too, which runs AFTER first paint — so a company on any
+        // non-default theme got 25-75ms of HartMonitor's own pink and midnight
+        // sidebar on every cold load, then a visible snap to their own brand.
+        // Only the raw stored values are set here; ThemeContext derives the
+        // contrast-safe --accent family from them a moment later, and setting
+        // the same properties again is a no-op when they already match.
+        var savedTheme = localStorage.getItem('hm_theme');
+        if (savedTheme) {
+          var t = JSON.parse(savedTheme);
+          var root = document.documentElement;
+          var vars = {
+            '--accent': t.accent, '--accent-dark': t.accentDark,
+            '--accent-light': t.accentLight, '--sidebar-bg': t.sidebarBg,
+            '--secondary': t.secondary || t.accent,
+            '--secondary-dark': t.secondaryDark || t.accentDark,
+            '--secondary-light': t.secondaryLight || t.accentLight,
+          };
+          for (var k in vars) if (vars[k]) root.style.setProperty(k, vars[k]);
+        }
       } catch (e) {}
     </script>
   </head>

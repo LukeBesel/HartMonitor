@@ -114,7 +114,13 @@ router.get('/app/:appId/history', (req, res) => {
   const agg = db.prepare(`
     SELECT
       COUNT(*)                                                  AS total_runs,
-      AVG(${DURATION_SQL})                                      AS avg_duration,
+      -- Averaged over the SAME runs best_time is taken from. Averaging
+      -- unfiltered while the minimum filtered out zeros gave the same missing
+      -- data two different answers on one screen: "0s Avg Hands-On Time"
+      -- sitting next to "— Best Time · no run has been timed yet". A run with
+      -- no recorded duration was never timed; it is not a run that took zero
+      -- seconds, and it must not drag an average toward zero.
+      AVG(CASE WHEN ${DURATION_SQL} > 0 THEN ${DURATION_SQL} END) AS avg_duration,
       MIN(CASE WHEN ${DURATION_SQL} > 0 THEN ${DURATION_SQL} END) AS best_time,
       SUM(CASE WHEN ${HAS_FAIL} THEN 1 ELSE 0 END)              AS fail_count,
       SUM(CASE WHEN ${HAS_FAIL} THEN 0 WHEN ${HAS_PASS} THEN 1 ELSE 0 END) AS pass_count

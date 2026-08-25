@@ -31,6 +31,11 @@ import PageHeader from '../components/shared/PageHeader';
 import StatCard from '../components/shared/StatCard';
 import DashboardFilterBar, { FilterOption } from '../components/shared/DashboardFilterBar';
 import EmptyState from '../components/shared/EmptyState';
+// The SECONDS-based formatter, shared with the App Dashboard. This file used to
+// declare its own `fmtDuration(m: number)` taking MINUTES, which shadowed it —
+// feeding it a seconds value rendered a seven-minute cycle as "7.5h". One
+// formatter, one unit, no shadowing.
+import { fmtDuration } from '../components/apps/appModel';
 import {
   LayoutDashboard, Tablet, AppWindow, CalendarRange,
   GitBranch, ShieldCheck, Bell, Database, Sparkles,
@@ -58,7 +63,10 @@ interface PlantViewData {
     department: string;
     color: string;
     completion_count: number;
+    /** Whole minutes; 0 for anything under 30 seconds. Do not render it. */
     avg_cycle_time: number;
+    /** The one to render. null when this department has finished nothing. */
+    avg_cycle_seconds: number | null;
     takt_time: number;
     on_track_count: number;
     total_count: number;
@@ -73,7 +81,9 @@ interface PlantViewData {
   }>;
   recent_completions: Array<{
     id: string; app_name: string; operator_name: string;
-    department: string; completed_at: string; duration_minutes: number; status: string;
+    department: string; completed_at: string; duration_minutes: number;
+    /** The one to render: a six-second run is "6s", not "0.1m". */
+    duration_seconds: number | null; status: string;
   }>;
 }
 
@@ -81,9 +91,6 @@ const WO_COLORS: Record<string, string> = {
   on_track: '#22c55e', at_risk: '#f59e0b', behind: '#ef4444', not_started: '#94a3b8',
 };
 
-function fmtDuration(m: number) {
-  return m < 60 ? `${m.toFixed(1)}m` : `${(m / 60).toFixed(1)}h`;
-}
 function fmtAgo(iso: string) {
   const d = Date.now() - new Date(iso).getTime();
   if (d < 60000) return 'just now';
@@ -225,7 +232,7 @@ function CustomizePanel({
 
 export default function Dashboard() {
   const { user, isAtLeast } = useAuth();
-  const { selectedSiteId } = useSite();
+  const { selectedSiteId, loading: sitesLoading } = useSite();
   const [brief, setBrief] = useState<ScopedBrief | null>(null);
   // The header subtitle used to re-fetch the whole company settings bag on every
   // poll tick just to read one name off it. The branding provider already has it.
@@ -353,8 +360,14 @@ export default function Dashboard() {
 
   // Live data: the brief moves slowly (60s), the floor moves fast (30s). Both
   // pause while the tab is hidden and catch up the moment it comes back.
-  const briefRefresh = useAutoRefresh(loadData, 60_000);
-  const plantRefresh = useAutoRefresh(loadPlantData, 30_000);
+  // Both loaders wait for the site context. Firing before it resolves cost a
+  // wasted round trip per page load — the brief was fetched once unscoped and
+  // again a few milliseconds later with ?site_id= — and the first answer was
+  // for the wrong scope, so for a moment the screen showed plant-wide numbers
+  // under a site-scoped heading.
+  const scopeReady = !sitesLoading;
+  const briefRefresh = useAutoRefresh(loadData, 60_000, { enabled: scopeReady, immediate: scopeReady });
+  const plantRefresh = useAutoRefresh(loadPlantData, 30_000, { enabled: scopeReady, immediate: scopeReady });
   const refreshAll = () => { void briefRefresh.refresh(); void plantRefresh.refresh(); };
 
   // A help request raised on any tablet appears here at once — the 60s poll
@@ -1014,11 +1027,11 @@ export default function Dashboard() {
                             </div>
                             <div className="space-y-1">
                               <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                                <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.min(100, dept.takt_time > 0 ? (dept.avg_cycle_time / dept.takt_time) * 100 : 0)}%` }} />
+                                <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.min(100, dept.takt_time > 0 && dept.avg_cycle_seconds != null ? (dept.avg_cycle_seconds / 60 / dept.takt_time) * 100 : 0)}%` }} />
                               </div>
                               <div className="flex justify-between text-[11px] text-gray-400">
                                 <span>{onTrackPct === null ? 'No work orders' : `${onTrackPct}% on track`}</span>
-                                <span>{dept.avg_cycle_time > 0 ? `${dept.avg_cycle_time.toFixed(1)}m avg` : 'no runs yet'}</span>
+                                <span>{dept.avg_cycle_seconds != null ? `${fmtDuration(dept.avg_cycle_seconds)} avg` : 'no runs yet'}</span>
                               </div>
                             </div>
                           </div>
@@ -1108,7 +1121,7 @@ export default function Dashboard() {
                                 <td className="py-2 pr-3 font-medium text-gray-900 truncate max-w-[120px]">{c.app_name}</td>
                                 <td className="py-2 pr-3 text-gray-600">{c.operator_name}</td>
                                 <td className="py-2 pr-3 text-gray-500">{c.department}</td>
-                                <td className="py-2 pr-3 text-gray-700 tabular-nums">{fmtDuration(c.duration_minutes)}</td>
+                                <td className="py-2 pr-3 text-gray-700 tabular-nums">{c.duration_seconds != null ? fmtDuration(c.duration_seconds) : '—'}</td>
                                 <td className="py-2 text-gray-400">{fmtAgo(c.completed_at)}</td>
                               </tr>
                             ))}

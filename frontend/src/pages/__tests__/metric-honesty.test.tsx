@@ -218,3 +218,50 @@ describe('Analytics refuses to invent metrics', () => {
     expect(screen.getByText(/12s avg/)).toBeTruthy();
   });
 });
+
+// ─── One formatter, one unit ─────────────────────────────────────────────────
+// The Command Center declared its own `fmtDuration(m: number)` taking MINUTES,
+// which shadowed the shared seconds-based one imported everywhere else. When
+// the KPI was switched to the new `avg_cycle_seconds` field, the call site
+// moved but the formatter did not — so 451 seconds rendered as "7.5h" on the
+// most-viewed screen in the product. This pins the unit contract.
+
+describe('the shared duration formatter is the only one', () => {
+  it('renders a seven-and-a-half-minute cycle as minutes, never hours', () => {
+    // The exact value the audit measured on the public demo.
+    expect(fmtDuration(451)).toBe('7m 31s');
+    expect(fmtDuration(451)).not.toContain('h');
+  });
+
+  it('keeps a sub-minute cycle in seconds', () => {
+    // A press, a pick-place or a visual check is routinely under a minute.
+    expect(fmtDuration(6)).toBe('6s');
+    expect(fmtDuration(12)).toBe('12s');
+    expect(fmtDuration(59)).toBe('59s');
+  });
+
+  it('only reaches hours at an hour', () => {
+    expect(fmtDuration(3599)).toBe('59m 59s');
+    expect(fmtDuration(3600)).toBe('1h');
+    expect(fmtDuration(27060)).toBe('7h 31m');
+  });
+
+  it('says nothing rather than zero when there is nothing to say', () => {
+    expect(fmtDuration(null)).toBe('—');
+    expect(fmtDuration(undefined)).toBe('—');
+  });
+
+  it('Dashboard.tsx declares no duration formatter of its own', async () => {
+    // The real guard: a second formatter in that file would shadow the import
+    // again, silently, and no assertion above would notice.
+    // `import.meta.url` is not a file: URL under the vitest transform, so
+    // resolve from the project root instead.
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const src = await fs.readFile(
+      path.resolve(process.cwd(), 'src/pages/Dashboard.tsx'), 'utf8',
+    );
+    expect(src).not.toMatch(/function\s+fmtDuration\s*\(/);
+    expect(src).toMatch(/import \{ fmtDuration \} from '\.\.\/components\/apps\/appModel'/);
+  });
+});

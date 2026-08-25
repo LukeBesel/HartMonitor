@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import {
   Settings,
   Palette,
@@ -69,6 +69,7 @@ import PendingResetsPanel from '../components/shared/PendingResetsPanel';
 import { api } from '../api/client';
 import Toggle from '../components/shared/Toggle';
 import type { PlanTier, AddonPricing, Site, NotificationPrefs, NotificationLogEntry, RolePermissionMap, AppRole, ApiKey, Webhook, WebhookDelivery } from '../types';
+import { deriveAccentTokens } from '../utils/contrast';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1156,6 +1157,13 @@ function PlanTab() {
 
 function ThemeTab() {
   const { theme, setTheme, darkMode, setDarkMode } = useTheme();
+  // The preview is captioned "How your colors look across UI elements", so it
+  // has to show what the app actually renders. It used to paint `theme.accent`
+  // raw, which is the colour the picker returned, not the contrast-safe family
+  // the app derives from it — so the panel showed white-on-pink at 3.53:1 that
+  // no screen in the product has, and for a light hand-typed hex it went as low
+  // as 1.19:1. Same derivation as the live app, same theme.
+  const preview = useMemo(() => deriveAccentTokens(theme.accent, darkMode), [theme.accent, darkMode]);
   const { user } = useAuth();
   const isDeveloper = user?.role === 'developer';
   const [confirmTheme, setConfirmTheme] = useState<Theme | null>(null);
@@ -1320,8 +1328,8 @@ function ThemeTab() {
 
             {/* Primary button */}
             <button
-              className="px-4 py-2 rounded-lg text-white text-sm font-medium shadow-sm"
-              style={{ backgroundColor: theme.accent }}
+              className="px-4 py-2 rounded-lg text-sm font-medium shadow-sm"
+              style={{ backgroundColor: preview.accent, color: preview.accentFg }}
             >
               Primary Action
             </button>
@@ -1330,8 +1338,8 @@ function ThemeTab() {
             <button
               className="px-4 py-2 rounded-lg text-sm font-medium border"
               style={{
-                color: theme.accent,
-                borderColor: theme.accent,
+                color: preview.accentInk,
+                borderColor: preview.accent,
                 backgroundColor: theme.accentLight,
               }}
             >
@@ -1341,7 +1349,7 @@ function ThemeTab() {
             {/* Badge */}
             <div
               className="px-2.5 py-1 rounded-full text-xs font-semibold"
-              style={{ backgroundColor: theme.accentLight, color: theme.accentDark }}
+              style={{ backgroundColor: theme.accentLight, color: preview.accentInk }}
             >
               Active
             </div>
@@ -1349,14 +1357,14 @@ function ThemeTab() {
             {/* Nav item simulation */}
             <div
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
-              style={{ backgroundColor: theme.accentLight, color: theme.accent }}
+              style={{ backgroundColor: theme.accentLight, color: preview.accentInk }}
             >
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: theme.accent }} />
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: preview.accentGlow }} />
               Nav Item
             </div>
 
             {/* Link */}
-            <span className="text-sm font-medium" style={{ color: theme.accent }}>
+            <span className="text-sm font-medium" style={{ color: preview.accentInk }}>
               Hyperlink →
             </span>
           </div>

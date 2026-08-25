@@ -493,7 +493,13 @@ router.get('/plant-view', (req, res) => {
     const deptWOs = allWOs.filter(wo => wo.department_id === dept.id);
 
     const completionCountToday = todayCountByDept[dept.id] || 0;
-    const avgCycleDept = avgCycleByDept[dept.id] ? Math.round(avgCycleByDept[dept.id]) : 0;
+    // Seconds, and null when there is genuinely nothing to average. Rounding to
+    // whole minutes made a department averaging 4 seconds indistinguishable
+    // from one that has never run — the screen said "116 done today" and "no
+    // runs yet" side by side.
+    const rawAvgDept = avgCycleByDept[dept.id];
+    const avgCycleSecondsDept = rawAvgDept != null ? Math.round(rawAvgDept * 60) : null;
+    const avgCycleDept = avgCycleSecondsDept === null ? 0 : Math.round(rawAvgDept);
 
     const onTrack = deptWOs.filter(wo => wo.schedule_status === 'on_track' || wo.schedule_status === 'completed').length;
     const onTrackPct = deptWOs.length > 0 ? Math.round((onTrack / deptWOs.length) * 100) : null;
@@ -511,7 +517,10 @@ router.get('/plant-view', (req, res) => {
       department:       dept.name,
       color:            dept.color,
       completion_count: completionCountToday,
+      /** Whole minutes; 0 for anything under 30 seconds. Do not render it. */
       avg_cycle_time:   avgCycleDept,
+      /** The one to render. null when nothing in this department has finished. */
+      avg_cycle_seconds: avgCycleSecondsDept,
       takt_time:        taktTime,
       on_track_count:   onTrack,
       total_count:      deptWOs.length,
@@ -567,7 +576,10 @@ router.get('/plant-view', (req, res) => {
       operator_name:    c.operator_name,
       department:       c.department_name || 'Unassigned',
       completed_at:     c.completed_at || c.started_at,
+      /** Whole-ish minutes, kept for anything already reading it. */
       duration_minutes: durationMinutes,
+      /** The one to render: a six-second run is "6s", not "0.1m". */
+      duration_seconds: durationMinutes != null ? Math.round(durationMinutes * 60) : null,
       status:           c.status,
     };
   });
