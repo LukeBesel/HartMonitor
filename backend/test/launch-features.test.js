@@ -71,12 +71,16 @@ test('password reset: request → reset → login with new password; token is si
   assert.equal(unknown.status, 200);
   assert.equal(unknown.json.ok, true);
 
-  // Real email: with no SMTP configured we get a dev_reset_url back.
+  // Real email: the token must NOT be returned to the caller (that was an
+  // account-takeover hole). With no SMTP, an admin recovers it from the
+  // admin-only pending-resets endpoint. Log in to get a session first.
   const forgot = await api('POST', '/api/auth/forgot-password', { body: { email } });
   assert.equal(forgot.status, 200);
-  assert.ok(forgot.json.dev_reset_url, 'dev_reset_url returned when SMTP is off');
-  const token = forgot.json.dev_reset_url.split('token=')[1];
-  assert.ok(token && token.length > 20, 'reset token present');
+  assert.equal(forgot.json.dev_reset_url, undefined, 'forgot-password must not leak the reset token');
+  const sess1 = (await api('POST', '/api/auth/login', { body: { email, password: 'originalpass1' } })).json.token;
+  const pending1 = await api('GET', '/api/admin/pending-resets', { token: sess1 });
+  const token = new URL(pending1.json.find(p => p.user_email === email).reset_url).searchParams.get('token');
+  assert.ok(token && token.length > 20, 'reset token retrievable by an admin');
 
   // Reset to a new password.
   const reset = await api('POST', '/api/auth/reset-password', { body: { token, new_password: 'brandnewpass2' } });
@@ -96,7 +100,10 @@ test('password reset: request → reset → login with new password; token is si
 
   // Too-short passwords are rejected.
   const forgot2 = await api('POST', '/api/auth/forgot-password', { body: { email } });
-  const token2 = forgot2.json.dev_reset_url.split('token=')[1];
+  assert.equal(forgot2.json.dev_reset_url, undefined, 'still no token leak on a second request');
+  const sess2 = (await api('POST', '/api/auth/login', { body: { email, password: 'brandnewpass2' } })).json.token;
+  const pending2 = await api('GET', '/api/admin/pending-resets', { token: sess2 });
+  const token2 = new URL(pending2.json.find(p => p.user_email === email).reset_url).searchParams.get('token');
   const weak = await api('POST', '/api/auth/reset-password', { body: { token: token2, new_password: 'short' } });
   assert.equal(weak.status, 400);
 });
