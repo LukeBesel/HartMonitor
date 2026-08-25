@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, ArrowLeft, ArrowRight, Check } from 'lucide-react';
 import { getWalkthrough, WalkthroughStep } from '../../config/walkthroughs';
+import { LIGHT_GROUND, readableInk, shiftUntilReadable } from '../../utils/contrast';
 
 export interface OverviewItem {
   icon: React.ElementType;
@@ -157,9 +158,9 @@ function PagedWalkthrough({
         >
           <div
             className="w-11 h-11 rounded-xl flex items-center justify-center shadow-md flex-shrink-0"
-            style={{ backgroundColor: color }}
+            style={{ backgroundColor: color, color: readableInk(color) }}
           >
-            <ModuleIcon size={22} className="text-white" />
+            <ModuleIcon size={22} />
           </div>
           <div className="min-w-0">
             <div className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
@@ -170,7 +171,7 @@ function PagedWalkthrough({
           <button
             onClick={onDismiss}
             aria-label="Close walkthrough"
-            className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"
+            className="absolute top-1.5 right-1.5 w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:text-gray-800 hover:bg-black/5 transition-colors"
           >
             <X size={18} />
           </button>
@@ -184,12 +185,16 @@ function PagedWalkthrough({
                 key={i}
                 onClick={() => setIndex(i)}
                 aria-label={`Go to step ${i + 1}`}
-                className="h-1.5 rounded-full transition-all"
-                style={{
-                  width: i === index ? 24 : 8,
-                  backgroundColor: i === index ? color : `${color}33`,
-                }}
-              />
+                className="h-6 min-w-[24px] flex items-center justify-center"
+              >
+                <span
+                  className="h-1.5 rounded-full transition-all block"
+                  style={{
+                    width: i === index ? 24 : 8,
+                    backgroundColor: i === index ? color : `${color}33`,
+                  }}
+                />
+              </button>
             ))}
           </div>
           <span className="text-xs font-medium text-gray-400 whitespace-nowrap">
@@ -206,7 +211,7 @@ function PagedWalkthrough({
               <div className="flex items-start gap-3 mb-3">
                 <div
                   className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
-                  style={{ backgroundColor: `${color}1a`, color }}
+                  style={{ backgroundColor: `${color}1a`, color: shiftUntilReadable(color, LIGHT_GROUND) }}
                 >
                   <StepIcon size={18} />
                 </div>
@@ -236,7 +241,7 @@ function PagedWalkthrough({
         <div className="px-7 pb-6 pt-2 flex items-center justify-between gap-3">
           <button
             onClick={onDismiss}
-            className="text-xs font-medium text-gray-400 hover:text-gray-600 transition-colors"
+            className="-mx-2 px-2 h-8 flex items-center rounded-lg text-xs font-medium text-gray-500 hover:text-gray-800 hover:bg-black/5 transition-colors"
           >
             Skip tour
           </button>
@@ -251,8 +256,8 @@ function PagedWalkthrough({
             </button>
             <button
               onClick={goNext}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold text-white transition-opacity hover:opacity-90"
-              style={{ backgroundColor: color }}
+              className="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-semibold transition-opacity hover:opacity-90"
+              style={{ backgroundColor: color, color: readableInk(color) }}
             >
               {isLast ? (
                 <>
@@ -295,7 +300,7 @@ function OverviewPage({
           >
             <div
               className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center"
-              style={{ backgroundColor: `${color}1a`, color }}
+              style={{ backgroundColor: `${color}1a`, color: shiftUntilReadable(color, LIGHT_GROUND) }}
             >
               <ItemIcon size={16} />
             </div>
@@ -356,9 +361,9 @@ function LegacyCard({
           </button>
           <div
             className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4 shadow-lg"
-            style={{ backgroundColor: color }}
+            style={{ backgroundColor: color, color: readableInk(color) }}
           >
-            <Icon size={28} className="text-white" />
+            <Icon size={28} />
           </div>
           <h2 className="text-xl font-bold text-gray-900 mb-1">{title}</h2>
           <p className="text-sm text-gray-600 leading-relaxed max-w-[440px]">{description}</p>
@@ -373,8 +378,8 @@ function LegacyCard({
             {steps.map((step, i) => (
               <li key={i} className="flex items-start gap-3">
                 <span
-                  className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-white text-xs font-bold mt-0.5"
-                  style={{ backgroundColor: color }}
+                  className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold mt-0.5"
+                  style={{ backgroundColor: color, color: readableInk(color) }}
                 >
                   {i + 1}
                 </span>
@@ -398,7 +403,7 @@ function LegacyCard({
                 >
                   <div
                     className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center"
-                    style={{ backgroundColor: `${color}1a`, color }}
+                    style={{ backgroundColor: `${color}1a`, color: shiftUntilReadable(color, LIGHT_GROUND) }}
                   >
                     <ItemIcon size={16} />
                   </div>
@@ -416,8 +421,8 @@ function LegacyCard({
         <div className="px-7 pt-4 pb-6 flex flex-col gap-3">
           <button
             onClick={onDismiss}
-            className="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-colors"
-            style={{ backgroundColor: color }}
+            className="w-full py-2.5 rounded-xl text-sm font-semibold transition-colors"
+            style={{ backgroundColor: color, color: readableInk(color) }}
           >
             Got it, let's go!
           </button>

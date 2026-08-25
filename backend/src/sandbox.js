@@ -34,7 +34,7 @@ function sampleAppSteps() {
         { id: uuidv4(), type: 'instruction', order: 0, label: 'Before You Start', config: { content: 'Welcome to the HartMonitor demo! This is a guided work instruction an operator would follow. Put on PPE and confirm the work area is clear.', backgroundColor: '#fef3c7' } },
         { id: uuidv4(), type: 'checkbox', order: 1, label: 'PPE Worn', config: { required: true, variableName: 'ppe_worn' } },
         { id: uuidv4(), type: 'checkbox', order: 2, label: 'Work Area Clear', config: { required: true, variableName: 'area_clear' } },
-        { id: uuidv4(), type: 'button', order: 3, label: '', config: { buttonText: 'Start Assembly', buttonType: 'next', buttonColor: '#22c55e' } },
+        { id: uuidv4(), type: 'button', order: 3, label: '', config: { buttonText: 'Start Assembly', buttonType: 'next', buttonColor: '#4ade80' } },
       ],
     },
     {
@@ -43,7 +43,7 @@ function sampleAppSteps() {
         { id: uuidv4(), type: 'instruction', order: 0, label: 'Assembly Instructions', config: { content: '1. Place the base bracket on the fixture\n2. Torque the four M6 bolts to 15 Nm\n3. Seat the control board and connect the harness', backgroundColor: '#eff6ff' } },
         { id: uuidv4(), type: 'number-input', order: 1, label: 'Torque Value (Nm)', config: { required: true, variableName: 'torque_value', placeholder: '15' } },
         { id: uuidv4(), type: 'text-input', order: 2, label: 'Board Serial Number', config: { required: true, variableName: 'serial_number', placeholder: 'Scan or type the serial' } },
-        { id: uuidv4(), type: 'button', order: 3, label: '', config: { buttonText: 'Assembly Done', buttonType: 'next', buttonColor: '#3b82f6' } },
+        { id: uuidv4(), type: 'button', order: 3, label: '', config: { buttonText: 'Assembly Done', buttonType: 'next', buttonColor: '#60a5fa' } },
       ],
     },
     {
@@ -52,7 +52,7 @@ function sampleAppSteps() {
         { id: uuidv4(), type: 'pass-fail', order: 0, label: 'Visual Inspection', config: { variableName: 'visual_ok' } },
         { id: uuidv4(), type: 'pass-fail', order: 1, label: 'Functional Test', config: { variableName: 'function_ok' } },
         { id: uuidv4(), type: 'text-input', order: 2, label: 'Notes', config: { variableName: 'notes', placeholder: 'Anything worth recording…' } },
-        { id: uuidv4(), type: 'button', order: 3, label: '', config: { buttonText: 'Complete', buttonType: 'complete', buttonColor: '#22c55e' } },
+        { id: uuidv4(), type: 'button', order: 3, label: '', config: { buttonText: 'Complete', buttonType: 'complete', buttonColor: '#4ade80' } },
       ],
     },
   ];

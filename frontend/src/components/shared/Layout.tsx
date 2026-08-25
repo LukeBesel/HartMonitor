@@ -164,7 +164,7 @@ export default function Layout() {
           <span
             aria-hidden
             className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-[3px] rounded-r-full"
-            style={{ backgroundColor: 'var(--accent)', boxShadow: '0 0 8px -1px var(--accent)' }}
+            style={{ backgroundColor: 'var(--accent-glow)', boxShadow: '0 0 8px -1px var(--accent-glow)' }}
           />
         )}
         <Icon size={15} className="flex-shrink-0" />
@@ -207,7 +207,7 @@ export default function Layout() {
             isActive ? '' : 'border-transparent text-gray-500 hover:text-gray-800'
           }`
         }
-        style={({ isActive }) => (isActive ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : undefined)}
+        style={({ isActive }) => (isActive ? { borderColor: 'var(--accent-ink)', color: 'var(--accent-ink)' } : undefined)}
       >
         <Icon size={14} className="flex-shrink-0" />
         {label}
@@ -281,7 +281,7 @@ export default function Layout() {
           ) : (
             <div
               className="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg"
-              style={{ background: 'linear-gradient(135deg, var(--accent), var(--secondary))' }}
+              style={{ background: 'linear-gradient(135deg, var(--accent-glow), var(--secondary))' }}
             >
               <Activity size={18} className="text-white" />
             </div>
@@ -302,7 +302,7 @@ export default function Layout() {
             header's tab bar (level 2). */}
         <nav className="flex-1 p-2 overflow-y-auto mt-1">
           {!effectiveCollapsed && (
-            <div className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-500 select-none">
+            <div className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400 select-none">
               Workspaces
             </div>
           )}
@@ -397,7 +397,7 @@ export default function Layout() {
                 </div>
                 <div className="flex-1 min-w-0 text-left">
                   <div className="text-xs font-semibold text-white/90 truncate">{user?.display_name}</div>
-                  <div className="text-[10px] text-gray-500 capitalize truncate">{user?.role}</div>
+                  <div className="text-[10px] text-gray-400 capitalize truncate">{user?.role}</div>
                 </div>
                 <ChevronDown size={12} className={`text-gray-500 flex-shrink-0 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} />
               </button>
@@ -449,7 +449,7 @@ export default function Layout() {
           ) : (
             <div
               className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0"
-              style={{ background: 'linear-gradient(135deg, var(--accent), var(--secondary))' }}
+              style={{ background: 'linear-gradient(135deg, var(--accent-glow), var(--secondary))' }}
             >
               <Activity size={14} className="text-white" />
             </div>

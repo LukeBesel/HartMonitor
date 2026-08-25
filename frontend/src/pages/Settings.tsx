@@ -1077,7 +1077,7 @@ function PlanTab() {
                   <ul className="space-y-1.5 mb-4">
                     {t.features.slice(0, 6).map(f => (
                       <li key={f} className="flex items-start gap-1.5 text-xs text-gray-600">
-                        <Check size={11} className="flex-shrink-0 mt-0.5" style={{ color: highlight ? 'var(--accent)' : '#9ca3af' }} />
+                        <Check size={11} className="flex-shrink-0 mt-0.5" style={{ color: highlight ? 'var(--accent-ink)' : '#9ca3af' }} />
                         {f}
                       </li>
                     ))}
@@ -1419,7 +1419,7 @@ function SidebarTab() {
                     <Icon size={15} />
                   </div>
                   {on
-                    ? <span style={{ color: 'var(--accent)' }}><Check size={16} /></span>
+                    ? <span style={{ color: 'var(--accent-ink)' }}><Check size={16} /></span>
                     : <span className="text-[10px] font-semibold text-gray-400 uppercase">Off</span>}
                 </div>
                 <div className="text-sm font-semibold text-gray-800">{section.label}</div>

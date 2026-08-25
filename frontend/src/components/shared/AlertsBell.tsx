@@ -160,7 +160,7 @@ export default function AlertsBell({ collapsed }: { collapsed: boolean }) {
         {!collapsed && <span className="flex-1 text-left">Alerts</span>}
         {totalBadge > 0 && (
           <span className={`flex items-center justify-center text-[10px] font-bold rounded-full text-white ${
-            criticalCount > 0 ? 'bg-red-500' : unreadCount > 0 ? 'bg-blue-500' : 'bg-amber-500'
+            criticalCount > 0 ? 'bg-red-600' : unreadCount > 0 ? 'bg-blue-600' : 'bg-amber-700'
           } ${collapsed ? 'absolute top-0.5 right-0.5 w-4 h-4' : 'min-w-[18px] h-[18px] px-1'}`}>
             {totalBadge > 9 ? '9+' : totalBadge}
           </span>

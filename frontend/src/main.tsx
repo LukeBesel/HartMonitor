@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import App from './App.tsx'
 import './index.css'
 import { isStaleChunkError, takeStaleChunkReload } from './utils/staleChunk'
+import { installAccentTokens } from './utils/accentTokens'
 
 // Every deploy replaces the hashed chunk filenames. A tab that was already open
 // across that deploy — an operator with the player up mid-shift, or a phone
@@ -30,6 +31,11 @@ window.addEventListener('unhandledrejection', event => {
     window.location.reload();
   }
 });
+
+// The theme applies the tenant's accent as inline custom properties on <html>,
+// which outrank any stylesheet, so the contrast-safe forms of that accent have
+// to be derived here rather than declared in CSS.
+installAccentTokens();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
