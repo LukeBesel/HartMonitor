@@ -13,6 +13,61 @@
 - **Railway API access**: project token in the owner's chat history; IDs — project `531029d3-79ff-497d-ad78-7a655ad72eb2`, env `0577bb97-2495-43bd-b8b5-39b51f054610`, service `f6a8e76d-2fe6-4a42-8796-934bd754a8c0`. GraphQL at `backboard.railway.app/graphql/v2` with `Project-Access-Token` header. Cloudflare zone `b580de7184699a955822c37f85e9a8e3` (token in chat; NEVER commit tokens).
 - **Owner's standing priority**: apps first. A new account lands on `/apps`, meets a "Build your first app" hero and a seven-step in-product training coach. Everything else is secondary to that path working well — verify it after any nav or onboarding change.
 
+## 1b. Full-sweep wave (this session) — shipped to the branch
+
+An 8-agent sweep (4 fixers in worktrees + 4 read-only auditors) plus coordinator
+work. All merged, tested, pushed. Highlights:
+
+- **Data integrity (correctness audit):** a stale autosave could overwrite a
+  finished run's data/values, rewrite completed_at (skewing every duration/OEE),
+  and shrink the multi-operator roster. Terminal runs are now immutable to a
+  partial flush; completed_at stamps only on the real transition; the roster only
+  grows. (`completions.js`, `backend/test/completion-integrity.test.js`)
+- **Security (audit):** CRITICAL — forgot-password returned the reset token in
+  the response (account takeover); now never returned, recovery via admin
+  endpoint only. HIGH — SSRF via customer webhooks; now blocks private/reserved
+  targets by DNS resolution at registration + delivery. MED — PIN endpoints had
+  no lockout and a viewer could call verify-authorizer; added per-company/IP
+  lockout + operator+ gate. MED — free self-upgrade to Enterprise; now requires
+  checkout when billing is configured. (`auth.js`, `webhooks.js`, `operators.js`,
+  `config.js`, + regression suites)
+- **Quality honesty (dogfood):** "no Pass/Fail recorded" was counted as a pass
+  across /analytics/quality, OEE quality, the SQDC trend, and app per-field
+  stats; all now count only inspected runs / return null. avgCycleTime returns
+  null (renders "—") for empty slices. (`analytics.js`, `oee.js`, `sqdc.js`,
+  `apps.js`, `quality-honesty.test.js`)
+- **Carried-forward defects:** capacity headcount saved to the wrong department
+  (now keyed by id), every next*Number helper misnumbered past 999 (now numeric
+  max), routings list department filter, N+1s collapsed in inventory/kits/BOM/PO
+  and analytics, redundant CAPA fetch, status-aware Andon empty state.
+- **UI audit (58 screens × 3 viewports × 2 themes):** fixed the CompletionDetail
+  hard crash (undefined variance_pct), the light-in-dark mobile header (1.01→16:1)
+  and demo button (1.96→8.3:1), and lifted secondary page text to AA in light
+  mode (2.43→4.6:1, scoped to `main` so the dark sidebar is untouched).
+- **Perf:** volume pass at 5k completions — every hot endpoint 3-104ms; added
+  the company-first analytics indexes + routing_steps department index the audits
+  justified. Second demo app seeded so the App Dashboard picker isn't trivial.
+
+### Deferred follow-ups (real, not blocking; do carefully)
+- **Contrast pass round 2 (UI audit medium items):** `.btn-primary` white-on-accent
+  3.53:1; the operator green primary button 2.28:1; oversized colored stat numbers
+  ~2.5:1 (large-text 3.0 floor); PRO badges 2.86:1; dark-mode `text-gray-500` on
+  the lighter slate "running job" cards 2.25:1; OEE amber hint 1.59:1. These are
+  component/token-level — change `.btn-primary`, StatCard, the player button, and
+  the dark card token, and re-measure. Don't blanket-sed; the sidebar taught us a
+  fixed-dark surface inverts the rule.
+- **Two widget renderers by step MODE** (stacked `PlayerWidget` vs free-form
+  `WidgetView`) — converting a step between modes changes the operator's view.
+- **"On track" defined differently** across Plant/Command vs Manager view
+  (completed WOs counted in one, not the other) — pick one definition.
+- **Capacity VIEW filter still matches department by name** — now that /capacity
+  emits department_id, switch the picker to id.
+- **review-fixes.test.js is flaky under the full parallel `npm test`** (port-3180
+  server contention at startup) — passes in isolation and on rerun. Stagger
+  server startups or give it a unique port; three agents independently hit it.
+- **next*Number is still read-then-write** (TOCTOU) — a UNIQUE(company_id, number)
+  or atomic allocate would close the concurrent-duplicate race.
+
 ## 2. Operating protocol (hard-won; follow exactly)
 
 1. **Worktree discipline**: every sub-agent works in an isolated git worktree branched from the CURRENT branch tip; commits locally; NEVER pushes (the git proxy 503s non-`claude/*` branch pushes). The coordinator merges local worktree branches.
