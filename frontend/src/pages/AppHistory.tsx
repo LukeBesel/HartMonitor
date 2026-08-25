@@ -9,23 +9,32 @@ import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, LineChart, Line, ReferenceLine, Cell
 } from 'recharts';
+// One duration formatter for the whole app: seconds / minutes / hours, and "—"
+// for null. A second local copy is how this page ended up printing "0m" for a
+// twelve-second run while the App Dashboard printed "12s".
+import { fmtDuration } from '../components/apps/appModel';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+// Anything the API cannot measure arrives as null, never 0 — a step nobody
+// timed, a takt nobody configured, a run still in progress. The page renders
+// those as "—" with the reason, because a fabricated zero reads as a
+// measurement (and, for a pass rate, as an alarming red one).
 interface StepAverage {
   step_id: string;
   step_name: string;
   step_order: number;
-  avg_duration_seconds: number;
-  takt_seconds: number;
+  avg_duration_seconds: number | null;
+  takt_seconds: number | null;
   completion_count: number;
 }
 
 interface HistoryCompletion {
   id: string;
   operator_name: string;
-  completed_at: string;
-  total_duration_seconds: number;
+  started_at: string | null;
+  completed_at: string | null;
+  total_duration_seconds: number | null;
   status: 'completed' | 'abandoned' | 'in_progress';
   work_order_number: string | null;
   pass_fail: 'pass' | 'fail' | null;
@@ -35,28 +44,16 @@ interface AppHistoryData {
   app_id: string;
   app_name: string;
   total_runs: number;
-  avg_duration: number;
-  best_time: number;
-  pass_rate: number;
+  avg_duration: number | null;
+  best_time: number | null;
+  pass_rate: number | null;
+  qc_sample_size?: number;
   step_averages: StepAverage[];
   completions: HistoryCompletion[];
   total: number;
 }
 
 const PAGE_SIZE = 25;
-
-function fmtDuration(seconds: number) {
-  if (!seconds || seconds <= 0) return '—';
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  if (seconds < 3600) {
-    const m = Math.floor(seconds / 60);
-    const s = Math.round(seconds % 60);
-    return s > 0 ? `${m}m ${s}s` : `${m}m`;
-  }
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  return `${h}h ${m}m`;
-}
 
 function fmtDate(iso: string | null) {
   if (!iso) return '—';
@@ -72,8 +69,8 @@ function fmtDateShort(iso: string | null) {
   return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
 }
 
-function stepBarColor(avg: number, takt: number) {
-  if (takt <= 0) return '#3b82f6';
+function stepBarColor(avg: number | null, takt: number | null) {
+  if (!takt || takt <= 0 || avg === null) return '#3b82f6';
   const ratio = avg / takt;
   if (ratio <= 1) return '#22c55e';
   if (ratio <= 1.10) return '#f59e0b';
@@ -90,7 +87,8 @@ function statusBadge(status: string) {
 function StepAvgTooltip({ active, payload }: any) {
   if (!active || !payload?.length) return null;
   const d: StepAverage = payload[0].payload;
-  const ratio = d.takt_seconds > 0 ? d.avg_duration_seconds / d.takt_seconds : 0;
+  const ratio = d.takt_seconds && d.takt_seconds > 0 && d.avg_duration_seconds !== null
+    ? d.avg_duration_seconds / d.takt_seconds : 0;
   const overUnder = ratio > 1
     ? `${((ratio - 1) * 100).toFixed(0)}% over takt`
     : ratio > 0 ? `${((1 - ratio) * 100).toFixed(0)}% under takt` : '';
@@ -177,16 +175,35 @@ export default function AppHistory() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const trendData = completions
-    .filter((c) => c.status === 'completed' && c.completed_at)
-    .map((c) => ({ date: fmtDateShort(c.completed_at), duration: c.total_duration_seconds }))
+    .filter((c) => c.status === 'completed' && c.completed_at && c.total_duration_seconds !== null)
+    .map((c) => ({ date: fmtDateShort(c.completed_at), duration: c.total_duration_seconds as number }))
     .reverse();
 
-  const stepChartData = steps.map((s) => ({
+  // Only steps somebody actually timed get a bar. A step with no runs behind it
+  // would otherwise draw a confident zero-length bar next to the real ones.
+  const timedSteps = steps.filter((s) => s.avg_duration_seconds !== null);
+  const untimedStepCount = steps.length - timedSteps.length;
+  const stepChartData = timedSteps.map((s) => ({
     ...s,
-    avg_minutes: parseFloat((s.avg_duration_seconds / 60).toFixed(2)),
+    avg_minutes: parseFloat(((s.avg_duration_seconds as number) / 60).toFixed(2)),
   }));
-  const maxTaktMin = steps.length > 0 ? Math.max(...steps.map((s) => s.takt_seconds / 60)) : 0;
-  const passRate = data.pass_rate ?? 0;
+  const taktMinutes = steps.map((s) => s.takt_seconds).filter((t): t is number => !!t && t > 0).map((t) => t / 60);
+  const maxTaktMin = taktMinutes.length > 0 ? Math.max(...taktMinutes) : 0;
+
+  // pass_rate is null when this app records no Pass/Fail result at all — the
+  // same thing /apps/:id/analytics and /apps/dashboard already say out loud.
+  // Coalescing it to 0 painted a red "0%" onto an app nobody ever inspected.
+  const passRate = data.pass_rate;
+  const qcSample = data.qc_sample_size ?? 0;
+  const passTone = passRate === null ? 'gray'
+    : passRate >= 95 ? 'green' : passRate >= 80 ? 'amber' : 'red';
+  const TONE = {
+    gray:  { icon: 'text-gray-400',   bg: 'bg-gray-100',  value: 'text-gray-400' },
+    green: { icon: 'text-green-600',  bg: 'bg-green-50',  value: 'text-green-600' },
+    amber: { icon: 'text-amber-600',  bg: 'bg-amber-50',  value: 'text-amber-600' },
+    red:   { icon: 'text-red-600',    bg: 'bg-red-50',    value: 'text-red-600' },
+  } as const;
+  const tone = TONE[passTone];
 
   return (
     <div className="min-h-screen bg-[#f8fafc] p-6 space-y-6">
@@ -218,23 +235,42 @@ export default function AppHistory() {
         </div>
       </div>
 
-      {/* Summary Stats */}
+      {/* Summary Stats
+          "Avg hands-on time" is deliberately NOT called "avg cycle time": this
+          page sums the per-step timers over every completed run ever, while
+          /apps/:id/analytics measures wall clock from start to finish over the
+          chosen day range. The two differ by whatever happens between steps, so
+          they are labelled for what each one actually counts rather than left
+          to look like the system disagreeing with itself. */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
         <SummaryCard icon={<Activity size={18} className="text-blue-600" />} bg="bg-blue-50" label="Total Runs" value={total} />
-        <SummaryCard icon={<Clock size={18} className="text-purple-600" />} bg="bg-purple-50" label="Avg Duration" value={fmtDuration(data.avg_duration)} />
-        <SummaryCard icon={<TrendingUp size={18} className="text-green-600" />} bg="bg-green-50" label="Best Time" value={fmtDuration(data.best_time)} />
         <SummaryCard
-          icon={<CheckCircle2 size={18} className={passRate >= 95 ? 'text-green-600' : passRate >= 80 ? 'text-amber-600' : 'text-red-600'} />}
-          bg={passRate >= 95 ? 'bg-green-50' : passRate >= 80 ? 'bg-amber-50' : 'bg-red-50'}
+          icon={<Clock size={18} className="text-purple-600" />} bg="bg-purple-50"
+          label="Avg Hands-On Time"
+          title="Per-step timers added up, averaged over every completed run. The Analytics page's Avg Cycle is wall clock from start to finish over the selected window, so it reads a little longer."
+          value={data.avg_duration === null ? null : fmtDuration(data.avg_duration)}
+          note={data.avg_duration === null ? 'no run has been timed yet' : 'step timers, all completed runs'}
+        />
+        <SummaryCard
+          icon={<TrendingUp size={18} className="text-green-600" />} bg="bg-green-50" label="Best Time"
+          value={data.best_time === null ? null : fmtDuration(data.best_time)}
+          note={data.best_time === null ? 'no run has been timed yet' : 'fastest completed run'}
+        />
+        <SummaryCard
+          icon={<CheckCircle2 size={18} className={tone.icon} />}
+          bg={tone.bg}
           label="Pass Rate"
-          value={`${passRate.toFixed(0)}%`}
-          valueColor={passRate >= 95 ? 'text-green-600' : passRate >= 80 ? 'text-amber-600' : 'text-red-600'}
+          value={passRate === null ? null : `${passRate.toFixed(0)}%`}
+          valueColor={tone.value}
+          note={passRate === null
+            ? 'no pass/fail checks recorded'
+            : `from ${qcSample} inspected run${qcSample === 1 ? '' : 's'}`}
         />
       </div>
 
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {steps.length > 0 && (
+        {timedSteps.length > 0 && (
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5">
             <div className="flex items-center gap-2 mb-3">
               <BarChart2 size={16} className="text-gray-500" />
@@ -245,7 +281,7 @@ export default function AppHistory() {
               <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-amber-500 inline-block" />Within 10%</span>
               <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-red-500 inline-block" />Over takt</span>
             </div>
-            <ResponsiveContainer width="100%" height={Math.max(180, steps.length * 36)}>
+            <ResponsiveContainer width="100%" height={Math.max(180, timedSteps.length * 36)}>
               <BarChart data={stepChartData} layout="vertical" margin={{ left: 8, right: 40, top: 4, bottom: 4 }}>
                 <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f0f0f0" />
                 <XAxis type="number" tick={{ fontSize: 11 }} unit="m" />
@@ -262,6 +298,11 @@ export default function AppHistory() {
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
+            {untimedStepCount > 0 && (
+              <p className="text-xs text-gray-400 mt-2">
+                {untimedStepCount} step{untimedStepCount === 1 ? '' : 's'} not shown — no run has recorded a time for {untimedStepCount === 1 ? 'it' : 'them'} yet.
+              </p>
+            )}
           </div>
         )}
 
@@ -278,7 +319,7 @@ export default function AppHistory() {
                 <XAxis dataKey="date" tick={{ fontSize: 10 }} />
                 <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => fmtDuration(v)} width={52} />
                 <Tooltip content={<TrendTooltip />} />
-                {data.avg_duration > 0 && (
+                {data.avg_duration !== null && data.avg_duration > 0 && (
                   <ReferenceLine y={data.avg_duration} stroke="#3b82f6" strokeDasharray="4 4"
                     label={{ value: 'Avg', fill: '#3b82f6', fontSize: 10, position: 'right' }} />
                 )}
@@ -335,15 +376,26 @@ export default function AppHistory() {
               <tbody className="divide-y divide-gray-100">
                 {completions.map((c) => {
                   const badge = statusBadge(c.status);
-                  const durationVsAvg = data.avg_duration > 0 ? c.total_duration_seconds / data.avg_duration : 1;
-                  const durationColor = durationVsAvg <= 0.9 ? 'text-green-600' : durationVsAvg <= 1.1 ? 'text-gray-900' : 'text-red-600';
+                  // Faster/slower than average is only a judgement when there IS
+                  // an average and this run was actually timed.
+                  const durationVsAvg = data.avg_duration && c.total_duration_seconds !== null
+                    ? c.total_duration_seconds / data.avg_duration : 1;
+                  const durationColor = c.total_duration_seconds === null ? 'text-gray-400'
+                    : durationVsAvg <= 0.9 ? 'text-green-600' : durationVsAvg <= 1.1 ? 'text-gray-900' : 'text-red-600';
                   return (
                     <tr key={c.id} className="hover:bg-gray-50 transition-colors cursor-pointer"
                       onClick={() => navigate(`/completions/${c.id}`)}>
+                      {/* A run still on the bench has no completed_at, but it
+                          does have a start — showing the day it started beats an
+                          em-dash in a column headed DATE. */}
                       <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">
                         <div className="flex items-center gap-1.5">
                           <Calendar size={11} className="text-gray-400 flex-shrink-0" />
-                          {fmtDate(c.completed_at)}
+                          {c.completed_at
+                            ? fmtDate(c.completed_at)
+                            : c.started_at
+                              ? <span className="text-gray-500">started {fmtDate(c.started_at)}</span>
+                              : '—'}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-700">
@@ -413,19 +465,27 @@ export default function AppHistory() {
   );
 }
 
-function SummaryCard({ icon, bg, label, value, valueColor }: {
+// `value` is null exactly when the number is unknown; the card then shows "—"
+// and the short reason underneath instead of a zero nobody measured.
+function SummaryCard({ icon, bg, label, value, valueColor, note, title }: {
   icon: React.ReactNode;
   bg: string;
   label: string;
-  value: string | number;
+  value: string | number | null;
   valueColor?: string;
+  note?: string;
+  title?: string;
 }) {
+  const known = value !== null && value !== undefined;
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center gap-3">
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center gap-3" title={title}>
       <div className={`w-10 h-10 ${bg} rounded-lg flex items-center justify-center flex-shrink-0`}>{icon}</div>
-      <div>
-        <div className={`text-xl font-bold ${valueColor ?? 'text-gray-900'}`}>{value}</div>
+      <div className="min-w-0">
+        <div className={`text-xl font-bold ${known ? (valueColor ?? 'text-gray-900') : 'text-gray-400'}`}>
+          {known ? value : '—'}
+        </div>
         <div className="text-xs text-gray-500">{label}</div>
+        {note && <div className="text-[11px] text-gray-400 truncate" title={note}>{note}</div>}
       </div>
     </div>
   );

@@ -74,6 +74,12 @@ router.get('/app/:appId/history', (req, res) => {
   // up to anything, else the wall clock between started_at and completed_at.
   // json_valid() guards every json_each() so one malformed legacy blob can't
   // abort the whole query.
+  //
+  // A run we cannot time — one still in progress, or an old blob with neither
+  // step times nor a completed_at — falls through to NULL, not 0. Zero seconds
+  // is a measurement ("this took no time"); NULL is the truth ("we never timed
+  // it"), and it also keeps those runs out of AVG() instead of dragging the
+  // average toward zero.
   const DURATION_SQL = `
     CASE
       WHEN COALESCE((SELECT SUM(CAST(je.value AS REAL)) FROM json_each(c.step_times) je
@@ -83,7 +89,7 @@ router.get('/app/:appId/history', (req, res) => {
       WHEN c.completed_at IS NOT NULL AND c.started_at IS NOT NULL
            AND (julianday(c.completed_at) - julianday(c.started_at)) > 0
         THEN CAST(ROUND((julianday(c.completed_at) - julianday(c.started_at)) * 86400) AS INTEGER)
-      ELSE 0
+      ELSE NULL
     END`;
   // Legacy runs record Pass/Fail as plain values inside the data blob.
   const HAS_FAIL = `EXISTS (SELECT 1 FROM json_each(c.data) jd WHERE json_valid(c.data) AND jd.value = 'Fail')`;
@@ -119,7 +125,7 @@ router.get('/app/:appId/history', (req, res) => {
   const stepAgg = new Map(stepRows.map(r => [r.idx, r]));
 
   const pageRows = db.prepare(`
-    SELECT c.id, c.operator_name, c.completed_at, c.status,
+    SELECT c.id, c.operator_name, c.started_at, c.completed_at, c.status,
            wo.work_order_number,
            ${DURATION_SQL} AS total_duration_seconds,
            ${PASS_FAIL_SQL} AS pass_fail
@@ -135,27 +141,36 @@ router.get('/app/:appId/history', (req, res) => {
 
   const totalRuns = agg?.total_runs || 0;
   const qcTotal = (agg?.pass_count || 0) + (agg?.fail_count || 0);
+  // Every rollup below is null when nothing measured it. An app whose steps
+  // carry no Pass/Fail widget has no pass rate — reporting 0% there paints a
+  // red "everything failed" on a run that nobody ever inspected. Same for a
+  // duration nobody timed and a takt nobody configured: the screen says "—"
+  // and why, which is the truth, instead of a number we invented.
   res.json({
     app_id: app.id,
     app_name: app.name,
     total_runs: totalRuns,
-    avg_duration: totalRuns > 0 ? Math.round(agg.avg_duration || 0) : 0,
-    best_time: agg?.best_time || 0,
-    pass_rate: qcTotal > 0 ? Math.round((agg.pass_count / qcTotal) * 100) : 0,
+    avg_duration: agg?.avg_duration != null ? Math.round(agg.avg_duration) : null,
+    best_time: agg?.best_time ?? null,
+    pass_rate: qcTotal > 0 ? Math.round((agg.pass_count / qcTotal) * 100) : null,
+    qc_sample_size: qcTotal,
     step_averages: steps.map((s, i) => ({
       step_id: s.id,
       step_name: s.name,
       step_order: i,
-      avg_duration_seconds: stepAgg.has(i) ? Math.round(stepAgg.get(i).avg_seconds || 0) : 0,
+      avg_duration_seconds: stepAgg.has(i) ? Math.round(stepAgg.get(i).avg_seconds || 0) : null,
       // Legacy v1 blobs store step takt as `takt_time`, v2 as `takt_time_seconds`.
-      takt_seconds: Number(s.takt_time_seconds ?? s.takt_time) || 0,
+      // Neither present = no takt was ever set for this step, which is not the
+      // same as a takt of zero.
+      takt_seconds: Number(s.takt_time_seconds ?? s.takt_time) || null,
       completion_count: stepAgg.has(i) ? stepAgg.get(i).n : 0,
     })),
     completions: pageRows.map(r => ({
       id: r.id,
       operator_name: r.operator_name,
+      started_at: r.started_at,
       completed_at: r.completed_at,
-      total_duration_seconds: r.total_duration_seconds || 0,
+      total_duration_seconds: r.total_duration_seconds ?? null,
       status: r.status,
       work_order_number: r.work_order_number || null,
       pass_fail: r.pass_fail || null,

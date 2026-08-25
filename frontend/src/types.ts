@@ -375,7 +375,10 @@ export interface CompanySettings {
 export interface AnalyticsOverview {
   totalCompletions: number; todayCompletions: number; inProgress: number;
   totalApps: number; publishedApps: number; activeStations: number;
-  avgCycleTime: number;
+  /** Whole minutes — 0 for anything under 30 seconds. Do not render this. */
+  avgCycleTime: number | null;
+  /** Average completed-run cycle time in seconds; null when nothing finished. */
+  avgCycleSeconds: number | null;
   /** null until at least one run records a Pass/Fail result. */
   passRate: number | null;
   /** How many completed runs the pass rate is based on. */
