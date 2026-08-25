@@ -22,10 +22,10 @@ export default function PlayerShell({ header, banner, footer, summaryBar, toasts
   children: ReactNode;
 }) {
   return (
-    <div className="p-root" data-player-shell>
+    <div className="p-root p-root-run" data-player-shell>
       {header}
       {banner}
-      <main className="flex-1 overflow-y-auto flex justify-center px-4 py-6 sm:py-8">
+      <main className="p-main flex-1 overflow-y-auto flex justify-center px-4 py-4 sm:py-8">
         {children}
       </main>
       {summaryBar}
@@ -33,7 +33,7 @@ export default function PlayerShell({ header, banner, footer, summaryBar, toasts
 
       {/* Toast stack */}
       {toasts.length > 0 && (
-        <div className="fixed bottom-24 right-4 z-[65] flex flex-col gap-2 items-end">
+        <div className="fixed bottom-24 left-4 right-4 sm:left-auto z-[65] flex flex-col gap-2 items-end">
           {toasts.map(t => (
             <div
               key={t.id}

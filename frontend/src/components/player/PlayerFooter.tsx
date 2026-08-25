@@ -30,7 +30,7 @@ export default function PlayerFooter(props: PlayerFooterProps) {
 
   return (
     <footer
-      className="flex-shrink-0 flex items-center gap-3 px-4 sm:px-6"
+      className="flex-shrink-0 flex items-center gap-2 sm:gap-3 px-3 sm:px-6"
       style={{
         minHeight: 72,
         background: 'var(--p-surface-1)',
@@ -39,10 +39,11 @@ export default function PlayerFooter(props: PlayerFooterProps) {
         paddingBottom: 'max(8px, env(safe-area-inset-bottom))',
       }}
     >
-      {/* Back — ghost, hidden on the first step */}
-      <div style={{ minWidth: 120 }}>
+      {/* Back — ghost, hidden on the first step. The 120px slot only exists on
+          ≥sm screens; phones give that width to the block-reason line. */}
+      <div className="sm:min-w-[120px] flex-shrink-0">
         {canBack && (
-          <button className="p-btn p-btn-ghost" onClick={onBack}>
+          <button className="p-btn p-btn-ghost" onClick={onBack} aria-label="Back">
             <ChevronLeft size={20} /> <span className="hidden sm:inline">Back</span>
           </button>
         )}
@@ -85,7 +86,7 @@ export default function PlayerFooter(props: PlayerFooterProps) {
 
       {/* Next / Complete — hidden when the step's own button widget advances */}
       {hideForward ? (
-        <div style={{ minWidth: 120 }} aria-hidden="true" />
+        <div className="sm:min-w-[120px]" aria-hidden="true" />
       ) : isLast ? (
         <button
           className="p-btn p-btn-good"
