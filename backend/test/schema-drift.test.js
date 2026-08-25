@@ -404,3 +404,77 @@ describe('statuses a screen can pick round-trip', () => {
     if (submitted.status === 200) assert.equal(submitted.json.status, 'submitted');
   });
 });
+
+// ─── The picker's own options must round-trip ─────────────────────────────────
+// The create-everything sweep above presses each endpoint with values taken
+// from the SCHEMA, which is why it stayed green while two real pickers were
+// dead: the PM form offers daily/weekly/monthly/quarterly/yearly against a
+// column that allows days/weeks/months, and the work-order form offered 'pm'
+// against a column that allows 'preventive'. These tests take their inputs from
+// the FORM instead — the only place that catches drift in that direction.
+
+describe('every option a maintenance picker offers', () => {
+  let assetId;
+
+  before(async () => {
+    const r = await api('POST', '/api/maintenance/assets', {
+      token, body: { asset_number: `PICK-${Date.now()}`, name: 'Picker probe press', type: 'machine' },
+    });
+    assert.equal(r.status, 201, `asset create failed: ${JSON.stringify(r.json)}`);
+    assetId = r.json.id;
+  });
+
+  // Mirrors the <option> values in frontend/src/pages/Maintenance.tsx.
+  it('creates a PM schedule at every cadence the form lists', async () => {
+    const expected = {
+      daily: ['days', 1], weekly: ['weeks', 1], monthly: ['months', 1],
+      quarterly: ['months', 3], yearly: ['months', 12],
+    };
+    for (const [cadence, [type, value]] of Object.entries(expected)) {
+      const r = await api('POST', '/api/maintenance/pm', {
+        token, body: { asset_id: assetId, title: `PM ${cadence}`, frequency_type: cadence, frequency_value: 1 },
+      });
+      assert.equal(r.status, 201, `cadence "${cadence}" rejected: ${JSON.stringify(r.json)}`);
+      assert.equal(r.json.frequency_type, type, `${cadence} should store as ${type}`);
+      // quarterly/yearly have no unit of their own — they must become a MULTIPLE
+      // of months, or a yearly PM silently becomes a monthly one.
+      assert.equal(r.json.frequency_value, value, `${cadence} should store ${value} ${type}`);
+    }
+  });
+
+  it('still accepts the raw schema words', async () => {
+    for (const type of ['days', 'weeks', 'months', 'hours', 'cycles']) {
+      const r = await api('POST', '/api/maintenance/pm', {
+        token, body: { asset_id: assetId, title: `PM ${type}`, frequency_type: type, frequency_value: 2 },
+      });
+      assert.equal(r.status, 201, `raw "${type}" rejected: ${JSON.stringify(r.json)}`);
+      assert.equal(r.json.frequency_type, type);
+      assert.equal(r.json.frequency_value, 2);
+    }
+  });
+
+  it('creates a work order at every type the form lists', async () => {
+    for (const type of ['preventive', 'corrective', 'emergency', 'inspection']) {
+      const r = await api('POST', '/api/maintenance/work-orders', { token, body: { title: `WO ${type}`, type } });
+      assert.equal(r.status, 201, `type "${type}" rejected: ${JSON.stringify(r.json)}`);
+      assert.equal(r.json.type, type);
+    }
+    // A tab open before the rename still says 'pm'.
+    const legacy = await api('POST', '/api/maintenance/work-orders', { token, body: { title: 'WO legacy', type: 'pm' } });
+    assert.equal(legacy.status, 201, `legacy "pm" rejected: ${JSON.stringify(legacy.json)}`);
+    assert.equal(legacy.json.type, 'preventive', 'legacy "pm" should store as "preventive"');
+  });
+
+  it('edits a schedule to a new cadence without failing the constraint', async () => {
+    const created = await api('POST', '/api/maintenance/pm', {
+      token, body: { asset_id: assetId, title: 'PM to edit', frequency_type: 'monthly', frequency_value: 1 },
+    });
+    assert.equal(created.status, 201);
+    const edited = await api('PUT', `/api/maintenance/pm/${created.json.id}`, {
+      token, body: { frequency_type: 'quarterly', frequency_value: 1 },
+    });
+    assert.equal(edited.status, 200, `edit rejected: ${JSON.stringify(edited.json)}`);
+    assert.equal(edited.json.frequency_type, 'months');
+    assert.equal(edited.json.frequency_value, 3);
+  });
+});

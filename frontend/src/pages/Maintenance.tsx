@@ -19,7 +19,9 @@ interface Asset {
   department_name?: string;
   department_id?: string;
   location: string;
-  status: 'active' | 'inactive' | 'under_maintenance' | 'retired';
+  // Matches assets.status CHECK exactly — the page said 'under_maintenance',
+  // a value the column cannot hold, so that badge branch was unreachable.
+  status: 'active' | 'inactive' | 'maintenance' | 'retired';
   install_date?: string;
   notes: string;
 }
@@ -29,7 +31,8 @@ interface MaintenanceWO {
   wo_number: string;
   asset_id?: string;
   asset_name?: string;
-  type: 'pm' | 'corrective' | 'emergency' | 'inspection';
+  // Matches maintenance_work_orders.type CHECK exactly ('pm' is not storable).
+  type: 'preventive' | 'corrective' | 'emergency' | 'inspection';
   title: string;
   description: string;
   // These two match the stored vocabularies exactly (DB CHECK constraints):
@@ -108,7 +111,7 @@ function assetStatusColor(s: string): string {
   switch (s) {
     case 'active':            return 'bg-emerald-50 text-emerald-700 border border-emerald-200';
     case 'inactive':          return 'bg-gray-100 text-gray-500 border border-gray-300';
-    case 'under_maintenance': return 'bg-amber-50 text-amber-700 border border-amber-200';
+    case 'maintenance': return 'bg-amber-50 text-amber-700 border border-amber-200';
     case 'retired':           return 'bg-gray-100 text-gray-700 border border-gray-300';
     default:                  return 'bg-gray-100 text-gray-500 border border-gray-300';
   }
@@ -116,7 +119,7 @@ function assetStatusColor(s: string): string {
 
 function woTypeLabel(t: string): string {
   switch (t) {
-    case 'pm':          return 'Preventive';
+    case 'preventive':  return 'Preventive';
     case 'corrective':  return 'Corrective';
     case 'emergency':   return 'Emergency';
     case 'inspection':  return 'Inspection';
@@ -126,7 +129,7 @@ function woTypeLabel(t: string): string {
 
 function woTypeColor(t: string): string {
   switch (t) {
-    case 'pm':          return 'bg-blue-50 text-blue-700 border border-blue-200';
+    case 'preventive':  return 'bg-blue-50 text-blue-700 border border-blue-200';
     case 'corrective':  return 'bg-amber-50 text-amber-700 border border-amber-200';
     case 'emergency':   return 'bg-red-50 text-red-700 border border-red-200';
     case 'inspection':  return 'bg-purple-50 text-purple-700 border border-purple-200';
@@ -284,7 +287,7 @@ function CreateWOModal({ assets, onClose, onCreated }: CreateWOModalProps) {
                 className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               >
                 <option value="corrective">Corrective</option>
-                <option value="pm">Preventive (PM)</option>
+                <option value="preventive">Preventive (PM)</option>
                 <option value="emergency">Emergency</option>
                 <option value="inspection">Inspection</option>
               </select>
@@ -952,7 +955,7 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO }: WorkOrdersTabProps)
         </select>
         <select value={typeFilter} onChange={e => setTypeFilter(e.target.value)} className={selectCls}>
           <option value="">All Types</option>
-          <option value="pm">Preventive</option>
+          <option value="preventive">Preventive</option>
           <option value="corrective">Corrective</option>
           <option value="emergency">Emergency</option>
           <option value="inspection">Inspection</option>

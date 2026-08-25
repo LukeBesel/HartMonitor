@@ -21,6 +21,12 @@ const db = require('./db');
 // non-public address. Literal IPs are checked directly; hostnames are resolved
 // first, so an internal DNS name can't slip a private IP through.
 
+/** A 3xx from a webhook target is refused, not followed — see deliverWebhooks. */
+function isRedirect(res) {
+  return res.status >= 300 && res.status < 400;
+}
+const REDIRECT_MSG = 'redirect not followed (webhook targets must publish their final URL)';
+
 function isBlockedIp(ip) {
   const v = net.isIP(ip);
   if (v === 4) {
@@ -32,6 +38,11 @@ function isBlockedIp(ip) {
     if (a === 169 && b === 254) return true;             // link-local + metadata
     if (a === 100 && b >= 64 && b <= 127) return true;   // CGNAT
     if (a === 0) return true;                            // unspecified/this-network
+    if (a >= 224) return true;                           // multicast 224/4 + reserved 240/4 + broadcast
+    if (a === 192 && b === 0) return true;               // 192.0.0/24 IETF, 192.0.2/24 TEST-NET-1
+    if (a === 198 && (b === 18 || b === 19)) return true; // 198.18/15 benchmarking
+    if (a === 198 && b === 51) return true;              // 198.51.100/24 TEST-NET-2
+    if (a === 203 && b === 0) return true;               // 203.0.113/24 TEST-NET-3
     return false;
   }
   if (v === 6) {
@@ -100,8 +111,17 @@ function deliverWebhooks(companyId, event, payload) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-HartMonitor-Event': event, 'X-HartMonitor-Signature': signature },
             body,
+            // Never follow redirects. assertSafeWebhookUrl vetted THIS url; a
+            // 307 to 169.254.169.254 or any RFC-1918 address would otherwise
+            // re-POST the signed body to an internal service, and the status we
+            // log back would turn that into a readable port scanner.
+            redirect: 'manual',
             signal: AbortSignal.timeout(8000),
           });
+          if (isRedirect(res)) {
+            logDelivery(hook.id, event, res.status, false, REDIRECT_MSG);
+            return;
+          }
           logDelivery(hook.id, event, res.status, res.ok, res.ok ? null : `HTTP ${res.status}`);
         } catch (e) {
           logDelivery(hook.id, event, 0, false, e.message);
@@ -131,8 +151,13 @@ function sendTestDelivery(webhook) {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'X-HartMonitor-Event': 'test.ping', 'X-HartMonitor-Signature': signature },
           body,
+          redirect: 'manual',   // see deliverWebhooks — a redirect defeats the URL guard
           signal: AbortSignal.timeout(8000),
         });
+        if (isRedirect(res)) {
+          logDelivery(webhook.id, 'test.ping', res.status, false, REDIRECT_MSG);
+          return;
+        }
         logDelivery(webhook.id, 'test.ping', res.status, res.ok, res.ok ? null : `HTTP ${res.status}`);
       } catch (e) {
         logDelivery(webhook.id, 'test.ping', 0, false, e.message);

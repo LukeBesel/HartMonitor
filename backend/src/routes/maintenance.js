@@ -94,6 +94,31 @@ router.get('/pm', (req, res) => {
   res.json(db.prepare(sql).all(...params));
 });
 
+// The PM form speaks in cadence words (daily/weekly/monthly/quarterly/yearly)
+// while pm_schedules.frequency_type CHECK allows days/weeks/months/hours/cycles.
+// Every option in that picker therefore failed the constraint — the screen could
+// not create a schedule at all. Quarterly and yearly have no unit of their own,
+// so they become a MULTIPLE of months; returning just 'months' would silently
+// turn a yearly PM into a monthly one.
+const FREQUENCY_ALIAS = {
+  daily: { type: 'days', factor: 1 },
+  weekly: { type: 'weeks', factor: 1 },
+  monthly: { type: 'months', factor: 1 },
+  quarterly: { type: 'months', factor: 3 },
+  yearly: { type: 'months', factor: 12 },
+  annually: { type: 'months', factor: 12 },
+};
+function normalizeFrequency(type, value) {
+  const alias = FREQUENCY_ALIAS[type];
+  const count = Number(value) || 1;
+  if (!alias) return { frequency_type: type, frequency_value: count };
+  return { frequency_type: alias.type, frequency_value: count * alias.factor };
+}
+
+// Same drift on the work-order type picker: the form offers 'pm' where the
+// column allows 'preventive'.
+const normalizeWOType = t => (t === 'pm' ? 'preventive' : t);
+
 router.post('/pm', (req, res) => {
   const { asset_id, title, description = '', frequency_type = 'days', frequency_value = 30, assigned_to = '', estimated_hours = 0 } = req.body;
   if (!asset_id || !title?.trim()) return res.status(400).json({ error: 'asset_id and title required' });
@@ -102,9 +127,10 @@ router.post('/pm', (req, res) => {
     return res.status(404).json({ error: 'Asset not found' });
   }
   const id = uuidv4();
-  const next_due_at = computeNextDue(new Date().toISOString(), frequency_type, frequency_value);
+  const freq = normalizeFrequency(frequency_type, frequency_value);
+  const next_due_at = computeNextDue(new Date().toISOString(), freq.frequency_type, freq.frequency_value);
   db.prepare(`INSERT INTO pm_schedules (id, company_id, asset_id, title, description, frequency_type, frequency_value, next_due_at, assigned_to, estimated_hours) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, req.companyId, asset_id, title.trim(), description, frequency_type, frequency_value, next_due_at, assigned_to, estimated_hours);
+    .run(id, req.companyId, asset_id, title.trim(), description, freq.frequency_type, freq.frequency_value, next_due_at, assigned_to, estimated_hours);
   res.status(201).json(db.prepare('SELECT p.*, a.name as asset_name, a.asset_number FROM pm_schedules p LEFT JOIN assets a ON a.id = p.asset_id WHERE p.id = ?').get(id));
 });
 
@@ -112,8 +138,13 @@ router.put('/pm/:id', (req, res) => {
   const pm = db.prepare('SELECT * FROM pm_schedules WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!pm) return res.status(404).json({ error: 'Not found' });
   const { title, description, frequency_type, frequency_value, assigned_to, estimated_hours } = req.body;
+  // Edits arrive from the same cadence picker as create, so normalise here too —
+  // otherwise changing a schedule to "quarterly" 500s on a row that created fine.
+  const freq = frequency_type === undefined && frequency_value === undefined
+    ? { frequency_type: undefined, frequency_value: undefined }
+    : normalizeFrequency(frequency_type ?? pm.frequency_type, frequency_value ?? pm.frequency_value);
   db.prepare(`UPDATE pm_schedules SET title = COALESCE(?, title), description = COALESCE(?, description), frequency_type = COALESCE(?, frequency_type), frequency_value = COALESCE(?, frequency_value), assigned_to = COALESCE(?, assigned_to), estimated_hours = COALESCE(?, estimated_hours) WHERE id = ?`)
-    .run(title, description, frequency_type, frequency_value, assigned_to, estimated_hours, req.params.id);
+    .run(title, description, freq.frequency_type, freq.frequency_value, assigned_to, estimated_hours, req.params.id);
   res.json(db.prepare('SELECT p.*, a.name as asset_name, a.asset_number FROM pm_schedules p LEFT JOIN assets a ON a.id = p.asset_id WHERE p.id = ?').get(req.params.id));
 });
 
@@ -166,7 +197,7 @@ router.post('/work-orders', (req, res) => {
   // of this route family reads; both carry the same value so neither the
   // constraint nor the reader is disappointed.
   db.prepare(`INSERT INTO maintenance_work_orders (id, company_id, number, wo_number, asset_id, type, title, description, priority, assigned_to, requested_by, department_id, due_date, scheduled_date, notes, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-    .run(id, req.companyId, wo_number, wo_number, asset_id || null, type, title.trim(), description, normalizePriority(priority), assigned_to, requested_by, department_id || null, due_date || null, scheduled_date || null, notes, now, now);
+    .run(id, req.companyId, wo_number, wo_number, asset_id || null, normalizeWOType(type), title.trim(), description, normalizePriority(priority), assigned_to, requested_by, department_id || null, due_date || null, scheduled_date || null, notes, now, now);
   logActivity(req.companyId, 'maintenance', id, `WO ${wo_number} created: ${title}`, req.user?.display_name);
   res.status(201).json(db.prepare('SELECT m.*, a.name as asset_name FROM maintenance_work_orders m LEFT JOIN assets a ON a.id = m.asset_id WHERE m.id = ?').get(id));
 });
