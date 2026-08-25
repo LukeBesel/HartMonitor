@@ -519,7 +519,7 @@ export default function PlayerWidget(props: PlayerWidgetProps) {
             minHeight, fontSize, fontWeight: 650,
             borderRadius: ap.radius,
             padding: '0 24px',
-            ...buttonVariantStyle(ap.variant, config.buttonColor || '#4f46e5'),
+            ...buttonVariantStyle(ap.variant, config.buttonColor || '#60a5fa'),
           }}
         >
           {ButtonIcon && <ButtonIcon size={Math.round(fontSize * 1.15)} className="flex-shrink-0" />}

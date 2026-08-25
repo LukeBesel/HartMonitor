@@ -113,12 +113,12 @@ const SCHEDULE_STATUS_CLASSES: Record<string, string> = {
   not_started: 'bg-gray-100 text-gray-500',
 };
 const PRIORITY_CLASSES: Record<string, string> = {
+  // The chip label is 12px, so it needs 4.5:1 rather than the 3:1 these shades
+  // were picked for: orange-600 measured 3.56:1 and blue-500 3.68:1 under white.
   critical: 'bg-red-600 text-white',
-  // 600/500 shades keep white label text above 3:1 on both grounds;
-  // orange-500 (2.8:1) and gray-400 (2.3:1) did not.
-  high:     'bg-orange-600 text-white',
-  medium:   'bg-blue-500 text-white',
-  low:      'bg-gray-500 text-white',
+  high:     'bg-orange-700 text-white',
+  medium:   'bg-blue-600 text-white',
+  low:      'bg-gray-600 text-white',
 };
 const GANTT_BAR_CLASSES: Record<string, string> = {
   pending:     'bg-gray-400',

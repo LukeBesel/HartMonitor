@@ -6,6 +6,7 @@
 import type {
   Step, Widget, KitLine, CompletionValueInput, CompletionValueType,
 } from '../../types';
+import { luminance } from '../../utils/contrast';
 
 /** Legacy formData key — unchanged from v1 (spec §5.3). */
 export function legacyKey(w: Widget): string {
@@ -384,28 +385,11 @@ export function runContextGate(required: boolean, workOrderId: string, partNumbe
 // ─── Text-contrast helpers (dark player ink, spec §1.4) ──────────────────────
 
 /** WCAG relative luminance of a CSS color (hex #rgb/#rrggbb or rgb()/rgba()).
- *  Returns null for un-parseable values (CSS vars, named colors). */
+ *  Returns null for un-parseable values (CSS vars, named colors). Re-exported
+ *  from the shared contrast module so the player, the accent tokens and the
+ *  button widget all measure with the same arithmetic. */
 export function relativeLuminance(color: string | undefined | null): number | null {
-  if (!color) return null;
-  const c = color.trim();
-  let r: number, g: number, b: number;
-  const hex3 = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(c);
-  const hex6 = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(c);
-  const rgb = /^rgba?\(\s*(\d{1,3})[\s,]+(\d{1,3})[\s,]+(\d{1,3})/i.exec(c);
-  if (hex3) {
-    r = parseInt(hex3[1] + hex3[1], 16); g = parseInt(hex3[2] + hex3[2], 16); b = parseInt(hex3[3] + hex3[3], 16);
-  } else if (hex6) {
-    r = parseInt(hex6[1], 16); g = parseInt(hex6[2], 16); b = parseInt(hex6[3], 16);
-  } else if (rgb) {
-    r = Number(rgb[1]); g = Number(rgb[2]); b = Number(rgb[3]);
-  } else {
-    return null;
-  }
-  const lin = (v: number) => {
-    const s = v / 255;
-    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
-  };
-  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+  return luminance(color);
 }
 
 /** True for backgrounds that need dark ink (white cards, pastel washes). */

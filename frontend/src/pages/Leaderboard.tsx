@@ -63,7 +63,7 @@ function BoardCard({ board }: { board: LeaderboardBoard }) {
         {board.all_time_best_minutes != null && (
           <div className="text-right flex-shrink-0">
             <div className="text-[10px] text-gray-400 uppercase tracking-wide">Plant record</div>
-            <div className="text-sm font-bold" style={{ color: 'var(--accent)' }}>{formatDuration(board.all_time_best_minutes)}</div>
+            <div className="text-sm font-bold" style={{ color: 'var(--accent-ink)' }}>{formatDuration(board.all_time_best_minutes)}</div>
           </div>
         )}
       </div>
@@ -142,7 +142,7 @@ function ChampionCard({ board }: { board: LeaderboardBoard }) {
 
 const DEPT_RANK_ACCENT: Record<number, string> = {
   1: 'text-amber-500',
-  2: 'text-slate-400',
+  2: 'text-slate-500',
   3: 'text-orange-400',
 };
 
@@ -176,7 +176,7 @@ function DepartmentCard({ dept, onSelect }: { dept: LeaderboardDepartment; onSel
           <div className="text-[10px] text-gray-400 uppercase tracking-wide">Completions</div>
         </div>
         <div>
-          <div className="text-lg font-bold tabular-nums" style={{ color: 'var(--accent)' }}>{formatDuration(dept.avg_minutes ?? 0)}</div>
+          <div className="text-lg font-bold tabular-nums" style={{ color: 'var(--accent-ink)' }}>{formatDuration(dept.avg_minutes ?? 0)}</div>
           <div className="text-[10px] text-gray-400 uppercase tracking-wide">Avg Cycle</div>
         </div>
         <div>

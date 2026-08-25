@@ -314,7 +314,7 @@ function SubmitIdeaModal({ departments, onClose, onSubmitted }: SubmitIdeaModalP
           <button
             onClick={handleSubmit}
             disabled={saving}
-            className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-base font-semibold hover:bg-green-700 transition-colors disabled:opacity-50"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-green-700 text-white rounded-xl text-base font-semibold hover:bg-green-800 transition-colors disabled:opacity-50"
           >
             <Plus className="w-5 h-5" />
             {saving ? 'Submitting…' : 'Submit Idea'}
@@ -940,7 +940,7 @@ export default function Kaizen() {
         </div>
         <button
           onClick={() => setShowSubmitModal(true)}
-          className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-base font-semibold hover:bg-green-700 transition-colors"
+          className="inline-flex items-center gap-2 px-6 py-3 bg-green-700 text-white rounded-xl text-base font-semibold hover:bg-green-800 transition-colors"
         >
           <Plus className="w-5 h-5" />
           Submit Idea
@@ -1081,7 +1081,7 @@ export default function Kaizen() {
                 </button>
                 <button
                   onClick={() => setShowSubmitModal(true)}
-                  className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-base font-semibold hover:bg-green-700 transition-colors"
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-green-700 text-white rounded-xl text-base font-semibold hover:bg-green-800 transition-colors"
                 >
                   <Plus className="w-5 h-5" />
                   Submit Idea
@@ -1110,7 +1110,7 @@ export default function Kaizen() {
               </p>
               <button
                 onClick={() => setShowSubmitModal(true)}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-base font-semibold hover:bg-green-700 transition-colors"
+                className="inline-flex items-center gap-2 px-6 py-3 bg-green-700 text-white rounded-xl text-base font-semibold hover:bg-green-800 transition-colors"
               >
                 <Plus className="w-5 h-5" />
                 Submit Your First Idea

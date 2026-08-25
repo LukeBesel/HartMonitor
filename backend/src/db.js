@@ -947,7 +947,7 @@ function seedAppData() {
         { id: uuidv4(), type: 'instruction', order: 0, label: 'Safety Instructions', config: { content: 'Ensure all safety equipment is in place before starting. Wear PPE including gloves and safety glasses.', backgroundColor: '#fef3c7' } },
         { id: uuidv4(), type: 'checkbox', order: 1, label: 'PPE Worn', config: { required: true, variableName: 'ppe_worn' } },
         { id: uuidv4(), type: 'checkbox', order: 2, label: 'Work Area Clear', config: { required: true, variableName: 'area_clear' } },
-        { id: uuidv4(), type: 'button', order: 3, label: '', config: { buttonText: 'Proceed to Assembly', buttonType: 'next', buttonColor: '#22c55e' } }
+        { id: uuidv4(), type: 'button', order: 3, label: '', config: { buttonText: 'Proceed to Assembly', buttonType: 'next', buttonColor: '#4ade80' } }
       ]
     },
     {
@@ -957,7 +957,7 @@ function seedAppData() {
         { id: uuidv4(), type: 'select-input', order: 1, label: 'Part Condition', config: { required: true, variableName: 'part_condition', options: ['Good', 'Minor Defect', 'Major Defect', 'Reject'] } },
         { id: uuidv4(), type: 'text-input', order: 2, label: 'Part Serial Number', config: { required: true, variableName: 'serial_number', placeholder: 'Scan or enter serial number' } },
         { id: uuidv4(), type: 'pass-fail', order: 3, label: 'Visual Inspection', config: { variableName: 'visual_inspection' } },
-        { id: uuidv4(), type: 'button', order: 4, label: '', config: { buttonText: 'Next Step', buttonType: 'next', buttonColor: '#3b82f6' } }
+        { id: uuidv4(), type: 'button', order: 4, label: '', config: { buttonText: 'Next Step', buttonType: 'next', buttonColor: '#60a5fa' } }
       ]
     },
     {
@@ -966,7 +966,7 @@ function seedAppData() {
         { id: uuidv4(), type: 'instruction', order: 0, label: 'Assembly Instructions', config: { content: '1. Place base component on fixture\n2. Apply torque to 15 Nm\n3. Attach side panels using M6 bolts\n4. Verify alignment before final tightening', backgroundColor: '#eff6ff' } },
         { id: uuidv4(), type: 'counter', order: 1, label: 'Bolt Count', config: { variableName: 'bolt_count', min: 0, max: 8, step: 1, initialValue: 0 } },
         { id: uuidv4(), type: 'number-input', order: 2, label: 'Torque Value (Nm)', config: { required: true, variableName: 'torque_value', placeholder: '15' } },
-        { id: uuidv4(), type: 'button', order: 3, label: '', config: { buttonText: 'Assembly Complete', buttonType: 'next', buttonColor: '#3b82f6' } }
+        { id: uuidv4(), type: 'button', order: 3, label: '', config: { buttonText: 'Assembly Complete', buttonType: 'next', buttonColor: '#60a5fa' } }
       ]
     },
     {
@@ -976,7 +976,7 @@ function seedAppData() {
         { id: uuidv4(), type: 'pass-fail', order: 1, label: 'Dimensional Check', config: { variableName: 'dim_check' } },
         { id: uuidv4(), type: 'pass-fail', order: 2, label: 'Functional Test', config: { variableName: 'func_test' } },
         { id: uuidv4(), type: 'text-input', order: 3, label: 'Inspector Notes', config: { variableName: 'inspector_notes', placeholder: 'Enter any observations...' } },
-        { id: uuidv4(), type: 'button', order: 4, label: '', config: { buttonText: 'Complete Process', buttonType: 'complete', buttonColor: '#22c55e' } }
+        { id: uuidv4(), type: 'button', order: 4, label: '', config: { buttonText: 'Complete Process', buttonType: 'complete', buttonColor: '#4ade80' } }
       ]
     }
   ];
@@ -1428,7 +1428,7 @@ function loadSampleDataForCompany(companyId) {
       widgets: [
         { id: uuidv4(), type: 'instruction', order: 0, label: 'Safety Instructions', config: { content: 'Ensure all safety equipment is in place before starting. Wear PPE including gloves and safety glasses.', backgroundColor: '#fef3c7' } },
         { id: uuidv4(), type: 'checkbox', order: 1, label: 'PPE Worn', config: { required: true, variableName: 'ppe_worn' } },
-        { id: uuidv4(), type: 'button', order: 2, label: '', config: { buttonText: 'Proceed to Assembly', buttonType: 'next', buttonColor: '#22c55e' } }
+        { id: uuidv4(), type: 'button', order: 2, label: '', config: { buttonText: 'Proceed to Assembly', buttonType: 'next', buttonColor: '#4ade80' } }
       ]
     },
     {
@@ -1436,14 +1436,14 @@ function loadSampleDataForCompany(companyId) {
       widgets: [
         { id: uuidv4(), type: 'instruction', order: 0, label: 'Assembly Instructions', config: { content: '1. Place base component on fixture\n2. Apply torque to 15 Nm\n3. Verify alignment before final tightening', backgroundColor: '#eff6ff' } },
         { id: uuidv4(), type: 'counter', order: 1, label: 'Bolt Count', config: { variableName: 'bolt_count', min: 0, max: 8, step: 1, initialValue: 0 } },
-        { id: uuidv4(), type: 'button', order: 2, label: '', config: { buttonText: 'Assembly Complete', buttonType: 'next', buttonColor: '#3b82f6' } }
+        { id: uuidv4(), type: 'button', order: 2, label: '', config: { buttonText: 'Assembly Complete', buttonType: 'next', buttonColor: '#60a5fa' } }
       ]
     },
     {
       id: uuidv4(), name: 'Quality Check', order: 2, takt_time: 120,
       widgets: [
         { id: uuidv4(), type: 'pass-fail', order: 0, label: 'Final Inspection', config: { variableName: 'final_inspection' } },
-        { id: uuidv4(), type: 'button', order: 1, label: '', config: { buttonText: 'Complete Process', buttonType: 'complete', buttonColor: '#22c55e' } }
+        { id: uuidv4(), type: 'button', order: 1, label: '', config: { buttonText: 'Complete Process', buttonType: 'complete', buttonColor: '#4ade80' } }
       ]
     }
   ];

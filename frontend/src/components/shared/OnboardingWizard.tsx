@@ -190,7 +190,12 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-5">
           <div className="text-xs font-medium text-gray-400">Step {index + 1} of {STEPS.length}</div>
-          <button onClick={finish} className="text-gray-400 hover:text-gray-600" title="Skip tour">
+          <button
+            onClick={finish}
+            title="Skip tour"
+            aria-label="Skip tour"
+            className="-mr-1.5 w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:text-gray-800 hover:bg-black/5 transition-colors"
+          >
             <X size={18} />
           </button>
         </div>
@@ -258,11 +263,11 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
           <button
             onClick={back}
             disabled={index === 0}
-            className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600 disabled:opacity-0 transition-colors"
+            className="-ml-2 px-2 h-8 flex items-center gap-1 rounded-lg text-sm text-gray-500 hover:text-gray-800 hover:bg-black/5 disabled:opacity-0 transition-colors"
           >
             <ArrowLeft size={14} /> Back
           </button>
-          <button onClick={finish} className="text-xs text-gray-400 hover:text-gray-600">Skip tour</button>
+          <button onClick={finish} className="px-2 h-8 flex items-center rounded-lg text-xs text-gray-500 hover:text-gray-800 hover:bg-black/5 transition-colors">Skip tour</button>
           {isLast ? (
             <button onClick={finish} className="btn-secondary text-sm">Not now</button>
           ) : (

@@ -5,12 +5,21 @@
 /* ── Theme CSS variables (overridden by data-accent) ── */
 /* Default theme: "Midnight" — deep navy sidebar + glowing pink accent. */
 :root {
-  --accent:       #ec4899;
-  --accent-dark:  #db2777;
+  /* The accent is published as a family, not a single value: --accent-glow is
+     the brand color exactly as picked and carries no text, --accent is the
+     shade deep enough to sit under white text (and to be read AS text on light
+     grounds), --accent-ink is the theme-aware text form. src/utils/contrast.ts
+     derives all of them from the picked color; these are the default-theme
+     values, so the very first paint is already legible. */
+  --accent:       #b33774;
+  --accent-dark:  #812854;
+  --accent-fg:    #ffffff;
+  --accent-ink:   #b33774;
+  --accent-glow:  #ec4899;
   --accent-light: #fdf2f8;
   --secondary:    #6366f1;
   --sidebar-bg:   #0a0e27;
-  --nav-active:   #db2777;
+  --nav-active:   #b33774;
 
   /* ── Design tokens: surfaces, borders, elevation ── */
   --surface-1:     #ffffff; /* cards, panels */
@@ -22,16 +31,31 @@
   --surface-1:     #1e293b;
   --surface-2:     #0f172a;
   --border-subtle: #334155;
+  /* Pink deep enough to read on a white card is 2.4:1 on a slate one, so the
+     text form of the accent lightens in dark mode while the filled form — whose
+     legibility depends only on itself and its white label — does not. */
+  --accent-ink:    #f38abe;
 }
-[data-accent="midnight"] { --accent:#ec4899; --accent-dark:#db2777; --accent-light:#fdf2f8; --sidebar-bg:#0a0e27; --nav-active:#db2777; }
-[data-accent="blue"]   { --accent:#3b82f6; --accent-dark:#2563eb; --accent-light:#eff6ff; --sidebar-bg:#0a1628; --nav-active:#2563eb; }
-[data-accent="indigo"] { --accent:#6366f1; --accent-dark:#4f46e5; --accent-light:#eef2ff; --sidebar-bg:#0f0e2b; --nav-active:#4f46e5; }
-[data-accent="purple"] { --accent:#8b5cf6; --accent-dark:#7c3aed; --accent-light:#f5f3ff; --sidebar-bg:#170a2d; --nav-active:#7c3aed; }
-[data-accent="teal"]   { --accent:#14b8a6; --accent-dark:#0d9488; --accent-light:#f0fdfa; --sidebar-bg:#041e1c; --nav-active:#0d9488; }
-[data-accent="green"]  { --accent:#10b981; --accent-dark:#059669; --accent-light:#f0fdf4; --sidebar-bg:#04200f; --nav-active:#059669; }
-[data-accent="orange"] { --accent:#f59e0b; --accent-dark:#d97706; --accent-light:#fffbeb; --sidebar-bg:#1c1003; --nav-active:#d97706; }
-[data-accent="rose"]   { --accent:#f43f5e; --accent-dark:#e11d48; --accent-light:#fff1f2; --sidebar-bg:#200508; --nav-active:#e11d48; }
-[data-accent="slate"]  { --accent:#64748b; --accent-dark:#475569; --accent-light:#f8fafc; --sidebar-bg:#0f172a; --nav-active:#475569; }
+[data-accent="midnight"]  { --accent:#b33774; --accent-dark:#812854; --accent-fg:#ffffff; --accent-ink:#b33774; --accent-glow:#ec4899; --accent-light:#fdf2f8; --sidebar-bg:#0a0e27; --nav-active:#b33774; }
+[data-accent="blue"]      { --accent:#2e65c0; --accent-dark:#21498a; --accent-fg:#ffffff; --accent-ink:#2e65c0; --accent-glow:#3b82f6; --accent-light:#eff6ff; --sidebar-bg:#0a1628; --nav-active:#2e65c0; }
+[data-accent="indigo"]    { --accent:#5558cf; --accent-dark:#3f4199; --accent-fg:#ffffff; --accent-ink:#5558cf; --accent-glow:#6366f1; --accent-light:#eef2ff; --sidebar-bg:#0f0e2b; --nav-active:#5558cf; }
+[data-accent="purple"]    { --accent:#754dcf; --accent-dark:#543795; --accent-fg:#ffffff; --accent-ink:#754dcf; --accent-glow:#8b5cf6; --accent-light:#f5f3ff; --sidebar-bg:#170a2d; --nav-active:#754dcf; }
+[data-accent="teal"]      { --accent:#0c7267; --accent-dark:#09544c; --accent-fg:#ffffff; --accent-ink:#0c7267; --accent-glow:#14b8a6; --accent-light:#f0fdfa; --sidebar-bg:#041e1c; --nav-active:#0c7267; }
+[data-accent="green"]     { --accent:#0a7653; --accent-dark:#07553c; --accent-fg:#ffffff; --accent-ink:#0a7653; --accent-glow:#10b981; --accent-light:#f0fdf4; --sidebar-bg:#04200f; --nav-active:#0a7653; }
+[data-accent="orange"]    { --accent:#8e5c06; --accent-dark:#694404; --accent-fg:#ffffff; --accent-ink:#8e5c06; --accent-glow:#f59e0b; --accent-light:#fffbeb; --sidebar-bg:#1c1003; --nav-active:#8e5c06; }
+[data-accent="rose"]      { --accent:#be3149; --accent-dark:#892335; --accent-fg:#ffffff; --accent-ink:#be3149; --accent-glow:#f43f5e; --accent-light:#fff1f2; --sidebar-bg:#200508; --nav-active:#be3149; }
+[data-accent="slate"]     { --accent:#5a687d; --accent-dark:#414b5a; --accent-fg:#ffffff; --accent-ink:#5a687d; --accent-glow:#64748b; --accent-light:#f8fafc; --sidebar-bg:#0f172a; --nav-active:#5a687d; }
+
+/* Dark-mode text form of each preset accent (see --accent-ink above). */
+.dark[data-accent="midnight"]  { --accent-ink:#f38abe; }
+.dark[data-accent="blue"]      { --accent-ink:#7eadf9; }
+.dark[data-accent="indigo"]    { --accent-ink:#a5a6f7; }
+.dark[data-accent="purple"]    { --accent-ink:#b99dfa; }
+.dark[data-accent="teal"]      { --accent-ink:#2cbfaf; }
+.dark[data-accent="green"]     { --accent-ink:#2dc190; }
+.dark[data-accent="orange"]    { --accent-ink:#f59e0b; }
+.dark[data-accent="rose"]      { --accent-ink:#f88c9e; }
+.dark[data-accent="slate"]     { --accent-ink:#a5aebc; }
 
 @layer base {
   * { box-sizing: border-box; }
@@ -52,20 +76,22 @@
 
 @layer components {
   .btn-primary {
-    @apply inline-flex items-center gap-2 px-4 py-2 text-white rounded-lg transition-all font-medium text-sm disabled:opacity-40 disabled:cursor-not-allowed shadow-sm;
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg transition-all font-medium text-sm disabled:opacity-40 disabled:cursor-not-allowed shadow-sm;
     background-color: var(--accent);
-    /* Visible accent glow — the signature pink halo. */
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 22px -4px var(--accent);
+    color: var(--accent-fg);
+    /* The halo keeps the brand color at full saturation while the fill under
+       the label is the deeper, legible one. */
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), 0 0 22px -4px var(--accent-glow);
   }
   .btn-primary:hover:not(:disabled) {
     background-color: var(--accent-dark);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.12), 0 0 30px -2px var(--accent);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.12), 0 0 30px -2px var(--accent-glow);
     transform: translateY(-1px);
   }
 
   /* Accent glow utility — drop on any element for a halo in the theme accent. */
   .glow-accent {
-    box-shadow: 0 0 28px -4px var(--accent);
+    box-shadow: 0 0 28px -4px var(--accent-glow);
   }
 }
 
@@ -268,6 +294,87 @@
    darkening it there would hurt. Placeholders use `placeholder-gray-400` and are
    unaffected. One token fix rather than editing every page. */
 html:not(.dark) main .text-gray-400 { color: #6b7280; }
+
+/* Saturated text at the -500 and -600 steps fails in LIGHT mode the way the
+   grays failed above. amber-600 measures 3.19:1 on a white card and 3.07:1 on
+   the amber-50 wash the NCR severity chips use as their ground; green-600 is
+   3.30:1; blue-500 is 3.68:1. Every hue's -700 step clears 4.5:1 on white and
+   on that hue's own -50 and -100 washes, so both light steps collapse onto it.
+   This is the mirror of the `.dark` block above, which brightens the same
+   utilities for dark surfaces, and it is scoped to `main` for the same reason
+   the gray rule is: the sidebar rail and the marketing shell stay dark grounds
+   even in light mode. */
+html:not(.dark) main .text-red-500,
+html:not(.dark) main .text-red-600 { color: #b91c1c; }
+html:not(.dark) main .text-orange-500,
+html:not(.dark) main .text-orange-600 { color: #c2410c; }
+html:not(.dark) main .text-amber-500,
+html:not(.dark) main .text-amber-600 { color: #b45309; }
+html:not(.dark) main .text-yellow-500,
+html:not(.dark) main .text-yellow-600 { color: #a16207; }
+html:not(.dark) main .text-lime-500,
+html:not(.dark) main .text-lime-600 { color: #4d7c0f; }
+html:not(.dark) main .text-green-500,
+html:not(.dark) main .text-green-600 { color: #15803d; }
+html:not(.dark) main .text-emerald-500,
+html:not(.dark) main .text-emerald-600 { color: #047857; }
+html:not(.dark) main .text-teal-500,
+html:not(.dark) main .text-teal-600 { color: #0f766e; }
+html:not(.dark) main .text-cyan-500,
+html:not(.dark) main .text-cyan-600 { color: #0e7490; }
+html:not(.dark) main .text-sky-500,
+html:not(.dark) main .text-sky-600 { color: #0369a1; }
+html:not(.dark) main .text-blue-500,
+html:not(.dark) main .text-blue-600 { color: #1d4ed8; }
+html:not(.dark) main .text-indigo-500,
+html:not(.dark) main .text-indigo-600 { color: #4338ca; }
+html:not(.dark) main .text-violet-500,
+html:not(.dark) main .text-violet-600 { color: #6d28d9; }
+html:not(.dark) main .text-purple-500,
+html:not(.dark) main .text-purple-600 { color: #7e22ce; }
+html:not(.dark) main .text-pink-500,
+html:not(.dark) main .text-pink-600 { color: #be185d; }
+html:not(.dark) main .text-rose-500,
+html:not(.dark) main .text-rose-600 { color: #be123c; }
+
+/* Gray secondary text loses its margin on a tinted or gray card: gray-500 reads
+   4.83:1 on white but 4.42:1 on the red-50 stat tile behind an "Open NCRs"
+   sublabel, and 4.39:1 on the gray-100 avatar circles in a department roster.
+   On such a ground — the element's own or its card's — it steps down. */
+html:not(.dark) main :is(
+  .bg-red-50, .bg-red-100, .bg-orange-50, .bg-orange-100, .bg-amber-50, .bg-amber-100,
+  .bg-yellow-50, .bg-yellow-100, .bg-lime-50, .bg-lime-100, .bg-green-50, .bg-green-100,
+  .bg-emerald-50, .bg-emerald-100, .bg-teal-50, .bg-teal-100, .bg-cyan-50, .bg-cyan-100,
+  .bg-sky-50, .bg-sky-100, .bg-blue-50, .bg-blue-100, .bg-indigo-50, .bg-indigo-100,
+  .bg-violet-50, .bg-violet-100, .bg-purple-50, .bg-purple-100, .bg-pink-50, .bg-pink-100,
+  .bg-rose-50, .bg-rose-100, .bg-gray-100, .bg-gray-200, .bg-slate-100
+) :is(.text-gray-400, .text-gray-500),
+html:not(.dark) main :is(
+  .bg-red-50, .bg-red-100, .bg-orange-50, .bg-orange-100, .bg-amber-50, .bg-amber-100,
+  .bg-yellow-50, .bg-yellow-100, .bg-lime-50, .bg-lime-100, .bg-green-50, .bg-green-100,
+  .bg-emerald-50, .bg-emerald-100, .bg-teal-50, .bg-teal-100, .bg-cyan-50, .bg-cyan-100,
+  .bg-sky-50, .bg-sky-100, .bg-blue-50, .bg-blue-100, .bg-indigo-50, .bg-indigo-100,
+  .bg-violet-50, .bg-violet-100, .bg-purple-50, .bg-purple-100, .bg-pink-50, .bg-pink-100,
+  .bg-rose-50, .bg-rose-100, .bg-gray-100, .bg-gray-200, .bg-slate-100
+):is(.text-gray-400, .text-gray-500) { color: #4b5563; }
+
+/* The same rule in reverse for the dark theme's raised surfaces, where the
+   remapped gray lands at 4.04:1 on a slate-700 well. */
+.dark :is(.bg-gray-100, .bg-gray-200, .bg-gray-50\/40, .bg-gray-50\/50, .bg-gray-50\/60) :is(.text-gray-400, .text-gray-500),
+.dark :is(.bg-gray-100, .bg-gray-200):is(.text-gray-400, .text-gray-500) { color: #cbd5e1; }
+
+/* Andon, the TV boards and other permanently dark panels keep their dark ground
+   in LIGHT mode, so the darkening above runs the wrong way on them — gray-400
+   at 7.1:1 on a gray-900 card becomes gray-500 at 3.7:1. Inside such a panel the
+   secondary gray lightens instead. */
+html:not(.dark) main :is(
+  .bg-gray-800, .bg-gray-900, .bg-gray-950,
+  .bg-slate-800, .bg-slate-900, .bg-slate-950, .bg-black
+) :is(.text-gray-400, .text-gray-500),
+html:not(.dark) main :is(
+  .bg-gray-800, .bg-gray-900, .bg-gray-950,
+  .bg-slate-800, .bg-slate-900, .bg-slate-950, .bg-black
+):is(.text-gray-400, .text-gray-500) { color: #cbd5e1; }
 
 /* Text */
 .dark .text-gray-900,
