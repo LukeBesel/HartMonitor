@@ -55,6 +55,21 @@ before(() => {
     INSERT INTO product_routings VALUES ('r-legacy', 'co-legacy', 'Old Routing', '');
     INSERT INTO routing_steps (id, routing_id, step_number, name) VALUES ('s-legacy', 'r-legacy', 1, 'Old Step');
   `);
+  // password_reset_tokens as it was when it held the token in plain text. The
+  // column it holds now — token_hash — cannot be added in place, so the table
+  // has to be rebuilt, and this row must not survive into the hash column.
+  db.exec(`
+    CREATE TABLE password_reset_tokens (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      token TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      used_at TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    );
+    INSERT INTO password_reset_tokens (id, user_id, token, expires_at)
+    VALUES ('t-legacy', 'u-legacy', 'plaintext-secret-do-not-keep', datetime('now', '+1 hour'));
+  `);
   db.close();
 });
 
@@ -82,6 +97,24 @@ describe('an old database gets the columns added since it was created', () => {
       `console.log(String(db.prepare("SELECT company_id FROM routing_steps WHERE id = 's-legacy'").get().company_id))`,
     );
     assert.equal(owner, 'co-legacy', 'the legacy step should inherit its routing\'s company');
+  });
+
+  it('rebuilds password_reset_tokens so a reset is possible at all', () => {
+    // Every reset query selects token_hash. On a database still holding `token`
+    // that is a hard SQL error, so nobody on that install could ever reset a
+    // password — it does not degrade, it fails outright.
+    const cols = inMigratedDb(
+      `console.log(db.prepare('PRAGMA table_info(password_reset_tokens)').all().map(r => r.name).join(','))`,
+    ).split(',');
+    assert.ok(cols.includes('token_hash'), `password_reset_tokens must gain token_hash — got: ${cols.join(',')}`);
+    assert.ok(cols.includes('reset_url'), 'the later reset_url migration must still apply to the rebuilt table');
+  });
+
+  it('does not carry the old plaintext token into the hash column', () => {
+    const rows = inMigratedDb(
+      `console.log(String(db.prepare('SELECT COUNT(*) AS c FROM password_reset_tokens').get().c))`,
+    );
+    assert.equal(rows, '0', 'a plaintext token must not be moved into the column that exists to avoid storing one');
   });
 
   it('runs clean a second time', () => {

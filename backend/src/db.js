@@ -533,6 +533,38 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
 `);
 
+// ─── Migrations: password_reset_tokens ────────────────────────────────────────
+// This table shipped once holding the reset token in plain text, in a column
+// called `token`, before it was changed to store only a hash. `CREATE TABLE IF
+// NOT EXISTS` cannot make that change to a database that already exists, so
+// such a database still has the old shape — and every reset query selects
+// `token_hash`, which is a hard SQL error there, not an empty result: nobody on
+// that install could ever reset a password.
+//
+// The column cannot be added in place (SQLite refuses ADD COLUMN for NOT NULL
+// without a default, and for UNIQUE), so the table is rebuilt. Nothing is
+// carried across on purpose: the old rows hold plaintext tokens, they expire
+// within the hour anyway, and moving them over would mean writing a plaintext
+// secret into a column that exists to avoid storing one. A reset link already
+// in flight stops working, and the person asks for another one.
+{
+  const prtCols = db.prepare('PRAGMA table_info(password_reset_tokens)').all().map(r => r.name);
+  if (prtCols.length > 0 && !prtCols.includes('token_hash')) {
+    db.exec(`
+      DROP TABLE password_reset_tokens;
+      CREATE TABLE password_reset_tokens (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
+    `);
+  }
+}
+
 // ─── Migration: add reset_url to password_reset_tokens for admin panel display ─
 {
   const prtCols = db.prepare('PRAGMA table_info(password_reset_tokens)').all().map(r => r.name);
