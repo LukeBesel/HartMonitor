@@ -46,6 +46,27 @@ function departmentCompletionClause(p) {
   )`;
 }
 
+// A completion's SITE, written the same alias-agnostic way. Site follows a
+// different rule from department and app on purpose, and it is the rule the
+// rest of this file already uses (`/plant-view`, `/manager-view`, GET
+// /departments): a record with no site belongs to the whole company and stays
+// visible under every site, so selecting the auto-created primary site never
+// empties the page for a company that has never used sites. A record belonging
+// to a DIFFERENT site is excluded.
+function siteCompletionClause(p) {
+  return `(
+    ${p}work_order_id IN (SELECT id FROM work_orders WHERE company_id = ? AND (site_id = ? OR site_id IS NULL))
+    OR (
+      (${p}work_order_id IS NULL
+       OR ${p}work_order_id NOT IN (SELECT id FROM work_orders WHERE company_id = ? AND site_id IS NOT NULL))
+      AND (
+        ${p}station_id IS NULL
+        OR ${p}station_id IN (SELECT id FROM stations WHERE company_id = ? AND (site_id = ? OR site_id IS NULL))
+      )
+    )
+  )`;
+}
+
 /**
  * @param req   the request, read for ?app_id / ?product_type_id / ?department_id
  * @param alias table alias (or table name) to qualify the columns with. Pass it
@@ -67,6 +88,14 @@ function completionFilter(req, alias = '') {
       req.companyId, req.query.department_id,   // …then fall back to the station's
     );
   }
+  if (req.query.site_id) {
+    clauses.push(siteCompletionClause(p));
+    params.push(
+      req.companyId, req.query.site_id,         // work order's own site (or none)
+      req.companyId,                            // …unless that work order has one
+      req.companyId, req.query.site_id,         // …then fall back to the station's
+    );
+  }
   return { clause: clauses.length ? ' AND ' + clauses.join(' AND ') : '', params };
 }
 
@@ -85,6 +114,9 @@ function workOrderScope(req, alias = 'wo') {
   const params = [];
   if (req.query.department_id) { clauses.push(`${a}department_id = ?`); params.push(req.query.department_id); }
   if (req.query.app_id)        { clauses.push(`${a}app_id = ?`);        params.push(req.query.app_id); }
+  // Site is not a dimension in the same sense: a work order with no site is not
+  // ambiguous, it simply predates sites, so it stays visible under every one.
+  if (req.query.site_id)       { clauses.push(`(${a}site_id = ? OR ${a}site_id IS NULL)`); params.push(req.query.site_id); }
   return { clause: clauses.length ? ' AND ' + clauses.join(' AND ') : '', params };
 }
 
@@ -877,6 +909,10 @@ router.get('/daily-brief', (req, res) => {
 
   const deptId = req.query.department_id || null;
   const appId  = req.query.app_id || null;
+  const siteId = req.query.site_id || null;
+  // `scoped` drives the set-aside counting below, and site deliberately does not
+  // set it: a row with no site is not ambiguous evidence the way a row with no
+  // department is — it simply predates sites and stays visible under every one.
   const scoped = !!(deptId || appId);
   const cf = completionFilter(req); // no joins in the KPI queries — no alias needed
 
@@ -893,7 +929,8 @@ router.get('/daily-brief', (req, res) => {
     FROM work_orders wo
     LEFT JOIN departments d ON d.id = wo.department_id
     WHERE wo.company_id = ? AND wo.status NOT IN ('completed', 'cancelled')
-  `).all(cid);
+      ${siteId ? 'AND (wo.site_id = ? OR wo.site_id IS NULL)' : ''}
+  `).all(cid, ...(siteId ? [siteId] : []));
 
   // A work order with no department is not evidence about any one department;
   // same for one with no app. It drops out of a specific scope and is counted.
@@ -945,11 +982,14 @@ router.get('/daily-brief', (req, res) => {
   // COALESCE the Andon board uses. Scoped in SQL because the list is capped:
   // filtering after the LIMIT would under-report a busy department.
   const callDeptExpr = 'COALESCE(a.department_id, s.department_id)';
+  const callSiteExpr = 'COALESCE(wo.site_id, s.site_id)';
   const callScope = [
     deptId ? `${callDeptExpr} = ?` : null,
     appId  ? 'a.app_id = ?' : null,
+    siteId ? `(${callSiteExpr} = ? OR ${callSiteExpr} IS NULL)` : null,
   ].filter(Boolean);
-  const scopeParams = [deptId, appId].filter(Boolean); // dept before app, everywhere
+  // dept, then app, then site — the same order every scoped query binds them in
+  const scopeParams = [deptId, appId, siteId].filter(Boolean);
   const openCalls = db.prepare(`
     SELECT a.id, a.team, a.type, a.target_type, a.status, a.title, a.step_name, a.created_by,
            a.department_id, d.name AS department_name, s.name AS station_name,
@@ -1011,8 +1051,9 @@ router.get('/daily-brief', (req, res) => {
   const downStations = appId ? [] : db.prepare(`
     SELECT id, name, current_status, current_status_since FROM stations
     WHERE company_id = ? AND current_status = 'down'${deptId ? ' AND department_id = ?' : ''}
+      ${siteId ? 'AND (site_id = ? OR site_id IS NULL)' : ''}
     ORDER BY current_status_since ASC LIMIT 10
-  `).all(cid, ...(deptId ? [deptId] : []));
+  `).all(cid, ...(deptId ? [deptId] : []), ...(siteId ? [siteId] : []));
   if (scoped) {
     // Under an app filter every down station is set aside (a station has no app),
     // narrowed to the chosen department when there is one. Under a department
@@ -1043,9 +1084,11 @@ router.get('/daily-brief', (req, res) => {
     // to its work order's.
     const ncrDeptExpr = 'COALESCE(wo.department_id, ap.department_id)';
     const ncrAppExpr  = 'COALESCE(n.app_id, wo.app_id)';
+    const ncrSiteExpr = 'wo.site_id';
     const ncrScope = [
       deptId ? `${ncrDeptExpr} = ?` : null,
       appId  ? `${ncrAppExpr} = ?` : null,
+      siteId ? `(${ncrSiteExpr} = ? OR ${ncrSiteExpr} IS NULL)` : null,
     ].filter(Boolean);
     const criticalNCRs = db.prepare(`
       SELECT n.id, n.ncr_number, n.title, n.due_date

@@ -318,14 +318,18 @@ export default function Dashboard() {
   // new `filters` object changes these callbacks' identity, which is what makes
   // useAutoRefresh refetch immediately.
   const loadData = useCallback(async () => {
+    // The site selection belongs to the brief too. Without it the attention list
+    // and the KPI tiles were plant-wide while the plant view directly below them
+    // was scoped to one site — a manager at a two-site company was reading the
+    // other site's late work orders next to this site's numbers.
     const [briefRes, cfgRes] = await Promise.allSettled([
-      api.getDailyBrief(filters),
+      api.getDailyBrief({ ...filters, site_id: selectedSiteId || undefined }),
       api.getCompanySettings(),
     ]);
     if (briefRes.status === 'fulfilled') setBrief(briefRes.value);
     if (cfgRes.status === 'fulfilled') setCompanyName(cfgRes.value?.company_name ?? '');
     setLoading(false);
-  }, [filters]);
+  }, [filters, selectedSiteId]);
 
   const loadPlantData = useCallback(async () => {
     try {
