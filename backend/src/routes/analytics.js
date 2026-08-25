@@ -79,7 +79,7 @@ router.get('/overview', (req, res) => {
     SELECT AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60) as avg_minutes
     FROM completions WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL${f.clause}
   `).get(cid, ...f.params);
-  const avgCycleTime = cycleTimeResult?.avg_minutes ? Math.round(cycleTimeResult.avg_minutes) : 0;
+  const avgCycleTime = cycleTimeResult?.avg_minutes ? Math.round(cycleTimeResult.avg_minutes) : null;
 
   // Pass rate over every completed run that recorded a QC result (a run with
   // both a Pass and a Fail counts once, as a fail). No QC results = null, so
@@ -307,7 +307,7 @@ router.get('/plant-view', (req, res) => {
     FROM completions ${siteJoin}
     WHERE completions.company_id = ? AND completions.status='completed' AND completions.completed_at IS NOT NULL${siteClause}
   `).get(cid, ...siteParams);
-  const avgCycleTime = ctRow?.avg_minutes ? Math.round(ctRow.avg_minutes) : 0;
+  const avgCycleTime = ctRow?.avg_minutes ? Math.round(ctRow.avg_minutes) : null;
 
   // Pass rate over the last 7 days, counting only completions with explicit QC results
   const pfRows = db.prepare(`
@@ -1069,7 +1069,7 @@ router.get('/department/:id', (req, res) => {
     SELECT AVG((julianday(c.completed_at) - julianday(c.started_at)) * 24 * 60) as avg_minutes
     ${DEPT_COMPLETION_JOIN} AND c.status='completed' AND c.completed_at IS NOT NULL
   `).get(cid, dept.id);
-  const avgCycleTime = ctRow?.avg_minutes ? Math.round(ctRow.avg_minutes) : 0;
+  const avgCycleTime = ctRow?.avg_minutes ? Math.round(ctRow.avg_minutes) : null;
 
   const pfRows = db.prepare(`SELECT c.data ${DEPT_COMPLETION_JOIN} AND c.status='completed' AND c.completed_at >= datetime('now', '-7 days')`).all(cid, dept.id);
   let pass = 0, fail = 0;

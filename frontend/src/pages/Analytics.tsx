@@ -279,7 +279,7 @@ export default function Analytics() {
       {/* KPI cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard icon={<CheckCircle size={18} className="text-green-600" />} bg="bg-green-50" label="Total Completions" value={overview?.totalCompletions ?? '—'} />
-        <KPICard icon={<Clock size={18} className="text-blue-600" />} bg="bg-blue-50" label="Avg Cycle Time" value={overview ? `${overview.avgCycleTime}m` : '—'} />
+        <KPICard icon={<Clock size={18} className="text-blue-600" />} bg="bg-blue-50" label="Avg Cycle Time" value={overview && overview.avgCycleTime != null ? `${overview.avgCycleTime}m` : '—'} />
         <KPICard icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50" label="Pass Rate" value={passRate !== null ? `${passRate}%` : '—'} />
         <KPICard icon={<Activity size={18} className="text-orange-600" />} bg="bg-orange-50" label="Today" value={overview?.todayCompletions ?? '—'} />
       </div>
