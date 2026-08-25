@@ -18,6 +18,43 @@ const config = {
   isProd: IS_PROD,
   port: Number(process.env.PORT) || 3001,
 
+  // How many reverse proxies sit in front of this process. Everything read out
+  // of X-Forwarded-For — including the client IP the rate limiter counts
+  // anonymous traffic against — is only as trustworthy as this number: allow
+  // one hop more than really exists and a caller can prepend a hop of its own
+  // invention to mint a fresh rate-limit bucket on every request. One is right
+  // for a single platform proxy (Railway, Render, Fly, nginx), which overwrites
+  // the last entry with the address it actually saw. Set TRUST_PROXY=0 when the
+  // process is exposed directly, so only the socket address is ever believed.
+  trustProxy: process.env.TRUST_PROXY !== undefined
+    ? (Number(process.env.TRUST_PROXY) || 0)
+    : (IS_PROD ? 1 : 0),
+
+  // What a caller may spend on /api in a fifteen-minute window.
+  //
+  // authenticatedMax is a budget for one signed-in person, not for a building.
+  // Opening a screen costs about a dozen API calls and the operational boards
+  // poll on a 30-60 second timer, so the heaviest real stretch of work we can
+  // construct — a supervisor opening a new screen every five seconds with a
+  // couple of dashboards refreshing in other tabs — comes to something under
+  // 2,500 calls in a window. 5,000 keeps a clear factor of two above that while
+  // staying far below what this limit actually exists to catch: a client stuck
+  // in a render loop, or somebody walking the whole API with a script.
+  //
+  // anonymousMax is still counted per IP, which for a customer means per
+  // factory, because an IP is the only handle we have on a request that carries
+  // no identity — and IP keying is what keeps credential stuffing off the login
+  // form. Little is exposed to it: without a session the only things reachable
+  // under /api are the public pricing catalog, the game endpoints, and the auth
+  // routes, which carry their own far stricter throttle.
+  //
+  // Both are overridable so a deployment with unusual traffic can tune them
+  // without a code change.
+  rateLimit: {
+    authenticatedMax: Number(process.env.API_RATE_LIMIT_MAX) || 5000,
+    anonymousMax: Number(process.env.API_RATE_LIMIT_ANON_MAX) || 1000,
+  },
+
   // Public base URL of the deployed app (used for OAuth + Stripe redirects).
   appUrl: process.env.APP_URL ? process.env.APP_URL.replace(/\/$/, '') : '',
 

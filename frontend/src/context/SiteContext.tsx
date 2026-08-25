@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
 import { api } from '../api/client';
 import type { Site } from '../types';
-import { useAuth } from './AuthContext';
+import { useAuthUserId } from './AuthContext';
 
 const STORAGE_KEY = 'hm_selected_site';
 
@@ -16,7 +16,7 @@ interface SiteContextValue {
 const SiteContext = createContext<SiteContextValue | null>(null);
 
 export function SiteProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const userId = useAuthUserId();
   const [sites, setSites] = useState<Site[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedSiteId, setSelectedSiteIdState] = useState<string | null>(() => {
@@ -34,9 +34,9 @@ export function SiteProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (user) refresh();
+    if (userId) refresh();
     else { setSites([]); setLoading(false); }
-  }, [user, refresh]);
+  }, [userId, refresh]);
 
   // Always keep exactly one site selected (no "All sites"). Once sites load,
   // fall back to the primary (or first) site if the saved one is gone / unset.

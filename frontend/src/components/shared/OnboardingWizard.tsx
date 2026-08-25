@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
+import { useBranding, useCompanySetting } from '../../context/BrandingContext';
 
 // Set by the "Replay product tour" button in Settings before navigating to the
 // dashboard, so the wizard re-opens even though onboarding was completed.
@@ -107,6 +108,11 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
   const [sampleLoaded, setSampleLoaded] = useState(false);
   const [sampleError, setSampleError] = useState('');
 
+  // The completion flag rides along on the company settings the branding
+  // provider already loaded — this used to be its own GET /api/config.
+  const { value: completedFlag, status: settingsStatus } = useCompanySetting('onboarding_completed');
+  const { refresh: refreshBranding } = useBranding();
+
   useEffect(() => {
     // Explicit replay from Settings bypasses the "completed" check.
     const replay = localStorage.getItem(REPLAY_FLAG);
@@ -117,25 +123,26 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
       onWillShow?.();
       return;
     }
-    let cancelled = false;
-    api.getCompanySettings()
-      .then(settings => {
-        if (cancelled) return;
-        const completed = isTruthy(settings?.onboarding_completed);
-        const roleOk = user?.role === 'manager' || user?.role === 'developer';
-        setEligible(!completed && roleOk);
-        if (!completed && roleOk) onWillShow?.();
-      })
-      .catch(() => setEligible(false))
-      .finally(() => { if (!cancelled) setReady(true); });
-    return () => { cancelled = true; };
-  }, [user?.role]);
+    if (settingsStatus === 'loading') return;
+    // Couldn't read the flag, so we don't know whether this welcome has already
+    // been dismissed — better to stay out of the way than to show it twice.
+    if (settingsStatus === 'error') { setEligible(false); setReady(true); return; }
+    const completed = isTruthy(completedFlag);
+    const roleOk = user?.role === 'manager' || user?.role === 'developer';
+    setEligible(!completed && roleOk);
+    if (!completed && roleOk) onWillShow?.();
+    setReady(true);
+  }, [user?.role, settingsStatus, completedFlag]);
 
   const persistDone = () => {
     // Lets the builder-training coach know the welcome is out of the way, so
     // the two never stack on top of each other.
     try { window.dispatchEvent(new CustomEvent(ONBOARDING_DONE_EVENT)); } catch { /* ignore */ }
-    return api.updateCompanySettings({ onboarding_completed: 'true' }).catch(() => {});
+    return api.updateCompanySettings({ onboarding_completed: 'true' })
+      // Everyone else reads this flag off the shared settings copy, so that copy
+      // has to learn about the write.
+      .then(() => refreshBranding())
+      .catch(() => {});
   };
 
   const finish = async () => {

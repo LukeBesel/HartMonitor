@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback } from 'react';
 import { api } from '../api/client';
 import type { Plan } from '../types';
-import { useAuth } from './AuthContext';
+import { useAuthUserId } from './AuthContext';
 
 interface PlanContextValue {
   plan: Plan | null;
@@ -30,7 +30,7 @@ interface PlanContextValue {
 const PlanContext = createContext<PlanContextValue | null>(null);
 
 export function PlanProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const userId = useAuthUserId();
   const [plan, setPlan] = useState<Plan | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -39,9 +39,9 @@ export function PlanProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (user) refresh();
+    if (userId) refresh();
     else { setPlan(null); setLoading(false); }
-  }, [user, refresh]);
+  }, [userId, refresh]);
 
   // Early access: the whole product is unlocked for every account. The backend
   // sends early_access on the plan payload while EARLY_ACCESS is on.

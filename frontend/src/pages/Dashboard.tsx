@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import { useBranding } from '../context/BrandingContext';
 import { useSite } from '../context/SiteContext';
 import {
   TrendingUp, Activity, CheckCircle,
@@ -226,7 +227,9 @@ export default function Dashboard() {
   const { user, isAtLeast } = useAuth();
   const { selectedSiteId } = useSite();
   const [brief, setBrief] = useState<ScopedBrief | null>(null);
-  const [companyName, setCompanyName] = useState('');
+  // The header subtitle used to re-fetch the whole company settings bag on every
+  // poll tick just to read one name off it. The branding provider already has it.
+  const { companyName } = useBranding();
   const [loading, setLoading] = useState(true);
   const { isHidden, toggleSection, resetSections } = useDashboardPrefs();
   const [showCustomize, setShowCustomize] = useState(false);
@@ -324,12 +327,16 @@ export default function Dashboard() {
     // and the KPI tiles were plant-wide while the plant view directly below them
     // was scoped to one site — a manager at a two-site company was reading the
     // other site's late work orders next to this site's numbers.
-    const [briefRes, cfgRes] = await Promise.allSettled([
-      api.getDailyBrief({ ...filters, site_id: selectedSiteId || undefined }),
-      api.getCompanySettings(),
-    ]);
-    if (briefRes.status === 'fulfilled') setBrief(briefRes.value);
-    if (cfgRes.status === 'fulfilled') setCompanyName(cfgRes.value?.company_name ?? '');
+    //
+    // Only the brief is fetched here. The company name comes from the branding
+    // context now; re-reading /api/config on every poll tick to fill in a header
+    // subtitle was one of the duplicate requests that made a page load cost ~28
+    // calls and put a whole factory behind one rate-limit bucket.
+    try {
+      setBrief(await api.getDailyBrief({ ...filters, site_id: selectedSiteId || undefined }));
+    } catch {
+      // keep whatever is on screen; the page surfaces its own load errors
+    }
     setLoading(false);
   }, [filters, selectedSiteId]);
 

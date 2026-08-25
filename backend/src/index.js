@@ -85,9 +85,10 @@ const PORT = config.port;
 app.use(cookieParser());
 app.use(pinoHttp({ logger }));
 
-// Behind a single platform proxy (Railway/Render/nginx) — needed so rate
-// limiting and logging see the real client IP, not the proxy's.
-app.set('trust proxy', 1);
+// Needed so rate limiting and logging see the real client IP, not the proxy's.
+// Deliberately counted in hops rather than left on — see config.trustProxy for
+// why believing one hop too many hands a caller a free rate-limit bypass.
+app.set('trust proxy', config.trustProxy);
 
 // Security headers. CSP is left off because the SPA relies heavily on inline
 // styles; the other protections (HSTS, no-sniff, frameguard, etc.) still apply.
@@ -131,11 +132,25 @@ function corsDelegate(req, cb) {
 app.use(cors(corsDelegate));
 
 // ─── Rate limiting ────────────────────────────────────────────────────────────
+const { apiRateKey, isSessionKey, apiKeyRateKey } = require('./middleware/rateLimitKey');
+
+// Two ceilings, because the two kinds of caller are not comparable — see
+// config.rateLimit for how each number was arrived at.
+const { authenticatedMax: AUTHENTICATED_MAX, anonymousMax: ANONYMOUS_MAX } = config.rateLimit;
+
+// The key is resolved once per request and reused for the ceiling, so the two
+// can never disagree about who is being counted.
+const rateKeyFor = (req) => (req._apiRateKey ??= apiRateKey(req));
+
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 1000,                       // generous; protects against runaway clients
+  keyGenerator: rateKeyFor,
+  limit: (req) => (isSessionKey(rateKeyFor(req)) ? AUTHENTICATED_MAX : ANONYMOUS_MAX),
   standardHeaders: true,
   legacyHeaders: false,
+  // A different code from the auth limiter's on purpose: a client may back off
+  // and retry this one, but must never auto-retry a rejected credential attempt.
+  message: { error: 'Too many requests. Please wait a moment and try again.', code: 'API_RATE_LIMITED' },
 });
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -190,7 +205,13 @@ app.use('/api/game',          gameRouter);  // public — no auth required
 app.get('/api/public/pricing', (_req, res) => res.json(PRICING));
 
 // Enterprise API v1 — authenticated with a long-lived API key, not a session.
-const apiKeyLimiter = rateLimit({ windowMs: 60 * 1000, max: 1000, standardHeaders: true, legacyHeaders: false });
+const apiKeyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 1000,
+  keyGenerator: apiKeyRateKey,   // per key, not per corporate egress IP
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 app.use('/api/v1', apiKeyLimiter, apiKeyAuth, v1Router);
 
 app.use('/api',               requireAuth); // protect everything below

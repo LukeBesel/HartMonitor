@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, ReactNode } from 'react';
 import { api } from '../api/client';
-import { useAuth } from './AuthContext';
+import { useAuthUserId } from './AuthContext';
 import { publishRealtime } from '../utils/realtime';
 import type { RealtimeEvent } from '../utils/realtime';
 import type { BroadcastMessage, MessageSeverity } from '../types';
@@ -20,7 +20,7 @@ const MessagesContext = createContext<MessagesContextValue | null>(null);
 const MAX_HISTORY = 100;
 
 export function MessagesProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const userId = useAuthUserId();
   const [messages, setMessages] = useState<BroadcastMessage[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [connected, setConnected] = useState(false);
@@ -30,16 +30,16 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout>>();
 
   useEffect(() => {
-    if (!user) {
+    if (!userId) {
       setMessages([]);
       setUnreadCount(0);
       return;
     }
     api.getMessages().then(setMessages).catch(() => {});
-  }, [user]);
+  }, [userId]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!userId) return;
 
     let cancelled = false;
 
@@ -71,7 +71,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
         if (d.type !== 'message' || !d.message) return;
         const incoming = d.message as BroadcastMessage;
         setMessages(prev => prev.some(m => m.id === incoming.id) ? prev : [incoming, ...prev].slice(0, MAX_HISTORY));
-        if (incoming.sender_id !== user.id) {
+        if (incoming.sender_id !== userId) {
           setUnreadCount(c => c + 1);
           setToast(incoming);
         }
@@ -97,7 +97,7 @@ export function MessagesProvider({ children }: { children: ReactNode }) {
       wsRef.current?.close();
       wsRef.current = null;
     };
-  }, [user]);
+  }, [userId]);
 
   const markAllRead = useCallback(() => setUnreadCount(0), []);
 

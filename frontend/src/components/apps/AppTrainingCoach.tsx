@@ -11,9 +11,9 @@ import {
   Check, ChevronDown, ChevronUp, X, ArrowRight, GraduationCap,
   Sparkles, RefreshCw, PartyPopper,
 } from 'lucide-react';
-import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useModules } from '../../context/ModulesContext';
+import { useCompanySetting } from '../../context/BrandingContext';
 import { ONBOARDING_DONE_EVENT } from '../shared/OnboardingWizard';
 import { useAppTraining, TrainingStepId } from './useAppTraining';
 
@@ -319,19 +319,20 @@ function useIsNarrow(): boolean {
 function useWelcomeDone(role: string | undefined): boolean {
   const showsWelcome = role === 'manager' || role === 'developer';
   const [done, setDone] = useState(!showsWelcome);
+  // Read off the settings the branding provider already holds rather than
+  // asking /api/config for the same bag a third time on every page load.
+  const { value: completedFlag, status: settingsStatus } = useCompanySetting('onboarding_completed');
 
   useEffect(() => {
     if (!showsWelcome) { setDone(true); return; }
-    let cancelled = false;
     const truthy = (v: unknown) => ['true', '1', 'yes'].includes(String(v ?? '').toLowerCase());
-    api.getCompanySettings()
-      .then(settings => { if (!cancelled) setDone(truthy(settings?.onboarding_completed)); })
-      // If settings can't be read we'd rather coach than go silent.
-      .catch(() => { if (!cancelled) setDone(true); });
+    // If the flag can't be read we'd rather coach than go silent.
+    if (settingsStatus === 'ready') setDone(truthy(completedFlag));
+    else if (settingsStatus === 'error') setDone(true);
     const onFinished = () => setDone(true);
     window.addEventListener(ONBOARDING_DONE_EVENT, onFinished);
-    return () => { cancelled = true; window.removeEventListener(ONBOARDING_DONE_EVENT, onFinished); };
-  }, [showsWelcome]);
+    return () => window.removeEventListener(ONBOARDING_DONE_EVENT, onFinished);
+  }, [showsWelcome, settingsStatus, completedFlag]);
 
   return done;
 }

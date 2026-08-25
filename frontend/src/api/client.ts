@@ -172,7 +172,45 @@ function dashboardFilterQS(f?: DashboardFilters): string {
   return s ? `?${s}` : '';
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+// ─── Hitting the API's rate limit ────────────────────────────────────────────
+// The server rejects an over-budget request in its rate-limit middleware, before
+// the route ever runs. That is a stronger guarantee than a 429 usually carries:
+// the request was not merely unsuccessful, it was never processed, so nothing
+// was written. Which is why a rejected POST is replayed here alongside the GETs.
+// The alternative — telling an operator half-way through a run that starting the
+// job "failed" — throws away real work, and there is no double-submit to fear
+// because the handler never saw the first attempt.
+//
+// The `code` is what pins that reasoning down. Only our own general limiter
+// sends it; a 429 from anywhere else in the chain (a proxy, a CDN, the auth
+// limiter guarding credentials) makes no promise about whether the request ran,
+// so it is surfaced to the caller untouched and never replayed.
+const REPLAYABLE_429 = 'API_RATE_LIMITED';
+const MAX_429_RETRIES = 3;
+// Past this, waiting is worse than telling the truth: the person is better off
+// being told when to come back than watching a spinner for ten minutes.
+const MAX_429_WAIT_MS = 15_000;
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/** `Retry-After` in milliseconds — seconds form or HTTP-date form. Null if absent. */
+function parseRetryAfter(header: string | null): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const when = Date.parse(header);
+  return Number.isNaN(when) ? null : Math.max(0, when - Date.now());
+}
+
+/** "40 seconds" / "about 3 minutes", from a real Retry-After — never a guess. */
+function describeWait(ms: number): string {
+  const seconds = Math.ceil(ms / 1000);
+  if (seconds <= 90) return `${seconds} second${seconds === 1 ? '' : 's'}`;
+  const minutes = Math.ceil(seconds / 60);
+  return `about ${minutes} minute${minutes === 1 ? '' : 's'}`;
+}
+
+async function sendRequest<T>(path: string, options?: RequestInit, attempt = 0): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   // On native apps, send token as Authorization header (cookies don't cross origins in WebView)
   if (_nativeToken) headers['Authorization'] = `Bearer ${_nativeToken}`;
@@ -183,6 +221,25 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     credentials: 'include', // sends httpOnly cookie on web; no-op on native (header used instead)
     headers,
   });
+
+  if (res.status === 429) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    const retryAfterMs = parseRetryAfter(res.headers.get('Retry-After'));
+    if (err?.code === REPLAYABLE_429 && attempt < MAX_429_RETRIES
+        && (retryAfterMs === null || retryAfterMs <= MAX_429_WAIT_MS)) {
+      // Honour Retry-After when the server sent one; otherwise back off on a
+      // jittered curve so a page's worth of parallel calls don't all come back
+      // in the same instant and trip the limit again.
+      const backoff = 400 * 2 ** attempt + Math.random() * 250;
+      await sleep(retryAfterMs ?? backoff);
+      return sendRequest<T>(path, options, attempt + 1);
+    }
+    const when = retryAfterMs === null ? '' : ` Please try again in ${describeWait(retryAfterMs)}.`;
+    throw Object.assign(
+      new Error(`The server is handling too many requests right now.${when || ' Please try again in a moment.'}`),
+      { status: 429, data: err },
+    );
+  }
 
   if (res.status === 401) {
     const err = await res.json().catch(() => ({ code: 'INVALID_TOKEN' }));
@@ -207,6 +264,70 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     throw Object.assign(new Error(err.message || err.error || 'Request failed'), { status: res.status, data: err });
   }
   return res.json();
+}
+
+// ─── Sharing one GET between the components that all want it ─────────────────
+// Mounting a screen mounts a sidebar, a coach, a checklist and the page itself,
+// and several of them independently need the same list. They are not wrong to
+// need it — asking the server for it four times is what is wrong. So identical
+// GETs raised close together are answered from one round trip.
+//
+// This is a backstop, not the plan: a component that fetches something it has no
+// business fetching still needs fixing at the component. What it removes is the
+// last, irreducible kind of duplication — separate components that each honestly
+// need the same list at the same moment.
+//
+// The freshness window is deliberately about as long as a mount cascade and no
+// longer, and any write clears the whole thing, so nothing here can serve a
+// caller data from before their own change.
+const GET_SHARE_WINDOW_MS = 2000;
+
+interface SharedGet { at: number; promise: Promise<unknown> }
+const sharedGets = new Map<string, SharedGet>();
+
+/** Forget every shared GET. Called after any write, and on sign-out. */
+export function invalidateApiCache(): void {
+  sharedGets.clear();
+}
+
+// Callers own what they are handed — one of them sorting an array in place must
+// not rearrange it for everybody else sharing the response.
+function detach<T>(value: T): T {
+  try {
+    return typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const method = (options?.method ?? 'GET').toUpperCase();
+
+  if (method !== 'GET') {
+    try {
+      return await sendRequest<T>(path, options);
+    } finally {
+      // A write may have changed anything, so no read from before it survives.
+      invalidateApiCache();
+    }
+  }
+
+  const key = `${path}::${JSON.stringify(options?.headers ?? null)}`;
+  const existing = sharedGets.get(key);
+  if (existing && Date.now() - existing.at < GET_SHARE_WINDOW_MS) {
+    return detach((await existing.promise) as T);
+  }
+
+  const promise = sendRequest<T>(path, options);
+  sharedGets.set(key, { at: Date.now(), promise });
+  try {
+    // The first caller gets the original object; only the sharers pay for a copy.
+    return await promise;
+  } catch (err) {
+    // A failure is not a result worth handing to the next caller.
+    if (sharedGets.get(key)?.promise === promise) sharedGets.delete(key);
+    throw err;
+  }
 }
 
 // Authenticated file download via fetch + blob, saved with the server-provided
