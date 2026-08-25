@@ -1,5 +1,6 @@
 const express = require('express');
 const db = require('../db');
+const { plantDayShift } = require('../plantDay');
 const { calcScheduleStatus } = require('./workorders');
 const { calcOEE } = require('./oee');
 const { teamOf: andonTeamOf, teamLabel: andonTeamLabel } = require('../andonTeams');
@@ -136,8 +137,11 @@ function safeDays(value, fallback) {
 router.get('/overview', (req, res) => {
   const cid = req.companyId;
   const f = completionFilter(req);
+  // The plant's day, not Greenwich's: bound to both sides of every "today"
+  // comparison so a second-shift crew's counters don't reset mid-shift.
+  const day = plantDayShift(cid);
   const totalCompletions  = db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed'${f.clause}`).get(cid, ...f.params).c;
-  const todayCompletions  = db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed' AND date(completed_at)=date('now')${f.clause}`).get(cid, ...f.params).c;
+  const todayCompletions  = db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed' AND date(completed_at, ?)=date('now', ?)${f.clause}`).get(cid, day, day, ...f.params).c;
   const inProgress        = db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='in_progress'${f.clause}`).get(cid, ...f.params).c;
   const totalApps         = db.prepare("SELECT COUNT(*) as c FROM apps WHERE company_id = ?").get(cid).c;
   const publishedApps     = db.prepare("SELECT COUNT(*) as c FROM apps WHERE company_id = ? AND status='published'").get(cid).c;
@@ -366,6 +370,9 @@ router.get('/manager-view', (req, res) => {
 router.get('/plant-view', (req, res) => {
   const cid = req.companyId;
   const { site_id, department_id, app_id } = req.query;
+  // The plant's day, not Greenwich's: bound to both sides of every "today"
+  // comparison so a second-shift crew's counters don't reset mid-shift.
+  const day = plantDayShift(cid);
 
   // Page scope, expressed twice because two of the queries below join
   // `work_orders` (which has an `app_id` of its own): once qualified for the
@@ -390,8 +397,8 @@ router.get('/plant-view', (req, res) => {
   // KPIs
   const todayCompleted = db.prepare(`
     SELECT COUNT(*) as c FROM completions ${siteJoin}
-    WHERE completions.company_id = ? AND completions.status='completed' AND date(completions.completed_at)=date('now')${siteClause}${cf.clause}
-  `).get(cid, ...siteParams, ...cf.params).c;
+    WHERE completions.company_id = ? AND completions.status='completed' AND date(completions.completed_at, ?)=date('now', ?)${siteClause}${cf.clause}
+  `).get(cid, day, day, ...siteParams, ...cf.params).c;
   const activeNow = db.prepare(`
     SELECT COUNT(*) as c FROM completions ${siteJoin}
     WHERE completions.company_id = ? AND completions.status='in_progress'${siteClause}${cf.clause}
@@ -464,9 +471,9 @@ router.get('/plant-view', (req, res) => {
     FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN stations st    ON st.id = c.station_id
-    WHERE c.company_id = ? AND c.status = 'completed' AND date(c.completed_at) = date('now')${cfc.clause}
+    WHERE c.company_id = ? AND c.status = 'completed' AND date(c.completed_at, ?) = date('now', ?)${cfc.clause}
     GROUP BY COALESCE(wo.department_id, st.department_id)
-  `).all(cid, ...cfc.params)) {
+  `).all(cid, day, day, ...cfc.params)) {
     if (r.dept_id != null) todayCountByDept[r.dept_id] = r.c;
   }
   const avgCycleByDept = {};
@@ -922,6 +929,9 @@ router.get('/completion/:id', (req, res) => {
 
 router.get('/daily-brief', (req, res) => {
   const cid = req.companyId;
+  // The plant's day, not Greenwich's: bound to both sides of every "today"
+  // comparison so a second-shift crew's counters don't reset mid-shift.
+  const day = plantDayShift(cid);
   const planRow = db.prepare('SELECT tier FROM plan WHERE company_id = ?').get(cid);
   const { config: appConfig } = require('../config');
   const isPro = appConfig.earlyAccess || (planRow && planRow.tier !== 'free');
@@ -1208,13 +1218,13 @@ router.get('/daily-brief', (req, res) => {
   // ── KPIs with deltas
   const completedToday = db.prepare(`
     SELECT COUNT(*) as c FROM completions
-    WHERE company_id = ? AND status='completed' AND date(completed_at)=date('now')${cf.clause}
-  `).get(cid, ...cf.params).c;
+    WHERE company_id = ? AND status='completed' AND date(completed_at, ?)=date('now', ?)${cf.clause}
+  `).get(cid, day, day, ...cf.params).c;
   const weekAvgRow = db.prepare(`
     SELECT COUNT(*) / 7.0 as avg
     FROM completions
-    WHERE company_id = ? AND status='completed' AND date(completed_at) >= date('now', '-7 days') AND date(completed_at) < date('now')${cf.clause}
-  `).get(cid, ...cf.params);
+    WHERE company_id = ? AND status='completed' AND date(completed_at, ?) >= date('now', ?, '-7 days') AND date(completed_at, ?) < date('now', ?)${cf.clause}
+  `).get(cid, day, day, day, day, ...cf.params);
   const weekAvg = weekAvgRow?.avg || 0;
   const vsAvgPct = weekAvg > 0 ? Math.round(((completedToday - weekAvg) / weekAvg) * 100) : null;
 
@@ -1310,6 +1320,9 @@ router.get('/department/:id', (req, res) => {
   const cid = req.companyId;
   const dept = db.prepare('SELECT * FROM departments WHERE id = ? AND company_id = ?').get(req.params.id, cid);
   if (!dept) return res.status(404).json({ error: 'Department not found' });
+  // The plant's day, not Greenwich's: bound to both sides of every "today"
+  // comparison so a second-shift crew's counters don't reset mid-shift.
+  const day = plantDayShift(cid);
 
   // Completions attribute to a department via their work order, falling back
   // to their station's department when run without a work order.
@@ -1320,7 +1333,7 @@ router.get('/department/:id', (req, res) => {
     WHERE c.company_id = ? AND COALESCE(wo.department_id, st.department_id) = ?
   `;
 
-  const completedToday = db.prepare(`SELECT COUNT(*) as c ${DEPT_COMPLETION_JOIN} AND c.status='completed' AND date(c.completed_at)=date('now')`).get(cid, dept.id).c;
+  const completedToday = db.prepare(`SELECT COUNT(*) as c ${DEPT_COMPLETION_JOIN} AND c.status='completed' AND date(c.completed_at, ?)=date('now', ?)`).get(cid, dept.id, day, day).c;
   const activeNow      = db.prepare(`SELECT COUNT(*) as c ${DEPT_COMPLETION_JOIN} AND c.status='in_progress'`).get(cid, dept.id).c;
 
   const ctRow = db.prepare(`

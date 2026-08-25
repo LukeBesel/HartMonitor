@@ -1,6 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { plantDayShift } = require('../plantDay');
 const { notify } = require('../notifications');
 const { deliverWebhooks } = require('../webhooks');
 const { requireRole } = require('../middleware/auth');
@@ -15,6 +16,9 @@ const router = express.Router();
 // and OEE itself is only reported when all three factors are real.
 function calcOEE(station) {
   const fullDayMinutes = (station.planned_hours_per_day || 8) * 60;
+  // "Today" means the plant's today. Against UTC, a second-shift crew watched
+  // every counter on this screen reset in the middle of their shift.
+  const day = plantDayShift(station.company_id);
 
   // Planned time ELAPSED SO FAR today, not the whole shift. Dividing today's
   // output by a full eight hours at ten in the morning reports a station
@@ -30,12 +34,12 @@ function calcOEE(station) {
   const firstActivity = db.prepare(`
     SELECT MIN(t) AS t FROM (
       SELECT MIN(started_at) AS t FROM machine_events
-       WHERE station_id = ? AND started_at >= date('now')
+       WHERE station_id = ? AND date(started_at, ?) = date('now', ?)
       UNION ALL
       SELECT MIN(started_at) AS t FROM completions
-       WHERE station_id = ? AND started_at >= date('now')
+       WHERE station_id = ? AND date(started_at, ?) = date('now', ?)
     )
-  `).get(station.id, station.id);
+  `).get(station.id, day, day, station.id, day, day);
 
   const startedMs = firstActivity?.t ? new Date(firstActivity.t).getTime() : null;
   const elapsedMinutes = startedMs === null
@@ -51,8 +55,8 @@ function calcOEE(station) {
     SELECT COALESCE(SUM(duration_minutes), 0) as total
     FROM machine_events
     WHERE station_id = ? AND event_type IN ('down','maintenance')
-      AND started_at >= date('now') AND duration_minutes IS NOT NULL
-  `).get(station.id);
+      AND date(started_at, ?) = date('now', ?) AND duration_minutes IS NOT NULL
+  `).get(station.id, day, day);
 
   // Also count ongoing downtime/maintenance event if current_status is down/maintenance
   let ongoingDowntime = 0;
@@ -72,8 +76,8 @@ function calcOEE(station) {
   // Completions today for this station
   const completionRow = db.prepare(`
     SELECT COUNT(*) as c FROM completions
-    WHERE station_id = ? AND status = 'completed' AND date(completed_at) = date('now')
-  `).get(station.id);
+    WHERE station_id = ? AND status = 'completed' AND date(completed_at, ?) = date('now', ?)
+  `).get(station.id, day, day);
   const completionsToday = completionRow.c;
 
   // Performance: actual output vs the ideal cycle time. Without a configured
@@ -87,8 +91,8 @@ function calcOEE(station) {
   // Quality: pass rate over today's runs. No runs today = nothing to measure.
   const todayRows = db.prepare(`
     SELECT data FROM completions
-    WHERE station_id = ? AND status='completed' AND date(completed_at)=date('now')
-  `).all(station.id);
+    WHERE station_id = ? AND status='completed' AND date(completed_at, ?)=date('now', ?)
+  `).all(station.id, day, day);
 
   // Quality is a rate over INSPECTED runs only. A run with no Pass/Fail step
   // was never inspected — the old `if (!Fail) pass++` counted it as good (and
