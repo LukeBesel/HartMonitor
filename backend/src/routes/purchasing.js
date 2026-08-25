@@ -30,10 +30,12 @@ function getPOWithDetails(id, companyId) {
 
 function nextPONumber(companyId) {
   const year = new Date().getFullYear();
-  const row = db.prepare(`SELECT po_number FROM purchase_orders WHERE company_id = ? AND po_number LIKE 'PO-${year}-%' ORDER BY po_number DESC LIMIT 1`).get(companyId);
-  if (!row) return `PO-${year}-001`;
-  const last = parseInt(row.po_number.split('-')[2]) || 0;
-  return `PO-${year}-${String(last + 1).padStart(3, '0')}`;
+  const prefix = `PO-${year}-`;
+  // Take the numeric max of the trailing sequence, not a lexical ORDER BY —
+  // otherwise PO-2026-1000 sorts before PO-2026-999 and the id collides.
+  const row = db.prepare(`SELECT MAX(CAST(substr(po_number, ?) AS INTEGER)) AS max_seq FROM purchase_orders WHERE company_id = ? AND po_number LIKE ?`).get(prefix.length + 1, companyId, prefix + '%');
+  const last = row && row.max_seq ? row.max_seq : 0;
+  return `${prefix}${String(last + 1).padStart(3, '0')}`;
 }
 
 function ownedPO(req) {

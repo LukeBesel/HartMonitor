@@ -17,10 +17,12 @@ const NCR_STATUS_LABELS = {
 
 function nextNCRNumber(companyId) {
   const year = new Date().getFullYear();
-  const row = db.prepare(`SELECT ncr_number FROM ncrs WHERE company_id = ? AND ncr_number LIKE 'NCR-${year}-%' ORDER BY ncr_number DESC LIMIT 1`).get(companyId);
-  if (!row) return `NCR-${year}-001`;
-  const last = parseInt(row.ncr_number.split('-')[2]) || 0;
-  return `NCR-${year}-${String(last + 1).padStart(3, '0')}`;
+  const prefix = `NCR-${year}-`;
+  // Take the numeric max of the trailing sequence, not a lexical ORDER BY —
+  // otherwise NCR-2026-1000 sorts before NCR-2026-999 and the id collides.
+  const row = db.prepare(`SELECT MAX(CAST(substr(ncr_number, ?) AS INTEGER)) AS max_seq FROM ncrs WHERE company_id = ? AND ncr_number LIKE ?`).get(prefix.length + 1, companyId, prefix + '%');
+  const last = row && row.max_seq ? row.max_seq : 0;
+  return `${prefix}${String(last + 1).padStart(3, '0')}`;
 }
 
 function getNCRWithDetails(id, companyId) {
