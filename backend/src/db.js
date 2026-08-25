@@ -1683,6 +1683,24 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_product_routings_company ON product_routings(company_id);
 `);
 
+// `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists, so a
+// database created before routing_steps carried company_id still has no such
+// column — and the routings department filter selects `rs2.company_id`, which is
+// a hard SQL error, not an empty result. Add it if missing, then backfill from
+// the parent routing so existing steps are not left tenant-less and invisible to
+// every filtered query. Both halves are idempotent.
+{
+  const routingStepCols = db.prepare('PRAGMA table_info(routing_steps)').all().map(r => r.name);
+  if (!routingStepCols.includes('company_id')) {
+    db.exec('ALTER TABLE routing_steps ADD COLUMN company_id TEXT REFERENCES organizations(id)');
+  }
+  db.exec(`
+    UPDATE routing_steps
+       SET company_id = (SELECT pr.company_id FROM product_routings pr WHERE pr.id = routing_steps.routing_id)
+     WHERE company_id IS NULL
+  `);
+}
+
 // ─── Migrations: work_orders (routing_id, assigned_user_id) ──────────────────
 
 {
