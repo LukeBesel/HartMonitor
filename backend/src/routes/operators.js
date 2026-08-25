@@ -13,6 +13,33 @@ const { issueGrant } = require('../authorization');
 
 const router = express.Router();
 
+// ─── PIN brute-force lockout ─────────────────────────────────────────────────
+// The PIN endpoints compare a submitted PIN against every active user's hash, so
+// without a limiter a 4-digit space is exhaustible in hours. We track failed
+// attempts per company+IP: after LOCK_THRESHOLD failures within LOCK_WINDOW_MS,
+// that source is locked out for the rest of the window. Keyed by IP so one
+// attacker can't lock out a whole company's legitimate tablets, and cleared on
+// the first success. In-memory (best-effort across a single process); it sits on
+// top of the global rate limiter, not instead of it.
+const LOCK_THRESHOLD = 10;
+const LOCK_WINDOW_MS = 15 * 60 * 1000;
+const pinFails = new Map(); // key -> { count, first }
+
+function pinKey(req) { return `${req.companyId}:${req.ip || req.socket?.remoteAddress || 'unknown'}`; }
+function pinLocked(req) {
+  const e = pinFails.get(pinKey(req));
+  if (!e) return false;
+  if (Date.now() - e.first > LOCK_WINDOW_MS) { pinFails.delete(pinKey(req)); return false; }
+  return e.count >= LOCK_THRESHOLD;
+}
+function pinFail(req) {
+  const key = pinKey(req);
+  const e = pinFails.get(key);
+  if (!e || Date.now() - e.first > LOCK_WINDOW_MS) pinFails.set(key, { count: 1, first: Date.now() });
+  else e.count += 1;
+}
+function pinSuccess(req) { pinFails.delete(pinKey(req)); }
+
 // GET /api/operators/roster — active operators in this company for the portal picker.
 router.get('/roster', (req, res) => {
   const rows = db.prepare(`
@@ -77,6 +104,7 @@ router.post('/badge-login', (req, res) => {
   }
 
   if (pin !== undefined && pin !== null && String(pin) !== '') {
+    if (pinLocked(req)) return res.status(429).json({ error: 'Too many failed PIN attempts — try again in a few minutes' });
     // With a user_id we verify one specific hash; without one we check the
     // company's active users that have a PIN set (rosters are small).
     const candidates = user_id
@@ -86,9 +114,11 @@ router.post('/badge-login', (req, res) => {
           .all(req.companyId);
     for (const u of candidates) {
       if (verifyPassword(String(pin), u.pin_hash)) {
+        pinSuccess(req);
         return res.json({ user_id: u.id, display_name: u.display_name });
       }
     }
+    pinFail(req);
     return res.status(401).json({ error: 'Invalid PIN' });
   }
 
@@ -101,6 +131,12 @@ router.post('/badge-login', (req, res) => {
 // AND whose role is supervisor or above. Lower roles and bad PINs both return
 // 403 with a clear message so the player can show why authorization failed.
 router.post('/verify-authorizer', (req, res) => {
+  // The caller must already be on the floor (operator+). A viewer has no reason
+  // to fish for a supervisor's PIN, so don't even let them try.
+  if ((ROLE_LEVELS[req.user?.role] ?? 0) < ROLE_LEVELS.operator) {
+    return res.status(403).json({ error: 'Not permitted' });
+  }
+  if (pinLocked(req)) return res.status(429).json({ error: 'Too many failed attempts — try again in a few minutes' });
   const { pin } = req.body || {};
   if (pin === undefined || pin === null || String(pin) === '') {
     return res.status(400).json({ error: 'pin required' });
@@ -112,6 +148,7 @@ router.post('/verify-authorizer', (req, res) => {
   `).all(req.companyId);
   const matches = candidates.filter(u => verifyPassword(String(pin), u.pin_hash));
   if (matches.length === 0) {
+    pinFail(req);
     return res.status(403).json({ error: 'PIN not recognized' });
   }
   // A PIN shared across roles (unlikely) authorizes if ANY match qualifies.
@@ -119,6 +156,7 @@ router.post('/verify-authorizer', (req, res) => {
   if (!authorizer) {
     return res.status(403).json({ error: 'Authorization requires a supervisor or above' });
   }
+  pinSuccess(req); // a real supervisor PIN cleared — reset the failure counter
   // Mint a single-use, expiring grant. The endpoint that needs the sign-off
   // redeems this id and takes the authorizer identity FROM the grant, so a
   // client can't skip the PIN check and name any supervisor it likes.

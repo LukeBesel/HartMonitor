@@ -8,7 +8,6 @@ export default function ForgotPassword() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
-  const [devUrl, setDevUrl] = useState<string | null>(null);
 
   const inputClass = 'w-full px-4 py-2.5 rounded-xl border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-sm';
 
@@ -18,8 +17,7 @@ export default function ForgotPassword() {
     setError('');
     setLoading(true);
     try {
-      const res = await api.forgotPassword(email.trim());
-      setDevUrl(res.dev_reset_url ?? null);
+      await api.forgotPassword(email.trim());
       setSent(true);
     } catch (err: any) {
       setError(err.message || 'Something went wrong. Please try again.');
@@ -57,13 +55,6 @@ export default function ForgotPassword() {
                     we've sent a link to reset your password. It expires in 1 hour.
                   </p>
                 </div>
-                {devUrl && !(import.meta as any).env?.PROD && (
-                  <div className="text-left rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
-                    <p className="text-xs font-semibold text-amber-700 mb-1">Dev mode — SMTP not configured</p>
-                    <p className="text-xs text-amber-700/80 mb-2">Use this one-time link to continue:</p>
-                    <a href={devUrl} className="text-xs font-medium text-blue-600 hover:underline break-all">{devUrl}</a>
-                  </div>
-                )}
                 <Link
                   to="/login"
                   className="inline-flex items-center justify-center gap-2 w-full py-3 rounded-xl text-white font-semibold text-sm transition-all"

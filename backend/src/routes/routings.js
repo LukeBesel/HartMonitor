@@ -15,17 +15,34 @@ function ownedOrNull(table, id, companyId) {
 }
 
 // ─── GET / — list all routings with step count ────────────────────────────────
+// Optional ?department_id= narrows the list to routings that have at least one
+// step in that department (a routing has no department of its own — the
+// department lives on each routing_steps row). The step_count stays the full
+// count so the list still reads as the whole routing, not the filtered slice.
 
 router.get('/', (req, res) => {
+  const { department_id } = req.query;
+  const params = [req.companyId];
+  let deptClause = '';
+  if (department_id) {
+    // company_id-scoped EXISTS: a department id from another tenant is never
+    // referenced by this company's steps, so it filters everything away.
+    deptClause = `
+      AND EXISTS (
+        SELECT 1 FROM routing_steps rs2
+        WHERE rs2.routing_id = pr.id AND rs2.department_id = ? AND rs2.company_id = ?
+      )`;
+    params.push(department_id, req.companyId);
+  }
   const rows = db.prepare(`
     SELECT pr.*,
            COUNT(rs.id) AS step_count
     FROM product_routings pr
     LEFT JOIN routing_steps rs ON rs.routing_id = pr.id
-    WHERE pr.company_id = ?
+    WHERE pr.company_id = ?${deptClause}
     GROUP BY pr.id
     ORDER BY pr.name ASC
-  `).all(req.companyId);
+  `).all(...params);
   res.json(rows);
 });
 

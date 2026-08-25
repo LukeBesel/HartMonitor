@@ -54,11 +54,12 @@ function enrichWorkOrder(wo) {
 function nextWorkOrderNumber(companyId) {
   const year   = new Date().getFullYear();
   const prefix = `WO-${year}-`;
-  const latest = db.prepare(
-    `SELECT work_order_number FROM work_orders WHERE company_id = ? AND work_order_number LIKE ? ORDER BY work_order_number DESC LIMIT 1`
-  ).get(companyId, prefix + '%');
-  if (!latest) return `${prefix}001`;
-  const seq = parseInt(latest.work_order_number.replace(prefix, ''), 10);
+  // Take the numeric max of the trailing sequence, not a lexical ORDER BY —
+  // otherwise WO-2026-1000 sorts before WO-2026-999 and the id collides.
+  const row = db.prepare(
+    `SELECT MAX(CAST(substr(work_order_number, ?) AS INTEGER)) AS max_seq FROM work_orders WHERE company_id = ? AND work_order_number LIKE ?`
+  ).get(prefix.length + 1, companyId, prefix + '%');
+  const seq = row && row.max_seq ? row.max_seq : 0;
   return `${prefix}${String(seq + 1).padStart(3, '0')}`;
 }
 

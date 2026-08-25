@@ -757,20 +757,23 @@ function JobsTab({
               </button>
             );
           })}
+          {/* Keep the last card reachable above the floating Start bar */}
+          {selectedWO && <div className="h-24" aria-hidden="true" />}
         </div>
       )}
 
-      {/* Start button */}
+      {/* Start button — floats above the tab bar; on notched phones the tab bar
+          grows by the safe-area inset, so the offset has to follow it. */}
       {selectedWO && (
-        <div className="fixed bottom-20 inset-x-4 sm:inset-x-6 z-30">
+        <div className="fixed inset-x-4 sm:inset-x-6 z-30" style={{ bottom: 'calc(5rem + env(safe-area-inset-bottom))' }}>
           <button
             onClick={onStartJob}
             disabled={!selectedWO.app_id}
-            className="w-full h-16 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-2xl font-bold text-xl transition-colors flex items-center justify-center gap-3 shadow-2xl shadow-blue-900/50"
+            className="w-full h-16 px-4 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-2xl font-bold text-xl transition-colors flex items-center justify-center gap-3 shadow-2xl shadow-blue-900/50"
           >
-            <Factory size={24} />
-            Start: {selectedWO.part_name}
-            <ChevronRight size={22} />
+            <Factory size={24} className="flex-shrink-0" />
+            <span className="truncate min-w-0">Start: {selectedWO.part_name}</span>
+            <ChevronRight size={22} className="flex-shrink-0" />
           </button>
           {!selectedWO.app_id && (
             <p className="text-center text-xs text-amber-300 mt-2">

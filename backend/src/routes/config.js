@@ -143,6 +143,27 @@ router.put('/plan', requireRole('manager'), (req, res) => {
   if (current.tier === tier) return res.json(planResponse(req.companyId));
 
   const def = PRICING.tiers[tier];
+
+  // When real billing is configured, Stripe is the source of truth for paid
+  // upgrades — otherwise a manager could set tier: 'enterprise' for free and
+  // unlock unlimited capacity, bypassing checkout entirely. A PUT may still
+  // DOWNGRADE (to cancel/reduce); an upgrade must go through /plan/checkout,
+  // whose completed subscription drives the tier via the Stripe webhook. With
+  // no billing configured (self-host, no revenue to bypass) the instant demo
+  // change stays.
+  if (isConfigured()) {
+    const currentPrice = PRICING.tiers[current.tier]?.monthly_price ?? 0;
+    const targetPrice = def.monthly_price;
+    // A null price means "contact sales" (Enterprise) — not free. Block it, and
+    // any move to a strictly more expensive tier. Downgrades to a known cheaper
+    // or equal price stay allowed so a customer can reduce their plan.
+    if (targetPrice === null || targetPrice === undefined || targetPrice > currentPrice) {
+      return res.status(402).json({
+        error: 'checkout_required',
+        message: 'Upgrading to a paid plan requires checkout. Start it from Settings → Plan (Enterprise: contact sales).',
+      });
+    }
+  }
   db.prepare(`UPDATE plan SET tier=?, app_limit=?, dashboard_limit=?, updated_at=datetime('now') WHERE company_id=?`)
     .run(tier, def.app_limit, def.dashboard_limit, req.companyId);
 
@@ -168,6 +189,12 @@ router.post('/plan/purchase', requireRole('manager'), (req, res) => {
 
   const qty = Math.floor(Number(quantity));
   if (!Number.isFinite(qty) || qty < 1 || qty > 50) return res.status(400).json({ error: 'quantity must be between 1 and 50' });
+
+  // Same rule as tier upgrades: with billing configured, paid add-on slots must
+  // be bought through checkout, not unlocked for free here.
+  if (isConfigured()) {
+    return res.status(402).json({ error: 'checkout_required', message: 'Add-on slots require checkout. Start it from Settings → Plan.' });
+  }
 
   const plan = getPlanRow(req.companyId);
   if (plan.app_limit < 0) {

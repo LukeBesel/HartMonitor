@@ -401,6 +401,51 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   // ── Shift handoff note (yesterday, tells the same downtime story) ───────────
   db.prepare(`INSERT INTO shift_notes (id, company_id, department_id, shift_name, shift_date, supervisor, good_count, scrap_count, downtime_minutes, notes, status, created_by) VALUES (?, ?, ?, 'Day', date('now', '-1 days'), 'Demo Visitor', 120, 3, 25, 'Pack-out conveyor squealing near the drive end — maintenance notified, keep an eye on it.', 'submitted', 'Demo Visitor')`)
     .run(uuidv4(), orgId, deptB);
+
+  // ── A SECOND published app, so the App Dashboard picker shows more than one ──
+  // Final QC on the pack-out line: a torque re-check plus a visual pass/fail.
+  // Kept deliberately small — two steps, its own runs on Station 2 — but real
+  // enough that its analytics tiles, operators and captured values are populated.
+  const qcAppId = uuidv4();
+  const qcTorqueW = uuidv4(), qcResultW = uuidv4();
+  const qcSteps = [
+    { id: uuidv4(), name: 'Re-torque check', order: 0, layout: 'stacked', widgets: [
+      { id: uuidv4(), type: 'instruction', config: { text: 'Confirm the two frame bolts hold 15 Nm before the unit ships.' } },
+      { id: qcTorqueW, type: 'number-input', config: { label: 'Verified torque (Nm)', variableName: 'final_torque', required: true } },
+    ] },
+    { id: uuidv4(), name: 'Final visual', order: 1, layout: 'stacked', widgets: [
+      { id: qcResultW, type: 'pass-fail', config: { label: 'Ships as-is?', variableName: 'qc_result', required: true } },
+    ] },
+  ];
+  db.prepare(`INSERT INTO apps (id, name, description, status, steps, company_id) VALUES (?, ?, ?, 'published', ?, ?)`)
+    .run(qcAppId, 'Final QC Inspection', 'Pack-out quality gate — a torque re-check and a ship/hold decision.', JSON.stringify(qcSteps), orgId);
+
+  const qcWidgets = widgetIndex(qcSteps);
+  const insQcCompletion = db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, operator_user_id, started_at, completed_at, status, data, step_times, takt_exceeded_steps, company_id)
+    VALUES (?, ?, 'Final QC Inspection', ?, ?, ?, datetime('now', ?), datetime('now', ?), 'completed', ?, ?, '[]', ?)`);
+  // end-minutes-ago, duration, torque, result — spread across ~4 days and 3 operators.
+  const qcRuns = [
+    [5730, 4, 15.1, 'Pass'], [4290, 5, 14.9, 'Pass'], [2850, 4, 15.2, 'Pass'],
+    [1400, 6, 14.6, 'Fail'], [1380, 4, 15.0, 'Pass'], [120, 5, 15.3, 'Pass'],
+  ];
+  qcRuns.forEach(([end, dur, torque, result], i) => {
+    const cid = uuidv4();
+    const [operatorUserId, operatorName] = ops[i % 3];
+    insQcCompletion.run(
+      cid, qcAppId, st2, operatorName, operatorUserId,
+      `-${end + dur} minutes`, `-${end} minutes`,
+      JSON.stringify({ final_torque: torque, qc_result: result }),
+      JSON.stringify({ 0: 90 + (i % 3) * 10, 1: 40 + (i % 2) * 12 }),
+      orgId
+    );
+    for (const [varName, raw] of Object.entries({ final_torque: torque, qc_result: result })) {
+      const w = qcWidgets[varName];
+      if (!w) continue;
+      const isNum = w.type === 'number-input';
+      insValue.run(uuidv4(), cid, orgId, qcAppId, w.step_id, w.widget_id, varName,
+        isNum ? 'number' : 'pass_fail', isNum ? null : String(raw).toLowerCase(), isNum ? raw : null, `-${end} minutes`);
+    }
+  });
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────

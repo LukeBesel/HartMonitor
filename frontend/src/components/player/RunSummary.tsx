@@ -15,7 +15,7 @@ function ConfettiBurst() {
       delay: `${Math.random() * 0.25}s`,
     })), []);
   return (
-    <div aria-hidden="true" className="absolute inset-x-0 top-0 pointer-events-none overflow-visible">
+    <div aria-hidden="true" className="absolute inset-0 pointer-events-none overflow-hidden">
       {pieces.map((p, i) => (
         <span
           key={i}

@@ -7,10 +7,12 @@ const router = express.Router();
 
 function nextWONumber(companyId) {
   const year = new Date().getFullYear();
-  const row = db.prepare(`SELECT wo_number FROM maintenance_work_orders WHERE company_id = ? AND wo_number LIKE 'MWO-${year}-%' ORDER BY wo_number DESC LIMIT 1`).get(companyId);
-  if (!row) return `MWO-${year}-001`;
-  const last = parseInt(row.wo_number.split('-')[2]) || 0;
-  return `MWO-${year}-${String(last + 1).padStart(3, '0')}`;
+  const prefix = `MWO-${year}-`;
+  // Take the numeric max of the trailing sequence, not a lexical ORDER BY —
+  // otherwise MWO-2026-1000 sorts before MWO-2026-999 and the id collides.
+  const row = db.prepare(`SELECT MAX(CAST(substr(wo_number, ?) AS INTEGER)) AS max_seq FROM maintenance_work_orders WHERE company_id = ? AND wo_number LIKE ?`).get(prefix.length + 1, companyId, prefix + '%');
+  const last = row && row.max_seq ? row.max_seq : 0;
+  return `${prefix}${String(last + 1).padStart(3, '0')}`;
 }
 
 function ownedAsset(req) {

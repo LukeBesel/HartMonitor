@@ -279,7 +279,7 @@ export default function Analytics() {
       {/* KPI cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard icon={<CheckCircle size={18} className="text-green-600" />} bg="bg-green-50" label="Total Completions" value={overview?.totalCompletions ?? '—'} />
-        <KPICard icon={<Clock size={18} className="text-blue-600" />} bg="bg-blue-50" label="Avg Cycle Time" value={overview ? `${overview.avgCycleTime}m` : '—'} />
+        <KPICard icon={<Clock size={18} className="text-blue-600" />} bg="bg-blue-50" label="Avg Cycle Time" value={overview && overview.avgCycleTime != null ? `${overview.avgCycleTime}m` : '—'} />
         <KPICard icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50" label="Pass Rate" value={passRate !== null ? `${passRate}%` : '—'} />
         <KPICard icon={<Activity size={18} className="text-orange-600" />} bg="bg-orange-50" label="Today" value={overview?.todayCompletions ?? '—'} />
       </div>
@@ -375,6 +375,10 @@ export default function Analytics() {
           <div className="flex items-center gap-2 mb-4">
             <Users size={16} className="text-gray-500" />
             <h3 className="font-semibold text-gray-900">Operator Performance</h3>
+            {/* This panel is not date-scoped — the day-range selector above drives
+                throughput, cycle time and quality, but operator and app rollups
+                are all-time. Say so rather than let the control look dead here. */}
+            <span className="ml-auto text-xs text-gray-400" title="Not limited to the selected date range; the app, part and department filters still apply.">all time</span>
           </div>
           <div className="space-y-3">
             {operators.map((op, i) => (
@@ -400,6 +404,7 @@ export default function Analytics() {
           <div className="flex items-center gap-2 mb-4">
             <BarChart2 size={16} className="text-gray-500" />
             <h3 className="font-semibold text-gray-900">App Performance</h3>
+            <span className="ml-auto text-xs text-gray-400" title="Not limited to the selected date range; the app, part and department filters still apply.">all time</span>
           </div>
           <div className="space-y-3">
             {appPerf.map(ap => (

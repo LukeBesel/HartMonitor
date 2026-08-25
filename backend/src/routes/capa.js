@@ -16,10 +16,12 @@ const EDITABLE_COLUMNS = [
 
 function nextCAPANumber(companyId) {
   const year = new Date().getFullYear();
-  const row = db.prepare(`SELECT number FROM capa_items WHERE company_id = ? AND number LIKE 'CAPA-${year}-%' ORDER BY number DESC LIMIT 1`).get(companyId);
-  if (!row) return `CAPA-${year}-001`;
-  const last = parseInt(row.number.split('-')[2]) || 0;
-  return `CAPA-${year}-${String(last + 1).padStart(3, '0')}`;
+  const prefix = `CAPA-${year}-`;
+  // Take the numeric max of the trailing sequence, not a lexical ORDER BY —
+  // otherwise CAPA-2026-1000 sorts before CAPA-2026-999 and the id collides.
+  const row = db.prepare(`SELECT MAX(CAST(substr(number, ?) AS INTEGER)) AS max_seq FROM capa_items WHERE company_id = ? AND number LIKE ?`).get(prefix.length + 1, companyId, prefix + '%');
+  const last = row && row.max_seq ? row.max_seq : 0;
+  return `${prefix}${String(last + 1).padStart(3, '0')}`;
 }
 
 function capaWithDetails(id, companyId) {

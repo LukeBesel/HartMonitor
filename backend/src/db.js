@@ -160,6 +160,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_completions_completed  ON completions(status, completed_at);
 `);
 
+
 // ─── ERP / Inventory tables ───────────────────────────────────────────────────
 
 db.exec(`
@@ -2374,6 +2375,21 @@ db.exec(`
     ON department_members(company_id, team_role);
   CREATE INDEX IF NOT EXISTS idx_department_members_dept
     ON department_members(company_id, department_id);
+`);
+
+// ─── Analytics / perf indexes (run last, after every additive column migration) ─
+// Placed here on purpose: some of these columns (e.g. completions.company_id)
+// are added by guarded ALTERs above, so an index referencing them earlier in the
+// file would run before the column exists. The base completions indexes lack a
+// leading company_id, so a tenant-selective date scan (plant-view dept stats,
+// throughput, cycle-times, quality, and the per-station OEE "today" counts run
+// once per station in GET /oee) can't seek by tenant first. These are
+// company-first. All additive, IF NOT EXISTS, so re-running is a no-op.
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_completions_company_completed ON completions(company_id, status, completed_at);
+  CREATE INDEX IF NOT EXISTS idx_completions_company_station   ON completions(company_id, station_id, status, completed_at);
+  CREATE INDEX IF NOT EXISTS idx_machine_events_station_type   ON machine_events(station_id, event_type, started_at);
+  CREATE INDEX IF NOT EXISTS idx_routing_steps_department      ON routing_steps(company_id, department_id, routing_id);
 `);
 
 module.exports = db;

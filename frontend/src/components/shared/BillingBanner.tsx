@@ -31,7 +31,7 @@ export function BillingBanner() {
           </span>
           <button
             onClick={() => setClaiming(true)}
-            className="shrink-0 px-2.5 sm:px-3 py-1 rounded-lg bg-amber-500 text-gray-900 font-semibold text-xs hover:bg-amber-400 transition-colors whitespace-nowrap"
+            className="shrink-0 px-2.5 sm:px-3 py-1 rounded-lg bg-amber-500 text-[#111827] font-semibold text-xs hover:bg-amber-400 transition-colors whitespace-nowrap"
           >
             <span className="sm:hidden">Keep my work</span>
             <span className="hidden sm:inline">Keep my work — create a free account</span>

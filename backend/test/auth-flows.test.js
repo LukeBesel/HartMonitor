@@ -225,11 +225,18 @@ test('password reset kills every existing session and the old password', async (
   const forgot = await api('POST', '/api/auth/forgot-password', { body: { email } });
   assert.equal(forgot.status, 200);
   assert.equal(forgot.json.ok, true);
-  assert.ok(forgot.json.dev_reset_url, 'demo mode surfaces the link so the flow is completable');
-  assert.ok(forgot.json.dev_reset_url.startsWith('https://hartmonitorapp.com/reset-password?token='),
-    `reset link must point at APP_URL, got ${forgot.json.dev_reset_url}`);
+  // The token must NEVER come back to the (unauthenticated) caller — returning
+  // it was an account-takeover hole. Self-hosted recovery goes through the
+  // admin-only pending-resets endpoint, read here with the still-valid session.
+  assert.equal(forgot.json.dev_reset_url, undefined, 'forgot-password must not leak the reset token');
+  const pending = await api('GET', '/api/admin/pending-resets', { token: sessionA });
+  assert.equal(pending.status, 200);
+  const entry = pending.json.find(p => p.user_email === email);
+  assert.ok(entry, 'the reset is listed for an admin of the same company');
+  assert.ok(entry.reset_url.startsWith('https://hartmonitorapp.com/reset-password?token='),
+    `reset link must point at APP_URL, got ${entry.reset_url}`);
 
-  const token = new URL(forgot.json.dev_reset_url).searchParams.get('token');
+  const token = new URL(entry.reset_url).searchParams.get('token');
   const reset = await api('POST', '/api/auth/reset-password', { body: { token, new_password: 'second-password-2' } });
   assert.equal(reset.status, 200);
 

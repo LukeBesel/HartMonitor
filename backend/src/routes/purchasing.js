@@ -30,10 +30,12 @@ function getPOWithDetails(id, companyId) {
 
 function nextPONumber(companyId) {
   const year = new Date().getFullYear();
-  const row = db.prepare(`SELECT po_number FROM purchase_orders WHERE company_id = ? AND po_number LIKE 'PO-${year}-%' ORDER BY po_number DESC LIMIT 1`).get(companyId);
-  if (!row) return `PO-${year}-001`;
-  const last = parseInt(row.po_number.split('-')[2]) || 0;
-  return `PO-${year}-${String(last + 1).padStart(3, '0')}`;
+  const prefix = `PO-${year}-`;
+  // Take the numeric max of the trailing sequence, not a lexical ORDER BY —
+  // otherwise PO-2026-1000 sorts before PO-2026-999 and the id collides.
+  const row = db.prepare(`SELECT MAX(CAST(substr(po_number, ?) AS INTEGER)) AS max_seq FROM purchase_orders WHERE company_id = ? AND po_number LIKE ?`).get(prefix.length + 1, companyId, prefix + '%');
+  const last = row && row.max_seq ? row.max_seq : 0;
+  return `${prefix}${String(last + 1).padStart(3, '0')}`;
 }
 
 function ownedPO(req) {
@@ -259,6 +261,17 @@ router.post('/orders/:id/receive', (req, res) => {
   const now = new Date().toISOString();
   const receivedDescriptions = [];
 
+  // Pre-fetch this PO's line item names once (they don't change mid-receive)
+  // instead of a per-receipt SELECT inside the loop.
+  const itemNameByLine = new Map();
+  for (const row of db.prepare(`
+    SELECT pl.id AS line_id, i.name AS item_name
+    FROM po_lines pl JOIN items i ON i.id = pl.item_id
+    WHERE pl.po_id = ?
+  `).all(req.params.id)) {
+    itemNameByLine.set(row.line_id, row.item_name);
+  }
+
   for (const r of receipts) {
     if (!r.line_id || !r.quantity_received) continue;
     const line = db.prepare('SELECT * FROM po_lines WHERE id = ? AND po_id = ?').get(r.line_id, req.params.id);
@@ -269,7 +282,7 @@ router.post('/orders/:id/receive', (req, res) => {
 
     db.prepare('UPDATE po_lines SET quantity_received = quantity_received + ? WHERE id = ?').run(qty, r.line_id);
 
-    const itemName = db.prepare('SELECT name FROM items WHERE id = ?').get(line.item_id)?.name || 'item';
+    const itemName = itemNameByLine.get(line.id) || 'item';
     receivedDescriptions.push(`${qty} × ${itemName}`);
 
     const locId = r.location_id || location_id;

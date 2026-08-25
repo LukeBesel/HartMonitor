@@ -216,7 +216,10 @@ router.get('/', (req, res) => {
 
     trend.push({
       date: ds,
-      pass_rate: (p + fl) > 0 ? Math.round((p / (p + fl)) * 100) : 0,
+      // null (not 0) when nothing was inspected that day — matching the main
+      // tile. A day that produced units with no QC is unmeasured, not 0% pass
+      // (which reads as "everything failed").
+      pass_rate: (p + fl) > 0 ? Math.round((p / (p + fl)) * 100) : null,
       units: tCompleted,
       safety_incidents: tSafety,
     });

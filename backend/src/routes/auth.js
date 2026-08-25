@@ -295,9 +295,14 @@ function sha256(s) {
 }
 
 // POST /forgot-password — request a reset link (public). Always responds 200 with
-// { ok: true } so the endpoint can't be used to enumerate which emails exist. When
-// SMTP is not configured we include dev_reset_url (and log it) so self-hosted
-// installs can still complete the flow. Tokens are also surfaced in /api/admin/pending-resets.
+// { ok: true } so the endpoint can't be used to enumerate which emails exist, and
+// — critically — NEVER returns the reset token to the caller. This endpoint is
+// unauthenticated, so returning the token (as an earlier "dev mode" branch did
+// whenever SMTP was unconfigured, the default) let anyone take over any account
+// by POSTing the victim's email and reading the token back. A self-hosted install
+// without email recovers resets through the admin-only /api/admin/pending-resets
+// endpoint instead. The raw link is echoed to the SERVER LOG only when explicitly
+// opted in with ALLOW_DEV_RESET_LINKS=true — never on the mere absence of SMTP.
 router.post('/forgot-password', async (req, res) => {
   const email = (req.body?.email || '').toLowerCase().trim();
   if (!email) return res.status(400).json({ error: 'email required' });
@@ -313,13 +318,13 @@ router.post('/forgot-password', async (req, res) => {
   db.prepare('INSERT INTO password_reset_tokens (id, user_id, token_hash, expires_at, reset_url) VALUES (?, ?, ?, ?, ?)')
     .run(uuidv4(), user.id, sha256(raw), expiresAt, resetUrl);
 
-  // In demo mode (no SMTP) sendPasswordResetEmail just logs — return dev link.
-  const isDemoMode = !process.env.RESEND_API_KEY && (!process.env.SMTP_HOST || !process.env.SMTP_USER);
   await sendPasswordResetEmail({ to: user.email, resetUrl });
 
-  if (isDemoMode) {
+  // Opt-in only: a local developer who has set ALLOW_DEV_RESET_LINKS can read the
+  // link from the server console. Off by default so a token never touches logs
+  // (which can be shipped/aggregated) unless someone deliberately asked for it.
+  if (process.env.ALLOW_DEV_RESET_LINKS === 'true') {
     console.log('[auth] password reset link for', email, '->', resetUrl);
-    return res.json({ ok: true, dev_reset_url: resetUrl });
   }
   res.json({ ok: true });
 });

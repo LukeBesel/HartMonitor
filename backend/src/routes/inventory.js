@@ -352,14 +352,26 @@ router.get('/requirements', (req, res) => {
      WHERE wo.company_id = ? AND wo.status IN ('pending','in_progress')`
   ).all(req.companyId);
 
-  const activeBomLines = db.prepare(`
-    SELECT bl.*, i.name AS item_name, i.sku AS item_sku
-    FROM boms b
-    JOIN bom_lines bl ON bl.bom_id = b.id
-    JOIN items i ON i.id = bl.item_id
-    WHERE b.company_id = ? AND b.product_type_id = ? AND b.status = 'active'
-    ORDER BY bl.sort_order ASC
-  `);
+  // Batch the active-BOM lines for every product type these WOs reference in one
+  // query, bucketed by product_type_id — instead of one query per work order.
+  const bomLinesByType = new Map();
+  const productTypeIds = [...new Set(wos.map(w => w.product_type_id).filter(Boolean))];
+  if (productTypeIds.length > 0) {
+    const placeholders = productTypeIds.map(() => '?').join(',');
+    const bomRows = db.prepare(`
+      SELECT bl.*, i.name AS item_name, i.sku AS item_sku, b.product_type_id
+      FROM boms b
+      JOIN bom_lines bl ON bl.bom_id = b.id
+      JOIN items i ON i.id = bl.item_id
+      WHERE b.company_id = ? AND b.status = 'active' AND b.product_type_id IN (${placeholders})
+      ORDER BY bl.sort_order ASC
+    `).all(req.companyId, ...productTypeIds);
+    for (const row of bomRows) {
+      let bucket = bomLinesByType.get(row.product_type_id);
+      if (!bucket) { bucket = []; bomLinesByType.set(row.product_type_id, bucket); }
+      bucket.push(row);
+    }
+  }
 
   // Two passes per work order. When the WO carries a product type with an
   // active BOM, its requirements come from the BOM keyed exactly by item_id —
@@ -377,7 +389,7 @@ router.get('/requirements', (req, res) => {
 
   for (const wo of wos) {
     let bomLines = [];
-    if (wo.product_type_id) bomLines = activeBomLines.all(req.companyId, wo.product_type_id);
+    if (wo.product_type_id) bomLines = bomLinesByType.get(wo.product_type_id) || [];
 
     if (bomLines.length > 0) {
       // Exact-keyed BOM pass: active BOM lines × remaining quantity.
@@ -408,23 +420,50 @@ router.get('/requirements', (req, res) => {
     }
   }
 
-  const items = Object.values(neededMap).map(item => {
-    // BOM-derived rows resolve stock exactly by item_id; string rows keep the
-    // original SKU-or-name lookup.
-    const dbItem = item.item_id
-      ? db.prepare(
-          `SELECT i.*, COALESCE(SUM(sl.quantity),0) as on_hand_qty
-           FROM items i LEFT JOIN stock_levels sl ON sl.item_id = i.id
-           WHERE i.company_id = ? AND i.id = ?
-           GROUP BY i.id LIMIT 1`
-        ).get(req.companyId, item.item_id)
-      : db.prepare(
-          `SELECT i.*, COALESCE(SUM(sl.quantity),0) as on_hand_qty
-           FROM items i LEFT JOIN stock_levels sl ON sl.item_id = i.id
-           WHERE i.company_id = ? AND (UPPER(i.sku)=UPPER(?) OR LOWER(i.name)=LOWER(?))
-           GROUP BY i.id LIMIT 1`
-        ).get(req.companyId, item.sku, item.name);
-    const onHand = dbItem ? Number(dbItem.on_hand_qty) : 0;
+  // Resolve on-hand stock for every needed row in at most two grouped queries
+  // instead of one query per row. BOM-derived rows resolve exactly by item_id;
+  // parts_list rows keep the original SKU-or-name lookup, prepared as maps.
+  const needed = Object.values(neededMap);
+
+  const onHandById = new Map();
+  const idNeeds = [...new Set(needed.filter(n => n.item_id).map(n => n.item_id))];
+  if (idNeeds.length > 0) {
+    const placeholders = idNeeds.map(() => '?').join(',');
+    const rows = db.prepare(
+      `SELECT i.id, COALESCE(SUM(sl.quantity),0) as on_hand_qty
+       FROM items i LEFT JOIN stock_levels sl ON sl.item_id = i.id
+       WHERE i.company_id = ? AND i.id IN (${placeholders})
+       GROUP BY i.id`
+    ).all(req.companyId, ...idNeeds);
+    for (const r of rows) onHandById.set(r.id, Number(r.on_hand_qty));
+  }
+
+  // Only the string (parts_list) rows need the sku/name lookup — build both maps
+  // from a single grouped scan of the company's items when any such row exists.
+  const onHandBySku = new Map();
+  const onHandByName = new Map();
+  if (needed.some(n => !n.item_id)) {
+    const rows = db.prepare(
+      `SELECT i.sku, i.name, COALESCE(SUM(sl.quantity),0) as on_hand_qty
+       FROM items i LEFT JOIN stock_levels sl ON sl.item_id = i.id
+       WHERE i.company_id = ?
+       GROUP BY i.id`
+    ).all(req.companyId);
+    for (const r of rows) {
+      if (r.sku)  onHandBySku.set(String(r.sku).toUpperCase(), Number(r.on_hand_qty));
+      if (r.name) onHandByName.set(String(r.name).toLowerCase(), Number(r.on_hand_qty));
+    }
+  }
+
+  const items = needed.map(item => {
+    let onHand;
+    if (item.item_id) {
+      onHand = onHandById.has(item.item_id) ? onHandById.get(item.item_id) : 0;
+    } else {
+      const bySku = item.sku ? onHandBySku.get(String(item.sku).toUpperCase()) : undefined;
+      const byName = onHandByName.get(String(item.name).toLowerCase());
+      onHand = bySku !== undefined ? bySku : (byName !== undefined ? byName : 0);
+    }
     return {
       ...item,
       on_hand_qty: onHand,

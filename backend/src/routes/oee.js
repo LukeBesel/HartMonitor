@@ -57,12 +57,18 @@ function calcOEE(station) {
     WHERE station_id = ? AND status='completed' AND date(completed_at)=date('now')
   `).all(station.id);
 
-  let pass = 0;
+  // Quality is a rate over INSPECTED runs only. A run with no Pass/Fail step
+  // was never inspected — the old `if (!Fail) pass++` counted it as good (and
+  // kept it in the denominator), so a station that inspects nothing reported
+  // 100% quality. Count explicit passes and fails; if nothing was inspected
+  // today, quality is unmeasured, not perfect.
+  let pass = 0, inspected = 0;
   for (const row of todayRows) {
     const vals = Object.values(JSON.parse(row.data || '{}'));
-    if (!vals.some(v => v === 'Fail')) pass++;
+    if (vals.some(v => v === 'Fail')) { inspected++; }
+    else if (vals.some(v => v === 'Pass')) { inspected++; pass++; }
   }
-  const quality = todayRows.length > 0 ? pass / todayRows.length : null;
+  const quality = inspected > 0 ? pass / inspected : null;
 
   const measurable = performance !== null && quality !== null;
   const pct = v => (v === null ? null : Math.round(v * 100));
@@ -70,7 +76,7 @@ function calcOEE(station) {
   // What a supervisor must do to make this station's OEE real.
   const missing = [];
   if (!hasIdealCycle) missing.push('ideal cycle time');
-  if (quality === null) missing.push('runs completed today');
+  if (quality === null) missing.push('an inspected run today');
 
   return {
     availability: pct(availability),

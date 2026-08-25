@@ -17,10 +17,12 @@ const EDITABLE_COLUMNS = [
 
 function nextIdeaNumber(companyId) {
   const year = new Date().getFullYear();
-  const row = db.prepare(`SELECT COALESCE(idea_number, number) AS idea_number FROM kaizen_ideas WHERE company_id = ? AND COALESCE(idea_number, number) LIKE 'KZN-${year}-%' ORDER BY 1 DESC LIMIT 1`).get(companyId);
-  if (!row) return `KZN-${year}-001`;
-  const last = parseInt(row.idea_number.split('-')[2]) || 0;
-  return `KZN-${year}-${String(last + 1).padStart(3, '0')}`;
+  const prefix = `KZN-${year}-`;
+  // Take the numeric max of the trailing sequence, not a lexical ORDER BY —
+  // otherwise KZN-2026-1000 sorts before KZN-2026-999 and the id collides.
+  const row = db.prepare(`SELECT MAX(CAST(substr(COALESCE(idea_number, number), ?) AS INTEGER)) AS max_seq FROM kaizen_ideas WHERE company_id = ? AND COALESCE(idea_number, number) LIKE ?`).get(prefix.length + 1, companyId, prefix + '%');
+  const last = row && row.max_seq ? row.max_seq : 0;
+  return `${prefix}${String(last + 1).padStart(3, '0')}`;
 }
 
 function ownedIdea(req) {

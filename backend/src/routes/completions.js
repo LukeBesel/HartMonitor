@@ -248,25 +248,55 @@ router.put('/:id', (req, res) => {
     if (problem) return res.status(400).json({ error: problem });
   }
 
-  // Preserve the server-maintained _operators roster (multi-operator sessions)
-  // when a client flushes a data blob that doesn't carry it. Never invents the
-  // key — blobs without prior _operators are written exactly as sent.
-  if (data && typeof data === 'object' && !Array.isArray(data) && data._operators === undefined) {
-    try {
-      const prev = JSON.parse(completion.data);
-      if (prev && Array.isArray(prev._operators)) data._operators = prev._operators;
-    } catch { /* unparsable legacy blob — leave as sent */ }
+  // A finished run is IMMUTABLE to autosave. `partial:true` is a background
+  // flush from the player's timer. If it lands after the run is already
+  // completed or abandoned — a stale tablet, or a handoff where another operator
+  // has since finished the job — writing it would silently overwrite the final
+  // data, the captured values, the step times, and the completion timestamp
+  // (corrupting every duration/OEE/cycle metric derived from completed_at).
+  // Leave the terminal run untouched and return it as-is.
+  if (partial === true && (completion.status === 'completed' || completion.status === 'abandoned')) {
+    return res.json({ ...completion, data: JSON.parse(completion.data), step_times: JSON.parse(completion.step_times) });
+  }
+
+  // Guard the status vocabulary. The column's CHECK allows exactly these three;
+  // an out-of-set value would abort the transaction as a raw 500 (leaking SQL in
+  // dev). Reject it as a 400 instead. A partial flush never carries a status.
+  const ALLOWED_STATUS = ['in_progress', 'completed', 'abandoned'];
+  if (partial !== true && status !== undefined && !ALLOWED_STATUS.includes(status)) {
+    return res.status(400).json({ error: `status must be one of: ${ALLOWED_STATUS.join(', ')}` });
+  }
+
+  // Merge the multi-operator roster rather than trusting the client's copy. The
+  // player seeds `_operators` into its local formData and sends it on every
+  // flush, so a stale tablet would otherwise REPLACE the server roster and drop
+  // whoever joined after that tablet loaded. Union stored ∪ incoming, first-seen
+  // order preserved — the roster only ever grows.
+  if (data && typeof data === 'object' && !Array.isArray(data)) {
+    let prevRoster = [];
+    try { const prev = JSON.parse(completion.data); if (Array.isArray(prev?._operators)) prevRoster = prev._operators; }
+    catch { /* unparsable legacy blob */ }
+    const incoming = Array.isArray(data._operators) ? data._operators : [];
+    if (prevRoster.length || incoming.length) {
+      const merged = [];
+      for (const op of [...prevRoster, ...incoming]) if (op != null && !merged.includes(op)) merged.push(op);
+      data._operators = merged;
+    }
   }
 
   // partial:true = autosave flush — it must never flip the run's status.
-  const effectiveStatus = partial === true ? completion.status : status;
+  const effectiveStatus = partial === true ? completion.status : (status ?? completion.status);
 
   const updates = {
-    status: effectiveStatus ?? completion.status,
+    status: effectiveStatus,
     data: data !== undefined ? JSON.stringify(data) : completion.data,
     step_times: step_times !== undefined ? JSON.stringify(step_times) : completion.step_times,
     takt_exceeded_steps: takt_exceeded_steps !== undefined ? JSON.stringify(takt_exceeded_steps) : completion.takt_exceeded_steps,
-    completed_at: effectiveStatus === 'completed' ? new Date().toISOString() : completion.completed_at,
+    // Stamp completed_at ONLY on the real transition into 'completed' — never on
+    // a re-send or a later flush, which would rewrite the finish time and skew
+    // every duration/OEE/cycle-time number computed from it.
+    completed_at: (effectiveStatus === 'completed' && completion.status !== 'completed')
+      ? new Date().toISOString() : completion.completed_at,
   };
 
   // Legacy blob update (dual-write — byte-identical to the pre-v2 behavior)
