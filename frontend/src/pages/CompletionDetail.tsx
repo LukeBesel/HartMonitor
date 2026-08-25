@@ -98,7 +98,11 @@ function statusBadge(status: string) {
   return { label: status, cls: 'bg-gray-100 text-gray-600' };
 }
 
-function variancePctLabel(pct: number) {
+function variancePctLabel(pct: number | null | undefined) {
+  // A run or step with no takt baseline has no variance. Calling .toFixed on the
+  // resulting undefined crashed the whole Completion Detail page (a hard
+  // ErrorBoundary) for that very common data shape — guard it and show a dash.
+  if (pct === null || pct === undefined || Number.isNaN(pct)) return { text: '—', cls: 'text-gray-400' };
   if (pct <= 0) return { text: `${Math.abs(pct).toFixed(0)}% under`, cls: 'text-green-600' };
   if (pct <= 10) return { text: `+${pct.toFixed(0)}%`, cls: 'text-amber-600' };
   return { text: `+${pct.toFixed(0)}% over`, cls: 'text-red-600' };

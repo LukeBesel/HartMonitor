@@ -432,7 +432,7 @@ export default function Layout() {
 
       <div className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Mobile header — hamburger to open the drawer, desktop hides this entirely */}
-        <header className="lg:hidden flex items-center gap-3 h-14 px-4 border-b border-gray-200 bg-white/95 backdrop-blur flex-shrink-0">
+        <header className="lg:hidden flex items-center gap-3 h-14 px-4 border-b border-gray-200 dark:border-slate-700 bg-white/95 dark:bg-slate-900/95 backdrop-blur flex-shrink-0">
           <button
             onClick={() => setMobileNavOpen(true)}
             aria-label="Open navigation menu"
