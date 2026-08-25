@@ -120,16 +120,20 @@ export function shiftUntilReadable(
   const start = parseColor(color);
   const groundRgb = parseColor(ground);
   if (!start || !groundRgb) return color ?? '';
-  const already = contrastRatio(start, groundRgb);
+  const already = contrastRatio(toHex(start), groundRgb);
   if (already !== null && already >= target) return toHex(start);
 
   // Toward whichever extreme the ground is furthest from — on a white card
   // that means darkening, on the player's near-black shell, lightening.
   const toward = (contrastRatio(BLACK, groundRgb) ?? 0) >= (contrastRatio(WHITE, groundRgb) ?? 0) ? BLACK : WHITE;
   for (let amount = 0.02; amount <= 1.0001; amount += 0.02) {
-    const candidate = mix(start, toward, Math.min(amount, 1));
+    // Measure the value that will actually be PAINTED. toHex rounds each
+    // channel to an integer, and testing the unrounded mix let a colour come
+    // back at 4.48:1 against a 4.5 target — the guarantee has to hold for the
+    // string this returns, not for the float it was derived from.
+    const candidate = toHex(mix(start, toward, Math.min(amount, 1)));
     const ratio = contrastRatio(candidate, groundRgb);
-    if (ratio !== null && ratio >= target) return toHex(candidate);
+    if (ratio !== null && ratio >= target) return candidate;
   }
   return toHex(toward);
 }
@@ -179,5 +183,43 @@ export function deriveAccentTokens(accent: string, dark: boolean): AccentTokens 
     accentHover: shiftUntilReadable(solid, LIGHT_GROUND, 7),
     accentInk: dark ? shiftUntilReadable(glow, DARK_GROUND) : solid,
     accentGlow: glow,
+  };
+}
+
+// ─── A chip tinted with a colour the customer picked ──────────────────────────
+// Department chips paint themselves with their department's own colour at 13%
+// alpha and then write the SAME colour on top of it. That is the operator
+// button's bug in a different costume: it looks deliberate, and for a green or
+// yellow department it lands at 2.24:1. Nobody chose that — it falls out of
+// whatever colour someone picked from a colour well.
+//
+// The ground is not the card: it is the card seen through the tint, and the
+// card differs by theme. So the ink has to be derived per theme, from the same
+// blend the browser will actually paint.
+
+/** The alpha the chips use, as a fraction. `'22'` is 34/255. */
+const CHIP_TINT = 0x22 / 255;
+
+/** The surface a chip sits on: a white card in light mode, a slate one in dark. */
+const CHIP_SURFACE_LIGHT = '#ffffff';
+const CHIP_SURFACE_DARK = '#1e293b';
+
+/**
+ * Inline style for a chip tinted with `color`, legible in `dark` or light mode.
+ * The background is left exactly as it was — only the text moves, and only as
+ * far as it must, so a blue department still reads blue.
+ */
+export function tintedChipStyle(
+  color: string | undefined | null,
+  dark: boolean,
+): { backgroundColor: string; color: string } {
+  const base = parseColor(color) ?? parseColor('#6b7280')!;
+  const surface = parseColor(dark ? CHIP_SURFACE_DARK : CHIP_SURFACE_LIGHT)!;
+  // What the browser composites: the surface, with the colour laid over it at
+  // the chip's alpha.
+  const ground = toHex(mix(surface, base, CHIP_TINT));
+  return {
+    backgroundColor: `${toHex(base)}22`,
+    color: shiftUntilReadable(toHex(base), ground),
   };
 }

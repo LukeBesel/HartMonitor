@@ -7,6 +7,8 @@ import {
 } from 'lucide-react';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
+import { tintedChipStyle } from '../utils/contrast';
+import { useTheme } from '../context/ThemeContext';
 
 interface StationViewData {
   station: {
@@ -71,6 +73,7 @@ function formatTimeAgo(iso: string) {
 }
 
 export default function StationView() {
+  const { darkMode } = useTheme();
   const { id } = useParams<{ id: string }>();
   const [data, setData] = useState<StationViewData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -132,7 +135,7 @@ export default function StationView() {
               {st.department_name && st.department_id && (
                 <Link to={`/departments/${st.department_id}`}
                   className="text-xs font-medium px-2 py-0.5 rounded-full hover:opacity-80"
-                  style={{ backgroundColor: (st.department_color || '#6b7280') + '22', color: st.department_color || '#6b7280' }}>
+                  style={tintedChipStyle(st.department_color, darkMode)}>
                   {st.department_name}
                 </Link>
               )}

@@ -11,6 +11,7 @@ import {
   parseColor,
   readableInk,
   shiftUntilReadable,
+  tintedChipStyle,
   toHex,
 } from '../contrast';
 
@@ -167,6 +168,79 @@ describe('deriveAccentTokens', () => {
       expect(contrastRatio(light.accentFg, light.accent)!).toBeGreaterThanOrEqual(AA_TEXT);
       expect(contrastRatio(light.accentInk, LIGHT_GROUND)!).toBeGreaterThanOrEqual(AA_TEXT);
       expect(contrastRatio(dark.accentInk, DARK_GROUND)!).toBeGreaterThanOrEqual(AA_TEXT);
+    }
+  });
+});
+
+describe('tintedChipStyle', () => {
+  // A department chip paints itself with its department's colour at 13% alpha
+  // and writes the same colour on top. For a green or yellow department that
+  // lands around 2:1 — nobody chose it, it falls out of whatever colour someone
+  // picked from a colour well.
+  const CHIP_TINT = 0x22 / 255;
+  const SURFACES = { light: '#ffffff', dark: '#1e293b' };
+
+  /** The ground the browser actually composites: surface seen through the tint. */
+  function chipGround(color: string, dark: boolean): string {
+    const s = parseColor(SURFACES[dark ? 'dark' : 'light'])!;
+    const c = parseColor(color)!;
+    return toHex({
+      r: s.r + (c.r - s.r) * CHIP_TINT,
+      g: s.g + (c.g - s.g) * CHIP_TINT,
+      b: s.b + (c.b - s.b) * CHIP_TINT,
+    });
+  }
+
+  // Every colour the department colour well offers.
+  const PALETTE = ['#22c55e', '#eab308', '#3b82f6', '#ec4899', '#ef4444',
+                   '#8b5cf6', '#14b8a6', '#f97316', '#6b7280'];
+
+  it('clears AA on every palette colour, in both themes', () => {
+    for (const dark of [false, true]) {
+      for (const color of PALETTE) {
+        const style = tintedChipStyle(color, dark);
+        const ratio = contrastRatio(style.color, chipGround(color, dark))!;
+        expect(
+          ratio,
+          `${color} in ${dark ? 'dark' : 'light'} mode read ${ratio.toFixed(2)}:1`,
+        ).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it('leaves the tint itself alone — only the text moves', () => {
+    expect(tintedChipStyle('#22c55e', false).backgroundColor).toBe('#22c55e22');
+  });
+
+  it('keeps a colour recognisably itself', () => {
+    // A green department must still read green, not a generic dark gray.
+    const ink = parseColor(tintedChipStyle('#22c55e', false).color)!;
+    expect(ink.g).toBeGreaterThan(ink.r);
+    expect(ink.g).toBeGreaterThan(ink.b);
+  });
+
+  it('falls back to a readable gray when a department has no colour', () => {
+    for (const dark of [false, true]) {
+      const style = tintedChipStyle(undefined, dark);
+      const ratio = contrastRatio(style.color, chipGround('#6b7280', dark))!;
+      expect(ratio).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+});
+
+describe('shiftUntilReadable returns what it promises', () => {
+  it('measures the rounded hex it hands back, not the float behind it', () => {
+    // toHex rounds each channel, which can shave the ratio below the target —
+    // #8b5cf6 on a dark chip ground came back at 4.48:1 against a 4.5 target.
+    const grounds = ['#ffffff', '#1e293b', '#e2e8f0', '#334155', '#26303f'];
+    const colors = ['#8b5cf6', '#22c55e', '#eab308', '#3b82f6', '#ec4899', '#14b8a6'];
+    for (const ground of grounds) {
+      for (const color of colors) {
+        const out = shiftUntilReadable(color, ground);
+        const ratio = contrastRatio(out, ground)!;
+        expect(ratio, `${color} on ${ground} → ${out} = ${ratio.toFixed(2)}:1`)
+          .toBeGreaterThanOrEqual(4.5);
+      }
     }
   });
 });
