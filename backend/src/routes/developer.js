@@ -4,7 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { requireRole } = require('../middleware/auth');
 const { getPlanRow } = require('./config');
-const { sendTestDelivery } = require('../webhooks');
+const { sendTestDelivery, assertSafeWebhookUrl } = require('../webhooks');
 const { EVENTS } = require('../notifications');
 const { logActivity } = require('../activity');
 
@@ -82,9 +82,13 @@ router.get('/webhooks', requireRole('manager'), requireEnterprise, (req, res) =>
 });
 
 // POST /webhooks — register a new webhook endpoint (manager+)
-router.post('/webhooks', requireRole('manager'), requireEnterprise, (req, res) => {
+router.post('/webhooks', requireRole('manager'), requireEnterprise, async (req, res) => {
   const { url, events = [] } = req.body;
   if (!url || !/^https?:\/\//.test(url)) return res.status(400).json({ error: 'A valid http(s) url is required' });
+  // Reject a URL that points at (or resolves to) an internal address before it
+  // is ever stored — a webhook is fetched server-side, so an internal target is
+  // a server-side request forgery channel.
+  try { await assertSafeWebhookUrl(url); } catch (e) { return res.status(400).json({ error: `Webhook URL rejected: ${e.message}` }); }
   const validEvents = (Array.isArray(events) ? events : []).filter(e => WEBHOOK_EVENTS.includes(e));
 
   const id = uuidv4();
@@ -97,12 +101,16 @@ router.post('/webhooks', requireRole('manager'), requireEnterprise, (req, res) =
 });
 
 // PUT /webhooks/:id — update url/events/active state (manager+)
-router.put('/webhooks/:id', requireRole('manager'), requireEnterprise, (req, res) => {
+router.put('/webhooks/:id', requireRole('manager'), requireEnterprise, async (req, res) => {
   const hook = db.prepare('SELECT * FROM webhooks WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!hook) return res.status(404).json({ error: 'Webhook not found' });
 
   const url = req.body.url !== undefined ? req.body.url : hook.url;
   if (!/^https?:\/\//.test(url)) return res.status(400).json({ error: 'A valid http(s) url is required' });
+  // Re-validate on update too, so a benign URL can't be swapped for an internal one.
+  if (req.body.url !== undefined) {
+    try { await assertSafeWebhookUrl(url); } catch (e) { return res.status(400).json({ error: `Webhook URL rejected: ${e.message}` }); }
+  }
   const events = req.body.events !== undefined
     ? (Array.isArray(req.body.events) ? req.body.events.filter(e => WEBHOOK_EVENTS.includes(e)) : [])
     : JSON.parse(hook.events || '[]');
