@@ -2,8 +2,16 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { logActivity } = require('../activity');
+const { startRunReaper } = require('../runReaper');
 
 const router = express.Router();
+
+// Runs that nobody ever closed have to be closed for them, or Run History fills
+// up with jobs that have been "in progress" since a tablet died last month and
+// every completion-rate number is divided by ghosts. The sweeper has no route
+// of its own and this is the module that owns run lifecycle, so starting it
+// here is what guarantees it is running whenever the API is.
+startRunReaper();
 
 // Resolve the department a completion belongs to: its work order's department,
 // falling back to its station's department when it ran without a work order.
@@ -190,7 +198,8 @@ router.post('/', (req, res) => {
     kitId = kit ? kit.id : null;
   }
   const id = uuidv4();
-  db.prepare('INSERT INTO completions (id, app_id, app_name, station_id, operator_name, work_order_id, product_type_id, operator_user_id, kit_id, company_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+  db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, work_order_id, product_type_id, operator_user_id, kit_id, company_id, last_activity_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`)
     .run(id, app_id, app.name, safeStationId, operator_name, safeWorkOrderId, safeProductTypeId, safeOperatorUserId, kitId, req.companyId);
   const completion = db.prepare('SELECT * FROM completions WHERE id = ?').get(id);
 
@@ -297,13 +306,26 @@ router.put('/:id', (req, res) => {
     // every duration/OEE/cycle-time number computed from it.
     completed_at: (effectiveStatus === 'completed' && completion.status !== 'completed')
       ? new Date().toISOString() : completion.completed_at,
+    // A person pressing Abandon and the sweeper closing a forgotten run both
+    // land on status 'abandoned' — the CHECK constraint allows no other word —
+    // so the reason is what tells them apart afterwards. Only stamp it on the
+    // real transition, never overwrite a reason already on the row.
+    abandoned_reason: (effectiveStatus === 'abandoned' && completion.status !== 'abandoned')
+      ? 'operator' : (completion.abandoned_reason || ''),
   };
 
   // Legacy blob update (dual-write — byte-identical to the pre-v2 behavior)
   // plus the structured completion_values upsert, atomically.
   const applyUpdate = db.transaction(() => {
-    db.prepare('UPDATE completions SET status=?, data=?, step_times=?, takt_exceeded_steps=?, completed_at=? WHERE id=?')
-      .run(updates.status, updates.data, updates.step_times, updates.takt_exceeded_steps, updates.completed_at, req.params.id);
+    // last_activity_at is stamped on EVERY write, autosave flushes included —
+    // that is what tells the stale-run reaper the difference between a job
+    // someone is still working and one a dead tablet left open.
+    db.prepare(`UPDATE completions
+                   SET status=?, data=?, step_times=?, takt_exceeded_steps=?, completed_at=?,
+                       abandoned_reason=?, last_activity_at=datetime('now')
+                 WHERE id=?`)
+      .run(updates.status, updates.data, updates.step_times, updates.takt_exceeded_steps,
+           updates.completed_at, updates.abandoned_reason, req.params.id);
 
     if (Array.isArray(values) && values.length > 0) {
       const upsert = upsertValueStmt();
@@ -430,7 +452,10 @@ router.post('/:id/sessions', (req, res) => {
     const names = Array.isArray(data._operators) ? data._operators.map(String) : [];
     if (!names.includes(operator_name.trim())) names.push(operator_name.trim());
     data._operators = names;
-    db.prepare('UPDATE completions SET data = ? WHERE id = ?').run(JSON.stringify(data), completion.id);
+    // Opening a session is a resume — it counts as activity, so a job picked
+    // back up after a long pause gets its reaper clock reset.
+    db.prepare("UPDATE completions SET data = ?, last_activity_at = datetime('now') WHERE id = ?")
+      .run(JSON.stringify(data), completion.id);
   });
   open();
 
@@ -463,6 +488,9 @@ router.put('/:id/sessions/close', (req, res) => {
     SET ended_at = datetime('now'), handoff_comment = ?
     WHERE id = ?
   `).run(typeof handoff_comment === 'string' ? handoff_comment : '', open.id);
+  // A clean pause-and-leave is still someone deliberately touching the run.
+  db.prepare("UPDATE completions SET last_activity_at = datetime('now') WHERE id = ? AND company_id = ?")
+    .run(completion.id, req.companyId);
   res.json(db.prepare('SELECT * FROM completion_sessions WHERE id = ?').get(open.id));
 });
 

@@ -4,11 +4,11 @@ import {
   Users, Building2, Activity, Server, RefreshCw,
   Search, AlertCircle, TrendingUp, CheckCircle2,
   Database, Cpu, Clock, Package, ChevronRight,
-  ShieldCheck, Copy, Check,
+  ShieldCheck,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
-import { Skeleton, SkeletonTable, SkeletonStats } from '../components/shared/Skeleton';
+import { SkeletonTable, SkeletonStats } from '../components/shared/Skeleton';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -60,7 +60,9 @@ interface ActivityEntry {
 interface HealthData {
   uptime_seconds: number;
   memory_mb: number;
-  db_size_mb: number;
+  /** null when the database file could not be measured — an unknown size is
+   *  not zero, so the card shows "—" rather than inventing a number. */
+  db_size_mb: number | null;
   node_version: string;
   timestamp: string;
 }
@@ -473,111 +475,6 @@ function ActivityFeed({ activity, loading, error, onRetry }: ActivityFeedProps) 
   );
 }
 
-// ─── Pending Password Resets sub-panel ──────────────────────────────────────
-
-interface PendingReset {
-  id: string;
-  user_email: string;
-  reset_url: string;
-  expires_at: string;
-  created_at: string;
-}
-
-function PendingResetsPanel() {
-  const [resets, setResets] = useState<PendingReset[]>([]);
-  const [loadingResets, setLoadingResets] = useState(true);
-  const [resetsError, setResetsError] = useState<string | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-
-  const loadResets = useCallback(async () => {
-    setLoadingResets(true);
-    setResetsError(null);
-    try {
-      const token = localStorage.getItem('hm_token');
-      const res = await fetch('/api/admin/pending-resets', {
-        headers: { Authorization: `Bearer ${token ?? ''}` },
-      });
-      if (!res.ok) {
-        const b = await res.json().catch(() => ({}));
-        throw new Error((b as any).error || 'Failed to load');
-      }
-      setResets(await res.json());
-    } catch (e: unknown) {
-      setResetsError(e instanceof Error ? e.message : 'Failed to load');
-    } finally {
-      setLoadingResets(false);
-    }
-  }, []);
-
-  useEffect(() => { loadResets(); }, [loadResets]);
-
-  const handleCopy = async (reset: PendingReset) => {
-    try {
-      await navigator.clipboard.writeText(reset.reset_url);
-    } catch {
-      const el = document.createElement('textarea');
-      el.value = reset.reset_url;
-      document.body.appendChild(el);
-      el.select();
-      document.execCommand('copy');
-      document.body.removeChild(el);
-    }
-    setCopiedId(reset.id);
-    setTimeout(() => setCopiedId(null), 2000);
-  };
-
-  return (
-    <div className="bg-white border border-gray-200 rounded-xl p-4">
-      <div className="flex items-center justify-between mb-3">
-        <div>
-          <h3 className="text-sm font-semibold text-gray-900">Pending Password Resets</h3>
-          <p className="text-xs text-gray-500 mt-0.5">
-            These links are shown here because email is not configured. Share them securely with the user.
-          </p>
-        </div>
-        <button
-          onClick={loadResets}
-          disabled={loadingResets}
-          className="p-1.5 rounded-lg text-gray-500 hover:text-gray-900 hover:bg-gray-100 disabled:opacity-40 transition-colors"
-        >
-          <RefreshCw size={13} className={loadingResets ? 'animate-spin' : ''} />
-        </button>
-      </div>
-      {resetsError && <p className="text-xs text-red-700 mb-3">{resetsError}</p>}
-      {loadingResets && (
-        <div className="py-4 text-center text-xs text-gray-500">Loading…</div>
-      )}
-      {!loadingResets && !resetsError && resets.length === 0 && (
-        <div className="py-4 text-center text-xs text-gray-500 border border-dashed border-gray-200 rounded-lg">
-          <CheckCircle2 size={16} className="mx-auto mb-1 text-green-500" />
-          No pending resets
-        </div>
-      )}
-      {!loadingResets && resets.map(r => (
-        <div key={r.id} className="mb-2 bg-gray-100 rounded-lg p-3 flex items-start gap-3">
-          <div className="flex-1 min-w-0">
-            <div className="text-sm font-medium text-gray-900 truncate">{r.user_email}</div>
-            <div className="text-xs text-gray-500 mt-0.5">
-              Expires: {new Date(r.expires_at + (r.expires_at.endsWith('Z') ? '' : 'Z')).toLocaleString()}
-            </div>
-            <div className="font-mono text-xs text-gray-500 mt-1 break-all">{r.reset_url}</div>
-          </div>
-          <button
-            onClick={() => handleCopy(r)}
-            className={`flex-shrink-0 flex items-center gap-1 px-2 py-1 rounded text-xs font-medium transition-colors ${
-              copiedId === r.id
-                ? 'bg-emerald-50 text-emerald-700'
-                : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
-            }`}
-          >
-            {copiedId === r.id ? (<><Check size={11} />Copied</>) : (<><Copy size={11} />Copy</>)}
-          </button>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 // ─── Tab: System Health ───────────────────────────────────────────────────
 
 interface SystemHealthProps {
@@ -603,7 +500,11 @@ function SystemHealth({ health, loading, error, onRetry }: SystemHealthProps) {
   const cards = [
     { icon: Clock,    label: 'Uptime',       value: formatUptime(health.uptime_seconds), color: 'text-emerald-700' },
     { icon: Cpu,      label: 'Memory',       value: `${health.memory_mb} MB`,             color: 'text-blue-700' },
-    { icon: Database, label: 'DB Size',      value: `${health.db_size_mb} MB`,            color: 'text-purple-700' },
+    {
+      icon: Database, label: 'DB Size', color: 'text-purple-700',
+      value: health.db_size_mb === null || health.db_size_mb === undefined
+        ? '—' : `${health.db_size_mb} MB`,
+    },
     { icon: Server,   label: 'Node Version', value: health.node_version,                  color: 'text-cyan-700' },
   ];
 
@@ -626,8 +527,6 @@ function SystemHealth({ health, loading, error, onRetry }: SystemHealthProps) {
           <span className="text-sm text-emerald-700">All systems operational</span>
         </div>
       </div>
-
-      <PendingResetsPanel />
     </div>
   );
 }
@@ -736,10 +635,14 @@ const TABS: { id: Tab; label: string; icon: React.ElementType }[] = [
 ];
 
 export default function Admin() {
-  const { isAtLeast } = useAuth();
+  const { user } = useAuth();
 
-  // Role guard — developer only
-  if (!isAtLeast('developer')) return <Navigate to="/dashboard" replace />;
+  // HartMonitor staff only. Deliberately NOT a role check: 'developer' is the
+  // role the first user of every new signup is given, so gating on it opened
+  // this console to every customer owner. The API behind every panel here
+  // answers 404 to anyone without the flag, so this redirect and the server
+  // agree on who may be here.
+  if (!user?.is_platform_staff) return <Navigate to="/dashboard" replace />;
 
   const [tab, setTab] = useState<Tab>('overview');
 
@@ -859,7 +762,7 @@ export default function Admin() {
         </div>
         <div>
           <h1 className="text-xl font-bold text-gray-900">Admin Dashboard</h1>
-          <p className="text-sm text-gray-500">Platform management — developer only</p>
+          <p className="text-sm text-gray-500">Platform management — HartMonitor staff only</p>
         </div>
       </div>
 

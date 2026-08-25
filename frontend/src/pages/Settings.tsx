@@ -65,6 +65,7 @@ import { useBranding } from '../context/BrandingContext';
 import { useNavPrefs } from '../context/NavPrefsContext';
 import { SECTIONS, ALL_SECTION_ITEMS } from '../config/navigation';
 import { REPLAY_FLAG } from '../components/shared/OnboardingWizard';
+import PendingResetsPanel from '../components/shared/PendingResetsPanel';
 import { api } from '../api/client';
 import Toggle from '../components/shared/Toggle';
 import type { PlanTier, AddonPricing, Site, NotificationPrefs, NotificationLogEntry, RolePermissionMap, AppRole, ApiKey, Webhook, WebhookDelivery } from '../types';
@@ -1381,9 +1382,12 @@ function SidebarTab() {
 
   // Apply the saved custom order to a section's items (matches the sidebar).
   const orderedItems = (section: typeof SECTIONS[number]) => {
+    // Platform-staff items are not a customer's sidebar to arrange, and listing
+    // one here would announce HartMonitor's operator console to everybody.
+    const items = section.items.filter(i => !i.platformStaffOnly);
     const order = itemOrder[section.id];
-    if (!order || order.length === 0) return section.items;
-    return [...section.items].sort((a, b) => {
+    if (!order || order.length === 0) return items;
+    return [...items].sort((a, b) => {
       const ia = order.indexOf(a.to); const ib = order.indexOf(b.to);
       if (ia === -1 && ib === -1) return 0;
       if (ia === -1) return 1;
@@ -4238,7 +4242,16 @@ export default function SettingsPage() {
         {activeTab === 'theme'    && <ThemeTab />}
         {activeTab === 'sidebar'  && <SidebarTab />}
         {activeTab === 'export'   && <ExportTab />}
-        {activeTab === 'users'         && <><UsersTab /><div className="mt-8"><PermissionsTab /></div></>}
+        {activeTab === 'users'         && (
+          <>
+            <UsersTab />
+            <div className="mt-8"><PermissionsTab /></div>
+            {/* Self-hosted password recovery. GET /api/admin/pending-resets is
+                behind the 'developer' role, so only offer it to someone who
+                will actually get an answer rather than a 403. */}
+            {isAtLeast('developer') && <PendingResetsPanel />}
+          </>
+        )}
         {activeTab === 'sites'         && <SitesTab />}
         {activeTab === 'notifications' && <NotificationsTab />}
         {activeTab === 'developer'     && <DeveloperTab />}

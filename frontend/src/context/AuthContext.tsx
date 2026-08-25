@@ -9,6 +9,12 @@ interface User {
   display_name: string;
   role: 'developer' | 'manager' | 'supervisor' | 'operator' | 'viewer';
   company_name?: string;
+  /** True only for HartMonitor's own staff. Separate from `role`, which says
+   *  what someone may do inside their own company — the first user of every
+   *  new signup is a 'developer' there and must never be treated as platform
+   *  staff. Nothing in the API can set this; it comes from the deployment's
+   *  PLATFORM_STAFF_EMAILS allowlist. */
+  is_platform_staff?: boolean;
 }
 
 interface AuthContextValue {
