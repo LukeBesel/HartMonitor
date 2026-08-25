@@ -260,6 +260,15 @@
 .dark .divide-gray-50 > * + *,
 .dark .divide-gray-100 > * + * { border-color: #334155; }
 
+/* Secondary text at gray-400 (rgb 156,163,175) measured 2.43:1 on white — below
+   the 4.5:1 AA floor — and it is used for subtitles, timestamps, KPI sublabels
+   and empty-state copy across 40+ screens. Bump it to gray-500 (~4.6:1) in LIGHT
+   mode only, and only inside the page content (`main`): the sidebar is a fixed
+   dark rail even in light mode, where lighter gray-400 text reads BETTER, so
+   darkening it there would hurt. Placeholders use `placeholder-gray-400` and are
+   unaffected. One token fix rather than editing every page. */
+html:not(.dark) main .text-gray-400 { color: #6b7280; }
+
 /* Text */
 .dark .text-gray-900,
 .dark .text-gray-800 { color: #f1f5f9; }
