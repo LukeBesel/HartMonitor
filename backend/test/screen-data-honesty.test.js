@@ -166,7 +166,18 @@ describe('Metrics with no data report null, never an invented number', () => {
     assert.equal(machine.oee.measurable, false);
     assert.ok(Array.isArray(machine.oee.missing) && machine.oee.missing.length > 0,
       'the response must say what is missing so the UI can tell the user');
-    assert.equal(typeof machine.oee.availability, 'number', 'availability is measurable from planned hours');
+
+    // Availability used to be derived from the configured planned hours alone,
+    // so a station nobody had ever touched reported 100% — on the very first
+    // screen a new customer sees. That is the one number in this file that was
+    // still invented: it says the machine was up and ready all day, about a
+    // machine that has not run. Now the planned window opens at the first thing
+    // that actually happens on the station each day, so before that there is no
+    // window and nothing to state.
+    assert.equal(machine.oee.availability, null,
+      'a station with no activity today has no availability to report, not 100%');
+    assert.ok(machine.oee.missing.includes('any activity today'),
+      `the response must say why, got ${JSON.stringify(machine.oee.missing)}`);
   });
 
   it('reports pass rate as null until a run records a QC result', async () => {
