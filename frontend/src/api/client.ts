@@ -149,6 +149,18 @@ function appAnalyticsQS(params?: AppAnalyticsParams): string {
   return s ? `?${s}` : '';
 }
 
+/** Query string for the page-level dashboard filters (department / app / site),
+ *  omitting anything unset. Shared by every endpoint that honours a page scope so
+ *  the three params are always spelled the same way on the wire. */
+function dashboardFilterQS(f?: DashboardFilters): string {
+  const qs = new URLSearchParams();
+  if (f?.department_id) qs.set('department_id', f.department_id);
+  if (f?.app_id)        qs.set('app_id', f.app_id);
+  if (f?.site_id)       qs.set('site_id', f.site_id);
+  const s = qs.toString();
+  return s ? `?${s}` : '';
+}
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   // On native apps, send token as Authorization header (cookies don't cross origins in WebView)
@@ -377,19 +389,18 @@ export const api = {
 
   // ── Analytics
   getOverview: (f?: AnalyticsFilters) => request<any>(`/analytics/overview${filterQS(f)}`),
-  getDailyBrief: () => request<DailyBrief>('/analytics/daily-brief'),
+  // Both of these honour the Command Center's page scope: the server applies
+  // department / app / site to every figure it returns, not just some of them.
+  getDailyBrief: (filters?: DashboardFilters) =>
+    request<DailyBrief>(`/analytics/daily-brief${dashboardFilterQS(filters)}`),
   getThroughput: (days?: number, f?: AnalyticsFilters) => request<any[]>(`/analytics/throughput${filterQS(f, { days: days ?? 30 })}`),
   getCycleTimes: (days?: number, f?: AnalyticsFilters) => request<any[]>(`/analytics/cycle-times${filterQS(f, { days: days ?? 30 })}`),
   getOperatorPerformance: (f?: AnalyticsFilters) => request<any[]>(`/analytics/operator-performance${filterQS(f)}`),
   getAppPerformance: (f?: AnalyticsFilters) => request<any[]>(`/analytics/app-performance${filterQS(f)}`),
   getQualityData: (days?: number, f?: AnalyticsFilters) => request<any[]>(`/analytics/quality${filterQS(f, { days: days ?? 30 })}`),
   getManagerView: () => request<any>('/analytics/manager-view'),
-  getPlantView: (params?: { site_id?: string }) => {
-    const qs = new URLSearchParams();
-    if (params?.site_id) qs.set('site_id', params.site_id);
-    const s = qs.toString();
-    return request<any>(`/analytics/plant-view${s ? `?${s}` : ''}`);
-  },
+  getPlantView: (params?: DashboardFilters) =>
+    request<any>(`/analytics/plant-view${dashboardFilterQS(params)}`),
   getDepartmentView: (id: string) => request<any>(`/analytics/department/${id}`),
   getStationView: (id: string) => request<any>(`/analytics/station/${id}`),
   getCompletionDetail: (id: string) => request<any>(`/analytics/completion/${id}`),
@@ -413,14 +424,8 @@ export const api = {
   deleteDashboard: (id: string) => request<any>(`/dashboards/${id}`, { method: 'DELETE' }),
   // Card data honours optional page-level filters; the server applies each one
   // to the card types it is meaningful for and ignores unknown ids.
-  getDashboardData: (id: string, filters?: DashboardFilters) => {
-    const qs = new URLSearchParams();
-    if (filters?.department_id) qs.set('department_id', filters.department_id);
-    if (filters?.app_id)        qs.set('app_id', filters.app_id);
-    if (filters?.site_id)       qs.set('site_id', filters.site_id);
-    const s = qs.toString();
-    return request<any>(`/dashboards/${id}/data${s ? `?${s}` : ''}`);
-  },
+  getDashboardData: (id: string, filters?: DashboardFilters) =>
+    request<any>(`/dashboards/${id}/data${dashboardFilterQS(filters)}`),
 
   // ── Inventory
   getInventoryItems: (params?: { category?: string; search?: string; low_stock?: boolean }) => {
