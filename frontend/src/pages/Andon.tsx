@@ -462,6 +462,23 @@ export default function Andon() {
     teamFilter === 'all' ? null : (ANDON_TEAMS[teamFilter]?.label ?? teamFilter),
   ].filter(Boolean).join(' · '), [deptFilter.selected, teamFilter]);
 
+  // Empty-state copy has to reflect the STATUS filter too, not just the scope.
+  // The default "all statuses" board is the attention queue, so an empty one is
+  // genuinely "All clear". But a status filter narrows the board to one slice —
+  // an empty "Resolved" view is not "All clear", it simply has nothing resolved.
+  const emptyState = useMemo(() => {
+    if (statusFilter === 'all') {
+      return {
+        heading: 'All clear',
+        subtext: scopeLabel ? `Nothing open for ${scopeLabel}` : 'No open help requests',
+      };
+    }
+    return {
+      heading: `No ${statusFilter} requests`,
+      subtext: scopeLabel ? `Nothing ${statusFilter} for ${scopeLabel}` : `Nothing ${statusFilter} right now`,
+    };
+  }, [statusFilter, scopeLabel]);
+
   // ── Render ────────────────────────────────────────────────────────────────
 
   return (
@@ -637,9 +654,9 @@ export default function Andon() {
               <CheckCircle size={40} className="text-green-400" />
             </div>
             <div className="text-center">
-              <h3 className="text-xl font-semibold text-white mb-1">All clear</h3>
+              <h3 className="text-xl font-semibold text-white mb-1">{emptyState.heading}</h3>
               <p className="text-gray-400">
-                {scopeLabel ? `Nothing open for ${scopeLabel}` : 'No open help requests'}
+                {emptyState.subtext}
               </p>
               {deptFilter.active && (
                 <button onClick={deptFilter.clear} className="btn-secondary mt-4 text-sm">

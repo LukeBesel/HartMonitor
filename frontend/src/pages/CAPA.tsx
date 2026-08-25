@@ -377,12 +377,12 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
     setLoading(true);
     setError('');
     try {
-      const [d, a] = await Promise.all([
-        api.getCAPAItem(capaId),
-        api.getCAPAItemActions(capaId),
-      ]);
+      // GET /capa/:id already returns `actions` inline (same query the
+      // /:id/actions endpoint runs), so read them from the detail response
+      // rather than making a second round-trip.
+      const d = await api.getCAPAItem(capaId);
       setDetail(d);
-      setActions(a);
+      setActions(d.actions ?? []);
       setContainment(d.containment_action ?? '');
       setRootCause(d.root_cause_analysis ?? '');
       setCorrective(d.corrective_action ?? '');
