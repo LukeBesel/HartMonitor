@@ -270,10 +270,43 @@ app.get('*', (_req, res) => {
 // ─── Central error handler ────────────────────────────────────────────────────
 // Catches thrown/async errors so the process never crashes and stack traces are
 // never leaked to clients in production.
+// A constraint the database enforces is a statement about the REQUEST, not a
+// server fault: a required field arrived empty, a status word the column does
+// not accept, a foreign id that is not there. Those were all surfacing as a
+// bare 500 "Internal server error", which tells the person at the screen
+// nothing and reads as the app being broken. Map them to 4xx with the column
+// named — in production too, since a column name is not a stack trace.
+function constraintFailure(err) {
+  const code = err.code || '';
+  if (!code.startsWith('SQLITE_CONSTRAINT')) return null;
+  // better-sqlite3 messages read like
+  //   "NOT NULL constraint failed: kaizen_ideas.title"
+  //   "CHECK constraint failed: status"
+  const field = (/failed:\s*(?:\w+\.)?([\w]+)/.exec(err.message) || [])[1] || '';
+  const named = field ? `'${field}'` : 'A field';
+  if (code === 'SQLITE_CONSTRAINT_NOTNULL') {
+    return { status: 400, code: 'FIELD_REQUIRED', error: `${named} is required and cannot be cleared.` };
+  }
+  if (code === 'SQLITE_CONSTRAINT_CHECK') {
+    return { status: 400, code: 'FIELD_NOT_ALLOWED', error: `${named} was given a value this field does not accept.` };
+  }
+  if (code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+    return { status: 400, code: 'REFERENCE_NOT_FOUND', error: 'That references a record that does not exist.' };
+  }
+  if (code === 'SQLITE_CONSTRAINT_UNIQUE' || code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+    return { status: 409, code: 'DUPLICATE', error: `${named} is already taken.` };
+  }
+  return { status: 400, code: 'CONSTRAINT_FAILED', error: 'That change was rejected by a data rule.' };
+}
+
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, _next) => {
   console.error('[error]', req.method, req.originalUrl, '-', err.message);
   if (res.headersSent) return;
+  const mapped = constraintFailure(err);
+  if (mapped) {
+    return res.status(mapped.status).json({ error: mapped.error, code: mapped.code });
+  }
   const status = err.status || 500;
   res.status(status).json({
     error: config.isProd ? 'Internal server error' : err.message,

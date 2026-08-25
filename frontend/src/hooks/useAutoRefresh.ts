@@ -131,7 +131,10 @@ export function useAutoRefresh(
       start();
     };
 
-    if (immediate) void tick();
+    // `refresh`, not `tick`: this effect re-runs because the INPUTS changed
+    // (new filters, new id). That is an explicit new question, so it must queue
+    // behind an in-flight fetch rather than be dropped like a stale timer tick.
+    if (immediate) void refresh();
     start();
     document.addEventListener('visibilitychange', onVisibilityChange);
 

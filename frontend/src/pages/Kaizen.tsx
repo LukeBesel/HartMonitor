@@ -386,13 +386,17 @@ function IdeaSidePanel({ idea, projects, onClose, onUpdated, onDeleted, onProjec
     setSaving(true);
     setSaveError('');
     try {
+      // '' not `undefined`: JSON.stringify DROPS an undefined key, and the
+      // server only writes the columns the body names — so sending undefined
+      // for a field someone just emptied means the clear never happens and the
+      // old value comes back on the next load. '' is what "cleared" looks like.
       await api.updateKaizenIdea(idea.id, {
-        champion_name: championName.trim() || undefined,
+        champion_name: championName.trim(),
         status,
-        target_date: targetDate || undefined,
+        target_date: targetDate,
         actual_savings: actualSavings ? parseFloat(actualSavings) : 0,
-        before_description: beforeDesc.trim() || undefined,
-        after_description: afterDesc.trim() || undefined,
+        before_description: beforeDesc.trim(),
+        after_description: afterDesc.trim(),
       });
       onUpdated();
     } catch (e: unknown) {

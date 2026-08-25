@@ -2455,6 +2455,11 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_completions_company_station   ON completions(company_id, station_id, status, completed_at);
   CREATE INDEX IF NOT EXISTS idx_machine_events_station_type   ON machine_events(station_id, event_type, started_at);
   CREATE INDEX IF NOT EXISTS idx_routing_steps_department      ON routing_steps(company_id, department_id, routing_id);
+  -- The Command Center scopes every tile by department and app; work_orders had
+  -- no index at all beyond its primary key, so each filtered tile was a full
+  -- table scan.
+  CREATE INDEX IF NOT EXISTS idx_work_orders_company_dept_app  ON work_orders(company_id, department_id, app_id);
+  CREATE INDEX IF NOT EXISTS idx_work_orders_company_status    ON work_orders(company_id, status);
 `);
 
 module.exports = db;
