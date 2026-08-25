@@ -25,6 +25,10 @@ export default defineConfig({
       },
       workbox: {
         navigateFallbackDenylist: [/^\/api/],
+        // Drop precached assets from previous builds when a new SW activates —
+        // a stale precache is one of the ways a tab ends up asking for a chunk
+        // filename this deploy no longer has.
+        cleanupOutdatedCaches: true,
         runtimeCaching: [
           {
             // Cache GET API responses so the operator portal keeps working offline,
