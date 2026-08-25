@@ -115,6 +115,11 @@ function loadDarkMode(): boolean {
   // Default is LIGHT everywhere (the operator player manages its own dark
   // surface). Following the OS preference here made some tabs open dark and
   // others light; the Settings appearance toggle is the one source of truth.
+  //
+  // The boot script in index.html applies the same rule before first paint, and
+  // has to keep matching this one: dark is a retrofit layer over a light
+  // Tailwind idiom, so a shop-floor tablet — and anyone who never opened
+  // Settings — gets the surface the product is actually designed in.
   return false;
 }
 

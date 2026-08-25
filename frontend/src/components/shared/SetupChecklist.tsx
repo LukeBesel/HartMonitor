@@ -1,8 +1,13 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { CheckCircle, Circle, ChevronDown, ChevronUp, X } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useModules } from '../../context/ModulesContext';
 import { api } from '../../api/client';
+import type { App } from '../../types';
+import {
+  readTrainingPrefs, trainingMilestones, TRAINING_PREFS_EVENT,
+} from '../apps/useAppTraining';
 
 interface ChecklistItem {
   id: string;
@@ -13,26 +18,44 @@ interface ChecklistItem {
 }
 
 // Apps-first on purpose: the fastest route to a working HartMonitor is build →
-// publish → run, and every one of these boxes ticks itself from real data.
+// publish → run.
+//
+// Those three used to be three separate boxes here, and the last two both
+// pointed at /apps — the screen you are usually already looking at when you
+// read them. They read like instructions and behaved like nothing. The guided
+// training coach teaches that arc properly, one step at a time, with a button
+// that goes to the right place at each step, so this list keeps a single box
+// for the whole arc and leaves the teaching to the coach. What remains here is
+// the account setup the coach never covers.
+//
+// Every box below ticks itself from real data.
 const INITIAL_ITEMS: ChecklistItem[] = [
-  { id: 'account',  label: 'Create account',        done: true },
-  { id: 'app',      label: 'Build your first app',  done: false, to: '/apps?new=1' },
-  { id: 'publish',  label: 'Publish it',            done: false, to: '/apps' },
-  { id: 'run',      label: 'Run it on the floor',   done: false, to: '/apps' },
-  { id: 'station',  label: 'Set up a work station', done: false, to: '/stations' },
-  { id: 'team',     label: 'Invite a team member',  done: false, to: '/settings?tab=users' },
+  { id: 'account',  label: 'Create account',               done: true },
+  { id: 'app',      label: 'Build and run your first app', done: false, to: '/apps' },
+  { id: 'station',  label: 'Set up a work station',        done: false, to: '/stations' },
+  { id: 'team',     label: 'Invite a team member',         done: false, to: '/settings?tab=users' },
 ];
 
+type LoadState = 'loading' | 'ready' | 'error';
+
 export function SetupChecklist() {
-  const { user } = useAuth();
+  const { user, canEdit } = useAuth();
+  const { isEnabled } = useModules();
+  const { pathname } = useLocation();
   const [items, setItems] = useState<ChecklistItem[]>(INITIAL_ITEMS);
+  const [loadState, setLoadState] = useState<LoadState>('loading');
+  const [coachRunning, setCoachRunning] = useState(false);
   const [expanded, setExpanded] = useState(true);
   const [dismissed, setDismissed] = useState(false);
+
+  const appsEnabled = isEnabled('apps');
 
   useEffect(() => {
     // Check localStorage for dismissed state
     const key = `setup_dismissed_${user?.id}`;
     if (localStorage.getItem(key)) { setDismissed(true); return; }
+
+    let cancelled = false;
 
     // Check which items are actually done
     (async () => {
@@ -43,23 +66,58 @@ export function SetupChecklist() {
           api.getStations(),
           api.getUsers(),
         ]);
-        const published = (apps as { status?: string }[]).some(a => a.status === 'published');
+        if (cancelled) return;
+        const ranOnFloor = !!stats?.company_has_completions;
         setItems(prev => prev.map(item => {
-          if (item.id === 'app')     return { ...item, done: apps.length > 0 };
-          if (item.id === 'publish') return { ...item, done: published };
-          if (item.id === 'run')     return { ...item, done: !!stats?.company_has_completions };
+          // Built, published AND run. Anything short of that is not yet a
+          // working app on the floor, which is what this box claims.
+          if (item.id === 'app')     return { ...item, done: ranOnFloor };
           if (item.id === 'station') return { ...item, done: stations.length > 0 };
           if (item.id === 'team')    return { ...item, done: users.length > 1 };
           return item;
         }));
-      } catch { /* ignore */ }
+
+        // Two progress trackers with different denominators on screen at the
+        // same time ("2/6 complete" here, "3 of 6 done" in the coach) is
+        // confusing even though each is right about its own thing. The coach is
+        // the deeper of the two and it is the one actively teaching, so this
+        // list stands down until the training is finished or dismissed.
+        const prefs = readTrainingPrefs(user?.id);
+        const trainingDone = trainingMilestones(
+          Array.isArray(apps) ? (apps as App[]) : [],
+          ranOnFloor,
+          prefs.dataSeen,
+        ).every(m => m.done);
+        setCoachRunning(canEdit && appsEnabled && !prefs.dismissed && !trainingDone);
+        setLoadState('ready');
+      } catch {
+        // No progress read means there is nothing truthful to show. An
+        // all-unticked list in front of someone who has already built ten apps
+        // is worse than no list.
+        if (!cancelled) setLoadState('error');
+      }
     })();
+
+    return () => { cancelled = true; };
+  }, [user?.id, canEdit, appsEnabled]);
+
+  // Dismissing or finishing the coach hands this list back over straight away.
+  useEffect(() => {
+    const sync = () => {
+      if (readTrainingPrefs(user?.id).dismissed) setCoachRunning(false);
+    };
+    window.addEventListener(TRAINING_PREFS_EVENT, sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener(TRAINING_PREFS_EVENT, sync);
+      window.removeEventListener('storage', sync);
+    };
   }, [user?.id]);
 
   const allDone = items.every(i => i.done);
   const doneCount = items.filter(i => i.done).length;
 
-  if (dismissed || allDone) return null;
+  if (dismissed || allDone || coachRunning || loadState !== 'ready') return null;
 
   const dismiss = () => {
     localStorage.setItem(`setup_dismissed_${user?.id}`, '1');
@@ -95,7 +153,10 @@ export function SetupChecklist() {
                 {item.label}
               </span>
             );
-            if (item.done || !item.to) {
+            // A link to the screen you are already reading it on is a step that
+            // does nothing when you follow it. Those render as plain text.
+            const isHere = !!item.to && pathname === item.to.split('?')[0];
+            if (item.done || !item.to || isHere) {
               return <div key={item.id} className="flex items-center gap-2">{icon}{label}</div>;
             }
             return (
