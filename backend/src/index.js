@@ -57,6 +57,7 @@ const capaRouter         = require('./routes/capa');
 const maintenanceRouter  = require('./routes/maintenance');
 const shiftsRouter       = require('./routes/shifts');
 const kaizenRouter       = require('./routes/kaizen');
+const ciProjectsRouter   = require('./routes/ci-projects');
 const modulesRouter      = require('./routes/modules');
 const bomsRouter         = require('./routes/boms');
 const kitsRouter         = require('./routes/kits');
@@ -229,6 +230,9 @@ app.use('/api/capa',          requirePlan('pro'), writeRole('operator'),   capaR
 app.use('/api/maintenance',   requirePlan('pro'), writeRole('supervisor'), maintenanceRouter);
 app.use('/api/shifts',        writeRole('operator'),   shiftsRouter);
 app.use('/api/kaizen',        writeRole('operator'),   kaizenRouter);
+// CI projects live in the same workspace as Kaizen ideas and carry the same
+// gate: any authenticated member can read the plan, operators and up can edit it.
+app.use('/api/ci-projects',   writeRole('operator'),   ciProjectsRouter);
 app.use('/api/modules',       modulesRouter);
 // BOM/kitting — reads open to any authenticated member; writes role-gated
 // per-route inside the routers (supervisor for BOM edits / kit generation,
