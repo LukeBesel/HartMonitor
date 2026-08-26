@@ -1759,13 +1759,17 @@ export default function AppPlayer() {
               </div>
             )}
             {isOverTakt && (
+              // --p-live carries white at 4.51:1 — one rounding step above the
+              // AA floor for this 14px label, which is no margin at all on a
+              // sunlit shop floor. The banner uses the deeper alarm red, where
+              // the same label measures 5.46:1.
               <div
-                className="flex items-center justify-center gap-2.5 py-2 flex-shrink-0"
-                style={{ background: 'var(--p-live)', color: '#fff', fontSize: 14, fontWeight: 750, letterSpacing: '0.5px' }}
+                className="flex items-center justify-center gap-2.5 py-2 px-3 flex-shrink-0 text-center"
+                style={{ background: 'var(--p-bad-strong)', color: '#fff', fontSize: 14, fontWeight: 750, letterSpacing: '0.5px' }}
               >
-                <AlertTriangle size={15} />
+                <AlertTriangle size={15} className="flex-shrink-0" />
                 TAKT TIME EXCEEDED — {formatDur(stepElapsed - stepTaktSeconds)} OVER
-                <Zap size={15} />
+                <Zap size={15} className="flex-shrink-0" />
               </div>
             )}
             {blockBanner && <BlockBanner text={blockBanner} onDismiss={() => setBlockBanner(null)} />}

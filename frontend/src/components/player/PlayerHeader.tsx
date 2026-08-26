@@ -156,9 +156,12 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
         {/* Operator chip — phones show the avatar only; the name still reads
             out via the title/aria-label. */}
         <span className="p-chip" style={{ paddingLeft: 4, minHeight: 36 }} title={operatorName || 'Operator'} aria-label={`Operator ${operatorName || 'Operator'}`}>
+          {/* --p-accent on its own tint is 3.59:1, which is fine for the 22px+
+              numerals it was picked for but not for this 13px initial. The
+              lighter step measures 5.38:1 on the same ground. */}
           <span
             className="flex items-center justify-center rounded-full"
-            style={{ width: 28, height: 28, background: 'var(--p-accent-tint)', color: 'var(--p-accent)', fontWeight: 750, fontSize: 13 }}
+            style={{ width: 28, height: 28, background: 'var(--p-accent-tint)', color: 'var(--p-accent-hover)', fontWeight: 750, fontSize: 13 }}
           >
             {initial}
           </span>

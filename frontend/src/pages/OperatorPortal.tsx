@@ -6,7 +6,8 @@ import {
   Briefcase, History as HistoryIcon, LogOut, RefreshCw, Send, ArrowLeft, ScanLine, WifiOff,
   MessageSquare, Lock, Delete, Users as UsersIcon, KeyRound, LayoutDashboard,
 } from 'lucide-react';
-import { timeAgo } from '../utils/time';
+import { timeAgo, fmtMinutes } from '../utils/time';
+import { tintedChipOn } from '../utils/contrast';
 import BarcodeScannerModal from '../components/shared/BarcodeScannerModal';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { getQueuedNCRs, queueNCR, syncQueuedNCRs } from '../utils/offlineQueue';
@@ -65,6 +66,11 @@ const SEVERITY_OPTIONS: { value: 'minor' | 'major' | 'critical'; label: string; 
   { value: 'major', label: 'Major', activeClass: 'border-amber-400 bg-amber-500/20 text-amber-300' },
   { value: 'critical', label: 'Critical', activeClass: 'border-red-400 bg-red-500/20 text-red-300' },
 ];
+
+/** The lightest surface a job card presents in this portal: `bg-blue-600/20`
+ *  over the light end of the page's fixed navy gradient. Department chips derive
+ *  their ink against this, so the darker card states clear by more. */
+const CARD_SURFACE_LIGHTEST = '#324a73';
 
 function fmtDate(iso?: string) {
   if (!iso) return '';
@@ -213,7 +219,7 @@ export default function OperatorPortal() {
         </div>
         <div className="min-w-0">
           <div className="text-white font-bold text-base leading-tight truncate">Hi, {operatorName}</div>
-          <div className="text-blue-300/60 text-xs">
+          <div className="text-blue-200/80 text-xs">
             {activeTab === 'jobs' && 'Your assigned jobs'}
             {activeTab === 'history' && 'Your recent activity'}
             {activeTab === 'report' && 'Report a quality issue'}
@@ -348,10 +354,10 @@ function IdentifyScreen({
       </div>
       <div>
         <div className="text-white font-bold text-lg leading-tight">HartMonitor</div>
-        <div className="text-blue-300/70 text-xs">Operator Portal</div>
+        <div className="text-blue-200/80 text-xs">Operator Portal</div>
       </div>
       {/* The way out, where someone looks for it. The only exit used to be a
-          40%-opacity line of text at the bottom of the page, which is fine for
+          faint line of text at the bottom of the page, which is fine for
           an operator on a locked tablet — they are meant to stay here — and no
           use at all to the person setting the floor up, who bounces between
           this and the management side all day. */}
@@ -392,7 +398,7 @@ function IdentifyScreen({
         )}
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="w-full max-w-xs">
-            <button onClick={() => setSelectedOp(null)} className="flex items-center gap-1.5 text-blue-300/70 hover:text-blue-200 text-sm mb-5 transition-colors">
+            <button onClick={() => setSelectedOp(null)} className="flex items-center gap-1.5 text-blue-200/80 hover:text-blue-200 text-sm mb-5 transition-colors">
               <ArrowLeft size={16} /> Choose someone else
             </button>
             <div className="text-center mb-6">
@@ -400,7 +406,7 @@ function IdentifyScreen({
                 {selectedOp.display_name.trim()[0]?.toUpperCase() ?? '?'}
               </div>
               <h1 className="text-xl font-bold text-white">{selectedOp.display_name}</h1>
-              <p className="text-blue-200/70 text-sm mt-1 flex items-center justify-center gap-1.5">
+              <p className="text-blue-200/80 text-sm mt-1 flex items-center justify-center gap-1.5">
                 <Lock size={13} /> Enter your PIN
               </p>
             </div>
@@ -416,20 +422,24 @@ function IdentifyScreen({
                 <Key key={d} onClick={() => { setPinError(false); setPin(p => (p.length < 8 ? p + d : p)); }}>{d}</Key>
               ))}
               <Key onClick={() => setPin('')}>
-                <span className="text-sm font-medium text-blue-200/70">Clear</span>
+                <span className="text-sm font-medium text-blue-200/80">Clear</span>
               </Key>
               <Key onClick={() => { setPinError(false); setPin(p => (p.length < 8 ? p + '0' : p)); }}>0</Key>
               <Key onClick={() => setPin(p => p.slice(0, -1))}><Delete size={22} /></Key>
             </div>
+            {/* Fading the whole button to 40% took its own label down to 2.8:1,
+                and an operator on a bright floor is looking straight at it while
+                they punch the PIN. The fill alone says "not yet" — deep navy in
+                place of the vivid enabled blue — and the label stays readable. */}
             <button
               onClick={submitPin}
               disabled={pin.length < 4 || verifying}
-              className="mt-5 w-full h-14 bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white rounded-xl font-bold text-lg transition-colors flex items-center justify-center gap-2"
+              className="mt-5 w-full h-14 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white rounded-xl font-bold text-lg transition-colors flex items-center justify-center gap-2"
             >
               {verifying ? <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <>Clock In <ChevronRight size={20} /></>}
             </button>
             {selectedOp.has_badge && (
-              <button onClick={() => setShowScanner(true)} className="mt-3 w-full text-sm text-blue-300/70 hover:text-blue-200 flex items-center justify-center gap-1.5 transition-colors">
+              <button onClick={() => setShowScanner(true)} className="mt-3 w-full text-sm text-blue-200/80 hover:text-blue-200 flex items-center justify-center gap-1.5 transition-colors">
                 <ScanLine size={14} /> Scan badge instead
               </button>
             )}
@@ -448,7 +458,7 @@ function IdentifyScreen({
         <div className="flex-1 flex items-center justify-center p-6">
           <div className="w-full max-w-md">
             {roster.length > 0 && (
-              <button onClick={() => setManualMode(false)} className="flex items-center gap-1.5 text-blue-300/70 hover:text-blue-200 text-sm mb-5 transition-colors">
+              <button onClick={() => setManualMode(false)} className="flex items-center gap-1.5 text-blue-200/80 hover:text-blue-200 text-sm mb-5 transition-colors">
                 <ArrowLeft size={16} /> Back to operator list
               </button>
             )}
@@ -457,7 +467,7 @@ function IdentifyScreen({
                 <User size={36} className="text-blue-400" />
               </div>
               <h1 className="text-3xl font-bold text-white">Welcome</h1>
-              <p className="text-blue-200/70 text-sm mt-2">Enter your name to see your assigned jobs</p>
+              <p className="text-blue-200/80 text-sm mt-2">Enter your name to see your assigned jobs</p>
             </div>
             <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-6 space-y-4">
               <div>
@@ -475,7 +485,7 @@ function IdentifyScreen({
               <button
                 onClick={onManualSubmit}
                 disabled={!operatorName.trim() || loading}
-                className="w-full h-14 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl font-bold text-lg transition-colors flex items-center justify-center gap-3 shadow-lg shadow-blue-900/50"
+                className="w-full h-14 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white rounded-xl font-bold text-lg transition-colors flex items-center justify-center gap-3 shadow-lg shadow-blue-900/50"
               >
                 {loading ? <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <>See My Jobs <ChevronRight size={20} /></>}
               </button>
@@ -501,14 +511,14 @@ function IdentifyScreen({
               <UsersIcon size={30} className="text-blue-400" />
             </div>
             <h1 className="text-2xl font-bold text-white">Who's working?</h1>
-            <p className="text-blue-200/70 text-sm mt-1">Tap your name to clock in</p>
+            <p className="text-blue-200/80 text-sm mt-1">Tap your name to clock in</p>
           </div>
 
           {isSelfOperator && (
             <button
               onClick={() => onIdentify(currentUser!.display_name!)}
               disabled={loading}
-              className="w-full mb-4 h-14 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-2xl font-bold text-base transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-900/40"
+              className="w-full mb-4 h-14 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white rounded-2xl font-bold text-base transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-900/40"
             >
               Continue as {currentUser!.display_name} <ChevronRight size={18} />
             </button>
@@ -528,9 +538,9 @@ function IdentifyScreen({
             </div>
           ) : roster.length === 0 ? (
             <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-8 text-center">
-              <KeyRound size={32} className="mx-auto mb-3 text-blue-300/50" />
+              <KeyRound size={32} className="mx-auto mb-3 text-blue-200/80" />
               <div className="text-white font-semibold">No operators set up yet</div>
-              <div className="text-blue-200/70 text-sm mt-1">Ask your manager to add operators (with PINs) in Settings → Users.</div>
+              <div className="text-blue-200/80 text-sm mt-1">Ask your manager to add operators (with PINs) in Settings → Users.</div>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -548,8 +558,8 @@ function IdentifyScreen({
                     <span className="text-white text-sm font-semibold truncate">{op.display_name}</span>
                   </div>
                   {op.has_pin
-                    ? <span className="flex items-center gap-1 text-[10px] text-blue-300/60"><Lock size={9} /> PIN</span>
-                    : <span className="text-[10px] text-blue-300/40">Tap to start</span>}
+                    ? <span className="flex items-center gap-1 text-[11px] text-blue-200/80"><Lock size={10} /> PIN</span>
+                    : <span className="text-[11px] text-blue-200/80">Tap to start</span>}
                 </button>
               ))}
             </div>
@@ -564,7 +574,7 @@ function IdentifyScreen({
                 <ScanLine size={16} /> Scan badge
               </button>
             )}
-            <button onClick={() => { setOperatorName(''); setManualMode(true); }} className="text-xs text-blue-400/50 hover:text-blue-300/70 transition-colors">
+            <button onClick={() => { setOperatorName(''); setManualMode(true); }} className="text-xs text-blue-200/80 hover:text-white transition-colors">
               Continue without a PIN
             </button>
           </div>
@@ -597,7 +607,7 @@ function BottomNav({ active, onChange }: { active: Tab; onChange: (t: Tab) => vo
             key={id}
             onClick={() => onChange(id)}
             className={`flex flex-col items-center justify-center gap-1 py-2.5 text-[11px] font-semibold transition-colors ${
-              isActive ? 'text-blue-400' : 'text-blue-200/40 hover:text-blue-200/70'
+              isActive ? 'text-blue-400' : 'text-blue-200/80 hover:text-white'
             }`}
           >
             <Icon size={20} />
@@ -656,7 +666,7 @@ function JobsTab({
       )}
 
       <div className="flex items-center justify-between mb-3">
-        <p className="text-blue-200/70 text-sm">
+        <p className="text-blue-200/80 text-sm">
           {workOrders.length > 0 ? `${workOrders.length} job${workOrders.length !== 1 ? 's' : ''} available` : 'No jobs scheduled yet'}
         </p>
         <div className="flex items-center gap-3">
@@ -688,8 +698,8 @@ function JobsTab({
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-10 text-center">
           <CheckCircle size={40} className="mx-auto mb-3 text-green-400" />
           <div className="text-white font-semibold text-lg">All caught up!</div>
-          <div className="text-blue-200/70 text-sm mt-1">No active work orders are scheduled right now</div>
-          <div className="text-blue-300/50 text-xs mt-3">Check with your supervisor for new assignments</div>
+          <div className="text-blue-200/80 text-sm mt-1">No active work orders are scheduled right now</div>
+          <div className="text-blue-200/80 text-xs mt-3">Check with your supervisor for new assignments</div>
         </div>
       ) : (
         <div className="space-y-3">
@@ -715,7 +725,7 @@ function JobsTab({
                     <div className="flex items-start justify-between gap-2">
                       <div>
                         <div className="text-white font-bold text-base leading-tight">{wo.part_name}</div>
-                        <div className="text-blue-200/60 text-xs mt-0.5 font-mono">{wo.work_order_number} · {wo.part_number}</div>
+                        <div className="text-blue-200/80 text-xs mt-0.5 font-mono">{wo.work_order_number} · {wo.part_number}</div>
                       </div>
                       {isSelected && (
                         <div className="flex-shrink-0 w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
@@ -725,29 +735,30 @@ function JobsTab({
                     </div>
 
                     <div className="mt-3 flex items-center gap-4 text-xs flex-wrap">
-                      <div className="flex items-center gap-1 text-blue-200/70">
+                      <div className="flex items-center gap-1 text-blue-200/80">
                         <Package size={12} />
                         {wo.quantity_completed} / {wo.quantity} units
                       </div>
                       {wo.takt_time_minutes > 0 && (
-                        <div className="flex items-center gap-1 text-blue-200/70">
+                        <div className="flex items-center gap-1 text-blue-200/80">
                           <Clock size={12} />
-                          {wo.takt_time_minutes}m takt
+                          {fmtMinutes(wo.takt_time_minutes)}m takt
                         </div>
                       )}
                       {wo.department_name && (
+                        // A department's colour is picked from a colour well and
+                        // then written on a chip tinted with itself, which for a
+                        // mid-blue landed at 2.4:1. The tint stays; only the ink
+                        // moves, and only as far as AA needs.
                         <span
                           className="text-xs font-medium px-2 py-0.5 rounded-full"
-                          style={{
-                            backgroundColor: (wo.department_color || '#6b7280') + '33',
-                            color: wo.department_color || '#9ca3af'
-                          }}
+                          style={tintedChipOn(wo.department_color, CARD_SURFACE_LIGHTEST)}
                         >
                           {wo.department_name}
                         </span>
                       )}
                       {wo.scheduled_end && (
-                        <div className="flex items-center gap-1 text-blue-200/60 ml-auto">
+                        <div className="flex items-center gap-1 text-blue-200/80 ml-auto">
                           <AlertTriangle size={11} />
                           Due {fmtDate(wo.scheduled_end)}
                         </div>
@@ -762,7 +773,7 @@ function JobsTab({
                           style={{ width: `${pct}%` }}
                         />
                       </div>
-                      <div className="text-xs text-blue-300/50 mt-0.5">{pct}% complete</div>
+                      <div className="text-xs text-blue-200/80 mt-0.5">{pct}% complete</div>
                     </div>
                   </div>
                 </div>
@@ -781,7 +792,7 @@ function JobsTab({
           <button
             onClick={onStartJob}
             disabled={!selectedWO.app_id}
-            className="w-full h-16 px-4 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-2xl font-bold text-xl transition-colors flex items-center justify-center gap-3 shadow-2xl shadow-blue-900/50"
+            className="w-full h-16 px-4 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white rounded-2xl font-bold text-xl transition-colors flex items-center justify-center gap-3 shadow-2xl shadow-blue-900/50"
           >
             <Factory size={24} className="flex-shrink-0" />
             <span className="truncate min-w-0">Start: {selectedWO.part_name}</span>
@@ -815,14 +826,14 @@ function HistoryTab({
     <div>
       <div className="grid grid-cols-2 gap-3 mb-4">
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-4">
-          <div className="text-blue-200/60 text-xs font-medium uppercase tracking-wide">Today</div>
+          <div className="text-blue-200/80 text-xs font-medium uppercase tracking-wide">Today</div>
           <div className="text-white text-3xl font-bold mt-1">{completedToday}</div>
-          <div className="text-blue-300/50 text-xs mt-0.5">units completed</div>
+          <div className="text-blue-200/80 text-xs mt-0.5">units completed</div>
         </div>
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-4">
-          <div className="text-blue-200/60 text-xs font-medium uppercase tracking-wide">Recent</div>
+          <div className="text-blue-200/80 text-xs font-medium uppercase tracking-wide">Recent</div>
           <div className="text-white text-3xl font-bold mt-1">{totalCompleted}</div>
-          <div className="text-blue-300/50 text-xs mt-0.5">total in history</div>
+          <div className="text-blue-200/80 text-xs mt-0.5">total in history</div>
         </div>
       </div>
 
@@ -846,9 +857,9 @@ function HistoryTab({
         </div>
       ) : list.length === 0 ? (
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-10 text-center">
-          <HistoryIcon size={36} className="mx-auto mb-3 text-blue-300/40" />
+          <HistoryIcon size={36} className="mx-auto mb-3 text-blue-200/80" />
           <div className="text-white font-semibold">No activity yet</div>
-          <div className="text-blue-200/70 text-sm mt-1">Completed and started jobs will show up here</div>
+          <div className="text-blue-200/80 text-sm mt-1">Completed and started jobs will show up here</div>
         </div>
       ) : (
         <div className="space-y-2">
@@ -859,7 +870,7 @@ function HistoryTab({
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-white text-sm font-medium truncate">{c.app_name}</div>
-                <div className="text-blue-300/50 text-xs">
+                <div className="text-blue-200/80 text-xs">
                   {c.status === 'completed' ? timeAgo(c.completed_at || c.started_at) : `Started ${timeAgo(c.started_at)}`}
                 </div>
               </div>
@@ -944,13 +955,13 @@ function ReportTab({
         {queuedOffline ? (
           <>
             <div className="text-white font-bold text-lg">Saved offline</div>
-            <div className="text-blue-200/70 text-sm mt-1">Your report will be submitted automatically once you're back online.</div>
+            <div className="text-blue-200/80 text-sm mt-1">Your report will be submitted automatically once you're back online.</div>
           </>
         ) : (
           <>
             <div className="text-white font-bold text-lg">Issue reported</div>
-            <div className="text-blue-200/70 text-sm mt-1">NCR <span className="font-mono">{submitted}</span> has been created</div>
-            <div className="text-blue-300/50 text-xs mt-2">Your supervisor and quality team will follow up.</div>
+            <div className="text-blue-200/80 text-sm mt-1">NCR <span className="font-mono">{submitted}</span> has been created</div>
+            <div className="text-blue-200/80 text-xs mt-2">Your supervisor and quality team will follow up.</div>
           </>
         )}
         <button
@@ -999,7 +1010,7 @@ function ReportTab({
               key={opt.value}
               onClick={() => setSeverity(opt.value)}
               className={`h-11 rounded-xl border-2 text-sm font-semibold capitalize transition-all ${
-                severity === opt.value ? opt.activeClass : 'border-white/10 bg-white/5 text-blue-200/60 hover:bg-white/10'
+                severity === opt.value ? opt.activeClass : 'border-white/10 bg-white/5 text-blue-200/80 hover:bg-white/10'
               }`}
             >
               {opt.label}
@@ -1026,10 +1037,13 @@ function ReportTab({
         </div>
       )}
 
+      {/* Same as Clock In: a half-faded button takes its own label down with it
+          (3.7:1 here). The deep fill carries "not yet"; the label stays readable
+          so an operator can see what they are about to do. */}
       <button
         onClick={handleSubmit}
         disabled={!title.trim() || saving}
-        className="w-full h-14 bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white rounded-xl font-bold text-lg transition-colors flex items-center justify-center gap-3 shadow-lg shadow-red-900/30"
+        className="w-full h-14 bg-red-600 hover:bg-red-500 disabled:bg-red-950 disabled:cursor-not-allowed text-white rounded-xl font-bold text-lg transition-colors flex items-center justify-center gap-3 shadow-lg shadow-red-900/30"
       >
         {saving ? (
           <span className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -1070,7 +1084,7 @@ function MessagesCard() {
         )}
       </div>
       {recent.length === 0 ? (
-        <div className="text-blue-300/50 text-xs py-2">No messages yet</div>
+        <div className="text-blue-200/80 text-xs py-2">No messages yet</div>
       ) : (
         <div className="space-y-2">
           {recent.map(m => (
@@ -1079,9 +1093,9 @@ function MessagesCard() {
               <div className="min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className="text-white text-xs font-medium truncate">{m.sender_name}</span>
-                  <span className="text-blue-300/40 text-[10px] flex-shrink-0">{timeAgo(m.created_at)}</span>
+                  <span className="text-blue-200/80 text-[10px] flex-shrink-0">{timeAgo(m.created_at)}</span>
                 </div>
-                <div className="text-blue-200/70 text-xs break-words">{m.body}</div>
+                <div className="text-blue-200/80 text-xs break-words">{m.body}</div>
               </div>
             </div>
           ))}
@@ -1110,7 +1124,7 @@ function ProfileTab({
           {operatorName.trim()[0]?.toUpperCase() ?? '?'}
         </div>
         <div className="text-white font-bold text-lg">{operatorName}</div>
-        <div className="text-blue-300/60 text-xs mt-1">Shop Floor Operator</div>
+        <div className="text-blue-200/80 text-xs mt-1">Shop Floor Operator</div>
       </div>
 
       <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-4 flex items-center gap-3">
@@ -1119,7 +1133,7 @@ function ProfileTab({
         </div>
         <div>
           <div className="text-white font-semibold">{jobCount} job{jobCount !== 1 ? 's' : ''} assigned</div>
-          <div className="text-blue-300/50 text-xs">Visible on the Jobs tab</div>
+          <div className="text-blue-200/80 text-xs">Visible on the Jobs tab</div>
         </div>
       </div>
 
@@ -1147,7 +1161,7 @@ function ProfileTab({
         </button>
         <button
           onClick={() => navigate('/dashboard')}
-          className="w-full h-12 bg-white/5 hover:bg-white/10 border border-white/10 text-blue-200/70 rounded-xl font-semibold text-sm transition-colors flex items-center justify-center gap-2"
+          className="w-full h-12 bg-white/5 hover:bg-white/10 border border-white/10 text-blue-200/80 rounded-xl font-semibold text-sm transition-colors flex items-center justify-center gap-2"
         >
           <LogOut size={16} />
           Management Dashboard

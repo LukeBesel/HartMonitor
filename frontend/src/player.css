@@ -241,11 +241,25 @@
 
 .p-takt-normal { color: var(--p-ink); }
 .p-takt-warn   { color: var(--p-warn); }
-.p-takt-over   { color: var(--p-live); animation: p-takt-flash 1.2s steps(2, jump-none) infinite; }
+
+/* Over takt is the loudest thing on an operator's screen, so it may never be
+   the least readable one. It used to flash by dropping to 45% opacity, which
+   composited the red down to 1.6:1 against the header — for half of every 1.2s
+   the number an operator is meant to react to was effectively invisible. The
+   alarm now flashes a wash BEHIND a colour that never moves: the readout sits
+   at --p-bad, which measures 5.84:1 on the header bare and 4.86:1 at the wash's
+   peak, so both ends of the cycle clear AA for body text. */
+.p-takt-over {
+  color: var(--p-bad);
+  border-radius: var(--p-r-ctrl);
+  padding: 0 6px;
+  margin: 0 -6px;
+  animation: p-takt-flash 1.2s steps(2, jump-none) infinite;
+}
 
 @keyframes p-takt-flash {
-  0%, 49% { opacity: 1; }
-  50%, 100% { opacity: 0.45; }
+  0%, 49%   { background-color: transparent; }
+  50%, 100% { background-color: rgba(224, 49, 49, 0.22); }
 }
 
 /* Slim always-visible takt countdown bar under the header. The fill drains with

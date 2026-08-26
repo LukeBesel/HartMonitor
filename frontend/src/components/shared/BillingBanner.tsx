@@ -23,7 +23,11 @@ export function BillingBanner() {
     return (
       <>
         <div className="flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-1.5 sm:py-2 bg-amber-50 dark:bg-amber-500/15 border-b border-amber-300 dark:border-amber-500/30 text-amber-900 dark:text-amber-200 text-xs sm:text-sm">
-          <Zap size={14} className="shrink-0 text-amber-400" />
+          {/* amber-400 is a dark-mode value; on the amber-50 ground this banner
+              uses in light mode it measures 1.61:1 — the icon simply is not
+              there. Both icons follow the banner's own text colour, which
+              already clears AA on either ground. */}
+          <Zap size={14} className="shrink-0" />
           <span className="flex-1 min-w-0 truncate">
             <span className="sm:hidden"><strong>Demo</strong> — resets in 24h</span>
             <span className="hidden sm:inline">
@@ -49,7 +53,7 @@ export function BillingBanner() {
             <span className="sm:hidden">Keep my work</span>
             <span className="hidden sm:inline">Keep my work — create a free account</span>
           </button>
-          <button onClick={() => setDismissed(true)} className="shrink-0 p-1 text-amber-400/70 hover:text-amber-200" aria-label="Dismiss">
+          <button onClick={() => setDismissed(true)} className="shrink-0 p-1 text-amber-800 dark:text-amber-300 hover:text-amber-950 dark:hover:text-amber-100" aria-label="Dismiss">
             <X size={14} />
           </button>
         </div>
