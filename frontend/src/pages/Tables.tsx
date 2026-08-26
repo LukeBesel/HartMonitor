@@ -181,7 +181,7 @@ export default function Tables() {
             <div className="p-5 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Table Name *</label>
-                <input className="input-field" placeholder="e.g. Part Inventory" value={newTable.name} onChange={e => setNewTable(p => ({ ...p, name: e.target.value }))} autoFocus />
+                <input className="input-field" placeholder="e.g. Part Inventory" value={newTable.name} onChange={e => setNewTable(p => ({ ...p, name: e.target.value }))} />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>

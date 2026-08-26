@@ -151,7 +151,6 @@ export default function Login() {
                     onChange={e => setEmail(e.target.value)}
                     className={inputClass}
                     placeholder="you@company.com"
-                    autoFocus
                   />
                 </div>
                 <div>
@@ -196,7 +195,6 @@ export default function Login() {
                       onChange={e => setCompanyName(e.target.value)}
                       className={`${inputClass} pl-10`}
                       placeholder="Acme Manufacturing"
-                      autoFocus
                     />
                     <Building2 size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
                   </div>

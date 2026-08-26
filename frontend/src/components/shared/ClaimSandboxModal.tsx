@@ -89,7 +89,7 @@ export function ClaimSandboxModal({ onClose }: Props) {
           <div>
             <label htmlFor="claim-company" className="block text-xs font-semibold text-gray-700 mb-1">Company name</label>
             <input
-              id="claim-company" className="input w-full" required autoFocus
+              id="claim-company" className="input w-full" required
               value={companyName} onChange={e => setCompanyName(e.target.value)}
               placeholder="Hart Machining"
             />

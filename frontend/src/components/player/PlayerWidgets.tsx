@@ -50,8 +50,9 @@ export interface PlayerWidgetProps {
   renderKit: (widget: Widget) => ReactNode;
   /**
    * Non-interactive rendering for the builder canvas: pixel-identical output,
-   * but nothing grabs focus or starts running on its own (no scan autoFocus,
-   * no auto-starting timer). Absent / false is the operator-facing behavior,
+   * but nothing starts running on its own (no auto-starting timer). Nothing
+   * grabs focus in either mode: the keyboard waits for a tap, everywhere,
+   * by the owner's explicit rule. Absent / false is the operator-facing behavior,
    * unchanged in every respect — a real run never sets this.
    */
   readOnly?: boolean;
@@ -155,7 +156,6 @@ function ScanInput({ widget, value, invalid, readOnly, onScanCode, onRequestCame
             style={{ paddingLeft: 44 }}
             placeholder={widget.config.placeholder || 'Scan or type a code…'}
             value={draft}
-            autoFocus={!readOnly}
             onChange={e => setDraft(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); commit(); } }}
             onBlur={() => { if (draft.trim()) commit(); }}

@@ -2166,7 +2166,6 @@ function PinModal({ user, onClose, onSaved, onError }: {
                 value={pin}
                 onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 8))}
                 placeholder="••••"
-                autoFocus
               />
               <button type="button" onClick={() => setShowPin(s => !s)}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-xs">
@@ -2694,7 +2693,6 @@ function SitesTab() {
                 value={newDeptName}
                 onChange={e => setNewDeptName(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') handleAddDept(); if (e.key === 'Escape') setAddingDept(false); }}
-                autoFocus
               />
               <div className="flex gap-1.5">
                 <button onClick={handleAddDept} disabled={!newDeptName.trim() || savingDept} className="btn-primary text-xs py-1 px-3 flex-1">
@@ -2756,7 +2754,6 @@ function SitesTab() {
                 value={newStationName}
                 onChange={e => setNewStationName(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') handleAddStation(); if (e.key === 'Escape') setAddingStation(false); }}
-                autoFocus
               />
               <div className="flex gap-1.5">
                 <button onClick={handleAddStation} disabled={!newStationName.trim() || savingStation} className="btn-primary text-xs py-1 px-3 flex-1">
@@ -3189,7 +3186,7 @@ function NewApiKeyModal({ onClose, onCreated, onError }: {
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Name</label>
-            <input className="input-field w-full" value={name} onChange={e => setName(e.target.value)} required placeholder="ERP Integration" autoFocus />
+            <input className="input-field w-full" value={name} onChange={e => setName(e.target.value)} required placeholder="ERP Integration" />
           </div>
           {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
           <div className="flex gap-3 pt-2">

@@ -535,7 +535,6 @@ function OperatorModal({
         </div>
         <input
           type="text"
-          autoFocus
           value={val}
           onChange={e => setVal(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && val.trim() && onSave(val.trim())}

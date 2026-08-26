@@ -215,7 +215,6 @@ export default function TemplatePickerModal({
               value={name}
               onChange={e => { setName(e.target.value); setNameTouched(true); }}
               onKeyDown={e => e.key === 'Enter' && handleCreate()}
-              autoFocus
             />
           </div>
           {selection.kind === 'blank' && (

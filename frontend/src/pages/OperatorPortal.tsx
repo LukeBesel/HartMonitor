@@ -478,7 +478,6 @@ function IdentifyScreen({
                   value={operatorName}
                   onChange={e => setOperatorName(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && onManualSubmit()}
-                  autoFocus
                   autoComplete="name"
                 />
               </div>
@@ -987,7 +986,6 @@ function ReportTab({
           placeholder="e.g. Bad weld on bracket"
           value={title}
           onChange={e => setTitle(e.target.value)}
-          autoFocus
         />
       </div>
 
