@@ -82,10 +82,6 @@ describe('the day rolls over on the plant clock', () => {
   const HERE = {};   // a company whose clock says the run happened today
   const AWAY = {};   // a company whose clock says the same run was yesterday
 
-  // The zone whose local calendar the "today" company runs on. Detroit is a
-  // real customer's clock and sits behind UTC, which is where the bug bit.
-  const HERE_TZ = 'America/Detroit';
-
   /** The wall-clock date in `tz` at `at`, as 'YYYY-MM-DD'. */
   function localDate(tz, at) {
     const p = Object.fromEntries(
@@ -108,47 +104,62 @@ describe('the day rolls over on the plant clock', () => {
     return Math.round((asUTC - at.getTime()) / 60000);
   }
 
-  /**
-   * A UTC instant that is half past midnight TODAY on `tz`'s wall clock — so it
-   * is unambiguously "today" there whatever time this suite happens to run.
-   */
-  function halfPastLocalMidnight(tz) {
-    const now = new Date();
+  /** `tz`'s most recent local midnight, as a UTC instant. Two passes because
+   *  the offset at midnight can differ from the offset now across a
+   *  daylight-saving changeover. */
+  function lastMidnight(tz, now) {
     const [y, m, d] = localDate(tz, now).split('-').map(Number);
-    // Two passes: the offset at midnight can differ from the offset now on a
-    // daylight-saving changeover day.
-    let guess = new Date(Date.UTC(y, m - 1, d, 0, 30) - offset(tz, now) * 60000);
-    guess = new Date(Date.UTC(y, m - 1, d, 0, 30) - offset(tz, guess) * 60000);
+    let guess = new Date(Date.UTC(y, m - 1, d) - offset(tz, now) * 60000);
+    guess = new Date(Date.UTC(y, m - 1, d) - offset(tz, guess) * 60000);
     return guess;
   }
 
   const toSqlite = date => date.toISOString().replace('T', ' ').slice(0, 19);
 
   before(async () => {
-    const stampDate = halfPastLocalMidnight(HERE_TZ);
-    const stamp = toSqlite(stampDate);
-    const now = new Date();
-
-    // Find a real zone that calls that same instant a DIFFERENT day than it
-    // calls right now — i.e. a plant for which this run belongs to another
-    // shift. Chosen at runtime so the test holds at every hour and both sides
-    // of a daylight-saving change.
-    const candidates = [
-      'Pacific/Kiritimati', 'Pacific/Auckland', 'Asia/Tokyo', 'Asia/Kolkata',
-      'Europe/Berlin', 'UTC', 'America/Los_Angeles', 'Pacific/Honolulu',
+    // The first shape of this fixture anchored HERE to one zone and HUNTED a
+    // candidate list for a zone that called the stamp another day. No candidate
+    // had a midnight inside one three-hour stretch of the day, so the suite
+    // failed deterministically from 04:00 to 07:00 UTC and passed the other 21
+    // hours — the worst kind of red, one nobody can reproduce at their desk.
+    //
+    // Now the disagreement is CONSTRUCTED instead of searched for. AWAY is the
+    // zone whose day began most recently (at least two minutes ago); the run is
+    // stamped half an hour BEFORE that midnight, which makes it yesterday there
+    // by construction. HERE is a zone whose day began at least 45 minutes
+    // earlier still, so the same stamp sits comfortably inside HERE's today.
+    // The zone list covers the clock roughly hourly, so both picks exist at
+    // every instant, daylight-saving changeovers included.
+    const ZONES = [
+      'Pacific/Kiritimati', 'Pacific/Auckland', 'Asia/Tokyo', 'Asia/Shanghai',
+      'Asia/Kolkata', 'Asia/Dubai', 'Europe/Moscow', 'Europe/Berlin',
+      'Atlantic/Azores', 'UTC', 'America/Sao_Paulo', 'America/Halifax',
+      'America/New_York', 'America/Chicago', 'America/Denver',
+      'America/Los_Angeles', 'Pacific/Honolulu', 'Pacific/Pago_Pago',
     ];
-    const awayTz = candidates.find(tz => localDate(tz, stampDate) !== localDate(tz, now));
-    assert.ok(awayTz, 'no candidate zone disagreed — the fixture is broken, not the code');
-    AWAY.tz = awayTz;
+    const now = new Date();
+    const ranked = ZONES
+      .map(tz => ({ tz, mid: lastMidnight(tz, now) }))
+      .sort((a, b) => b.mid.getTime() - a.mid.getTime());   // newest day first
 
-    assert.equal(
-      localDate(HERE_TZ, stampDate), localDate(HERE_TZ, now),
-      'the fixture must be today on the "here" clock',
-    );
+    const away = ranked.find(z => now.getTime() - z.mid.getTime() >= 2 * 60_000);
+    const here = ranked.find(z => away.mid.getTime() - z.mid.getTime() >= 45 * 60_000);
+    assert.ok(away && here, 'the zone list must always yield both roles');
+    AWAY.tz = away.tz;
+    HERE.tz = here.tz;
+
+    const stampDate = new Date(away.mid.getTime() - 30 * 60_000);
+    const stamp = toSqlite(stampDate);
+
+    // The properties the construction promises, asserted rather than trusted.
+    assert.equal(localDate(HERE.tz, stampDate), localDate(HERE.tz, now),
+      `the stamp must be today in ${HERE.tz}`);
+    assert.notEqual(localDate(AWAY.tz, stampDate), localDate(AWAY.tz, now),
+      `the stamp must be another day in ${AWAY.tz}`);
 
     for (const [co, tz, email] of [
-      [HERE, HERE_TZ, 'admin@here.test'],
-      [AWAY, awayTz, 'admin@away.test'],
+      [HERE, HERE.tz, 'admin@here.test'],
+      [AWAY, AWAY.tz, 'admin@away.test'],
     ]) {
       const signup = await api('POST', '/api/auth/signup', {
         body: { company_name: `Plant ${tz}`, email, password: 'SecretPass1', display_name: 'Admin' },
@@ -184,7 +195,7 @@ describe('the day rolls over on the plant clock', () => {
     const overview = await api('GET', '/api/analytics/overview', { token: HERE.token });
     assert.equal(overview.status, 200);
     assert.equal(overview.json.todayCompletions, 1,
-      `half past midnight ${HERE_TZ} time is today there`);
+      `half an hour into ${HERE.tz}'s day is today there`);
   });
 
   it('does not count the same instant for a plant whose clock says it was another day', async () => {

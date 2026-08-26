@@ -30,9 +30,8 @@ import {
 // One duration formatter for the whole app: seconds / minutes / hours, and "—"
 // for null. A second local copy is how this page ended up printing "0m" for a
 // twelve-second run while the App Dashboard printed "12s".
-import {
-  durationTicks, elapsedSeconds, fmtDateTime, fmtDuration, fmtRelative, measuredSeconds, pluralize,
-} from '../components/apps/appModel';
+import { type DurationBasis,
+  durationTicks, elapsedSeconds, fmtDateTime, fmtDuration, fmtRelative, measuredSeconds, pluralize, durationBasisLabel, durationBasisNote } from '../components/apps/appModel';
 import useAutoRefresh from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
 import EmptyState from '../components/shared/EmptyState';
@@ -68,6 +67,8 @@ interface AppHistoryData {
   app_name: string;
   total_runs: number;
   avg_duration: number | null;
+  /** Which measurement avg_duration is — hands-on, wall clock, or a mix. */
+  avg_duration_basis?: DurationBasis;
   best_time: number | null;
   pass_rate: number | null;
   qc_sample_size?: number;
@@ -435,9 +436,15 @@ export default function AppHistory() {
             <SummaryCard
               icon={<Clock size={18} className="text-purple-600" />} bg="bg-purple-50"
               label="Typical run time"
-              title="Per-step timers added up, averaged over every completed run. The Analytics page's Avg Cycle is wall clock from start to finish over the selected window, so it reads a little longer."
+              title={durationBasisNote(data.avg_duration_basis)}
               value={avgDuration === null ? null : fmtDuration(avgDuration)}
-              note={avgDuration === null ? 'no run has been timed yet' : 'step timers, all completed runs'}
+              // The API says which measurement its average actually is. The old
+              // note asserted "step timers" unconditionally — true for a tenant
+              // whose runs all record timers, a quiet lie for one whose average
+              // fell back to wall clock.
+              note={avgDuration === null
+                ? 'no run has been timed yet'
+                : `${durationBasisLabel(data.avg_duration_basis) || 'measured'} · all completed runs`}
             />
             <TrendCard trend={trend} />
             <SummaryCard
