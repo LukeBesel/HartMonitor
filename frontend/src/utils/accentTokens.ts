@@ -32,9 +32,18 @@ function sync(): void {
 
   // A value we wrote ourselves means the theme has not changed since the last
   // pass; anything else is a freshly picked accent to derive from.
-  const raw = declared && declared !== lastSolid ? declared : lastRaw;
+  const isOurs = !!lastSolid && declared === lastSolid;
+  const raw = declared && !isOurs ? declared : lastRaw;
   if (!raw) return;
-  if (raw === lastRaw && dark === lastDark) return;
+
+  // Short-circuit only when nothing changed AND what we derived is still the
+  // value on the element. Comparing the raw input alone was not enough. The
+  // boot script in index.html paints the stored accent before React exists, so
+  // this runs once against it and derives — and then ThemeContext's own write
+  // of that SAME raw value lands afterwards. Same input, so the old guard
+  // returned here; but our derived value had just been overwritten, which left
+  // the raw colour on <html> permanently. A tenant on yellow read 1.19:1.
+  if (raw === lastRaw && dark === lastDark && isOurs) return;
 
   const t = deriveAccentTokens(raw, dark);
   lastRaw = raw;
