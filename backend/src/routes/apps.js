@@ -1,4 +1,8 @@
 const express = require('express');
+const {
+  roundSeconds, runSecondsSQL, runBasisSQL, avgRunSecondsSQL, avgRunBasisSQL,
+  handsOnSecondsSQL, elapsedSecondsSQL, elapsedSoFarSecondsSQL,
+} = require('../cycleTime');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { logActivity } = require('../activity');
@@ -552,7 +556,8 @@ router.get('/:id/detail', (req, res) => {
            SUM(CASE WHEN c.status = 'in_progress' THEN 1 ELSE 0 END) AS in_progress,
            MAX(c.started_at) AS last_run_at,
            MIN(c.started_at) AS first_run_at,
-           ${AVG_DURATION_S} AS avg_duration_s
+           ${AVG_DURATION_S} AS avg_duration_s,
+           ${AVG_BASIS}      AS avg_duration_basis
     FROM completions c WHERE c.app_id = ? AND c.company_id = ?
   `).get(...args);
 
@@ -610,11 +615,15 @@ router.get('/:id/detail', (req, res) => {
     FROM worked w
     JOIN completions c ON c.id = w.completion_id
     GROUP BY w.operator_name ORDER BY runs DESC, w.operator_name LIMIT 25
-  `).all(...args, ...args);
+  `).all(...args, ...args).map(o => ({ ...o, avg_duration_s: roundSeconds(o.avg_duration_s) }));
 
   const recentRuns = db.prepare(`
     SELECT c.id, c.started_at, c.completed_at, c.status, c.operator_name,
-           CASE WHEN c.completed_at IS NOT NULL THEN CAST(ROUND(${DURATION_S}) AS INTEGER) END AS duration_s,
+           ${DURATION_S}                 AS duration_s,
+           ${runBasisSQL('c')}           AS duration_basis,
+           ${handsOnSecondsSQL('c')}     AS hands_on_seconds,
+           ${elapsedSecondsSQL('c')}     AS elapsed_seconds,
+           ${elapsedSoFarSecondsSQL('c')} AS elapsed_so_far_seconds,
            wo.work_order_number, pt.name AS product_type_name, st.name AS station_name
     FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
@@ -649,15 +658,19 @@ router.get('/:id/detail', (req, res) => {
       runs_7d: runs7d || 0,
       runs_30d: win.runs || 0,
       completed_30d: win.completed || 0,
-      avg_duration_s: lifetime.avg_duration_s ?? null,
-      avg_duration_30d_s: win.avg_duration_s ?? null,
+      // Rounded once, here, on the way out — and null, never 0, when no run in
+      // scope carries a measurement.
+      avg_duration_s: roundSeconds(lifetime.avg_duration_s),
+      /** 'hands_on' | 'elapsed' | 'mixed' | null — the label the tile must carry. */
+      avg_duration_basis: lifetime.avg_duration_basis ?? null,
+      avg_duration_30d_s: roundSeconds(win.avg_duration_s),
       first_run_at: lifetime.first_run_at || null,
       last_run_at: lifetime.last_run_at || null,
       first_pass_yield: fpy.total > 0 ? Math.round(((fpy.passed || 0) / fpy.total) * 1000) / 10 : null,
       operator_count: operators.length,
     },
     operators,
-    recent_runs: recentRuns,
+    recent_runs: recentRuns.map(shapeRunRow),
   });
 });
 
@@ -728,8 +741,36 @@ router.delete('/:id', (req, res) => {
 // powering the /apps/:id/analytics dashboard and its CSV download. All SQL is
 // tenant-scoped (app ownership checked first → cross-tenant requests 404).
 
-const DURATION_S = `(julianday(c.completed_at) - julianday(c.started_at)) * 86400`;
-const AVG_DURATION_S = `ROUND(AVG(CASE WHEN c.status = 'completed' AND c.completed_at IS NOT NULL THEN ${DURATION_S} END), 1)`;
+// How long a run took is decided in backend/src/cycleTime.js and nowhere else.
+// These are that module's expressions under the names this file already used.
+//
+// `AVG_DURATION_S` used to average raw wall clock with no honesty guard, so an
+// app whose runs are all sub-second averaged to a fraction and printed "0s" on
+// App Detail, App Analytics and the Apps Dashboard — right beside the honest
+// form of the same gap ("— First-pass yield · no pass/fail check recorded") —
+// while App History, reading the same runs through a stricter rule, said the
+// app had never been timed at all. One definition now feeds all four.
+const DURATION_S     = runSecondsSQL('c');
+const AVG_DURATION_S = avgRunSecondsSQL('c');
+const AVG_BASIS      = avgRunBasisSQL('c');
+
+/**
+ * One run's row as every "recent runs" table receives it. `duration_s` is the
+ * canonical run duration and `duration_basis` names the measurement behind it,
+ * so the table can label the column instead of leaving a customer to work out
+ * why the same run reads differently elsewhere. A run still open has no
+ * duration at all — only an elapsed-so-far, which is kept in its own field.
+ */
+function shapeRunRow(r) {
+  return {
+    ...r,
+    duration_s: roundSeconds(r.duration_s),
+    duration_basis: r.duration_basis ?? null,
+    hands_on_seconds: roundSeconds(r.hands_on_seconds),
+    elapsed_seconds: roundSeconds(r.elapsed_seconds),
+    elapsed_so_far_seconds: roundSeconds(r.elapsed_so_far_seconds),
+  };
+}
 
 // Shared filter builder for both endpoints: ?days= (clamped 1..365, default 30),
 // ?operator=, ?work_order_id=, ?product_type_id=. Returns a WHERE fragment over
@@ -790,7 +831,10 @@ router.get('/:id/analytics', (req, res) => {
     SELECT COUNT(*) AS runs,
            SUM(CASE WHEN c.status = 'completed' THEN 1 ELSE 0 END) AS completed,
            SUM(CASE WHEN c.status = 'abandoned' THEN 1 ELSE 0 END) AS abandoned,
-           ${AVG_DURATION_S} AS avg_duration_s
+           ${AVG_DURATION_S} AS avg_duration_s,
+           ${AVG_BASIS}      AS avg_duration_basis,
+           AVG(${handsOnSecondsSQL('c')}) AS avg_hands_on_seconds,
+           AVG(${elapsedSecondsSQL('c')}) AS avg_elapsed_seconds
     FROM completions c WHERE ${where}
   `).get(...params);
 
@@ -814,14 +858,14 @@ router.get('/:id/analytics', (req, res) => {
            ${AVG_DURATION_S} AS avg_duration_s
     FROM completions c WHERE ${where}
     GROUP BY date(c.started_at) ORDER BY date ASC LIMIT 366
-  `).all(...params);
+  `).all(...params).map(r => ({ ...r, avg_duration_s: roundSeconds(r.avg_duration_s) }));
 
   // ── Per-operator ──
   const byOperator = db.prepare(`
     SELECT c.operator_name, COUNT(*) AS runs, ${AVG_DURATION_S} AS avg_duration_s
     FROM completions c WHERE ${where}
     GROUP BY c.operator_name ORDER BY runs DESC LIMIT 50
-  `).all(...params);
+  `).all(...params).map(o => ({ ...o, avg_duration_s: roundSeconds(o.avg_duration_s) }));
 
   // ── Per-field stats over completion_values ──
   // Completed runs only. An abandoned or in-progress run may have captured a
@@ -938,7 +982,11 @@ router.get('/:id/analytics', (req, res) => {
   // ── Recent runs (for the dashboard's table) ──
   const recent = db.prepare(`
     SELECT c.id, c.started_at, c.completed_at, c.status, c.operator_name,
-           CASE WHEN c.completed_at IS NOT NULL THEN CAST(ROUND(${DURATION_S}) AS INTEGER) END AS duration_s,
+           ${DURATION_S}                 AS duration_s,
+           ${runBasisSQL('c')}           AS duration_basis,
+           ${handsOnSecondsSQL('c')}     AS hands_on_seconds,
+           ${elapsedSecondsSQL('c')}     AS elapsed_seconds,
+           ${elapsedSoFarSecondsSQL('c')} AS elapsed_so_far_seconds,
            wo.work_order_number, pt.name AS product_type_name
     FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
@@ -954,14 +1002,19 @@ router.get('/:id/analytics', (req, res) => {
       runs: totalsRow.runs || 0,
       completed: totalsRow.completed || 0,
       abandoned: totalsRow.abandoned || 0,
-      avg_duration_s: totalsRow.avg_duration_s ?? null,
+      avg_duration_s: roundSeconds(totalsRow.avg_duration_s),
+      /** 'hands_on' | 'elapsed' | 'mixed' | null — the label the tile must carry. */
+      avg_duration_basis: totalsRow.avg_duration_basis ?? null,
+      /** Both measurements, so the tile can name the gap instead of hiding it. */
+      avg_hands_on_seconds: roundSeconds(totalsRow.avg_hands_on_seconds),
+      avg_elapsed_seconds: roundSeconds(totalsRow.avg_elapsed_seconds),
       first_pass_yield: fpy.total > 0 ? Math.round(((fpy.passed || 0) / fpy.total) * 1000) / 10 : null,
     },
     series,
     by_operator: byOperator,
     fields,
     filter_options: filterOptions,
-    recent_runs: recent,
+    recent_runs: recent.map(shapeRunRow),
   });
 });
 
@@ -982,7 +1035,7 @@ router.get('/:id/export.csv', (req, res) => {
 
   const rows = db.prepare(`
     SELECT c.id, c.started_at, c.completed_at, c.status, c.operator_name,
-           CASE WHEN c.completed_at IS NOT NULL THEN CAST(ROUND(${DURATION_S}) AS INTEGER) END AS duration_s,
+           ${DURATION_S} AS duration_s,
            wo.work_order_number, pt.name AS product_type_name
     FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
@@ -1039,7 +1092,10 @@ router.get('/:id/export.csv', (req, res) => {
   const header = [...fixedCols, ...columnIds.map(id => headerFor.get(id))].map(escapeCSV).join(',');
   const lines = rows.map(r => {
     const vals = byCompletion.get(r.id) || new Map();
-    const fixed = [r.id, r.started_at, r.completed_at, r.duration_s, r.operator_name, r.work_order_number, r.product_type_name, r.status];
+    // An export cell for a run nobody timed stays empty; a 0 there would be
+    // read as a measurement by every spreadsheet that opens it.
+    const fixed = [r.id, r.started_at, r.completed_at, roundSeconds(r.duration_s) ?? '',
+                   r.operator_name, r.work_order_number, r.product_type_name, r.status];
     return [...fixed, ...columnIds.map(id => vals.get(id))].map(escapeCSV).join(',');
   });
   const csv = [header, ...lines].join('\n') + '\n';

@@ -29,7 +29,9 @@ import EmptyState from '../components/shared/EmptyState';
 import StatCard from '../components/shared/StatCard';
 import LastRefreshed from '../components/shared/LastRefreshed';
 import { useCoachDocked } from '../components/apps/AppTrainingCoach';
-import { fmtDateTime, fmtDuration, fmtRelative, pluralize } from '../components/apps/appModel';
+import {
+  fmtDateTime, fmtDuration, fmtRelative, pluralize, durationBasisNote,
+} from '../components/apps/appModel';
 import {
   DAY_PRESETS, DEFAULT_FILTERS, buildAppOptions, buildHeadlineMetrics, emptyReasonFor,
   fieldSampleSize, filtersToQuery, hasNarrowingFilters, readSelectedAppId, resolveAppId,
@@ -450,7 +452,12 @@ export default function AppsDashboard() {
                           <div className="h-full rounded bg-indigo-500" style={{ width: `${(op.runs / max) * 100}%` }} />
                         </div>
                         <span className="text-xs font-semibold text-gray-900 tabular-nums w-8 text-right">{op.runs}</span>
-                        <span className="text-[11px] text-gray-400 w-20 truncate" title="average cycle time">
+                        <span
+                          className="text-[11px] text-gray-400 w-20 truncate"
+                          title={op.avg_duration_s === null
+                            ? 'none of their runs in this window has been timed'
+                            : durationBasisNote(current.totals.avg_duration_basis)}
+                        >
                           {op.avg_duration_s === null ? '— avg' : `avg ${fmtDuration(op.avg_duration_s)}`}
                         </span>
                       </div>
@@ -520,7 +527,13 @@ export default function AppsDashboard() {
                 <thead className="bg-gray-50 border-b border-gray-100">
                   <tr>
                     {['Started', 'Operator', 'Duration', 'Work order', 'Product type', 'Status', ''].map(h => (
-                      <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide px-4 py-3">{h}</th>
+                      <th
+                        key={h}
+                        className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide px-4 py-3"
+                        title={h === 'Duration'
+                          ? 'Hands-on step time where a run recorded step timers, wall clock otherwise — the same number App History and Completion Detail show.'
+                          : undefined}
+                      >{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -536,7 +549,9 @@ export default function AppsDashboard() {
                       <td className="px-4 py-3 text-xs text-gray-700">{run.operator_name || <span className="text-gray-400">—</span>}</td>
                       <td className="px-4 py-3 text-xs font-medium text-gray-900 tabular-nums">
                         {/* An unfinished run has no duration to report — not a zero. */}
-                        {run.duration_s === null ? <span className="text-gray-400" title="run has not finished">—</span> : fmtDuration(run.duration_s)}
+                        {run.duration_s === null
+                          ? <span className="text-gray-400" title={run.status === 'in_progress' ? 'run has not finished' : 'this run was never timed'}>—</span>
+                          : <span title={durationBasisNote(run.duration_basis)}>{fmtDuration(run.duration_s)}</span>}
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-600">{run.work_order_number || <span className="text-gray-400">—</span>}</td>
                       <td className="px-4 py-3 text-xs text-gray-600">{run.product_type_name || <span className="text-gray-400">—</span>}</td>

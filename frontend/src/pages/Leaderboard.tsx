@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
+import { fmtDuration } from '../components/apps/appModel';
 import type {
   LeaderboardBoard, LeaderboardPeriod, LeaderboardResponse,
   LeaderboardDepartment, LeaderboardDepartmentsResponse,
@@ -17,13 +18,15 @@ const PERIODS: { id: LeaderboardPeriod; label: string }[] = [
   { id: 'all', label: 'All Time' },
 ];
 
-export function formatDuration(minutes: number): string {
-  if (minutes == null) return '—';
-  if (minutes < 1) return `${Math.round(minutes * 60)}s`;
-  const m = Math.floor(minutes);
-  const s = Math.round((minutes - m) * 60);
-  if (s === 0) return `${m}m`;
-  return `${m}m ${s}s`;
+/**
+ * The leaderboard payload is in minutes end to end, so this adapts the unit —
+ * it is NOT a second formatter. Everything below the unit conversion is the one
+ * shared implementation, so a plant record cannot print one way here and
+ * another way on the run's own history page.
+ */
+export function formatDuration(minutes: number | null | undefined): string {
+  if (minutes === null || minutes === undefined) return '—';
+  return fmtDuration(minutes * 60);
 }
 
 const RANK_ICON: Record<number, { icon: React.ReactNode; color: string }> = {
@@ -175,8 +178,13 @@ function DepartmentCard({ dept, onSelect }: { dept: LeaderboardDepartment; onSel
           <div className="text-lg font-bold text-gray-900 tabular-nums">{dept.completions}</div>
           <div className="text-[10px] text-gray-400 uppercase tracking-wide">Completions</div>
         </div>
+        {/* A department nobody has timed has no average. The `?? 0` that used to
+            sit here printed "0s", which reads as a department finishing units
+            instantly rather than one nobody has measured. */}
         <div>
-          <div className="text-lg font-bold tabular-nums" style={{ color: 'var(--accent-ink)' }}>{formatDuration(dept.avg_minutes ?? 0)}</div>
+          <div className="text-lg font-bold tabular-nums" style={{ color: 'var(--accent-ink)' }}>
+            {formatDuration(dept.avg_minutes)}
+          </div>
           <div className="text-[10px] text-gray-400 uppercase tracking-wide">Avg Cycle</div>
         </div>
         <div>

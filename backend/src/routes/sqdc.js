@@ -4,6 +4,8 @@ const db = require('../db');
 const { requireRole } = require('../middleware/auth');
 const { plantDayShift, plantToday, plantDateFn } = require('../plantDay');
 
+const { runSecondsSQL, elapsedSecondsSQL } = require('../cycleTime');
+
 const router = express.Router();
 
 const SQDC_CATEGORIES = ['safety', 'quality', 'delivery', 'cost'];
@@ -182,11 +184,14 @@ router.get('/', (req, res) => {
   };
 
   // ─── COST ────────────────────────────────────────────────────────────────
-  // Labor hours = sum of completion durations on the date. Units = completed runs.
+  // Labor hours is the WALL-CLOCK measurement (see backend/src/cycleTime.js):
+  // how long the bench was occupied, idle time included — deliberately not the
+  // hands-on time a cycle-time screen shows. A run the clocks cannot separate
+  // contributes nothing rather than a zero.
   const costRow = db.prepare(`
     SELECT
       COUNT(*) AS units,
-      SUM(MAX(0, (julianday(c.completed_at) - julianday(c.started_at)) * 24)) AS labor_hours
+      SUM(${elapsedSecondsSQL('c')}) / 3600.0 AS labor_hours
     FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN stations    st ON st.id = c.station_id
@@ -466,7 +471,7 @@ router.get('/:category/detail', (req, res) => {
     const rows = db.prepare(`
       SELECT ${COMPLETION_DEPT} AS dept_id,
              COUNT(*) AS units,
-             SUM(MAX(0, (julianday(c.completed_at) - julianday(c.started_at)) * 24)) AS labor_hours
+             SUM(${elapsedSecondsSQL('c')}) / 3600.0 AS labor_hours
       FROM completions c
       LEFT JOIN work_orders wo ON wo.id = c.work_order_id
       LEFT JOIN stations    st ON st.id = c.station_id
@@ -571,14 +576,15 @@ router.get('/department/:id', (req, res) => {
   // Leaderboard: fastest completions in the department for the date.
   const leaderboardRows = db.prepare(`
     SELECT c.operator_name, c.app_name,
-           ROUND((julianday(c.completed_at) - julianday(c.started_at)) * 24 * 60, 1) AS duration_minutes
+           ROUND(${runSecondsSQL('c')} / 60.0, 1) AS duration_minutes,
+           ${runSecondsSQL('c')} AS duration_seconds
     FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN stations    st ON st.id = c.station_id
     WHERE c.company_id = ? AND ${COMPLETION_DEPT} = ? AND c.status = 'completed'
       AND c.completed_at IS NOT NULL AND date(c.completed_at, ?) = ?
-      AND (julianday(c.completed_at) - julianday(c.started_at)) > 0
-    ORDER BY duration_minutes ASC LIMIT 5
+      AND ${runSecondsSQL('c')} IS NOT NULL
+    ORDER BY duration_seconds ASC LIMIT 5
   `).all(cid, deptId, day, date);
 
   // ─── Behind-takt detector ──────────────────────────────────────────────────

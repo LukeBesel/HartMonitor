@@ -4,7 +4,12 @@ import { api, AppAnalyticsResponse, AppAnalyticsField, AppAnalyticsParams } from
 import { useToast } from '../context/ToastContext';
 import { useAuth } from '../context/AuthContext';
 import { markTrainingDataSeen } from '../components/apps/useAppTraining';
-import { parseServerTime } from '../components/apps/appModel';
+// One duration formatter, imported — never re-declared. A local copy of
+// `fmtDuration` lived here and shadowed the shared one; that is exactly how a
+// 60x unit error shipped from another page. See appModel.ts.
+import {
+  fmtDuration, parseServerTime, durationBasisLabel, durationBasisNote,
+} from '../components/apps/appModel';
 import { useCoachDocked } from '../components/apps/AppTrainingCoach';
 import {
   ArrowLeft, Play, Activity, Clock, CheckCircle2, XCircle, TrendingUp,
@@ -22,19 +27,6 @@ import { stepTaktSeconds } from '../components/player/runtime';
 const ACCENT = '#6366f1';
 const GOOD = '#22c55e';
 const BAD = '#ef4444';
-
-function fmtDuration(seconds: number | null | undefined) {
-  if (seconds === null || seconds === undefined || seconds < 0) return '—';
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  if (seconds < 3600) {
-    const m = Math.floor(seconds / 60);
-    const s = Math.round(seconds % 60);
-    return s > 0 ? `${m}m ${s}s` : `${m}m`;
-  }
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  return `${h}h ${m}m`;
-}
 
 function fmtDate(iso: string | null) {
   // SQLite hands back "YYYY-MM-DD HH:MM:SS" with no zone, which `new Date()`
@@ -200,6 +192,13 @@ export default function AppAnalytics() {
   }
 
   const { totals, series, fields, filter_options: opts, recent_runs: recent } = data;
+  // Two genuinely different measurements of the same runs exist; the tile names
+  // the one it shows and offers the other beside it, so a customer reads two
+  // facts rather than two answers. See backend/src/cycleTime.js.
+  const avgBasisLabel = durationBasisLabel(totals.avg_duration_basis);
+  const avgOtherMeasurement = totals.avg_duration_basis === 'hands_on'
+    ? (totals.avg_elapsed_seconds == null ? null : `${fmtDuration(totals.avg_elapsed_seconds)} wall clock`)
+    : (totals.avg_hands_on_seconds == null ? null : `${fmtDuration(totals.avg_hands_on_seconds)} hands-on`);
   const avgVsTakt = taktTotalS > 0 && totals.avg_duration_s !== null
     ? totals.avg_duration_s - taktTotalS : null;
 
@@ -317,11 +316,19 @@ export default function AppAnalytics() {
               label="Completions" value={totals.completed}
               sub={totals.runs > 0 ? `${Math.round((totals.completed / totals.runs) * 100)}% of runs` : undefined} />
             <KPI icon={<Clock size={18} className="text-purple-600" />} bg="bg-purple-50"
-              label="Avg Cycle" value={fmtDuration(totals.avg_duration_s)}
-              sub={avgVsTakt !== null
-                ? `${avgVsTakt > 0 ? '+' : '−'}${fmtDuration(Math.abs(avgVsTakt))} vs takt ${fmtDuration(taktTotalS)}`
-                : taktTotalS > 0 ? `takt ${fmtDuration(taktTotalS)}` : undefined}
-              subColor={avgVsTakt !== null ? (avgVsTakt > 0 ? 'text-red-600' : 'text-green-600') : undefined} />
+              label={`Avg Cycle${avgBasisLabel ? ` · ${avgBasisLabel}` : ''}`}
+              title={totals.avg_duration_s === null
+                ? 'No run in this window has been timed.'
+                : `${durationBasisNote(totals.avg_duration_basis)}${avgOtherMeasurement ? ` The same runs measured the other way: ${avgOtherMeasurement}.` : ''}`}
+              value={totals.avg_duration_s === null ? '—' : fmtDuration(totals.avg_duration_s)}
+              valueColor={totals.avg_duration_s === null ? 'text-gray-400' : undefined}
+              sub={totals.avg_duration_s === null
+                ? (totals.runs === 0 ? 'no runs in this window' : 'no run has been timed yet')
+                : avgVsTakt !== null
+                  ? `${avgVsTakt > 0 ? '+' : '−'}${fmtDuration(Math.abs(avgVsTakt))} vs takt ${fmtDuration(taktTotalS)}`
+                  : avgOtherMeasurement ? `${avgOtherMeasurement} start to finish`
+                  : taktTotalS > 0 ? `takt ${fmtDuration(taktTotalS)}` : undefined}
+              subColor={totals.avg_duration_s !== null && avgVsTakt !== null ? (avgVsTakt > 0 ? 'text-red-600' : 'text-green-600') : undefined} />
             <KPI
               icon={<TrendingUp size={18} className={yieldColor(totals.first_pass_yield)} />}
               bg={yieldBg(totals.first_pass_yield)}
@@ -384,7 +391,7 @@ export default function AppAnalytics() {
                 rows={data.by_operator.map(o => ({
                   label: o.operator_name || 'Unknown',
                   count: o.runs,
-                  extra: `avg ${fmtDuration(o.avg_duration_s)}`,
+                  extra: o.avg_duration_s === null ? 'avg —' : `avg ${fmtDuration(o.avg_duration_s)}`,
                 }))}
               />
             </div>
@@ -419,7 +426,13 @@ export default function AppAnalytics() {
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
                     {['Started', 'Operator', 'Duration', 'Work Order', 'Product Type', 'Status', ''].map(h => (
-                      <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide px-4 py-3">{h}</th>
+                      <th
+                        key={h}
+                        className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide px-4 py-3"
+                        title={h === 'Duration'
+                          ? 'Hands-on step time where a run recorded step timers, wall clock otherwise — the same number App History and Completion Detail show.'
+                          : undefined}
+                      >{h}</th>
                     ))}
                   </tr>
                 </thead>
@@ -436,7 +449,12 @@ export default function AppAnalytics() {
                             {r.operator_name || '—'}
                           </div>
                         </td>
-                        <td className="px-4 py-3 text-xs font-mono font-medium text-gray-900 tabular-nums">{fmtDuration(r.duration_s)}</td>
+                        <td
+                          className={`px-4 py-3 text-xs font-mono font-medium tabular-nums ${r.duration_s === null ? 'text-gray-400' : 'text-gray-900'}`}
+                          title={r.duration_s === null
+                            ? (r.status === 'in_progress' ? 'this run has not finished' : 'this run was never timed')
+                            : durationBasisNote(r.duration_basis)}
+                        >{r.duration_s === null ? '—' : fmtDuration(r.duration_s)}</td>
                         <td className="px-4 py-3 text-xs text-gray-600">
                           {r.work_order_number ? (
                             <span className="flex items-center gap-1 text-blue-600"><Package size={11} /> {r.work_order_number}</span>
@@ -475,12 +493,12 @@ function yieldBg(y: number | null) {
   return y >= 95 ? 'bg-green-50' : y >= 80 ? 'bg-amber-50' : 'bg-red-50';
 }
 
-function KPI({ icon, bg, label, value, sub, valueColor, subColor }: {
+function KPI({ icon, bg, label, value, sub, valueColor, subColor, title }: {
   icon: React.ReactNode; bg: string; label: string; value: string | number;
-  sub?: string; valueColor?: string; subColor?: string;
+  sub?: string; valueColor?: string; subColor?: string; title?: string;
 }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center gap-3">
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex items-center gap-3" title={title}>
       <div className={`w-10 h-10 ${bg} rounded-lg flex items-center justify-center flex-shrink-0`}>{icon}</div>
       <div className="min-w-0">
         <div className={`text-xl font-bold tabular-nums ${valueColor ?? 'text-gray-900'}`}>{value}</div>

@@ -127,6 +127,32 @@ export interface AppAnalyticsField {
   trend?: { date: string; avg: number }[];
 }
 
+/**
+ * Which measurement a duration is. Two genuinely different numbers exist for one
+ * run — hands-on step time and wall clock — and a screen showing one of them has
+ * to say which. 'mixed' means the runs behind an average were not all measured
+ * the same way. See backend/src/cycleTime.js for the model.
+ */
+export type DurationBasis = 'hands_on' | 'elapsed' | 'mixed' | null;
+
+/**
+ * Every duration one run can honestly report. Seconds, and null when unknown.
+ *
+ * `duration_s` and `duration_basis` are required together on purpose: a screen
+ * may not print a duration without being able to say which measurement it is.
+ * The two components behind it are optional — an endpoint ships them where the
+ * screen offers both.
+ */
+export interface RunDurations {
+  /** The canonical run duration every "Duration" column shows. */
+  duration_s: number | null;
+  duration_basis: DurationBasis;
+  hands_on_seconds?: number | null;
+  elapsed_seconds?: number | null;
+  /** Set only while a run is still open. Never a cycle time. */
+  elapsed_so_far_seconds?: number | null;
+}
+
 export interface AppAnalyticsResponse {
   app_id: string;
   app_name: string;
@@ -134,6 +160,9 @@ export interface AppAnalyticsResponse {
   totals: {
     runs: number; completed: number; abandoned: number;
     avg_duration_s: number | null; first_pass_yield: number | null;
+    avg_duration_basis: DurationBasis;
+    avg_hands_on_seconds?: number | null;
+    avg_elapsed_seconds?: number | null;
   };
   series: { date: string; completed: number; avg_duration_s: number | null }[];
   by_operator: { operator_name: string; runs: number; avg_duration_s: number | null }[];
@@ -143,11 +172,11 @@ export interface AppAnalyticsResponse {
     work_orders: { id: string; work_order_number: string }[];
     product_types: { id: string; name: string }[];
   };
-  recent_runs: {
+  recent_runs: (RunDurations & {
     id: string; started_at: string; completed_at: string | null; status: string;
-    operator_name: string; duration_s: number | null;
+    operator_name: string;
     work_order_number: string | null; product_type_name: string | null;
-  }[];
+  })[];
 }
 
 function appAnalyticsQS(params?: AppAnalyticsParams): string {
@@ -1333,6 +1362,7 @@ export interface AppDetailStats {
   runs_total: number; completed: number; abandoned: number; in_progress: number;
   runs_7d: number; runs_30d: number; completed_30d: number;
   avg_duration_s: number | null; avg_duration_30d_s: number | null;
+  avg_duration_basis: DurationBasis;
   first_run_at: string | null; last_run_at: string | null;
   first_pass_yield: number | null;
   operator_count: number;
@@ -1345,10 +1375,10 @@ export interface AppDetailOperator {
   last_run_at: string | null; avg_duration_s: number | null;
 }
 
-export interface AppDetailRun {
+export interface AppDetailRun extends RunDurations {
   id: string; started_at: string; completed_at: string | null;
   status: 'in_progress' | 'completed' | 'abandoned';
-  operator_name: string; duration_s: number | null;
+  operator_name: string;
   work_order_number: string | null; product_type_name: string | null;
   station_name: string | null;
 }

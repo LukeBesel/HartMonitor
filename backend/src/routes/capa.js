@@ -79,7 +79,13 @@ router.get('/summary', (req, res) => {
   const by_priority = Object.fromEntries(byPriority.map(r => [r.priority, r.n]));
 
   const avgRow = db.prepare("SELECT AVG(CAST((julianday(closed_at) - julianday(created_at)) AS REAL)) as avg_days FROM capa_items WHERE company_id = ? AND status = 'closed' AND closed_at IS NOT NULL").get(req.companyId);
-  res.json({ open, overdue, closed_this_month, avg_days_to_close: Math.round(avgRow.avg_days || 0), by_status, by_priority });
+  // Null, not 0: a company that has never closed a CAPA has no average time to
+  // close, and "0 days" reads as every issue resolved the moment it was raised.
+  res.json({
+    open, overdue, closed_this_month,
+    avg_days_to_close: avgRow?.avg_days == null ? null : Math.round(avgRow.avg_days),
+    by_status, by_priority,
+  });
 });
 
 // ─── GET /capa/:id ────────────────────────────────────────────────────────────

@@ -33,7 +33,11 @@ function option(over: Partial<DashboardAppOption> & { id: string }): DashboardAp
 }
 
 function totals(over: Partial<AppAnalyticsResponse['totals']> = {}): AppAnalyticsResponse['totals'] {
-  return { runs: 0, completed: 0, abandoned: 0, avg_duration_s: null, first_pass_yield: null, ...over };
+  return {
+    runs: 0, completed: 0, abandoned: 0,
+    avg_duration_s: null, avg_duration_basis: null, first_pass_yield: null,
+    ...over,
+  };
 }
 
 function field(over: Partial<AppAnalyticsResponse['fields'][number]> & { kind: AppAnalyticsResponse['fields'][number]['kind'] }) {
@@ -154,11 +158,33 @@ describe('buildHeadlineMetrics', () => {
     expect(metrics.some(m => (m.value ?? '').includes('%'))).toBe(false);
   });
 
-  it('says a run is unfinished rather than reporting a zero cycle time', () => {
+  it('says nothing was timed rather than reporting a zero cycle time', () => {
+    // Runs started and none of them produced a measurement. "Not timed" is the
+    // honest reason and it covers both ways of getting here — nothing finished,
+    // or finished runs that recorded no time at all.
     const metrics = buildHeadlineMetrics(totals({ runs: 4, completed: 0, avg_duration_s: null }), 7);
     const avg = metrics.find(m => m.key === 'avg_cycle');
     expect(avg?.value).toBeNull();
-    expect(avg?.note).toBe('no run has finished yet');
+    expect(avg?.note).toBe('no run has been timed yet');
+  });
+
+  it('names the measurement behind a real average', () => {
+    // Hands-on step time and wall clock are two different, both-correct numbers
+    // for the same runs. An unlabelled average is what made two screens look
+    // like they were contradicting each other.
+    const handsOn = buildHeadlineMetrics(
+      totals({ runs: 4, completed: 4, avg_duration_s: 381, avg_duration_basis: 'hands_on' }), 30,
+    ).find(m => m.key === 'avg_cycle');
+    expect(handsOn?.label).toBe('Avg cycle time · hands-on');
+
+    const wallClock = buildHeadlineMetrics(
+      totals({ runs: 4, completed: 4, avg_duration_s: 402, avg_duration_basis: 'elapsed' }), 30,
+    ).find(m => m.key === 'avg_cycle');
+    expect(wallClock?.label).toBe('Avg cycle time · wall clock');
+
+    // Nothing measured ⇒ nothing to name.
+    const unknown = buildHeadlineMetrics(totals({ runs: 0 }), 30).find(m => m.key === 'avg_cycle');
+    expect(unknown?.label).toBe('Avg cycle time');
   });
 
   it('separates "no pass/fail check recorded" from a real zero yield', () => {

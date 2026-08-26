@@ -5,6 +5,7 @@
 
 const express = require('express');
 const db = require('../db');
+const { runSecondsSQL } = require('../cycleTime');
 
 const router = express.Router();
 
@@ -32,7 +33,8 @@ router.get('/completions', (req, res) => {
   const rows = db.prepare(`
     SELECT c.id, c.app_name, s.name as station_name, c.operator_name,
            c.started_at, c.completed_at, c.status,
-           ROUND((julianday(c.completed_at)-julianday(c.started_at))*1440, 1) as cycle_time_minutes,
+           ROUND(${runSecondsSQL('c')} / 60.0, 1) as cycle_time_minutes,
+           ROUND(${runSecondsSQL('c')}, 3) as cycle_time_seconds,
            wo.work_order_number
     FROM completions c
     LEFT JOIN stations s ON s.id = c.station_id
