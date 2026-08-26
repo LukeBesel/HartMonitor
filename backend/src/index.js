@@ -132,7 +132,7 @@ function corsDelegate(req, cb) {
 app.use(cors(corsDelegate));
 
 // ─── Rate limiting ────────────────────────────────────────────────────────────
-const { apiRateKey, isSessionKey, apiKeyRateKey } = require('./middleware/rateLimitKey');
+const { apiRateKey, isSessionKey, apiKeyRateKey, credentialRateKey, credentialIpKey } = require('./middleware/rateLimitKey');
 
 // Two ceilings, because the two kinds of caller are not comparable — see
 // config.rateLimit for how each number was arrived at.
@@ -152,12 +152,62 @@ const generalLimiter = rateLimit({
   // and retry this one, but must never auto-retry a rejected credential attempt.
   message: { error: 'Too many requests. Please wait a moment and try again.', code: 'API_RATE_LIMITED' },
 });
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 20,                         // brute-force protection on credentials
+// ── Credential endpoints ──────────────────────────────────────────────────────
+// Guessing a password is an attack on ONE account, so the ceiling that stops it
+// is counted per account. The old limiter counted per IP, which for a customer
+// is per factory: every tablet, kiosk and desk machine on the floor leaves the
+// building through one NAT gateway, so twenty sign-ins at shift start — a couple
+// of them mistyped — spent the whole site's budget and locked the plant out of
+// its own MES for fifteen minutes. It did not buy much in exchange, either: an
+// attacker with twenty addresses simply had twenty budgets.
+//
+// So there are two, and both count failures only (skipSuccessfulRequests), which
+// is what makes a shift starting together invisible to them:
+//
+//   per account  — the real brute-force ceiling. 10 failures / 15 min against
+//                  one login, wherever they come from.
+//   per address  — the site-level abuse ceiling, kept because credential
+//                  stuffing walks MANY accounts from one place and the
+//                  per-account counter never sees that shape. Raised to a number
+//                  a whole factory cannot reach by accident.
+//
+// See config.rateLimit for how each number was arrived at.
+const CREDENTIAL_WINDOW_MS = 15 * 60 * 1000;
+const CREDENTIAL_MESSAGE = {
+  error: 'Too many attempts. Please wait a few minutes and try again.',
+  code: 'RATE_LIMITED',
+};
+
+const accountAuthLimiter = rateLimit({
+  windowMs: CREDENTIAL_WINDOW_MS,
+  limit: config.rateLimit.credentialAccountMax,
+  keyGenerator: credentialRateKey,
+  skipSuccessfulRequests: true,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Too many attempts. Please wait a few minutes and try again.', code: 'RATE_LIMITED' },
+  message: CREDENTIAL_MESSAGE,
+});
+
+const siteAuthLimiter = rateLimit({
+  windowMs: CREDENTIAL_WINDOW_MS,
+  limit: config.rateLimit.credentialIpMax,
+  keyGenerator: credentialIpKey,
+  skipSuccessfulRequests: true,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: CREDENTIAL_MESSAGE,
+});
+
+// Creating an organization or a demo sandbox is not a credential attempt — it is
+// write-heavy work nobody does in bursts — so it keeps the strict per-IP ceiling
+// and counts every request, successful or not.
+const accountCreationLimiter = rateLimit({
+  windowMs: CREDENTIAL_WINDOW_MS,
+  limit: config.rateLimit.accountCreationMax,
+  keyGenerator: credentialIpKey,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: CREDENTIAL_MESSAGE,
 });
 
 // ─── Health check (for platform probes / uptime monitors) ─────────────────────
@@ -181,11 +231,14 @@ app.use('/api/tables/import', express.json({ limit: '16mb' }));
 app.use(express.json({ limit: '10mb' }));
 
 // Throttle credential endpoints specifically, then everything under /api.
-app.use('/api/auth/login',           authLimiter);
-app.use('/api/auth/signup',          authLimiter);
-app.use('/api/auth/demo',            authLimiter);   // sandbox creation is write-heavy — same throttle
-app.use('/api/auth/claim-sandbox',   authLimiter);   // creates a real account — same throttle as signup
-app.use('/api/auth/change-password', authLimiter);
+// Both credential ceilings apply to a sign-in: whichever is reached first stops
+// it. The account one is listed first so a single login under attack is rejected
+// by its own budget rather than by the site's.
+app.use('/api/auth/login',           accountAuthLimiter, siteAuthLimiter);
+app.use('/api/auth/change-password', accountAuthLimiter, siteAuthLimiter);
+app.use('/api/auth/signup',          accountCreationLimiter);
+app.use('/api/auth/demo',            accountCreationLimiter);   // sandbox creation is write-heavy
+app.use('/api/auth/claim-sandbox',   accountCreationLimiter);   // creates a real account — same as signup
 app.use('/api', generalLimiter);
 
 // Method-aware role gate: reads (GET) stay open to any authenticated member,

@@ -66,7 +66,7 @@ import { useNavPrefs } from '../context/NavPrefsContext';
 import { SECTIONS, ALL_SECTION_ITEMS } from '../config/navigation';
 import { REPLAY_FLAG } from '../components/shared/OnboardingWizard';
 import PendingResetsPanel from '../components/shared/PendingResetsPanel';
-import { api } from '../api/client';
+import { api, browserTimeZone } from '../api/client';
 import Toggle from '../components/shared/Toggle';
 import type { PlanTier, AddonPricing, Site, NotificationPrefs, NotificationLogEntry, RolePermissionMap, AppRole, ApiKey, Webhook, WebhookDelivery } from '../types';
 import { deriveAccentTokens } from '../utils/contrast';
@@ -96,7 +96,10 @@ const DEFAULT_FORM: CompanyForm = {
   address: '',
   phone: '',
   email: '',
-  timezone: 'America/New_York',
+  // Not a guess about which hemisphere the customer is in — the zone this
+  // browser is actually set to, falling back to UTC when it will not say. This
+  // is only the value shown before the server's own answer arrives.
+  timezone: browserTimeZone() || 'UTC',
   date_format: 'MM/DD/YYYY',
   currency: 'USD',
   fiscal_year_start: 'January',
@@ -121,6 +124,28 @@ const TIMEZONES = [
   'Europe/Rome',
   'Europe/Stockholm',
 ];
+
+// The shortlist above is a convenience, not the set of zones a company may be
+// in: signup now stores whatever zone the browser reported, which is any of the
+// ~400 IANA names. A stored zone missing from the <select> renders as the first
+// option, so opening Settings and pressing Save would silently move the plant's
+// day to UTC. Fold the current value (and this browser's) into the list instead.
+function timeZoneOptions(current: string): string[] {
+  const seen = new Set(TIMEZONES);
+  const extra = [current, browserTimeZone()].filter(tz => tz && !seen.has(tz));
+  return [...TIMEZONES, ...new Set(extra)];
+}
+
+/** The current wall-clock time in `tz`, or '' for a zone this browser rejects. */
+function clockIn(tz: string): string {
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      timeZone: tz, hour: '2-digit', minute: '2-digit', weekday: 'short',
+    }).format(new Date());
+  } catch {
+    return '';
+  }
+}
 
 const DATE_FORMATS = ['MM/DD/YYYY', 'DD/MM/YYYY', 'YYYY-MM-DD'];
 const CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'AUD'];
@@ -533,10 +558,19 @@ function CompanyTab() {
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Timezone</label>
             <select className="input-field w-full" value={form.timezone} onChange={set('timezone')}>
-              {TIMEZONES.map(tz => (
+              {timeZoneOptions(form.timezone).map(tz => (
                 <option key={tz} value={tz}>{tz.replace('_', ' ')}</option>
               ))}
             </select>
+            {/* This one setting decides when every "completed today" counter in
+                the product rolls over, so the screen says so and shows the clock
+                it is claiming. A wrong zone is otherwise invisible until a
+                shift's output lands on the wrong day. */}
+            <p className="mt-1 text-xs text-gray-500">
+              {clockIn(form.timezone)
+                ? <>It is <span className="font-medium text-gray-700">{clockIn(form.timezone)}</span> there now — every “today” count rolls over at midnight on this clock.</>
+                : <>Every “today” count rolls over at midnight on this clock.</>}
+            </p>
           </div>
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Date Format</label>
@@ -2361,7 +2395,7 @@ function SiteModal({ site, onClose, onSaved, onError }: {
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Timezone</label>
             <select className="input-field w-full" value={form.timezone} onChange={set('timezone')}>
-              {TIMEZONES.map(tz => (
+              {timeZoneOptions(form.timezone).map(tz => (
                 <option key={tz} value={tz}>{tz.replace('_', ' ')}</option>
               ))}
             </select>

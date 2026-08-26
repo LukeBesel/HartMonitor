@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../db');
-const { plantDayShift } = require('../plantDay');
+const { plantDayShift, plantToday } = require('../plantDay');
 const { calcScheduleStatus } = require('./workorders');
 const { calcOEE } = require('./oee');
 const { teamOf: andonTeamOf, teamLabel: andonTeamLabel } = require('../andonTeams');
@@ -185,14 +185,18 @@ router.get('/overview', (req, res) => {
 router.get('/throughput', (req, res) => {
   const days = Math.min(365, parseInt(req.query.days) || 30);
   const f = completionFilter(req);
+  // Each bar on this chart is a day, and it has to be the same day the "today"
+  // tile counts — otherwise the rightmost bar disagrees with the number printed
+  // above it for the four hours after midnight UTC.
+  const day = plantDayShift(req.companyId);
   const rows = db.prepare(`
-    SELECT date(completed_at) as date, COUNT(*) as count
+    SELECT date(completed_at, ?) as date, COUNT(*) as count
     FROM completions
-    WHERE company_id = ? AND status='completed' AND completed_at >= date('now', '-' || ? || ' days')${f.clause}
-    GROUP BY date(completed_at)
+    WHERE company_id = ? AND status='completed' AND date(completed_at, ?) >= date('now', ?, '-' || ? || ' days')${f.clause}
+    GROUP BY 1
     ORDER BY date ASC
     LIMIT 10000
-  `).all(req.companyId, days, ...f.params);
+  `).all(day, req.companyId, day, day, days, ...f.params);
   res.json(rows);
 });
 
@@ -201,19 +205,20 @@ router.get('/throughput', (req, res) => {
 router.get('/cycle-times', (req, res) => {
   const days = Math.min(365, parseInt(req.query.days) || 30);
   const f = completionFilter(req);
+  const day = plantDayShift(req.companyId);
   const rows = db.prepare(`
     SELECT
-      date(completed_at) as date,
+      date(completed_at, ?) as date,
       ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_minutes,
       ROUND(MIN((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as min_minutes,
       ROUND(MAX((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as max_minutes
     FROM completions
     WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL
-      AND completed_at >= date('now', '-' || ? || ' days')${f.clause}
-    GROUP BY date(completed_at)
+      AND date(completed_at, ?) >= date('now', ?, '-' || ? || ' days')${f.clause}
+    GROUP BY 1
     ORDER BY date ASC
     LIMIT 10000
-  `).all(req.companyId, days, ...f.params);
+  `).all(day, req.companyId, day, day, days, ...f.params);
   res.json(rows);
 });
 
@@ -261,12 +266,13 @@ router.get('/app-performance', (req, res) => {
 router.get('/quality', (req, res) => {
   const { days = 30 } = req.query;
   const f = completionFilter(req);
+  const day = plantDayShift(req.companyId);
   const rows = db.prepare(`
-    SELECT date(completed_at) as date, data
+    SELECT date(completed_at, ?) as date, data
     FROM completions
-    WHERE company_id = ? AND status='completed' AND completed_at >= date('now', '-' || ? || ' days')${f.clause}
+    WHERE company_id = ? AND status='completed' AND date(completed_at, ?) >= date('now', ?, '-' || ? || ' days')${f.clause}
     ORDER BY completed_at ASC
-  `).all(req.companyId, safeDays(days, 30), ...f.params);
+  `).all(day, req.companyId, day, day, safeDays(days, 30), ...f.params);
 
   const byDate = {};
   for (const row of rows) {
@@ -621,13 +627,14 @@ router.get('/step-metrics/:appId', (req, res) => {
 
   const steps = JSON.parse(app.steps || '[]');
 
+  const day = plantDayShift(req.companyId);
   const rows = db.prepare(`
-    SELECT step_times, takt_exceeded_steps, date(completed_at) as date
+    SELECT step_times, takt_exceeded_steps, date(completed_at, ?) as date
     FROM completions
     WHERE company_id = ? AND app_id = ? AND status = 'completed' AND completed_at IS NOT NULL
-      AND completed_at >= date('now', '-' || ? || ' days')
+      AND date(completed_at, ?) >= date('now', ?, '-' || ? || ' days')
     ORDER BY completed_at ASC
-  `).all(req.companyId, appId, days);
+  `).all(day, req.companyId, appId, day, day, days);
 
   const stepStats = steps.map((step, idx) => {
     const times = [];
@@ -763,10 +770,17 @@ router.get('/capacity', (req, res) => {
   // against real headcount per day over the planning horizon.
   const HORIZON_DAYS = 14;
   const days = [];
-  for (let i = 0; i < HORIZON_DAYS; i++) {
-    const d = new Date();
-    d.setDate(d.getDate() + i);
-    days.push(d.toISOString().slice(0, 10));
+  {
+    // Column zero is today where the plant is. Walking the calendar with
+    // setDate() on a `new Date()` counts in the SERVER's timezone and then reads
+    // the result back as UTC, which slides the whole grid a day on a host that
+    // is not itself on UTC.
+    const start = new Date(`${plantToday(req.companyId)}T00:00:00Z`);
+    for (let i = 0; i < HORIZON_DAYS; i++) {
+      const d = new Date(start);
+      d.setUTCDate(d.getUTCDate() + i);
+      days.push(d.toISOString().slice(0, 10));
+    }
   }
 
   // Aggregate demand by department *id*, not by name. Two departments can share
@@ -1202,14 +1216,14 @@ router.get('/daily-brief', (req, res) => {
       SELECT po.id, po.po_number, po.expected_date, v.name AS vendor_name
       FROM purchase_orders po
       LEFT JOIN vendors v ON v.id = po.vendor_id
-      WHERE po.company_id = ? AND po.status IN ('sent', 'partial') AND po.expected_date < date('now')
+      WHERE po.company_id = ? AND po.status IN ('sent', 'partial') AND po.expected_date < date('now', ?)
       ORDER BY po.expected_date ASC LIMIT 10
-    `).all(cid);
+    `).all(cid, day);
     if (scoped) {
       setAside(db.prepare(`
         SELECT COUNT(*) AS c FROM purchase_orders po
-        WHERE po.company_id = ? AND po.status IN ('sent', 'partial') AND po.expected_date < date('now')
-      `).get(cid).c, 'late purchase orders');
+        WHERE po.company_id = ? AND po.status IN ('sent', 'partial') AND po.expected_date < date('now', ?)
+      `).get(cid, day).c, 'late purchase orders');
     }
     for (const po of latePOs) {
       attention.push({
@@ -1289,18 +1303,24 @@ router.get('/daily-brief', (req, res) => {
 
   // ── 7-day throughput with the week's average for a reference line
   const throughput = db.prepare(`
-    SELECT date(completed_at) as date, COUNT(*) as count
+    SELECT date(completed_at, ?) as date, COUNT(*) as count
     FROM completions
-    WHERE company_id = ? AND status='completed' AND date(completed_at) >= date('now', '-6 days')${cf.clause}
-    GROUP BY date(completed_at)
+    WHERE company_id = ? AND status='completed' AND date(completed_at, ?) >= date('now', ?, '-6 days')${cf.clause}
+    GROUP BY 1
     ORDER BY date ASC
-  `).all(cid, ...cf.params);
+  `).all(day, cid, day, day, ...cf.params);
   const days7 = [];
-  for (let i = 6; i >= 0; i--) {
-    const d = new Date();
-    d.setDate(d.getDate() - i);
-    const key = d.toISOString().slice(0, 10);
-    days7.push({ date: key, count: throughput.find(t => t.date === key)?.count ?? 0 });
+  {
+    // The last bar is today's, and it must carry the same number as the
+    // "Completed Today" KPI above it — so both the buckets and these labels are
+    // plant days, walked in UTC arithmetic so no server clock can shift them.
+    const end = new Date(`${plantToday(cid)}T00:00:00Z`);
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(end);
+      d.setUTCDate(d.getUTCDate() - i);
+      const key = d.toISOString().slice(0, 10);
+      days7.push({ date: key, count: throughput.find(t => t.date === key)?.count ?? 0 });
+    }
   }
 
   res.json({

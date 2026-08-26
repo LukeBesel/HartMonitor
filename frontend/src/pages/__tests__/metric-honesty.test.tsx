@@ -254,13 +254,19 @@ describe('the shared duration formatter is the only one', () => {
   it('Dashboard.tsx declares no duration formatter of its own', async () => {
     // The real guard: a second formatter in that file would shadow the import
     // again, silently, and no assertion above would notice.
-    // `import.meta.url` is not a file: URL under the vitest transform, so
-    // resolve from the project root instead.
+    //
+    // Resolved from this file's own location, never from process.cwd(). The cwd
+    // is whatever directory the runner was started in — `frontend/` for
+    // `npm --workspace=frontend`, the repository root for
+    // `vitest run --root frontend` — and this assertion is the only thing
+    // standing between the codebase and the 60x cycle-time bug coming back, so
+    // it has to hold whichever way somebody invokes it. It used to ENOENT under
+    // the second form, which is a green suite that silently stopped guarding.
     const fs = await import('node:fs/promises');
     const path = await import('node:path');
-    const src = await fs.readFile(
-      path.resolve(process.cwd(), 'src/pages/Dashboard.tsx'), 'utf8',
-    );
+    const { fileURLToPath } = await import('node:url');
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const src = await fs.readFile(path.join(here, '..', 'Dashboard.tsx'), 'utf8');
     expect(src).not.toMatch(/function\s+fmtDuration\s*\(/);
     expect(src).toMatch(/import \{ fmtDuration \} from '\.\.\/components\/apps\/appModel'/);
   });

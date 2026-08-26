@@ -205,21 +205,38 @@ const CHIP_SURFACE_LIGHT = '#ffffff';
 const CHIP_SURFACE_DARK = '#1e293b';
 
 /**
- * Inline style for a chip tinted with `color`, legible in `dark` or light mode.
+ * Inline style for a chip tinted with `color`, on a surface the caller names.
+ *
  * The background is left exactly as it was — only the text moves, and only as
  * far as it must, so a blue department still reads blue.
+ *
+ * `surface` must be the colour actually PAINTED behind the chip. Where a chip
+ * sits on a translucent card over a gradient, the honest surface to pass is the
+ * LIGHTEST one the chip can land on: the ink is pushed away from that ground,
+ * and ink chosen to clear a light ground clears every darker one by more.
+ */
+export function tintedChipOn(
+  color: string | undefined | null,
+  surface: string,
+): { backgroundColor: string; color: string } {
+  const base = parseColor(color) ?? parseColor('#6b7280')!;
+  const surfaceRgb = parseColor(surface) ?? parseColor(CHIP_SURFACE_LIGHT)!;
+  // What the browser composites: the surface, with the colour laid over it at
+  // the chip's alpha.
+  const ground = toHex(mix(surfaceRgb, base, CHIP_TINT));
+  return {
+    backgroundColor: `${toHex(base)}22`,
+    color: shiftUntilReadable(toHex(base), ground),
+  };
+}
+
+/**
+ * The same chip on the theme's routine card surface — a white card in light
+ * mode, a slate one in dark.
  */
 export function tintedChipStyle(
   color: string | undefined | null,
   dark: boolean,
 ): { backgroundColor: string; color: string } {
-  const base = parseColor(color) ?? parseColor('#6b7280')!;
-  const surface = parseColor(dark ? CHIP_SURFACE_DARK : CHIP_SURFACE_LIGHT)!;
-  // What the browser composites: the surface, with the colour laid over it at
-  // the chip's alpha.
-  const ground = toHex(mix(surface, base, CHIP_TINT));
-  return {
-    backgroundColor: `${toHex(base)}22`,
-    color: shiftUntilReadable(toHex(base), ground),
-  };
+  return tintedChipOn(color, dark ? CHIP_SURFACE_DARK : CHIP_SURFACE_LIGHT);
 }

@@ -6,6 +6,7 @@ const { getStripe, isConfigured, billingMode, currency } = require('../stripe');
 const { PRICING } = require('../pricing');
 const { logActivity } = require('../activity');
 const { config } = require('../config');
+const { isValidTimeZone } = require('../plantDay');
 
 const router = express.Router();
 
@@ -97,6 +98,13 @@ router.get('/', (req, res) => {
 // ─── PUT / — bulk update settings (manager+) ──────────────────────────────────
 
 router.put('/', requireRole('manager'), (req, res) => {
+  // The timezone decides where every "today" on every screen starts, and a name
+  // the runtime does not know does not fail loudly — it silently means UTC. Say
+  // so at the point of saving rather than letting a typo move the plant's day.
+  if (req.body && req.body.timezone !== undefined && !isValidTimeZone(req.body.timezone)) {
+    return res.status(400).json({ error: `Unknown timezone "${req.body.timezone}". Use an IANA name such as Europe/Berlin or UTC.` });
+  }
+
   const ins = db.prepare(`INSERT INTO org_settings (company_id, key, value, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(company_id, key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`);
   const upsertAll = db.transaction((data) => {
     for (const [key, value] of Object.entries(data)) {

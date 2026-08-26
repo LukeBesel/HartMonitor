@@ -116,11 +116,23 @@ function calcOEE(station) {
   if (quality === null) missing.push('an inspected run today');
   if (availability === null) missing.push('any activity today');
 
+  // OEE is the product of the three numbers the screen SHOWS, so it is computed
+  // from the rounded factors rather than from the raw fractions. Multiplying the
+  // fractions and rounding once put the tile a point away from what a supervisor
+  // gets multiplying the three figures printed beside it — 100 × 78 × 95 reads
+  // as 74, and the tile said 75. One of the four is then wrong and the screen
+  // does not say which.
+  const availabilityPct = pct(availability);
+  const performancePct  = pct(performance);
+  const qualityPct      = pct(quality);
+
   return {
-    availability: pct(availability),
-    performance: pct(performance),
-    quality: pct(quality),
-    oee: measurable ? Math.round(availability * performance * quality * 100) : null,
+    availability: availabilityPct,
+    performance: performancePct,
+    quality: qualityPct,
+    oee: measurable
+      ? Math.round((availabilityPct / 100) * (performancePct / 100) * (qualityPct / 100) * 100)
+      : null,
     measurable,
     missing,
     uptime_minutes: Math.round(uptimeMinutes),
@@ -264,15 +276,18 @@ router.get('/:id/history', (req, res) => {
 router.get('/analytics/trend', (req, res) => {
   const stations = db.prepare('SELECT id FROM stations WHERE company_id = ?').all(req.companyId);
   // For now return per-day throughput and uptime summary
+  // Buckets are plant days, so the last point on this trend is the same day the
+  // station tiles above it call "today".
+  const day = plantDayShift(req.companyId);
   const trend = db.prepare(`
     SELECT
-      date(completed_at) as date,
+      date(completed_at, ?) as date,
       COUNT(*) as completions,
       COUNT(DISTINCT station_id) as active_stations
     FROM completions
-    WHERE company_id = ? AND status='completed' AND completed_at >= date('now','-30 days')
-    GROUP BY date(completed_at) ORDER BY date ASC
-  `).all(req.companyId);
+    WHERE company_id = ? AND status='completed' AND date(completed_at, ?) >= date('now', ?, '-30 days')
+    GROUP BY 1 ORDER BY date ASC
+  `).all(day, req.companyId, day, day);
   res.json({ station_count: stations.length, trend });
 });
 

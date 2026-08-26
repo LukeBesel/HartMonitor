@@ -16,6 +16,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { plantDayShift } = require('../plantDay');
 const { logActivity } = require('../activity');
 const { buildUpdate, nextValue } = require('../patch');
 
@@ -206,11 +207,13 @@ router.get('/summary', (req, res) => {
     SELECT SUM(estimated_savings) AS est, SUM(CASE WHEN status = 'complete' THEN actual_savings ELSE 0 END) AS act
     FROM ci_projects WHERE company_id = ?
   `).get(req.companyId);
+  // target_date is a date on a plan, not an instant — compared as stored, with
+  // only "today" resolved on the plant's clock.
   const overdue = db.prepare(`
     SELECT COUNT(*) AS n FROM ci_projects
-    WHERE company_id = ? AND target_date IS NOT NULL AND target_date < date('now')
+    WHERE company_id = ? AND target_date IS NOT NULL AND target_date < date('now', ?)
       AND status IN ('planning','active','on_hold')
-  `).get(req.companyId).n;
+  `).get(req.companyId, plantDayShift(req.companyId)).n;
   const from_ideas = db.prepare('SELECT COUNT(*) AS n FROM ci_projects WHERE company_id = ? AND kaizen_idea_id IS NOT NULL').get(req.companyId).n;
 
   res.json({

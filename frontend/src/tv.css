@@ -1,0 +1,34 @@
+/* ─── Wall boards (Department TV, Leaderboard TV) ─────────────────────────────
+   A board is read from across a room, and the same markup has to serve a phone
+   held at arm's length, a 1080p panel and a 4K one. Panel width is the only
+   signal available for how far away the reader is standing, so the board scales
+   its ROOT font size with the panel and expresses everything — type, padding,
+   gaps, max-widths — in rem. They then grow together, instead of a layout sized
+   for a laptop stranding itself in the middle of a 4K screen at half the
+   apparent size of the same board on a 1080p one.
+
+   The floor is the normal 16px, so phones and tablets are untouched and the
+   responsive stacking below carries them. Above that the scale is linear in
+   viewport width, ALSO capped by viewport height: a board that grows on width
+   alone would push its own content off the bottom of a short window, and the
+   whole point is that a board never needs scrolling. */
+
+html[data-tv] {
+  font-size: clamp(16px, min(1.2vw, 2.1vh), 44px);
+}
+
+/* Boards are placed once and then looked at; nothing on them is scrolled by
+   hand. A stray horizontal scrollbar means content has already been pushed out
+   of sight, so the page itself never scrolls sideways — anything that has to
+   overflow does it inside a named container that says so. */
+html[data-tv],
+html[data-tv] body {
+  overflow-x: hidden;
+}
+
+/* Content the board could not fit gets a marker rather than silently
+   disappearing off an edge nobody will ever scroll. */
+.tv-more {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}

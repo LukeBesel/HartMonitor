@@ -18,6 +18,46 @@ if (!orgCols.includes('is_sandbox')) {
 const SANDBOX_EMAIL_DOMAIN = 'sandbox.hartmonitor.local';
 const SANDBOX_TTL_HOURS = 24;
 
+// The pace the seeded shift is laid out at. 79 % Performance is a good plant —
+// neither a crisis nor a world-class number nobody would believe.
+const TARGET_PERF = 0.79;
+
+/**
+ * How much of a shift the sandbox can honestly show, given how far into the day
+ * it is. Pure arithmetic, exported so it can be checked at every minute of the
+ * day rather than only at the minute a test happens to run — the mismatch this
+ * returns used to exist only between 00:00 and 00:48 UTC, which is precisely the
+ * window nobody runs the suite in.
+ *
+ * @param {number} minutesToday  minutes elapsed since the plant day began
+ * @param {number} idealCycleS   the app's own summed step takts, in seconds
+ * @returns {{runs: number, windowMin: number, plannedHours: number}}
+ *   `runs` finished units to seed, laid out across a `windowMin` window that
+ *   opens when the station's day opens. OEE divides today's output by exactly
+ *   that window (see calcOEE in routes/oee.js), so sizing the runs against
+ *   anything else is what produced a Performance the screen had to clamp.
+ */
+function shiftShape(minutesToday, idealCycleS) {
+  // A shift can never be longer than the day so far: seeding work into hours the
+  // clock has not reached would be inventing output.
+  const todaySoFarMin = Math.min(480, Math.max(0, minutesToday));
+  const runs = idealCycleS > 0
+    ? Math.floor((todaySoFarMin * 60) / idealCycleS * TARGET_PERF)
+    : 0;
+  // Open the day exactly wide enough to hold those runs at the target pace, so
+  // Performance is a real ratio rather than one the screen has to clamp. Never
+  // wider than the day, or the window reaches back past midnight into a day
+  // these runs would no longer count toward; and rounded UP, because a window a
+  // minute short of the exact fit would put the runs slightly AHEAD of the pace.
+  const windowMin = runs > 0
+    ? Math.min(todaySoFarMin, Math.ceil((runs * idealCycleS) / TARGET_PERF / 60))
+    : Math.max(1, todaySoFarMin);
+  // The planned day the stations advertise: whole hours, rounded UP so the
+  // window is never clamped below itself by its own plan.
+  const plannedHours = Math.min(8, Math.max(1, Math.ceil(todaySoFarMin / 60)));
+  return { runs, windowMin, plannedHours };
+}
+
 function hashPassword(password) {
   const salt = crypto.randomBytes(16).toString('hex');
   const hash = crypto.scryptSync(password, salt, 64).toString('hex');
@@ -106,15 +146,20 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   //                 meets the over-takt state, and a hard-coded 420 here would
   //                 have quietly gone on measuring output against a cycle the
   //                 app no longer has.
-  //   shift         the whole hours of today that have ALREADY happened, capped
-  //                 at 8. Every timestamp in this app is UTC, so "today" is the
+  //   shift         however much of today has ALREADY happened, capped at 8h.
+  //                 The demo sandbox is configured in UTC so "today" here is the
   //                 UTC day; seeding work into hours the clock has not reached
   //                 would be inventing output, and measuring a full 8-hour plan
   //                 against a morning that is three hours old can never look
-  //                 healthy. The station's planned_hours_per_day is set to the
-  //                 same window so plan and reality describe one shift.
-  //   runs          floor(shift_seconds / ideal_cycle × 0.79)
-  //                   → Performance = runs × ideal_cycle / shift_seconds ≈ 79 %
+  //                 healthy. The station's planned_hours_per_day covers the same
+  //                 window (whole hours, rounded up) so plan and reality
+  //                 describe one shift.
+  //   runs          floor(shift_seconds / ideal_cycle × 0.79) — and then the
+  //                 station's day is opened exactly wide enough to hold them, so
+  //                 Performance = runs × ideal_cycle / window ≈ 79 % by
+  //                 construction. Sizing the runs against one quantity and
+  //                 letting OEE divide by another is what made the demo read a
+  //                 clamped 100 % just after midnight UTC (below).
   //   the other 21% each run's step timers land near takt; the bench then idles
   //                 ~80 s before the next run starts. Seeding the loss as gaps
   //                 between runs rather than as slow work makes it the classic
@@ -129,22 +174,29 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   // shift pushes Performance toward the 100 % clamp, fewer sinks it.
   const stepTakts     = steps.map(st => Number(st.takt_time) || 0);
   const IDEAL_CYCLE_S = stepTakts.reduce((a, b) => a + b, 0);
-  const TARGET_PERF   = 0.79;
 
   const minutesToday = db.prepare(
     `SELECT CAST((julianday('now') - julianday(date('now'))) * 1440 AS INTEGER) AS m`
   ).get().m;
-  const shiftHours = Math.min(8, Math.max(1, Math.floor(minutesToday / 60)));
-  const shiftMin   = shiftHours * 60;
-  // Between midnight and 01:00 UTC there is less than an hour of "today" to
-  // work with, so the shift's runs pack into whatever exists rather than
-  // spilling into yesterday (where they would stop counting toward today's
-  // OEE). Every other hour of the day they tile the shift exactly.
-  const todayWindowMin = Math.min(shiftMin, Math.max(10, minutesToday));
-  const runsInShift  = mins => Math.max(1, Math.floor((mins * 60) / IDEAL_CYCLE_S * TARGET_PERF));
-  const RUNS_TODAY   = runsInShift(shiftMin);
-  const RUNS_PER_DAY = runsInShift(480);   // a full shift on each previous day
-  const HISTORY_DAYS = 4;
+  // Runs first, then the window that holds them, and that order matters. The
+  // count used to be sized against a whole hour of shift while OEE divides by
+  // the minutes the station has actually been open, so for the 49 minutes after
+  // midnight UTC the two disagreed: the honest ratio ran as high as 426 % and
+  // the screen showed the clamp, 100 %. A clamped ratio is a made-up number, and
+  // it is the public demo's front page. See shiftShape() above.
+  //
+  // For the first eight minutes of the day there is not room for even one run at
+  // the target pace, so the sandbox seeds none. Station 1 then reports an
+  // unmeasured OEE — "an inspected run today" is what it is missing — which is
+  // the truth, and is exactly what the product is built to say. Padding it with
+  // one run divided by a two-minute day would not be.
+  const today = shiftShape(minutesToday, IDEAL_CYCLE_S);
+  const RUNS_TODAY     = today.runs;
+  const todayWindowMin = today.windowMin;
+  const shiftHours     = today.plannedHours;
+  const shiftMin       = shiftHours * 60;
+  const RUNS_PER_DAY   = shiftShape(480, IDEAL_CYCLE_S).runs;   // a full shift on each previous day
+  const HISTORY_DAYS   = 4;
   // Scrap enough to move Quality off 100 % without pretending a short shift had
   // a bad day: a full shift loses two units, a short one loses one, and a shift
   // barely underway loses none (there is then simply nothing to report).
@@ -731,4 +783,4 @@ function startSandboxSweeper() {
   setInterval(sweep, 60 * 60 * 1000).unref();
 }
 
-module.exports = { createSandbox, cleanupExpiredSandboxes, deleteSandboxOrg, startSandboxSweeper, SANDBOX_EMAIL_DOMAIN };
+module.exports = { createSandbox, cleanupExpiredSandboxes, deleteSandboxOrg, startSandboxSweeper, shiftShape, SANDBOX_EMAIL_DOMAIN, TARGET_PERF };
