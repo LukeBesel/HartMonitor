@@ -200,16 +200,7 @@ router.get('/throughput', (req, res) => {
     GROUP BY 1
     ORDER BY date ASC
     LIMIT 10000
-<<<<<<< HEAD
   `).all(day, req.companyId, day, day, days, ...f.params);
-=======
-  `).all(req.companyId, days, ...f.params).map(r => ({
-    ...r,
-    avg_seconds: roundSeconds(r.avg_seconds),
-    min_seconds: roundSeconds(r.min_seconds),
-    max_seconds: roundSeconds(r.max_seconds),
-  }));
->>>>>>> claude/wt-cycletime
   res.json(rows);
 });
 
@@ -221,27 +212,25 @@ router.get('/cycle-times', (req, res) => {
   const day = plantDayShift(req.companyId);
   const rows = db.prepare(`
     SELECT
-<<<<<<< HEAD
       date(completed_at, ?) as date,
-      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_minutes,
-      ROUND(MIN((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as min_minutes,
-      ROUND(MAX((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as max_minutes
-=======
-      date(completed_at) as date,
       ROUND(${avgRunSecondsSQL('completions')} / 60.0, 1) as avg_minutes,
       ROUND(MIN(${runSecondsSQL('completions')}) / 60.0, 1) as min_minutes,
       ROUND(MAX(${runSecondsSQL('completions')}) / 60.0, 1) as max_minutes,
       ${avgRunSecondsSQL('completions')} as avg_seconds,
       MIN(${runSecondsSQL('completions')}) as min_seconds,
       MAX(${runSecondsSQL('completions')}) as max_seconds
->>>>>>> claude/wt-cycletime
     FROM completions
     WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL
       AND date(completed_at, ?) >= date('now', ?, '-' || ? || ' days')${f.clause}
     GROUP BY 1
     ORDER BY date ASC
     LIMIT 10000
-  `).all(day, req.companyId, day, day, days, ...f.params);
+  `).all(day, req.companyId, day, day, days, ...f.params).map(r => ({
+    ...r,
+    avg_seconds: roundSeconds(r.avg_seconds),
+    min_seconds: roundSeconds(r.min_seconds),
+    max_seconds: roundSeconds(r.max_seconds),
+  }));
   res.json(rows);
 });
 
