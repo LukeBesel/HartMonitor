@@ -148,11 +148,14 @@ describe('PlayerWidget default (operator) behavior is unchanged', () => {
   beforeEach(() => { vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); });
 
-  it('autofocuses the scan field for an operator, and does not on the canvas', () => {
+  it('never grabs focus — the keyboard waits for a tap, on canvas and floor alike', () => {
+    // The owner's rule, verbatim: "Never auto pop up keyboard. always have
+    // them click the field to make it pop up." On a tablet an autofocused
+    // input throws the keyboard over half the step the moment it loads.
     const scan = widget('scan-input', 'Scan Code', { placeholder: 'Scan or type a code…' });
 
     const run = render(<PlayerWidget {...base} widget={scan} />);
-    expect(document.activeElement).toBe(run.container.querySelector('input'));
+    expect(document.activeElement).not.toBe(run.container.querySelector('input'));
     run.unmount();
 
     const canvas = render(<PlayerWidget {...base} widget={scan} readOnly />);

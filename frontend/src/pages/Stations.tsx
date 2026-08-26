@@ -301,7 +301,7 @@ export default function Stations() {
             <div className="p-5 space-y-3">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Name *</label>
-                <input className="input-field" placeholder="e.g. Assembly Station A1" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} autoFocus />
+                <input className="input-field" placeholder="e.g. Assembly Station A1" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>

@@ -566,7 +566,6 @@ export default function Routings() {
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1.5">Name *</label>
                 <input
-                  autoFocus
                   value={newName}
                   onChange={e => setNewName(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleCreate()}
@@ -613,7 +612,6 @@ export default function Routings() {
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1.5">Step Name *</label>
                 <input
-                  autoFocus
                   value={stepForm.name}
                   onChange={e => setStepForm(f => ({ ...f, name: e.target.value }))}
                   placeholder="e.g. CNC Machining"

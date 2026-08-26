@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import {
-  CheckCircle2, Activity, TrendingUp, Clock, Package, RefreshCw,
+  CheckCircle2, Activity, TrendingUp, Clock, RefreshCw,
   ArrowLeft, Monitor, User, ChevronRight, Calendar, AlertTriangle
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
@@ -36,7 +36,10 @@ interface DeptViewData {
   hourly_throughput: Array<{ hour: string; count: number }>;
   recent_completions: Array<{
     id: string; app_name: string; operator_name: string; status: string;
-    station_name: string | null; completed_at: string; duration_minutes: number;
+    station_name: string | null; started_at: string | null;
+    completed_at: string;
+    /** Tenths of a minute; too coarse to render. Use `runSeconds` instead. */
+    duration_minutes: number;
   }>;
 }
 
@@ -78,6 +81,30 @@ function formatTimeAgo(iso: string) {
 function formatShortDate(iso: string) {
   const d = new Date(iso);
   return isNaN(d.getTime()) ? '—' : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+/**
+ * How long a run took, in SECONDS, for the shared `fmtDuration` to render.
+ *
+ * The endpoint only sends `duration_minutes`, rounded to a tenth — enough to
+ * turn a real six-second check into "0.1m" — but it also sends both raw
+ * timestamps, so the exact figure is computable here and nothing has to be
+ * invented.
+ *
+ * A run in progress has no cycle time yet, so what comes back for one is the
+ * time elapsed so far, which the caller labels as such. An abandoned run is
+ * never stamped finished, so measuring it against the clock would produce a
+ * figure that grows forever: null, and the caller prints a dash.
+ */
+function runSeconds(c: { started_at?: string | null; completed_at: string; status: string }): number | null {
+  if (!c.started_at) return null;
+  if (c.status !== 'completed' && c.status !== 'in_progress') return null;
+  const start = new Date(c.started_at).getTime();
+  if (isNaN(start)) return null;
+  const end = c.status === 'completed' ? new Date(c.completed_at).getTime() : Date.now();
+  if (isNaN(end)) return null;
+  const seconds = Math.round((end - start) / 1000);
+  return seconds >= 0 ? seconds : null;
 }
 
 export default function DepartmentView() {
@@ -125,8 +152,14 @@ export default function DepartmentView() {
   const workOrders = data.work_orders ?? [];
   const recentCompletions = data.recent_completions ?? [];
 
+  const onTrackNote = kpis.wos_total > 0
+    ? `${kpis.wos_on_track} of ${kpis.wos_total} on track`
+    : 'No open work orders';
+
   return (
-    <div className="min-h-screen bg-[#f8fafc] p-6 space-y-6">
+    // The app shell owns the page background and the scroll container, so this
+    // no longer paints its own surface or claims a second screen of height.
+    <div className="p-4 sm:p-6 space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-4">
@@ -150,13 +183,23 @@ export default function DepartmentView() {
         />
       </div>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
-        <KPICard icon={<CheckCircle2 size={18} className="text-green-600" />} bg="bg-green-50" label="Completed Today" value={kpis.completed_today} />
-        <KPICard icon={<Activity size={18} className="text-blue-600" />} bg="bg-blue-50" label="Active Now" value={kpis.active_now} />
-        <KPICard icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50" label="Pass Rate (7d)" value={kpis.pass_rate !== null ? `${kpis.pass_rate}%` : '—'} />
-        <KPICard icon={<Clock size={18} className="text-orange-600" />} bg="bg-orange-50" label="Avg Cycle Time" value={kpis.avg_cycle_seconds != null ? fmtDuration(kpis.avg_cycle_seconds) : '—'} />
-        <KPICard icon={<Package size={18} className="text-indigo-600" />} bg="bg-indigo-50" label="WOs On Track" value={`${kpis.wos_on_track} / ${kpis.wos_total}`} />
+      {/* KPIs. Four, not five: the work-order ratio moved into the Work Orders
+          card's own header, where it sits next to the orders it describes. */}
+      <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
+        <KPICard icon={<CheckCircle2 size={18} className="text-green-600" />} bg="bg-green-50" label="Finished today" value={kpis.completed_today} />
+        <KPICard icon={<Activity size={18} className="text-blue-600" />} bg="bg-blue-50" label="Running now" value={kpis.active_now} />
+        <KPICard
+          icon={<Clock size={18} className="text-orange-600" />} bg="bg-orange-50"
+          label="Average cycle time"
+          value={kpis.avg_cycle_seconds != null ? fmtDuration(kpis.avg_cycle_seconds) : '—'}
+          note={kpis.avg_cycle_seconds != null ? undefined : 'no completed runs here yet'}
+        />
+        <KPICard
+          icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50"
+          label="Pass rate (7 days)"
+          value={kpis.pass_rate !== null ? `${kpis.pass_rate}%` : '—'}
+          note={kpis.pass_rate !== null ? undefined : 'no pass/fail check recorded'}
+        />
       </div>
 
       {/* Stations */}
@@ -214,8 +257,11 @@ export default function DepartmentView() {
       {/* WOs + throughput */}
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-gray-900">Work Orders</h2>
+          <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+            <div className="min-w-0">
+              <h2 className="font-semibold text-gray-900">Work Orders</h2>
+              <p className="text-[11px] text-gray-500">{onTrackNote}</p>
+            </div>
             <Link to="/schedule" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
               Schedule <ChevronRight size={12} />
             </Link>
@@ -267,28 +313,38 @@ export default function DepartmentView() {
           </div>
 
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-            <h2 className="font-semibold text-gray-900 mb-3">Recent Completions</h2>
+            <h2 className="font-semibold text-gray-900">Latest runs</h2>
+            <p className="text-[11px] text-gray-500 mb-3">What each one took, as your apps record it</p>
             <div className="divide-y divide-gray-50">
               {recentCompletions.length === 0 && (
-                <div className="text-center text-gray-400 text-xs py-6">No completions yet</div>
+                <div className="text-center text-gray-400 text-xs py-6">No runs recorded here yet</div>
               )}
-              {recentCompletions.slice(0, 8).map(c => (
-                <div key={c.id} className="flex items-center justify-between py-2 text-xs">
-                  <div className="min-w-0">
-                    <div className="font-medium text-gray-900 truncate">{c.app_name}</div>
-                    <div className="text-gray-400">{c.operator_name}{c.station_name ? ` · ${c.station_name}` : ''}</div>
+              {recentCompletions.slice(0, 8).map(c => {
+                // A run still on the bench has elapsed time, not a cycle time.
+                // Printing it unlabelled would quietly fold a job that has not
+                // finished into the reader's sense of what a cycle costs.
+                const running = c.status === 'in_progress';
+                const seconds = runSeconds(c);
+                return (
+                  <div key={c.id} className="flex items-center justify-between gap-3 py-2 text-xs">
+                    <div className="min-w-0">
+                      <div className="font-medium text-gray-900 truncate">{c.app_name}</div>
+                      <div className="text-gray-400 truncate">{c.operator_name}{c.station_name ? ` · ${c.station_name}` : ''}</div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="font-semibold text-gray-700 tabular-nums whitespace-nowrap">
+                        {seconds != null ? fmtDuration(seconds) : '—'}
+                        {running && seconds != null && <span className="font-normal text-gray-400"> so far</span>}
+                      </div>
+                      <div className="text-gray-400 mt-0.5 whitespace-nowrap">
+                        {running && <span className="text-blue-600 font-medium">running</span>}
+                        {!running && c.status !== 'completed' && <span>{c.status}</span>}
+                        {c.status === 'completed' && formatTimeAgo(c.completed_at)}
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-right flex-shrink-0 ml-3">
-                    <span className={`px-2 py-0.5 rounded-full font-medium ${
-                      c.status === 'completed' ? 'bg-green-100 text-green-700' :
-                      c.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'
-                    }`}>
-                      {c.status === 'in_progress' ? 'Running' : c.status}
-                    </span>
-                    <div className="text-gray-400 mt-0.5">{formatTimeAgo(c.completed_at)}</div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>
@@ -297,12 +353,17 @@ export default function DepartmentView() {
   );
 }
 
-function KPICard({ icon, bg, label, value }: { icon: React.ReactNode; bg: string; label: string; value: string | number }) {
+function KPICard({ icon, bg, label, value, note }: {
+  icon: React.ReactNode; bg: string; label: string; value: string | number;
+  /** Why the value is a dash. Present only when there is nothing to report. */
+  note?: string;
+}) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-5">
       <div className={`w-9 h-9 ${bg} rounded-lg flex items-center justify-center mb-3`}>{icon}</div>
-      <div className="text-2xl font-bold text-gray-900">{value}</div>
+      <div className="text-2xl font-bold text-gray-900 tabular-nums">{value}</div>
       <div className="text-xs text-gray-500 mt-0.5">{label}</div>
+      {note && <div className="text-[11px] text-gray-400 mt-0.5">{note}</div>}
     </div>
   );
 }

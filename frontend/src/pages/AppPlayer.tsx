@@ -1443,7 +1443,6 @@ export default function AppPlayer() {
                   className="p-input" placeholder="Enter your name…" value={operatorName}
                   onChange={e => setOperatorName(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') void startRun(); }}
-                  autoFocus
                 />
               )}
             </div>
@@ -2037,7 +2036,7 @@ function ReportProblemSheet({ preview, onClose, onSubmit }: {
         <div className="space-y-4">
           <div>
             <label className="p-label">What happened?</label>
-            <input className="p-input" placeholder="Short summary…" value={title} onChange={e => setTitle(e.target.value)} autoFocus />
+            <input className="p-input" placeholder="Short summary…" value={title} onChange={e => setTitle(e.target.value)} />
           </div>
           <div>
             <label className="p-label">Severity</label>
@@ -2131,7 +2130,6 @@ function LeaveJobSheet({ leaving, onClose, onLeave }: {
               className="p-input" rows={3} style={{ minHeight: 88, resize: 'vertical' }}
               placeholder="Anything the next operator should know…"
               value={comment} onChange={e => setComment(e.target.value)}
-              autoFocus
             />
           </div>
           <div className="flex gap-3">

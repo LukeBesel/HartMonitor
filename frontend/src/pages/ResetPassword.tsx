@@ -96,7 +96,6 @@ export default function ResetPassword() {
                       onChange={e => setPassword(e.target.value)}
                       className={`${inputClass} pr-10`}
                       placeholder="8+ characters"
-                      autoFocus
                     />
                     <button type="button" onClick={() => setShowPw(!showPw)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600">

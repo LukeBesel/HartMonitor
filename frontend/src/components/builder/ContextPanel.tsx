@@ -190,7 +190,6 @@ function VariableNameSelect({ value, variables, widgetTypeHint, onChange, onRegi
       ) : (
         <div className="flex items-center gap-1.5">
           <input
-            autoFocus
             className="wb-input font-mono flex-1"
             style={{ fontSize: 12 }}
             placeholder="new_variable"

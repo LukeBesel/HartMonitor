@@ -257,7 +257,6 @@ export default function VariablesPanel({ app, onChangeApp, onClose, canEdit }: {
                         {renaming ? (
                           <span className="flex items-center gap-1.5">
                             <input
-                              autoFocus
                               className="wb-input !min-h-0 !py-1 font-mono"
                               style={{ fontSize: 12.5, width: 160 }}
                               value={renameDraft}

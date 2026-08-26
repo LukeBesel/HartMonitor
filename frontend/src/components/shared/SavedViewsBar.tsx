@@ -56,7 +56,6 @@ export default function SavedViewsBar<T>({ storageKey, currentFilters, onApply }
       {adding ? (
         <span className="inline-flex items-center gap-1 pl-2 pr-1 py-1 rounded-lg bg-white border border-gray-200 shadow-sm">
           <input
-            autoFocus
             className="text-xs w-28 focus:outline-none"
             placeholder="View name…"
             value={name}

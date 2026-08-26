@@ -780,7 +780,6 @@ export default function Andon() {
                         placeholder="Resolution notes (optional)…"
                         value={resolutionText}
                         onChange={e => setResolutionText(e.target.value)}
-                        autoFocus
                       />
                       <div className="flex gap-2">
                         <button

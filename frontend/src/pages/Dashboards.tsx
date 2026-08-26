@@ -121,7 +121,7 @@ export default function Dashboards() {
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Dashboard Name *</label>
               <input className="input-field" value={newName} onChange={e => setNewName(e.target.value)}
-                placeholder="e.g. Production Overview, Quality Report..." autoFocus
+                placeholder="e.g. Production Overview, Quality Report..."
                 onKeyDown={e => e.key === 'Enter' && handleCreate()} />
             </div>
             <div>

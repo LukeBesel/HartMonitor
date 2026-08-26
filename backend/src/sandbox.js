@@ -626,7 +626,7 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
       { id: uuidv4(), type: 'instruction', order: 0, label: 'What to check', config: { content: 'Confirm the two frame bolts hold 15 Nm before the unit ships. Use the calibrated torque wrench at the bench — set it to 15 and pull until it clicks.', backgroundColor: '#eff6ff' } },
       { id: qcTorqueW, type: 'number-input', order: 1, label: 'Verified torque (Nm)', config: { variableName: 'final_torque', required: true, placeholder: 'Reading off the wrench, e.g. 15' } },
     ] },
-    { id: uuidv4(), name: 'Final visual', order: 1, layout: 'stacked', widgets: [
+    { id: uuidv4(), name: 'Final visual', order: 1, layout: 'stacked', takt_time: 60, widgets: [
       { id: uuidv4(), type: 'instruction', order: 0, label: 'Look it over', config: { content: 'Scratches, missing hardware, loose harness. Pass sends it to pack-out; Fail holds it and raises a quality record.' } },
       { id: qcResultW, type: 'pass-fail', order: 1, label: 'Ships as-is?', config: { variableName: 'qc_result', required: true } },
     ] },
@@ -636,7 +636,7 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
 
   const qcWidgets = widgetIndex(qcSteps);
   const insQcCompletion = db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, operator_user_id, started_at, completed_at, status, data, step_times, takt_exceeded_steps, company_id)
-    VALUES (?, ?, 'Final QC Inspection', ?, ?, ?, datetime('now', ?), datetime('now', ?), 'completed', ?, ?, '[]', ?)`);
+    VALUES (?, ?, 'Final QC Inspection', ?, ?, ?, datetime('now', ?), datetime('now', ?), 'completed', ?, ?, ?, ?)`);
   // end-minutes-ago, duration, torque, result — spread across ~4 days and 3 operators.
   // The last one has to fall inside today or Station 2 reports no inspected run
   // today at all — which is true, but only because the seed put it in yesterday.
@@ -648,11 +648,19 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   qcRuns.forEach(([end, dur, torque, result], i) => {
     const cid = uuidv4();
     const [operatorUserId, operatorName] = ops[i % 3];
+    // Times sized to the takts the app declares (5s re-torque, 60s visual):
+    // most runs land under, every third one runs the re-torque a beat long —
+    // the same one-in-a-few over-takt texture the assembly app's history has.
+    const qcStepTimes = { 0: 4 + (i % 3), 1: 40 + (i % 2) * 12 };
+    const qcTakts = qcSteps.map(st => Number(st.takt_time) || 0);
     insQcCompletion.run(
       cid, qcAppId, st2, operatorName, operatorUserId,
       `-${end + dur} minutes`, `-${end} minutes`,
       JSON.stringify({ final_torque: torque, qc_result: result }),
-      JSON.stringify({ 0: 90 + (i % 3) * 10, 1: 40 + (i % 2) * 12 }),
+      JSON.stringify(qcStepTimes),
+      JSON.stringify(Object.entries(qcStepTimes)
+        .filter(([idx, sec]) => qcTakts[idx] > 0 && sec > qcTakts[idx])
+        .map(([idx]) => Number(idx))),
       orgId
     );
     for (const [varName, raw] of Object.entries({ final_torque: torque, qc_result: result })) {

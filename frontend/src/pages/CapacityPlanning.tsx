@@ -550,7 +550,7 @@ function DeptCapacityCard({ dept, onSaved, canEdit }: { dept: DeptSummary; onSav
           ) : editing ? (
             <>
               <input
-                type="number" min={0} autoFocus
+                type="number" min={0}
                 className="w-16 px-2 py-1 border border-gray-300 rounded-lg text-sm text-right"
                 value={value}
                 onChange={e => setValue(e.target.value)}
