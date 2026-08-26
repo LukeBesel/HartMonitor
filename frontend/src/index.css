@@ -384,6 +384,22 @@ html:not(.dark) main :is(
   .bg-slate-800, .bg-slate-900, .bg-slate-950, .bg-black
 ):is(.text-gray-400, .text-gray-500) { color: #cbd5e1; }
 
+/* The dark-theme mirror of the rule above. `.dark .text-gray-300` below darkens
+   gray-300 to #64748b, which is right on the slate-800 cards the dark theme
+   builds out of `bg-white` — but the Andon board and the other permanently-dark
+   panels are DARKER than those cards, not lighter, so on them the same step
+   runs the wrong way: gray-300 at 11.9:1 on a gray-900 card comes back at
+   3.7:1. Inside such a panel it keeps a light value, the same one the light-mode
+   rule above settles on. */
+.dark :is(
+  .bg-gray-800, .bg-gray-900, .bg-gray-950,
+  .bg-slate-800, .bg-slate-900, .bg-slate-950, .bg-black
+) :is(.text-gray-300, .text-gray-400, .text-gray-500),
+.dark :is(
+  .bg-gray-800, .bg-gray-900, .bg-gray-950,
+  .bg-slate-800, .bg-slate-900, .bg-slate-950, .bg-black
+):is(.text-gray-300, .text-gray-400, .text-gray-500) { color: #cbd5e1; }
+
 /* Text */
 .dark .text-gray-900,
 .dark .text-gray-800 { color: #f1f5f9; }

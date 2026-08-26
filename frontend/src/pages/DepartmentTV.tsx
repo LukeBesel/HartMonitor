@@ -8,8 +8,22 @@ import {
 import {
   BarChart, Bar, ResponsiveContainer, XAxis, Tooltip, Cell,
 } from 'recharts';
+import { useTvScale } from '../utils/useTvScale';
+import { fmtMinutes } from '../utils/time';
+import { shiftUntilReadable } from '../utils/contrast';
+import '../tv.css';
 
 const REFRESH_MS = 25000;
+
+/** The board's own ground. It keeps this palette in either theme, so the ink
+ *  that has to survive on it can be derived once, exactly. */
+const BOARD_GROUND = '#020617';
+
+/** How many behind-takt jobs the banner names before it starts counting the
+ *  rest. Three wide slots beat four narrow ones: the point of the banner is
+ *  WHO is behind and by how much, and at four across a 1080p bar the operator's
+ *  name is the part that gets trimmed away. */
+const BANNER_SLOTS = 3;
 
 interface TVData {
   department: { id: string; name: string; color?: string; manager_name?: string };
@@ -26,9 +40,9 @@ interface TVData {
 }
 
 const RANK_ICON: Record<number, React.ReactNode> = {
-  1: <Crown size={26} className="text-amber-400" />,
-  2: <Medal size={26} className="text-slate-300" />,
-  3: <Award size={26} className="text-orange-400" />,
+  1: <Crown size="1.6em" className="text-amber-400" />,
+  2: <Medal size="1.6em" className="text-slate-300" />,
+  3: <Award size="1.6em" className="text-orange-400" />,
 };
 
 const RANK_RING: Record<number, string> = {
@@ -57,10 +71,10 @@ function Tile({
   icon: Icon, value, label, accent,
 }: { icon: React.ElementType; value: number; label: string; accent: string }) {
   return (
-    <div className="flex-1 bg-white/5 border border-white/10 rounded-3xl px-6 py-5 flex flex-col items-center justify-center">
-      <Icon size={26} style={{ color: accent }} className="mb-2" />
-      <div className="text-6xl font-bold tabular-nums tracking-tight leading-none">{value}</div>
-      <div className="text-xs uppercase tracking-[0.2em] text-white/40 mt-2">{label}</div>
+    <div className="bg-white/5 border border-white/10 rounded-3xl px-3 sm:px-6 py-4 sm:py-5 flex flex-col items-center justify-center text-center min-w-0">
+      <Icon size="1.6em" style={{ color: accent }} className="mb-2" />
+      <div className="text-5xl sm:text-6xl font-bold tabular-nums tracking-tight leading-none">{value}</div>
+      <div className="text-xs uppercase tracking-[0.15em] text-white/60 mt-2 leading-tight">{label}</div>
     </div>
   );
 }
@@ -70,6 +84,9 @@ export default function DepartmentTV() {
   const [data, setData] = useState<TVData | null>(null);
   const [error, setError] = useState(false);
   const now = useClock();
+  // The board scales its whole type ramp with the panel; the chart is the one
+  // piece that needs the number rather than the rem.
+  const rootPx = useTvScale();
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -89,104 +106,145 @@ export default function DepartmentTV() {
   }, [load]);
 
   const accent = data?.department.color || '#6366f1';
+  // The department's own colour is whatever someone picked out of a colour
+  // well, and here it is drawn as an icon on the board's near-black ground. A
+  // deep blue or purple lands under 3:1 there, so it is lifted only as far as
+  // the non-text-contrast floor requires and keeps its hue.
+  const accentInk = shiftUntilReadable(accent, BOARD_GROUND, 3);
   const hourly = data?.hourly ?? [];
   const issues = data?.issues ?? [];
   const leaderboard = data?.leaderboard ?? [];
   const maxHour = Math.max(1, ...hourly.map(h => h.count), 1);
+  // Every bar at zero is a truthful chart of a quiet shift, but on a wall it is
+  // indistinguishable from a chart that failed to load. Name which one it is.
+  const noThroughputYet = hourly.length > 0 && hourly.every(h => h.count === 0);
   const behind = data?.behind_takt ?? [];
   const anyBehind = !!data?.any_behind && behind.length > 0;
+  const bannerShown = behind.slice(0, BANNER_SLOTS);
+  const bannerRest = behind.length - bannerShown.length;
 
   return (
-    <div className="h-screen w-full bg-slate-950 text-white flex flex-col overflow-hidden">
+    // A board owns the whole screen and never scrolls — but a phone cannot show
+    // one in a single viewport, so below the board breakpoint the same content
+    // becomes an ordinary scrolling column instead of being clipped away.
+    <div className="min-h-screen lg:h-screen w-full bg-slate-950 text-white flex flex-col overflow-x-hidden lg:overflow-hidden">
       {/* Header */}
-      <div className="flex-shrink-0 flex items-center justify-between px-10 py-4 border-b border-white/10">
-        <div className="flex items-center gap-4">
+      <div className="flex-shrink-0 flex items-center justify-between gap-x-6 gap-y-2 flex-wrap px-4 sm:px-10 py-4 border-b border-white/10">
+        <div className="flex items-center gap-4 min-w-0">
           <div
-            className="w-12 h-12 rounded-2xl flex items-center justify-center"
-            style={{ backgroundColor: `${accent}33`, color: accent }}
+            className="w-12 h-12 rounded-2xl flex items-center justify-center flex-shrink-0"
+            style={{ backgroundColor: `${accent}33`, color: accentInk }}
           >
-            <Building2 size={26} />
+            <Building2 size="1.6em" />
           </div>
-          <div>
-            <h1 className="text-4xl font-bold tracking-tight leading-none">{data?.department.name ?? 'Department'}</h1>
-            <p className="text-white/40 mt-1 flex items-center gap-3 text-sm">
-              {data?.department.manager_name && <span>{data.department.manager_name}</span>}
-              <span className="flex items-center gap-1.5">
+          <div className="min-w-0">
+            <h1 className="text-3xl sm:text-4xl font-bold tracking-tight leading-none truncate">{data?.department.name ?? 'Department'}</h1>
+            <p className="text-white/60 mt-1 flex items-center gap-3 text-sm">
+              {data?.department.manager_name && <span className="truncate">{data.department.manager_name}</span>}
+              <span className="flex items-center gap-1.5 flex-shrink-0">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
                 Live
               </span>
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-6">
-          <div className="text-right">
-            <div className="text-4xl font-mono font-bold tabular-nums leading-none">
+        <div className="flex items-center gap-4 sm:gap-6 min-w-0">
+          <div className="text-right min-w-0">
+            <div className="text-3xl sm:text-4xl font-mono font-bold tabular-nums leading-none">
               {now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
             </div>
-            <div className="text-xs text-white/40 mt-1">
+            <div className="text-xs text-white/60 mt-1 truncate">
               {now.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
             </div>
           </div>
-          <Link to={`/departments/${id ?? ''}`} className="text-white/30 hover:text-white/70 transition-colors">
-            <X size={24} />
+          <Link
+            to={`/departments/${id ?? ''}`}
+            aria-label="Leave the board"
+            className="text-white/60 hover:text-white transition-colors flex-shrink-0"
+          >
+            <X size="1.5em" />
           </Link>
         </div>
       </div>
 
-      {/* Behind-takt alert banner */}
+      {/* Behind-takt alert banner.
+          The bar itself does not pulse. Fading a red bar in and out drags
+          everything written on it down too — at the dim end of the cycle the
+          job numbers here measured 2.7:1, so for half of every second the most
+          urgent thing on the board was also the least readable. The alarm is
+          carried by a solid red that holds white at 6.5:1, and only the timer
+          icon moves. */}
       {anyBehind && (
-        <div className="flex-shrink-0 bg-red-600 animate-pulse px-10 py-3 flex items-center gap-5 border-b border-red-400/40">
+        <div className="flex-shrink-0 bg-red-700 px-4 sm:px-10 py-3 flex flex-col xl:flex-row xl:items-center gap-3 xl:gap-5 border-b border-red-400/40">
           <div className="flex items-center gap-2 flex-shrink-0">
-            <Timer size={28} className="text-white" />
-            <span className="text-2xl font-extrabold tracking-wide uppercase">Behind Takt</span>
-            <span className="bg-white/25 text-white text-sm font-bold px-2.5 py-0.5 rounded-full">{behind.length}</span>
+            <Timer size="1.75em" className="text-white animate-pulse" />
+            <span className="text-xl sm:text-2xl font-extrabold tracking-wide uppercase">Behind Takt</span>
+            <span className="bg-black/25 text-white text-sm font-bold px-2.5 py-0.5 rounded-full tabular-nums">{behind.length}</span>
           </div>
-          <div className="flex items-center gap-3 overflow-x-auto">
-            {behind.slice(0, 4).map((b, i) => (
-              <div key={i} className="flex-shrink-0 bg-white/15 rounded-xl px-4 py-1.5">
-                <span className="font-bold">{b.work_order_number}</span>
-                <span className="text-white/80 text-sm"> · {b.operator_name} @ {b.station}</span>
-                <span className="ml-2 font-bold tabular-nums">+{b.over_by_minutes}m</span>
-                <span className="text-white/70 text-xs"> over {b.takt_minutes}m takt{b.live ? ' (live)' : ''}</span>
+          {/* A wall board is never scrolled, so the jobs wrap into a grid that
+              fits instead of a strip that runs off the edge. Whatever the grid
+              cannot seat is counted rather than dropped. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2 xl:gap-3 flex-1 min-w-0">
+            {bannerShown.map((b, i) => (
+              <div key={i} className="bg-black/25 rounded-xl px-4 py-1.5 min-w-0">
+                <div className="flex items-baseline gap-3 min-w-0">
+                  <span className="font-bold truncate">{b.work_order_number}</span>
+                  <span className="font-bold tabular-nums ml-auto flex-shrink-0">+{fmtMinutes(b.over_by_minutes)}m</span>
+                </div>
+                <div className="text-sm text-white/85 truncate">
+                  {b.operator_name} @ {b.station} · over {fmtMinutes(b.takt_minutes)}m takt{b.live ? ' (live)' : ''}
+                </div>
               </div>
             ))}
           </div>
+          {bannerRest > 0 && (
+            <div className="tv-more text-sm font-bold self-center flex-shrink-0">+{bannerRest} more</div>
+          )}
         </div>
       )}
 
       {error && !data ? (
-        <div className="flex-1 flex items-center justify-center text-white/40 text-2xl">
+        <div className="flex-1 flex items-center justify-center text-white/60 text-2xl px-6 text-center">
           Unable to load department display. Retrying automatically…
         </div>
       ) : !data ? (
-        <div className="flex-1 flex items-center justify-center text-white/40 text-2xl">Loading…</div>
+        <div className="flex-1 flex items-center justify-center text-white/60 text-2xl">Loading…</div>
       ) : (
-        <div className="flex-1 min-h-0 grid grid-cols-3 gap-6 p-6">
+        <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6 p-4 sm:p-6">
           {/* Left + center column: tiles, chart, issues */}
-          <div className="col-span-2 flex flex-col gap-6 min-h-0">
+          <div className="lg:col-span-2 flex flex-col gap-4 sm:gap-6 min-h-0">
             {/* Status tiles */}
-            <div className="flex gap-6 flex-shrink-0">
+            <div className="grid grid-cols-3 gap-3 sm:gap-6 flex-shrink-0">
               <Tile icon={Activity} value={data.status.running} label="Running Now" accent="#38bdf8" />
               <Tile icon={CheckCircle2} value={data.status.completed_today} label="Completed Today" accent="#34d399" />
               <Tile icon={Calendar} value={data.status.upcoming} label="Upcoming" accent="#fbbf24" />
             </div>
 
             {/* Hourly throughput chart */}
-            <div className="flex-1 min-h-0 bg-white/5 border border-white/10 rounded-3xl p-6 flex flex-col">
-              <h2 className="text-lg font-semibold text-white/70 mb-3 flex-shrink-0">Hourly Throughput</h2>
+            <div className="flex-1 min-h-[14rem] bg-white/5 border border-white/10 rounded-3xl p-4 sm:p-6 flex flex-col">
+              <h2 className="text-lg font-semibold text-white/80 mb-3 flex-shrink-0">Hourly Throughput</h2>
+              {noThroughputYet && (
+                <div className="text-white/60 text-base mb-2 flex-shrink-0">
+                  Nothing completed in these hours yet today.
+                </div>
+              )}
               <div className="flex-1 min-h-0">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={hourly} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
                     <XAxis
                       dataKey="hour"
-                      stroke="#ffffff40"
-                      tick={{ fill: '#ffffff60', fontSize: 13 }}
+                      stroke="#ffffff66"
+                      // Recharts wants a number, so the axis is derived from the
+                      // board's own scale rather than pinned at a laptop size.
+                      tick={{ fill: '#ffffff99', fontSize: rootPx * 0.8 }}
                       tickLine={false}
                       axisLine={false}
+                      interval="preserveStartEnd"
+                      minTickGap={rootPx}
                     />
                     <Tooltip
                       cursor={{ fill: '#ffffff10' }}
-                      contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 12, color: '#fff' }}
+                      contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 12, color: '#fff', fontSize: rootPx * 0.85 }}
                       formatter={(v: number) => [v, 'Completions']}
                     />
                     <Bar dataKey="count" radius={[6, 6, 0, 0]}>
@@ -200,29 +258,29 @@ export default function DepartmentTV() {
             </div>
 
             {/* Issues */}
-            <div className="flex-shrink-0 bg-white/5 border border-white/10 rounded-3xl p-5">
+            <div className="flex-shrink-0 bg-white/5 border border-white/10 rounded-3xl p-4 sm:p-5">
               <div className="flex items-center gap-3 mb-3">
-                <AlertTriangle size={20} className="text-red-400" />
-                <h2 className="text-lg font-semibold text-white/70">Active Issues</h2>
+                <AlertTriangle size="1.25em" className="text-red-400" />
+                <h2 className="text-lg font-semibold text-white/80">Active Issues</h2>
                 {issues.length > 0 && (
-                  <span className="bg-red-500/20 text-red-300 text-sm font-bold px-3 py-0.5 rounded-full">
+                  <span className="bg-red-500/20 text-red-200 text-sm font-bold px-3 py-0.5 rounded-full tabular-nums">
                     {issues.length}
                   </span>
                 )}
               </div>
               {issues.length === 0 ? (
                 <div className="flex items-center gap-3 text-emerald-400 text-lg">
-                  <CheckCircle2 size={22} />
+                  <CheckCircle2 size="1.4em" />
                   <span>All clear — no active issues.</span>
                 </div>
               ) : (
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {issues.slice(0, 4).map((iss, i) => (
-                    <div key={i} className="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-2xl px-4 py-3">
-                      <AlertTriangle size={18} className="text-red-400 mt-0.5 flex-shrink-0" />
+                    <div key={i} className="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-2xl px-4 py-3 min-w-0">
+                      <AlertTriangle size="1.15em" className="text-red-400 mt-0.5 flex-shrink-0" />
                       <div className="min-w-0">
-                        <div className="font-bold text-red-200 text-base">{iss.label}</div>
-                        <div className="text-red-300/70 text-xs truncate">{iss.detail}</div>
+                        <div className="font-bold text-red-200 text-base truncate">{iss.label}</div>
+                        <div className="text-red-200/90 text-sm line-clamp-2">{iss.detail}</div>
                       </div>
                     </div>
                   ))}
@@ -232,13 +290,13 @@ export default function DepartmentTV() {
           </div>
 
           {/* Right column: leaderboard */}
-          <div className="bg-white/5 border border-white/10 rounded-3xl p-6 flex flex-col min-h-0">
+          <div className="bg-white/5 border border-white/10 rounded-3xl p-4 sm:p-6 flex flex-col min-h-0">
             <div className="flex items-center gap-3 mb-4 flex-shrink-0">
-              <Crown size={24} className="text-amber-400" />
+              <Crown size="1.5em" className="text-amber-400" />
               <h2 className="text-xl font-bold">Fastest Today</h2>
             </div>
             {leaderboard.length === 0 ? (
-              <div className="flex-1 flex items-center justify-center text-white/30 text-center text-lg">
+              <div className="flex-1 flex items-center justify-center text-white/60 text-center text-lg py-8">
                 No completed runs yet today.
               </div>
             ) : (
@@ -248,16 +306,16 @@ export default function DepartmentTV() {
                   return (
                     <div
                       key={`${l.operator_name}-${i}`}
-                      className={`flex items-center gap-3 rounded-2xl border px-4 py-3 ${
+                      className={`flex items-center gap-3 rounded-2xl border px-4 py-3 min-w-0 ${
                         RANK_RING[rank] ?? 'border-white/10 bg-white/5'
                       }`}
                     >
                       <div className="w-9 flex items-center justify-center flex-shrink-0">
-                        {RANK_ICON[rank] ?? <span className="text-xl font-bold text-white/30">{rank}</span>}
+                        {RANK_ICON[rank] ?? <span className="text-xl font-bold text-white/60 tabular-nums">{rank}</span>}
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="text-lg font-semibold truncate">{l.operator_name}</div>
-                        {l.app_name && <div className="text-xs text-white/40 truncate">{l.app_name}</div>}
+                        {l.app_name && <div className="text-sm text-white/60 truncate">{l.app_name}</div>}
                       </div>
                       <div
                         className="text-xl font-bold tabular-nums flex-shrink-0"

@@ -5,14 +5,18 @@ import type { LeaderboardBoard, LeaderboardPeriod, LeaderboardResponse } from '.
 import { Trophy, Crown, Medal, Award, X, Sparkles } from 'lucide-react';
 import { formatDuration } from './Leaderboard';
 import { useBranding } from '../context/BrandingContext';
+import { useTvScale } from '../utils/useTvScale';
+import '../tv.css';
 
 const ROTATE_MS = 10000;
 const REFRESH_MS = 60000;
 
+// Icons are sized in em so they ride the board's type scale up onto a 4K panel
+// with everything else, instead of staying a fixed laptop size.
 const RANK_STYLE: Record<number, { icon: React.ReactNode; ring: string }> = {
-  1: { icon: <Crown size={28} />, ring: 'border-amber-400 bg-amber-400/10' },
-  2: { icon: <Medal size={28} />, ring: 'border-slate-400 bg-slate-400/10' },
-  3: { icon: <Award size={28} />, ring: 'border-orange-400 bg-orange-400/10' },
+  1: { icon: <Crown size="1.75em" />, ring: 'border-amber-400 bg-amber-400/10' },
+  2: { icon: <Medal size="1.75em" />, ring: 'border-slate-400 bg-slate-400/10' },
+  3: { icon: <Award size="1.75em" />, ring: 'border-orange-400 bg-orange-400/10' },
 };
 
 function boardTitle(board: LeaderboardBoard): string {
@@ -39,6 +43,7 @@ export default function LeaderboardTV() {
   const [index, setIndex] = useState(0);
   const { companyName } = useBranding();
   const now = useClock();
+  useTvScale();
 
   useEffect(() => {
     const load = () => api.getLeaderboard(period)
@@ -60,47 +65,47 @@ export default function LeaderboardTV() {
   const board = boards[Math.min(index, boards.length - 1)];
 
   return (
-    <div className="min-h-screen w-full bg-slate-950 text-white flex flex-col overflow-hidden">
+    <div className="min-h-screen w-full bg-slate-950 text-white flex flex-col overflow-x-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-10 py-6 border-b border-white/10">
-        <div className="flex items-center gap-3">
-          <div className="w-11 h-11 rounded-2xl flex items-center justify-center"
+      <div className="flex items-center justify-between gap-x-6 gap-y-3 flex-wrap px-4 sm:px-10 py-5 sm:py-6 border-b border-white/10">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-11 h-11 rounded-2xl flex items-center justify-center flex-shrink-0"
             style={{ background: 'linear-gradient(135deg, var(--accent-glow), var(--secondary))' }}>
-            <Trophy size={22} />
+            <Trophy size="1.4em" />
           </div>
-          <div>
-            <h1 className="text-2xl font-bold tracking-tight">{companyName || 'HartMonitor'} Leaderboard</h1>
-            <p className="text-sm text-white/50">{data?.period_label ?? ''} · fastest clean runs</p>
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold tracking-tight truncate">{companyName || 'HartMonitor'} Leaderboard</h1>
+            <p className="text-sm text-white/60 truncate">{data?.period_label ?? ''} · fastest clean runs</p>
           </div>
         </div>
-        <div className="flex items-center gap-6">
-          <div className="text-right">
+        <div className="flex items-center gap-4 sm:gap-6 min-w-0">
+          <div className="text-right min-w-0">
             <div className="text-2xl font-mono font-bold tabular-nums">{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</div>
-            <div className="text-xs text-white/40">{now.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}</div>
+            <div className="text-xs text-white/60 truncate">{now.toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}</div>
           </div>
-          <Link to="/leaderboard" className="text-white/30 hover:text-white/70 transition-colors">
-            <X size={22} />
+          <Link to="/leaderboard" aria-label="Leave the board" className="text-white/60 hover:text-white transition-colors flex-shrink-0">
+            <X size="1.4em" />
           </Link>
         </div>
       </div>
 
       {/* Body */}
-      <div className="flex-1 flex flex-col items-center justify-center px-10 py-8">
+      <div className="flex-1 flex flex-col items-center justify-center px-4 sm:px-10 py-8">
         {!data ? (
-          <div className="text-white/40 text-lg">
+          <div className="text-white/60 text-lg text-center">
             {loadFailed ? 'Unable to load leaderboard. Retrying automatically…' : 'Loading…'}
           </div>
         ) : !board ? (
-          <div className="text-center text-white/40">
-            <Trophy size={56} className="mx-auto mb-4 opacity-20" />
+          <div className="text-center text-white/60">
+            <Trophy size="3.5em" className="mx-auto mb-4 text-white/50" />
             <p className="text-xl font-medium">No qualifying runs yet</p>
             <p className="text-sm mt-1">Leaderboards appear once published apps log clean completions.</p>
           </div>
         ) : (
           <div key={`${board.app_id}-${board.product_type_id ?? 'd'}`} className="w-full max-w-4xl animate-[fadeIn_0.4s_ease-out]">
             <div className="text-center mb-8">
-              <div className="text-sm uppercase tracking-[0.2em] text-white/40 mb-1">{boardTitle(board)}</div>
-              <div className="flex items-center justify-center gap-4 text-white/50 text-sm">
+              <div className="text-sm uppercase tracking-[0.15em] text-white/60 mb-1">{boardTitle(board)}</div>
+              <div className="flex items-center justify-center flex-wrap gap-x-4 gap-y-1 text-white/60 text-sm">
                 <span>{board.operator_count} operators</span>
                 <span>·</span>
                 <span>{board.qualifying_count} runs</span>
@@ -119,21 +124,21 @@ export default function LeaderboardTV() {
                 return (
                   <div
                     key={l.operator_name}
-                    className={`flex items-center gap-5 px-6 py-4 rounded-2xl border transition-all ${
+                    className={`flex items-center gap-3 sm:gap-5 flex-wrap px-4 sm:px-6 py-4 rounded-2xl border transition-all ${
                       style ? style.ring : 'border-white/10 bg-white/5'
                     }`}
                   >
-                    <div className="w-10 flex items-center justify-center text-white/70 flex-shrink-0">
-                      {style ? style.icon : <span className="text-xl font-bold text-white/30">{l.rank}</span>}
+                    <div className="w-10 flex items-center justify-center text-white/80 flex-shrink-0">
+                      {style ? style.icon : <span className="text-xl font-bold text-white/60 tabular-nums">{l.rank}</span>}
                     </div>
-                    <div className="flex-1 min-w-0">
+                    <div className="flex-1 min-w-[10rem]">
                       <div className="text-xl font-semibold truncate flex items-center gap-2">
                         {l.operator_name}
-                        {l.is_record && <Sparkles size={18} className="text-amber-300 flex-shrink-0" />}
+                        {l.is_record && <Sparkles size="1.15em" className="text-amber-300 flex-shrink-0" />}
                       </div>
-                      <div className="text-sm text-white/40">{l.completions} run{l.completions === 1 ? '' : 's'} · avg {formatDuration(l.avg_minutes)}</div>
+                      <div className="text-sm text-white/60 truncate">{l.completions} run{l.completions === 1 ? '' : 's'} · avg {formatDuration(l.avg_minutes)}</div>
                     </div>
-                    <div className="text-3xl font-bold tabular-nums flex-shrink-0" style={{ color: l.rank === 1 ? '#fbbf24' : 'white' }}>
+                    <div className="text-3xl font-bold tabular-nums flex-shrink-0 ml-auto" style={{ color: l.rank === 1 ? '#fbbf24' : 'white' }}>
                       {formatDuration(l.best_minutes)}
                     </div>
                   </div>
@@ -150,7 +155,7 @@ export default function LeaderboardTV() {
           {boards.map((b, i) => (
             <div
               key={`${b.app_id}-${b.product_type_id ?? 'd'}`}
-              className={`h-1.5 rounded-full transition-all ${i === index ? 'w-8 bg-white/80' : 'w-1.5 bg-white/20'}`}
+              className={`h-1.5 rounded-full transition-all ${i === index ? 'w-8 bg-white/80' : 'w-1.5 bg-white/40'}`}
             />
           ))}
         </div>
