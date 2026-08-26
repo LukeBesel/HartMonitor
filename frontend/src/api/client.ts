@@ -10,9 +10,20 @@ import type {
   MESTable,
   AndonCall, AndonCallInput, AndonSummary, AndonTeam,
   DepartmentMember, DepartmentMemberInput, DepartmentTeamRole,
+  CIProject, CIProjectTask, CIProjectSummary,
 } from '../types';
 
 const BASE = '/api';
+
+/** An unused password-reset link an admin can hand to a locked-out user when
+ *  the deployment has no SMTP configured. */
+export interface PendingReset {
+  id: string;
+  user_email: string;
+  reset_url: string;
+  expires_at: string;
+  created_at: string;
+}
 
 // On native (iOS/Android), cookies don't work across origins so we inject
 // the token as an Authorization header instead. Set by AuthContext after login.
@@ -149,7 +160,57 @@ function appAnalyticsQS(params?: AppAnalyticsParams): string {
   return s ? `?${s}` : '';
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+/** Query string for the page-level dashboard filters (department / app / site),
+ *  omitting anything unset. Shared by every endpoint that honours a page scope so
+ *  the three params are always spelled the same way on the wire. */
+function dashboardFilterQS(f?: DashboardFilters): string {
+  const qs = new URLSearchParams();
+  if (f?.department_id) qs.set('department_id', f.department_id);
+  if (f?.app_id)        qs.set('app_id', f.app_id);
+  if (f?.site_id)       qs.set('site_id', f.site_id);
+  const s = qs.toString();
+  return s ? `?${s}` : '';
+}
+
+// ─── Hitting the API's rate limit ────────────────────────────────────────────
+// The server rejects an over-budget request in its rate-limit middleware, before
+// the route ever runs. That is a stronger guarantee than a 429 usually carries:
+// the request was not merely unsuccessful, it was never processed, so nothing
+// was written. Which is why a rejected POST is replayed here alongside the GETs.
+// The alternative — telling an operator half-way through a run that starting the
+// job "failed" — throws away real work, and there is no double-submit to fear
+// because the handler never saw the first attempt.
+//
+// The `code` is what pins that reasoning down. Only our own general limiter
+// sends it; a 429 from anywhere else in the chain (a proxy, a CDN, the auth
+// limiter guarding credentials) makes no promise about whether the request ran,
+// so it is surfaced to the caller untouched and never replayed.
+const REPLAYABLE_429 = 'API_RATE_LIMITED';
+const MAX_429_RETRIES = 3;
+// Past this, waiting is worse than telling the truth: the person is better off
+// being told when to come back than watching a spinner for ten minutes.
+const MAX_429_WAIT_MS = 15_000;
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/** `Retry-After` in milliseconds — seconds form or HTTP-date form. Null if absent. */
+function parseRetryAfter(header: string | null): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const when = Date.parse(header);
+  return Number.isNaN(when) ? null : Math.max(0, when - Date.now());
+}
+
+/** "40 seconds" / "about 3 minutes", from a real Retry-After — never a guess. */
+function describeWait(ms: number): string {
+  const seconds = Math.ceil(ms / 1000);
+  if (seconds <= 90) return `${seconds} second${seconds === 1 ? '' : 's'}`;
+  const minutes = Math.ceil(seconds / 60);
+  return `about ${minutes} minute${minutes === 1 ? '' : 's'}`;
+}
+
+async function sendRequest<T>(path: string, options?: RequestInit, attempt = 0): Promise<T> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   // On native apps, send token as Authorization header (cookies don't cross origins in WebView)
   if (_nativeToken) headers['Authorization'] = `Bearer ${_nativeToken}`;
@@ -160,6 +221,25 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     credentials: 'include', // sends httpOnly cookie on web; no-op on native (header used instead)
     headers,
   });
+
+  if (res.status === 429) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    const retryAfterMs = parseRetryAfter(res.headers.get('Retry-After'));
+    if (err?.code === REPLAYABLE_429 && attempt < MAX_429_RETRIES
+        && (retryAfterMs === null || retryAfterMs <= MAX_429_WAIT_MS)) {
+      // Honour Retry-After when the server sent one; otherwise back off on a
+      // jittered curve so a page's worth of parallel calls don't all come back
+      // in the same instant and trip the limit again.
+      const backoff = 400 * 2 ** attempt + Math.random() * 250;
+      await sleep(retryAfterMs ?? backoff);
+      return sendRequest<T>(path, options, attempt + 1);
+    }
+    const when = retryAfterMs === null ? '' : ` Please try again in ${describeWait(retryAfterMs)}.`;
+    throw Object.assign(
+      new Error(`The server is handling too many requests right now.${when || ' Please try again in a moment.'}`),
+      { status: 429, data: err },
+    );
+  }
 
   if (res.status === 401) {
     const err = await res.json().catch(() => ({ code: 'INVALID_TOKEN' }));
@@ -184,6 +264,70 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     throw Object.assign(new Error(err.message || err.error || 'Request failed'), { status: res.status, data: err });
   }
   return res.json();
+}
+
+// ─── Sharing one GET between the components that all want it ─────────────────
+// Mounting a screen mounts a sidebar, a coach, a checklist and the page itself,
+// and several of them independently need the same list. They are not wrong to
+// need it — asking the server for it four times is what is wrong. So identical
+// GETs raised close together are answered from one round trip.
+//
+// This is a backstop, not the plan: a component that fetches something it has no
+// business fetching still needs fixing at the component. What it removes is the
+// last, irreducible kind of duplication — separate components that each honestly
+// need the same list at the same moment.
+//
+// The freshness window is deliberately about as long as a mount cascade and no
+// longer, and any write clears the whole thing, so nothing here can serve a
+// caller data from before their own change.
+const GET_SHARE_WINDOW_MS = 2000;
+
+interface SharedGet { at: number; promise: Promise<unknown> }
+const sharedGets = new Map<string, SharedGet>();
+
+/** Forget every shared GET. Called after any write, and on sign-out. */
+export function invalidateApiCache(): void {
+  sharedGets.clear();
+}
+
+// Callers own what they are handed — one of them sorting an array in place must
+// not rearrange it for everybody else sharing the response.
+function detach<T>(value: T): T {
+  try {
+    return typeof structuredClone === 'function' ? structuredClone(value) : JSON.parse(JSON.stringify(value));
+  } catch {
+    return value;
+  }
+}
+
+async function request<T>(path: string, options?: RequestInit): Promise<T> {
+  const method = (options?.method ?? 'GET').toUpperCase();
+
+  if (method !== 'GET') {
+    try {
+      return await sendRequest<T>(path, options);
+    } finally {
+      // A write may have changed anything, so no read from before it survives.
+      invalidateApiCache();
+    }
+  }
+
+  const key = `${path}::${JSON.stringify(options?.headers ?? null)}`;
+  const existing = sharedGets.get(key);
+  if (existing && Date.now() - existing.at < GET_SHARE_WINDOW_MS) {
+    return detach((await existing.promise) as T);
+  }
+
+  const promise = sendRequest<T>(path, options);
+  sharedGets.set(key, { at: Date.now(), promise });
+  try {
+    // The first caller gets the original object; only the sharers pay for a copy.
+    return await promise;
+  } catch (err) {
+    // A failure is not a result worth handing to the next caller.
+    if (sharedGets.get(key)?.promise === promise) sharedGets.delete(key);
+    throw err;
+  }
 }
 
 // Authenticated file download via fetch + blob, saved with the server-provided
@@ -248,6 +392,11 @@ export const api = {
   // Flush the player's values buffer (autosave / step change / complete).
   flushCompletion: (id: string, data: CompletionFlushPayload) =>
     request<any>(`/completions/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  /** Same PUT, but survives the page going away — for a last flush on unload.
+   *  `keepalive` lets the browser finish the request after the document is
+   *  gone, which a normal fetch would abandon. */
+  flushCompletionOnUnload: (id: string, data: CompletionFlushPayload) =>
+    request<any>(`/completions/${id}`, { method: 'PUT', body: JSON.stringify(data), keepalive: true }),
   getCompletionValues: (id: string) =>
     request<CompletionValue[]>(`/completions/${id}/values`),
 
@@ -377,19 +526,18 @@ export const api = {
 
   // ── Analytics
   getOverview: (f?: AnalyticsFilters) => request<any>(`/analytics/overview${filterQS(f)}`),
-  getDailyBrief: () => request<DailyBrief>('/analytics/daily-brief'),
+  // Both of these honour the Command Center's page scope: the server applies
+  // department / app / site to every figure it returns, not just some of them.
+  getDailyBrief: (filters?: DashboardFilters) =>
+    request<DailyBrief>(`/analytics/daily-brief${dashboardFilterQS(filters)}`),
   getThroughput: (days?: number, f?: AnalyticsFilters) => request<any[]>(`/analytics/throughput${filterQS(f, { days: days ?? 30 })}`),
   getCycleTimes: (days?: number, f?: AnalyticsFilters) => request<any[]>(`/analytics/cycle-times${filterQS(f, { days: days ?? 30 })}`),
   getOperatorPerformance: (f?: AnalyticsFilters) => request<any[]>(`/analytics/operator-performance${filterQS(f)}`),
   getAppPerformance: (f?: AnalyticsFilters) => request<any[]>(`/analytics/app-performance${filterQS(f)}`),
   getQualityData: (days?: number, f?: AnalyticsFilters) => request<any[]>(`/analytics/quality${filterQS(f, { days: days ?? 30 })}`),
   getManagerView: () => request<any>('/analytics/manager-view'),
-  getPlantView: (params?: { site_id?: string }) => {
-    const qs = new URLSearchParams();
-    if (params?.site_id) qs.set('site_id', params.site_id);
-    const s = qs.toString();
-    return request<any>(`/analytics/plant-view${s ? `?${s}` : ''}`);
-  },
+  getPlantView: (params?: DashboardFilters) =>
+    request<any>(`/analytics/plant-view${dashboardFilterQS(params)}`),
   getDepartmentView: (id: string) => request<any>(`/analytics/department/${id}`),
   getStationView: (id: string) => request<any>(`/analytics/station/${id}`),
   getCompletionDetail: (id: string) => request<any>(`/analytics/completion/${id}`),
@@ -413,14 +561,8 @@ export const api = {
   deleteDashboard: (id: string) => request<any>(`/dashboards/${id}`, { method: 'DELETE' }),
   // Card data honours optional page-level filters; the server applies each one
   // to the card types it is meaningful for and ignores unknown ids.
-  getDashboardData: (id: string, filters?: DashboardFilters) => {
-    const qs = new URLSearchParams();
-    if (filters?.department_id) qs.set('department_id', filters.department_id);
-    if (filters?.app_id)        qs.set('app_id', filters.app_id);
-    if (filters?.site_id)       qs.set('site_id', filters.site_id);
-    const s = qs.toString();
-    return request<any>(`/dashboards/${id}/data${s ? `?${s}` : ''}`);
-  },
+  getDashboardData: (id: string, filters?: DashboardFilters) =>
+    request<any>(`/dashboards/${id}/data${dashboardFilterQS(filters)}`),
 
   // ── Inventory
   getInventoryItems: (params?: { category?: string; search?: string; low_stock?: boolean }) => {
@@ -930,7 +1072,38 @@ export const api = {
   deleteKaizenIdea: (id: string) => request<any>(`/kaizen/${id}`, { method: 'DELETE' }),
   getKaizenSummary: () => request<any>('/kaizen/summary'),
 
+  // ── CI Projects (Kaizen / CI workspace)
+  // A project is where an idea gets executed. Task endpoints are nested under
+  // their project so the server can prove ownership of both ids in one place.
+  getCIProjects: (params?: { status?: string; department_id?: string; kaizen_idea_id?: string; search?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.status)         qs.set('status', params.status);
+    if (params?.department_id)  qs.set('department_id', params.department_id);
+    if (params?.kaizen_idea_id) qs.set('kaizen_idea_id', params.kaizen_idea_id);
+    if (params?.search)         qs.set('search', params.search);
+    const s = qs.toString();
+    return request<CIProject[]>(`/ci-projects${s ? `?${s}` : ''}`);
+  },
+  getCIProject: (id: string) => request<CIProject>(`/ci-projects/${id}`),
+  getCIProjectSummary: () => request<CIProjectSummary>('/ci-projects/summary'),
+  createCIProject: (data: Partial<CIProject>) =>
+    request<CIProject>('/ci-projects', { method: 'POST', body: JSON.stringify(data) }),
+  updateCIProject: (id: string, data: Partial<CIProject>) =>
+    request<CIProject>(`/ci-projects/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCIProject: (id: string) => request<{ ok: boolean }>(`/ci-projects/${id}`, { method: 'DELETE' }),
+
+  getCIProjectTasks: (projectId: string) => request<CIProjectTask[]>(`/ci-projects/${projectId}/tasks`),
+  createCIProjectTask: (projectId: string, data: Partial<CIProjectTask>) =>
+    request<CIProjectTask>(`/ci-projects/${projectId}/tasks`, { method: 'POST', body: JSON.stringify(data) }),
+  updateCIProjectTask: (projectId: string, taskId: string, data: Partial<CIProjectTask>) =>
+    request<CIProjectTask>(`/ci-projects/${projectId}/tasks/${taskId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteCIProjectTask: (projectId: string, taskId: string) =>
+    request<{ ok: boolean }>(`/ci-projects/${projectId}/tasks/${taskId}`, { method: 'DELETE' }),
+
   // ─── Admin (developer-only) ────────────────────────────────────────────────
+  /** Reset links for THIS company, for self-hosted recovery when SMTP is off.
+   *  Company-scoped on the server; returns [] when email is configured. */
+  getPendingResets: () => request<PendingReset[]>('/admin/pending-resets'),
   getAdminStats: () => request<any>('/admin/stats'),
   getAdminCompanies: (params?: { search?: string; plan?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams();

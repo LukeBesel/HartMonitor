@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import {
   Settings,
   Palette,
@@ -65,9 +65,11 @@ import { useBranding } from '../context/BrandingContext';
 import { useNavPrefs } from '../context/NavPrefsContext';
 import { SECTIONS, ALL_SECTION_ITEMS } from '../config/navigation';
 import { REPLAY_FLAG } from '../components/shared/OnboardingWizard';
+import PendingResetsPanel from '../components/shared/PendingResetsPanel';
 import { api } from '../api/client';
 import Toggle from '../components/shared/Toggle';
 import type { PlanTier, AddonPricing, Site, NotificationPrefs, NotificationLogEntry, RolePermissionMap, AppRole, ApiKey, Webhook, WebhookDelivery } from '../types';
+import { deriveAccentTokens } from '../utils/contrast';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -1077,7 +1079,7 @@ function PlanTab() {
                   <ul className="space-y-1.5 mb-4">
                     {t.features.slice(0, 6).map(f => (
                       <li key={f} className="flex items-start gap-1.5 text-xs text-gray-600">
-                        <Check size={11} className="flex-shrink-0 mt-0.5" style={{ color: highlight ? 'var(--accent)' : '#9ca3af' }} />
+                        <Check size={11} className="flex-shrink-0 mt-0.5" style={{ color: highlight ? 'var(--accent-ink)' : '#9ca3af' }} />
                         {f}
                       </li>
                     ))}
@@ -1155,6 +1157,13 @@ function PlanTab() {
 
 function ThemeTab() {
   const { theme, setTheme, darkMode, setDarkMode } = useTheme();
+  // The preview is captioned "How your colors look across UI elements", so it
+  // has to show what the app actually renders. It used to paint `theme.accent`
+  // raw, which is the colour the picker returned, not the contrast-safe family
+  // the app derives from it — so the panel showed white-on-pink at 3.53:1 that
+  // no screen in the product has, and for a light hand-typed hex it went as low
+  // as 1.19:1. Same derivation as the live app, same theme.
+  const preview = useMemo(() => deriveAccentTokens(theme.accent, darkMode), [theme.accent, darkMode]);
   const { user } = useAuth();
   const isDeveloper = user?.role === 'developer';
   const [confirmTheme, setConfirmTheme] = useState<Theme | null>(null);
@@ -1319,8 +1328,8 @@ function ThemeTab() {
 
             {/* Primary button */}
             <button
-              className="px-4 py-2 rounded-lg text-white text-sm font-medium shadow-sm"
-              style={{ backgroundColor: theme.accent }}
+              className="px-4 py-2 rounded-lg text-sm font-medium shadow-sm"
+              style={{ backgroundColor: preview.accent, color: preview.accentFg }}
             >
               Primary Action
             </button>
@@ -1329,8 +1338,8 @@ function ThemeTab() {
             <button
               className="px-4 py-2 rounded-lg text-sm font-medium border"
               style={{
-                color: theme.accent,
-                borderColor: theme.accent,
+                color: preview.accentInk,
+                borderColor: preview.accent,
                 backgroundColor: theme.accentLight,
               }}
             >
@@ -1340,7 +1349,7 @@ function ThemeTab() {
             {/* Badge */}
             <div
               className="px-2.5 py-1 rounded-full text-xs font-semibold"
-              style={{ backgroundColor: theme.accentLight, color: theme.accentDark }}
+              style={{ backgroundColor: theme.accentLight, color: preview.accentInk }}
             >
               Active
             </div>
@@ -1348,14 +1357,14 @@ function ThemeTab() {
             {/* Nav item simulation */}
             <div
               className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium"
-              style={{ backgroundColor: theme.accentLight, color: theme.accent }}
+              style={{ backgroundColor: theme.accentLight, color: preview.accentInk }}
             >
-              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: theme.accent }} />
+              <div className="w-2 h-2 rounded-full" style={{ backgroundColor: preview.accentGlow }} />
               Nav Item
             </div>
 
             {/* Link */}
-            <span className="text-sm font-medium" style={{ color: theme.accent }}>
+            <span className="text-sm font-medium" style={{ color: preview.accentInk }}>
               Hyperlink →
             </span>
           </div>
@@ -1381,9 +1390,12 @@ function SidebarTab() {
 
   // Apply the saved custom order to a section's items (matches the sidebar).
   const orderedItems = (section: typeof SECTIONS[number]) => {
+    // Platform-staff items are not a customer's sidebar to arrange, and listing
+    // one here would announce HartMonitor's operator console to everybody.
+    const items = section.items.filter(i => !i.platformStaffOnly);
     const order = itemOrder[section.id];
-    if (!order || order.length === 0) return section.items;
-    return [...section.items].sort((a, b) => {
+    if (!order || order.length === 0) return items;
+    return [...items].sort((a, b) => {
       const ia = order.indexOf(a.to); const ib = order.indexOf(b.to);
       if (ia === -1 && ib === -1) return 0;
       if (ia === -1) return 1;
@@ -1419,7 +1431,7 @@ function SidebarTab() {
                     <Icon size={15} />
                   </div>
                   {on
-                    ? <span style={{ color: 'var(--accent)' }}><Check size={16} /></span>
+                    ? <span style={{ color: 'var(--accent-ink)' }}><Check size={16} /></span>
                     : <span className="text-[10px] font-semibold text-gray-400 uppercase">Off</span>}
                 </div>
                 <div className="text-sm font-semibold text-gray-800">{section.label}</div>
@@ -4238,7 +4250,16 @@ export default function SettingsPage() {
         {activeTab === 'theme'    && <ThemeTab />}
         {activeTab === 'sidebar'  && <SidebarTab />}
         {activeTab === 'export'   && <ExportTab />}
-        {activeTab === 'users'         && <><UsersTab /><div className="mt-8"><PermissionsTab /></div></>}
+        {activeTab === 'users'         && (
+          <>
+            <UsersTab />
+            <div className="mt-8"><PermissionsTab /></div>
+            {/* Self-hosted password recovery. GET /api/admin/pending-resets is
+                behind the 'developer' role, so only offer it to someone who
+                will actually get an answer rather than a 403. */}
+            {isAtLeast('developer') && <PendingResetsPanel />}
+          </>
+        )}
         {activeTab === 'sites'         && <SitesTab />}
         {activeTab === 'notifications' && <NotificationsTab />}
         {activeTab === 'developer'     && <DeveloperTab />}

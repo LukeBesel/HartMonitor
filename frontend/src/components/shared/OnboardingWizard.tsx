@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
+import { useBranding, useCompanySetting } from '../../context/BrandingContext';
 
 // Set by the "Replay product tour" button in Settings before navigating to the
 // dashboard, so the wizard re-opens even though onboarding was completed.
@@ -107,6 +108,11 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
   const [sampleLoaded, setSampleLoaded] = useState(false);
   const [sampleError, setSampleError] = useState('');
 
+  // The completion flag rides along on the company settings the branding
+  // provider already loaded — this used to be its own GET /api/config.
+  const { value: completedFlag, status: settingsStatus } = useCompanySetting('onboarding_completed');
+  const { refresh: refreshBranding } = useBranding();
+
   useEffect(() => {
     // Explicit replay from Settings bypasses the "completed" check.
     const replay = localStorage.getItem(REPLAY_FLAG);
@@ -117,25 +123,26 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
       onWillShow?.();
       return;
     }
-    let cancelled = false;
-    api.getCompanySettings()
-      .then(settings => {
-        if (cancelled) return;
-        const completed = isTruthy(settings?.onboarding_completed);
-        const roleOk = user?.role === 'manager' || user?.role === 'developer';
-        setEligible(!completed && roleOk);
-        if (!completed && roleOk) onWillShow?.();
-      })
-      .catch(() => setEligible(false))
-      .finally(() => { if (!cancelled) setReady(true); });
-    return () => { cancelled = true; };
-  }, [user?.role]);
+    if (settingsStatus === 'loading') return;
+    // Couldn't read the flag, so we don't know whether this welcome has already
+    // been dismissed — better to stay out of the way than to show it twice.
+    if (settingsStatus === 'error') { setEligible(false); setReady(true); return; }
+    const completed = isTruthy(completedFlag);
+    const roleOk = user?.role === 'manager' || user?.role === 'developer';
+    setEligible(!completed && roleOk);
+    if (!completed && roleOk) onWillShow?.();
+    setReady(true);
+  }, [user?.role, settingsStatus, completedFlag]);
 
   const persistDone = () => {
     // Lets the builder-training coach know the welcome is out of the way, so
     // the two never stack on top of each other.
     try { window.dispatchEvent(new CustomEvent(ONBOARDING_DONE_EVENT)); } catch { /* ignore */ }
-    return api.updateCompanySettings({ onboarding_completed: 'true' }).catch(() => {});
+    return api.updateCompanySettings({ onboarding_completed: 'true' })
+      // Everyone else reads this flag off the shared settings copy, so that copy
+      // has to learn about the write.
+      .then(() => refreshBranding())
+      .catch(() => {});
   };
 
   const finish = async () => {
@@ -183,7 +190,12 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-5">
           <div className="text-xs font-medium text-gray-400">Step {index + 1} of {STEPS.length}</div>
-          <button onClick={finish} className="text-gray-400 hover:text-gray-600" title="Skip tour">
+          <button
+            onClick={finish}
+            title="Skip tour"
+            aria-label="Skip tour"
+            className="-mr-1.5 w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:text-gray-800 hover:bg-black/5 transition-colors"
+          >
             <X size={18} />
           </button>
         </div>
@@ -251,11 +263,11 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
           <button
             onClick={back}
             disabled={index === 0}
-            className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600 disabled:opacity-0 transition-colors"
+            className="-ml-2 px-2 h-8 flex items-center gap-1 rounded-lg text-sm text-gray-500 hover:text-gray-800 hover:bg-black/5 disabled:opacity-0 transition-colors"
           >
             <ArrowLeft size={14} /> Back
           </button>
-          <button onClick={finish} className="text-xs text-gray-400 hover:text-gray-600">Skip tour</button>
+          <button onClick={finish} className="px-2 h-8 flex items-center rounded-lg text-xs text-gray-500 hover:text-gray-800 hover:bg-black/5 transition-colors">Skip tour</button>
           {isLast ? (
             <button onClick={finish} className="btn-secondary text-sm">Not now</button>
           ) : (

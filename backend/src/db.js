@@ -533,6 +533,38 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
 `);
 
+// ─── Migrations: password_reset_tokens ────────────────────────────────────────
+// This table shipped once holding the reset token in plain text, in a column
+// called `token`, before it was changed to store only a hash. `CREATE TABLE IF
+// NOT EXISTS` cannot make that change to a database that already exists, so
+// such a database still has the old shape — and every reset query selects
+// `token_hash`, which is a hard SQL error there, not an empty result: nobody on
+// that install could ever reset a password.
+//
+// The column cannot be added in place (SQLite refuses ADD COLUMN for NOT NULL
+// without a default, and for UNIQUE), so the table is rebuilt. Nothing is
+// carried across on purpose: the old rows hold plaintext tokens, they expire
+// within the hour anyway, and moving them over would mean writing a plaintext
+// secret into a column that exists to avoid storing one. A reset link already
+// in flight stops working, and the person asks for another one.
+{
+  const prtCols = db.prepare('PRAGMA table_info(password_reset_tokens)').all().map(r => r.name);
+  if (prtCols.length > 0 && !prtCols.includes('token_hash')) {
+    db.exec(`
+      DROP TABLE password_reset_tokens;
+      CREATE TABLE password_reset_tokens (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL UNIQUE,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
+    `);
+  }
+}
+
 // ─── Migration: add reset_url to password_reset_tokens for admin panel display ─
 {
   const prtCols = db.prepare('PRAGMA table_info(password_reset_tokens)').all().map(r => r.name);
@@ -545,6 +577,41 @@ db.exec(`
   const ssoCols = db.prepare('PRAGMA table_info(users)').all().map(r => r.name);
   if (!ssoCols.includes('sso_provider')) db.exec("ALTER TABLE users ADD COLUMN sso_provider TEXT DEFAULT ''");
 }
+
+// ─── Migrations: platform-staff flag on users ─────────────────────────────
+// `role` says what someone may do INSIDE their own company, and the first user
+// of a brand-new signup is given 'developer' so they can configure their own
+// workspace. That word used to double as "HartMonitor employee", which meant
+// every new customer owner was quietly handed the cross-tenant operator
+// console. The two ideas are separate now: is_platform_staff marks a
+// HartMonitor operator, is never writable through any API, and no signup or
+// invite path touches it. See applyPlatformStaffRoster() below.
+{
+  const staffCols = db.prepare('PRAGMA table_info(users)').all().map(r => r.name);
+  if (!staffCols.includes('is_platform_staff')) {
+    db.exec('ALTER TABLE users ADD COLUMN is_platform_staff INTEGER NOT NULL DEFAULT 0');
+  }
+}
+
+// The only way in is the deployment's own environment: PLATFORM_STAFF_EMAILS is
+// a comma-separated allowlist that only whoever controls the server can set. It
+// is authoritative when present — emails on it are granted, everyone else is
+// revoked — so removing a departed operator from the list actually takes the
+// access away on the next restart. When the variable is absent we leave the
+// column untouched, which keeps a hand-set flag working for self-hosters who
+// would rather manage it in the database.
+function applyPlatformStaffRoster() {
+  const raw = process.env.PLATFORM_STAFF_EMAILS;
+  if (raw === undefined || raw === null) return;
+  const emails = String(raw).split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
+  const sync = db.transaction(() => {
+    db.prepare('UPDATE users SET is_platform_staff = 0 WHERE is_platform_staff = 1').run();
+    const grant = db.prepare('UPDATE users SET is_platform_staff = 1 WHERE email = ?');
+    for (const email of emails) grant.run(email);
+  });
+  sync();
+}
+applyPlatformStaffRoster();
 
 // ─── Migrations: company_id on every directly-scoped table ────────────────────
 // Child tables (table_records, machine_events, stock_levels, stock_movements,
@@ -880,7 +947,7 @@ function seedAppData() {
         { id: uuidv4(), type: 'instruction', order: 0, label: 'Safety Instructions', config: { content: 'Ensure all safety equipment is in place before starting. Wear PPE including gloves and safety glasses.', backgroundColor: '#fef3c7' } },
         { id: uuidv4(), type: 'checkbox', order: 1, label: 'PPE Worn', config: { required: true, variableName: 'ppe_worn' } },
         { id: uuidv4(), type: 'checkbox', order: 2, label: 'Work Area Clear', config: { required: true, variableName: 'area_clear' } },
-        { id: uuidv4(), type: 'button', order: 3, label: '', config: { buttonText: 'Proceed to Assembly', buttonType: 'next', buttonColor: '#22c55e' } }
+        { id: uuidv4(), type: 'button', order: 3, label: '', config: { buttonText: 'Proceed to Assembly', buttonType: 'next', buttonColor: '#4ade80' } }
       ]
     },
     {
@@ -890,7 +957,7 @@ function seedAppData() {
         { id: uuidv4(), type: 'select-input', order: 1, label: 'Part Condition', config: { required: true, variableName: 'part_condition', options: ['Good', 'Minor Defect', 'Major Defect', 'Reject'] } },
         { id: uuidv4(), type: 'text-input', order: 2, label: 'Part Serial Number', config: { required: true, variableName: 'serial_number', placeholder: 'Scan or enter serial number' } },
         { id: uuidv4(), type: 'pass-fail', order: 3, label: 'Visual Inspection', config: { variableName: 'visual_inspection' } },
-        { id: uuidv4(), type: 'button', order: 4, label: '', config: { buttonText: 'Next Step', buttonType: 'next', buttonColor: '#3b82f6' } }
+        { id: uuidv4(), type: 'button', order: 4, label: '', config: { buttonText: 'Next Step', buttonType: 'next', buttonColor: '#60a5fa' } }
       ]
     },
     {
@@ -899,7 +966,7 @@ function seedAppData() {
         { id: uuidv4(), type: 'instruction', order: 0, label: 'Assembly Instructions', config: { content: '1. Place base component on fixture\n2. Apply torque to 15 Nm\n3. Attach side panels using M6 bolts\n4. Verify alignment before final tightening', backgroundColor: '#eff6ff' } },
         { id: uuidv4(), type: 'counter', order: 1, label: 'Bolt Count', config: { variableName: 'bolt_count', min: 0, max: 8, step: 1, initialValue: 0 } },
         { id: uuidv4(), type: 'number-input', order: 2, label: 'Torque Value (Nm)', config: { required: true, variableName: 'torque_value', placeholder: '15' } },
-        { id: uuidv4(), type: 'button', order: 3, label: '', config: { buttonText: 'Assembly Complete', buttonType: 'next', buttonColor: '#3b82f6' } }
+        { id: uuidv4(), type: 'button', order: 3, label: '', config: { buttonText: 'Assembly Complete', buttonType: 'next', buttonColor: '#60a5fa' } }
       ]
     },
     {
@@ -909,7 +976,7 @@ function seedAppData() {
         { id: uuidv4(), type: 'pass-fail', order: 1, label: 'Dimensional Check', config: { variableName: 'dim_check' } },
         { id: uuidv4(), type: 'pass-fail', order: 2, label: 'Functional Test', config: { variableName: 'func_test' } },
         { id: uuidv4(), type: 'text-input', order: 3, label: 'Inspector Notes', config: { variableName: 'inspector_notes', placeholder: 'Enter any observations...' } },
-        { id: uuidv4(), type: 'button', order: 4, label: '', config: { buttonText: 'Complete Process', buttonType: 'complete', buttonColor: '#22c55e' } }
+        { id: uuidv4(), type: 'button', order: 4, label: '', config: { buttonText: 'Complete Process', buttonType: 'complete', buttonColor: '#4ade80' } }
       ]
     }
   ];
@@ -1361,7 +1428,7 @@ function loadSampleDataForCompany(companyId) {
       widgets: [
         { id: uuidv4(), type: 'instruction', order: 0, label: 'Safety Instructions', config: { content: 'Ensure all safety equipment is in place before starting. Wear PPE including gloves and safety glasses.', backgroundColor: '#fef3c7' } },
         { id: uuidv4(), type: 'checkbox', order: 1, label: 'PPE Worn', config: { required: true, variableName: 'ppe_worn' } },
-        { id: uuidv4(), type: 'button', order: 2, label: '', config: { buttonText: 'Proceed to Assembly', buttonType: 'next', buttonColor: '#22c55e' } }
+        { id: uuidv4(), type: 'button', order: 2, label: '', config: { buttonText: 'Proceed to Assembly', buttonType: 'next', buttonColor: '#4ade80' } }
       ]
     },
     {
@@ -1369,14 +1436,14 @@ function loadSampleDataForCompany(companyId) {
       widgets: [
         { id: uuidv4(), type: 'instruction', order: 0, label: 'Assembly Instructions', config: { content: '1. Place base component on fixture\n2. Apply torque to 15 Nm\n3. Verify alignment before final tightening', backgroundColor: '#eff6ff' } },
         { id: uuidv4(), type: 'counter', order: 1, label: 'Bolt Count', config: { variableName: 'bolt_count', min: 0, max: 8, step: 1, initialValue: 0 } },
-        { id: uuidv4(), type: 'button', order: 2, label: '', config: { buttonText: 'Assembly Complete', buttonType: 'next', buttonColor: '#3b82f6' } }
+        { id: uuidv4(), type: 'button', order: 2, label: '', config: { buttonText: 'Assembly Complete', buttonType: 'next', buttonColor: '#60a5fa' } }
       ]
     },
     {
       id: uuidv4(), name: 'Quality Check', order: 2, takt_time: 120,
       widgets: [
         { id: uuidv4(), type: 'pass-fail', order: 0, label: 'Final Inspection', config: { variableName: 'final_inspection' } },
-        { id: uuidv4(), type: 'button', order: 1, label: '', config: { buttonText: 'Complete Process', buttonType: 'complete', buttonColor: '#22c55e' } }
+        { id: uuidv4(), type: 'button', order: 1, label: '', config: { buttonText: 'Complete Process', buttonType: 'complete', buttonColor: '#4ade80' } }
       ]
     }
   ];
@@ -1682,6 +1749,24 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_routing_steps_routing ON routing_steps(routing_id, step_number);
   CREATE INDEX IF NOT EXISTS idx_product_routings_company ON product_routings(company_id);
 `);
+
+// `CREATE TABLE IF NOT EXISTS` does nothing to a table that already exists, so a
+// database created before routing_steps carried company_id still has no such
+// column — and the routings department filter selects `rs2.company_id`, which is
+// a hard SQL error, not an empty result. Add it if missing, then backfill from
+// the parent routing so existing steps are not left tenant-less and invisible to
+// every filtered query. Both halves are idempotent.
+{
+  const routingStepCols = db.prepare('PRAGMA table_info(routing_steps)').all().map(r => r.name);
+  if (!routingStepCols.includes('company_id')) {
+    db.exec('ALTER TABLE routing_steps ADD COLUMN company_id TEXT REFERENCES organizations(id)');
+  }
+  db.exec(`
+    UPDATE routing_steps
+       SET company_id = (SELECT pr.company_id FROM product_routings pr WHERE pr.id = routing_steps.routing_id)
+     WHERE company_id IS NULL
+  `);
+}
 
 // ─── Migrations: work_orders (routing_id, assigned_user_id) ──────────────────
 
@@ -2128,7 +2213,29 @@ db.exec(`
     db.exec('ALTER TABLE completions ADD COLUMN operator_user_id TEXT REFERENCES users(id) ON DELETE SET NULL');
   if (!cCols.includes('kit_id'))
     db.exec('ALTER TABLE completions ADD COLUMN kit_id TEXT');
+  // Last time anyone touched this run — set on every autosave flush, step
+  // change and status change, including the keepalive flush the player fires
+  // on pagehide. `started_at` alone cannot answer "is this run still alive?":
+  // a job legitimately worked for ten hours and a job abandoned ten hours ago
+  // look identical by start time. NULL on rows written before this column
+  // existed, so every reader falls back to started_at.
+  if (!cCols.includes('last_activity_at'))
+    db.exec('ALTER TABLE completions ADD COLUMN last_activity_at TEXT');
+  // Why a run ended up 'abandoned'. The status column's CHECK allows exactly
+  // three words and a CHECK cannot be altered in place, so the reaper cannot
+  // invent a fourth status — it writes 'abandoned' and records the reason
+  // here instead. '' on legacy rows (we genuinely do not know), 'operator'
+  // when a person pressed Abandon, 'stale_timeout' when the sweeper closed it.
+  if (!cCols.includes('abandoned_reason'))
+    db.exec("ALTER TABLE completions ADD COLUMN abandoned_reason TEXT NOT NULL DEFAULT ''");
 }
+
+// The reaper scans for open runs by age; without this the sweep is a full table
+// scan on every pass.
+db.exec(`
+  CREATE INDEX IF NOT EXISTS idx_completions_open
+    ON completions(status, last_activity_at);
+`);
 
 // ─── BOM / Kitting / structured completion capture (app-platform v2) ─────────
 
@@ -2377,6 +2484,71 @@ db.exec(`
     ON department_members(company_id, department_id);
 `);
 
+// ─── CI Projects: where a Kaizen idea gets EXECUTED ───────────────────────────
+// An idea is where improvement work starts; a project is where it gets planned,
+// scheduled and tracked to a close. ci_projects.kaizen_idea_id is the (nullable)
+// link back to the idea that spawned it — nullable because a CI manager may also
+// stand a project up directly, without an idea ever having been filed.
+//
+// The status vocabularies below are the ONLY words these columns accept. The
+// Projects screen keys off exactly these strings and keeps its human labels in a
+// separate map — a page that offers a word the CHECK forbids saves with a 500,
+// and one that writes 'in-progress' but reads 'in_progress' creates rows it can
+// never find again. Both have shipped here before.
+//
+// Additive and guarded: CREATE TABLE / CREATE INDEX IF NOT EXISTS only.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS ci_projects (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    number TEXT NOT NULL,
+    name TEXT NOT NULL,
+    description TEXT DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'planning'
+      CHECK(status IN ('planning','active','on_hold','complete','cancelled')),
+    department_id TEXT REFERENCES departments(id) ON DELETE SET NULL,
+    owner_name TEXT DEFAULT '',
+    kaizen_idea_id TEXT REFERENCES kaizen_ideas(id) ON DELETE SET NULL,
+    start_date TEXT,
+    target_date TEXT,
+    completed_at TEXT,
+    estimated_savings REAL DEFAULT 0,
+    actual_savings REAL DEFAULT 0,
+    created_by TEXT DEFAULT '',
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_ci_projects_lookup
+    ON ci_projects(company_id, status, created_at DESC);
+  CREATE INDEX IF NOT EXISTS idx_ci_projects_number
+    ON ci_projects(company_id, number);
+  CREATE INDEX IF NOT EXISTS idx_ci_projects_idea
+    ON ci_projects(company_id, kaizen_idea_id);
+  CREATE INDEX IF NOT EXISTS idx_ci_projects_department
+    ON ci_projects(company_id, department_id);
+
+  CREATE TABLE IF NOT EXISTS ci_project_tasks (
+    id TEXT PRIMARY KEY,
+    company_id TEXT NOT NULL REFERENCES organizations(id),
+    project_id TEXT NOT NULL REFERENCES ci_projects(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'not_started'
+      CHECK(status IN ('not_started','in_progress','blocked','done')),
+    assignee_name TEXT DEFAULT '',
+    start_date TEXT,
+    end_date TEXT,
+    progress INTEGER NOT NULL DEFAULT 0 CHECK(progress >= 0 AND progress <= 100),
+    depends_on TEXT REFERENCES ci_project_tasks(id) ON DELETE SET NULL,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_ci_project_tasks_project
+    ON ci_project_tasks(company_id, project_id, sort_order);
+  CREATE INDEX IF NOT EXISTS idx_ci_project_tasks_depends
+    ON ci_project_tasks(depends_on);
+`);
+
 // ─── Analytics / perf indexes (run last, after every additive column migration) ─
 // Placed here on purpose: some of these columns (e.g. completions.company_id)
 // are added by guarded ALTERs above, so an index referencing them earlier in the
@@ -2390,6 +2562,11 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_completions_company_station   ON completions(company_id, station_id, status, completed_at);
   CREATE INDEX IF NOT EXISTS idx_machine_events_station_type   ON machine_events(station_id, event_type, started_at);
   CREATE INDEX IF NOT EXISTS idx_routing_steps_department      ON routing_steps(company_id, department_id, routing_id);
+  -- The Command Center scopes every tile by department and app; work_orders had
+  -- no index at all beyond its primary key, so each filtered tile was a full
+  -- table scan.
+  CREATE INDEX IF NOT EXISTS idx_work_orders_company_dept_app  ON work_orders(company_id, department_id, app_id);
+  CREATE INDEX IF NOT EXISTS idx_work_orders_company_status    ON work_orders(company_id, status);
 `);
 
 module.exports = db;

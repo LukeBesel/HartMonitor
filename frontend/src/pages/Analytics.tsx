@@ -8,6 +8,7 @@ import {
 import { TrendingUp, CheckCircle, Clock, Users, Activity, BarChart2, Filter, X, Timer, ChevronDown, AlertTriangle, RefreshCw } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import { StepMetricsPanel } from './StepMetrics';
+import { fmtDuration } from '../components/apps/appModel';
 
 const COLORS = ['#22c55e', '#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6'];
 const DAYS_OPTIONS = [7, 14, 30, 90];
@@ -278,10 +279,21 @@ export default function Analytics() {
       <>
       {/* KPI cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard icon={<CheckCircle size={18} className="text-green-600" />} bg="bg-green-50" label="Total Completions" value={overview?.totalCompletions ?? '—'} />
-        <KPICard icon={<Clock size={18} className="text-blue-600" />} bg="bg-blue-50" label="Avg Cycle Time" value={overview && overview.avgCycleTime != null ? `${overview.avgCycleTime}m` : '—'} />
-        <KPICard icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50" label="Pass Rate" value={passRate !== null ? `${passRate}%` : '—'} />
-        <KPICard icon={<Activity size={18} className="text-orange-600" />} bg="bg-orange-50" label="Today" value={overview?.todayCompletions ?? '—'} />
+        <KPICard icon={<CheckCircle size={18} className="text-green-600" />} bg="bg-green-50" label="Total Completions"
+          value={overview ? overview.totalCompletions : null} note={overview ? null : 'not loaded'} />
+        {/* Seconds in, unit out: fmtDuration prints 12s / 3m 20s / 1h 5m, so a
+            sub-minute operation stops reading "0m". */}
+        <KPICard icon={<Clock size={18} className="text-blue-600" />} bg="bg-blue-50" label="Avg Cycle Time"
+          title="Wall clock from run start to run finish, over completed runs only."
+          value={overview?.avgCycleSeconds != null ? fmtDuration(overview.avgCycleSeconds) : null}
+          note={overview?.avgCycleSeconds != null ? 'start to finish, completed runs' : 'no completed runs in scope'} />
+        <KPICard icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50" label="Pass Rate"
+          value={passRate !== null ? `${passRate}%` : null}
+          note={passRate !== null
+            ? `from ${overview?.qcSampleSize ?? 0} inspected run${overview?.qcSampleSize === 1 ? '' : 's'}`
+            : 'no pass/fail checks recorded'} />
+        <KPICard icon={<Activity size={18} className="text-orange-600" />} bg="bg-orange-50" label="Today"
+          value={overview ? overview.todayCompletions : null} note={overview ? null : 'not loaded'} />
       </div>
 
       {/* Throughput + Quality */}
@@ -319,7 +331,7 @@ export default function Analytics() {
               </ResponsiveContainer>
               <div className="flex justify-center gap-4 text-xs mt-2">
                 <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-green-500 rounded-full inline-block" />Pass {passRate}%</span>
-                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-red-500 rounded-full inline-block" />Fail {100 - (passRate ?? 0)}%</span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 bg-red-500 rounded-full inline-block" />Fail {100 - passRate!}%</span>
               </div>
               {typeof overview?.qcSampleSize === 'number' && (
                 <div className="text-center text-[11px] text-gray-400 mt-1">
@@ -387,7 +399,9 @@ export default function Analytics() {
                 <div className="flex-1 min-w-0">
                   <div className="flex justify-between items-center mb-0.5">
                     <span className="text-sm font-medium text-gray-800 truncate">{op.operator_name}</span>
-                    <span className="text-xs text-gray-500 ml-2 flex-shrink-0">{op.completions} runs · {op.avg_cycle_minutes}m avg</span>
+                    <span className="text-xs text-gray-500 ml-2 flex-shrink-0">
+                      {op.completions} runs · {op.avg_cycle_seconds == null ? '— avg' : `${fmtDuration(op.avg_cycle_seconds)} avg`}
+                    </span>
                   </div>
                   <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
                     <div className="h-full bg-blue-500 rounded-full" style={{ width: `${Math.min(100, (op.completions / (operators[0]?.completions || 1)) * 100)}%` }} />
@@ -414,7 +428,7 @@ export default function Analytics() {
                   <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full ml-2">{ap.completions} runs</span>
                 </div>
                 <div className="flex gap-3 text-xs text-gray-500">
-                  <span><Clock size={10} className="inline mr-0.5" />{ap.avg_cycle_minutes}m avg</span>
+                  <span><Clock size={10} className="inline mr-0.5" />{ap.avg_cycle_seconds == null ? '— avg' : `${fmtDuration(ap.avg_cycle_seconds)} avg`}</span>
                   {ap.abandoned_count > 0 && <span className="text-red-500">{ap.abandoned_count} abandoned</span>}
                 </div>
               </div>
@@ -429,13 +443,22 @@ export default function Analytics() {
   );
 }
 
-function KPICard({ icon, bg, label, value }: any) {
+// A KPI with nothing behind it shows an em-dash and why, never a zero. `value`
+// is null exactly when the number is unknown; `note` is the short reason (or a
+// bit of provenance when the number IS known, so the two tiles that could be
+// confused for each other say what they measure).
+function KPICard({ icon, bg, label, value, note, title }: {
+  icon: React.ReactNode; bg: string; label: string;
+  value: string | number | null; note?: string | null; title?: string;
+}) {
+  const known = value !== null && value !== undefined;
   return (
-    <div className="stat-card flex items-center gap-3">
+    <div className="stat-card flex items-center gap-3" title={title}>
       <div className={`w-10 h-10 ${bg} rounded-lg flex items-center justify-center flex-shrink-0`}>{icon}</div>
-      <div>
-        <div className="text-xl font-bold text-gray-900">{value}</div>
+      <div className="min-w-0">
+        <div className={`text-xl font-bold ${known ? 'text-gray-900' : 'text-gray-400'}`}>{known ? value : '—'}</div>
         <div className="text-xs text-gray-500">{label}</div>
+        {note && <div className="text-[11px] text-gray-400 truncate" title={note}>{note}</div>}
       </div>
     </div>
   );

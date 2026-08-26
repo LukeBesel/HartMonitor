@@ -2,7 +2,7 @@ import { createContext, useContext, useEffect, useState, ReactNode, useCallback 
 import { api } from '../api/client';
 import type { RolePermissionMap } from '../types';
 import type { NavItem } from '../config/navigation';
-import { useAuth } from './AuthContext';
+import { useAuth, useAuthUserId } from './AuthContext';
 
 const ROLE_LEVELS: Record<string, number> = { manager: 4, supervisor: 3, operator: 2, viewer: 1 };
 
@@ -17,6 +17,7 @@ const PermissionsContext = createContext<PermissionsContextValue | null>(null);
 
 export function PermissionsProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
+  const userId = useAuthUserId();
   const [permissions, setPermissions] = useState<RolePermissionMap | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -25,12 +26,20 @@ export function PermissionsProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (user) refresh();
+    if (userId) refresh();
     else { setPermissions(null); setLoading(false); }
-  }, [user, refresh]);
+  }, [userId, refresh]);
 
   const canShowNavItem = useCallback((item: NavItem): boolean => {
     if (!user) return false;
+
+    // Platform-operator tooling is checked FIRST and answers on its own. It is
+    // not a role question at all: 'developer' is what the first user of every
+    // new signup is given, so the role short-circuit below would hand
+    // HartMonitor's own console to every customer owner. No permission
+    // override can turn it back on either — this is the whole gate.
+    if (item.platformStaffOnly) return !!user.is_platform_staff;
+
     if (user.role === 'developer') return true;
 
     const userLevel = ROLE_LEVELS[user.role] ?? 0;

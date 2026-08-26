@@ -10,6 +10,8 @@ import {
   Users, Clock, Package, AlertTriangle, RefreshCw, TrendingUp, Calendar,
   CheckCircle2, ChevronDown, ChevronUp, Pencil, Check, X, Building2
 } from 'lucide-react';
+import { tintedChipStyle } from '../utils/contrast';
+import { useIsDark } from '../utils/useIsDark';
 
 interface WOCapacity {
   id: string;
@@ -74,6 +76,7 @@ const PRIORITY_COLORS: Record<string, string> = {
 };
 
 export default function CapacityPlanning() {
+  const darkMode = useIsDark();
   const { canEdit } = useAuth();
   // GET /analytics/capacity takes no parameters and always returns the whole
   // company, so the narrowing happens here — over the work orders, the
@@ -414,10 +417,7 @@ export default function CapacityPlanning() {
                             <td className="px-4 py-3">
                               <span
                                 className="text-xs font-medium px-2 py-0.5 rounded-full"
-                                style={{
-                                  backgroundColor: (wo.department_color || '#6b7280') + '22',
-                                  color: wo.department_color || '#6b7280'
-                                }}
+                                style={tintedChipStyle(wo.department_color, darkMode)}
                               >
                                 {wo.department_name}
                               </span>

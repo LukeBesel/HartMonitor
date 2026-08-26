@@ -2,11 +2,12 @@ import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   AlertTriangle, ShieldCheck, Plus, Search, Download, X,
-  User, Calendar, MessageSquare, ChevronRight, AlertCircle,
+  User, Calendar, MessageSquare, ChevronRight, ChevronLeft, AlertCircle, RefreshCw,
   Package, Briefcase, Cpu, Clock, Send, Trash2, History,
 } from 'lucide-react';
 import { api } from '../api/client';
 import ActivityLog from '../components/shared/ActivityLog';
+import EmptyState from '../components/shared/EmptyState';
 import SavedViewsBar from '../components/shared/SavedViewsBar';
 import { useAuth } from '../context/AuthContext';
 
@@ -366,14 +367,31 @@ function NCRDetail({ ncrId, onClose, onRefresh }: {
     }
   }
 
+  // A stale bookmark or a link to a deleted NCR must say so. Same shape as
+  // every other detail route (/apps/:id, /stations/:id, /tables/:id): a way
+  // back to the list, then a titled explanation with a Retry — a bare "Not
+  // found" tucked in the side panel reads as nothing at all next to a full
+  // list of NCRs that loaded fine.
   if (loadError) {
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-3 p-6 text-center">
-        <AlertCircle size={32} className="text-red-400" />
-        <p className="text-sm text-gray-500">{loadError}</p>
-        <div className="flex items-center gap-2">
-          <button className="btn-secondary" onClick={load}>Retry</button>
-          <button className="btn-ghost" onClick={onClose}>Close</button>
+      <div className="flex flex-col h-full overflow-y-auto p-6 gap-4">
+        <button
+          onClick={onClose}
+          className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800 self-start"
+        >
+          <ChevronLeft size={15} /> All NCRs
+        </button>
+        <div className="card p-8">
+          <EmptyState
+            icon={AlertTriangle}
+            title="Couldn't open this NCR"
+            description={`${loadError}. It may have been deleted, or it belongs to another company.`}
+            action={
+              <button className="btn-secondary" onClick={load}>
+                <RefreshCw size={14} /> Retry
+              </button>
+            }
+          />
         </div>
       </div>
     );

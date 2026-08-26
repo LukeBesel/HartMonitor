@@ -59,7 +59,7 @@ export function defaultWidget(type: WidgetType): Widget {
   switch (type) {
     case 'text': return { ...base, label: '', config: { text: 'Enter text here', fontSize: 16, color: '#374151' } };
     case 'instruction': return { ...base, label: 'Instructions', config: { content: 'Step instructions go here...', backgroundColor: '#eff6ff' } };
-    case 'button': return { ...base, label: '', config: { buttonText: 'Next', buttonType: 'next', buttonColor: '#3b82f6', buttonSize: 'md', buttonVariant: 'solid', buttonShape: 'rounded', fullWidth: true } };
+    case 'button': return { ...base, label: '', config: { buttonText: 'Next', buttonType: 'next', buttonColor: '#60a5fa', buttonSize: 'md', buttonVariant: 'solid', buttonShape: 'rounded', fullWidth: true } };
     case 'text-input': return { ...base, label: 'Text Field', config: { placeholder: 'Enter value...', required: false, variableName: `field_${Date.now()}` } };
     case 'number-input': return { ...base, label: 'Number Field', config: { placeholder: '0', required: false, variableName: `num_${Date.now()}` } };
     case 'select-input': return { ...base, label: 'Select Field', config: { options: ['Option 1', 'Option 2', 'Option 3'], variableName: `sel_${Date.now()}` } };

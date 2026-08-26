@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, ReactNode } from 'react';
 import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
-import { api, setNativeToken } from '../api/client';
+import { api, setNativeToken, invalidateApiCache } from '../api/client';
 
 interface User {
   id: string;
@@ -9,6 +9,12 @@ interface User {
   display_name: string;
   role: 'developer' | 'manager' | 'supervisor' | 'operator' | 'viewer';
   company_name?: string;
+  /** True only for HartMonitor's own staff. Separate from `role`, which says
+   *  what someone may do inside their own company — the first user of every
+   *  new signup is a 'developer' there and must never be treated as platform
+   *  staff. Nothing in the API can set this; it comes from the deployment's
+   *  PLATFORM_STAFF_EMAILS allowlist. */
+  is_platform_staff?: boolean;
 }
 
 interface AuthContextValue {
@@ -52,11 +58,24 @@ async function loadToken(): Promise<string | null> {
   return value;
 }
 
+// Every context in the app hangs its data fetch off the `user` object, so a new
+// object for the same person is not free — it is a fresh round of /config,
+// /sites, /permissions, /modules and /messages. Boot hands us the same person
+// twice (the copy cached in localStorage, then the answer from /auth/me), so
+// keep the object we already have whenever the new one says the same thing.
+function sameUser(a: User | null, b: User | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(() => {
+  const [user, setUserState] = useState<User | null>(() => {
     const stored = localStorage.getItem('hm_user');
     return stored ? JSON.parse(stored) : null;
   });
+  const setUser = (next: User | null) =>
+    setUserState(prev => (sameUser(prev, next) ? prev : next));
   const [loading, setLoading] = useState(true);
   const tokenRef = useRef<string | null>(null);
 
@@ -99,6 +118,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = async (email: string, password: string) => {
     const data = await api.login(email, password);
+    invalidateApiCache();
     if (data.token) {
       tokenRef.current = data.token;
       await saveToken(data.token);
@@ -141,6 +161,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = async () => {
     await api.logout().catch(() => {});
+    // Nothing the previous session read may be handed to the next one.
+    invalidateApiCache();
     tokenRef.current = null;
     await clearToken();
     localStorage.removeItem('hm_user');
@@ -174,3 +196,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 }
 
 export const useAuth = () => useContext(AuthContext);
+
+/**
+ * The signed-in user's id, or null when nobody is.
+ *
+ * Data-loading effects belong on this and not on the `user` object. Identity is
+ * the only thing that decides whose data to fetch, so hanging a fetch off the
+ * whole object means a display-name edit — or simply /auth/me answering with
+ * the same person again — re-runs every provider's load. Multiply that by the
+ * eight providers wrapping the app and one navigation costs the API twice what
+ * it should.
+ */
+export const useAuthUserId = (): string | null => useAuth().user?.id ?? null;

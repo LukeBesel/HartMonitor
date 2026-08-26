@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import type { Widget, WidgetConfig, WidgetType, WidgetLayout } from '../../types';
 import { instructionInk } from '../player/runtime';
+import { contrastRatio, readableInk, shiftUntilReadable } from '../../utils/contrast';
 
 // Fixed logical canvas width. Both the builder and player render the canvas at
 // this width, then scale uniformly to fit their container — so what you build is
@@ -95,14 +96,38 @@ export function buttonAppearance(config: WidgetConfig): ButtonAppearance {
   };
 }
 
-/** Variant → background/text/border styles for the configured accent color. */
-export function buttonVariantStyle(variant: ButtonAppearance['variant'], color: string): React.CSSProperties {
+/** The ground a widget button is drawn on. Both renderers put it there: the
+ *  player's shell and the builder's WYSIWYG stage are the same near-black. */
+export const WIDGET_GROUND = '#12161d';
+
+/**
+ * Variant → background/text/border styles for the configured accent color.
+ *
+ * The label color is never assumed. A solid button takes its label from its own
+ * fill, so the green an author picks from the color well arrives with dark ink
+ * instead of the white that measured 2.28:1 on it; outline and ghost buttons
+ * draw the label in the accent itself, lightened only if that accent would be
+ * lost against the ground behind it.
+ */
+export function buttonVariantStyle(
+  variant: ButtonAppearance['variant'],
+  color: string,
+  ground: string = WIDGET_GROUND,
+): React.CSSProperties {
   const tint = /^#[0-9a-fA-F]{6}$/.test(color) ? `${color}1f` : 'rgba(127, 127, 127, 0.12)';
+  const onGround = shiftUntilReadable(color, ground) || color;
   switch (variant) {
-    case 'outline': return { background: 'transparent', color, border: `2px solid ${color}` };
-    case 'ghost':   return { background: tint, color, border: '2px solid transparent' };
-    default:        return { background: color, color: '#ffffff', border: '2px solid transparent' };
+    case 'outline': return { background: 'transparent', color: onGround, border: `2px solid ${onGround}` };
+    case 'ghost':   return { background: tint, color: onGround, border: '2px solid transparent' };
+    default:        return { background: color, color: readableInk(color), border: '2px solid transparent' };
   }
+}
+
+/** Contrast a solid button's label will actually be drawn at, or null when the
+ *  color cannot be parsed. The builder shows this next to the color well. */
+export function buttonLabelContrast(color: string | undefined | null): number | null {
+  if (!color) return null;
+  return contrastRatio(readableInk(color), color);
 }
 
 // ─── Shape widget (canvas decoration — pure SVG) ──────────────────────────────
@@ -479,7 +504,7 @@ export function WidgetView({ widget, value, onChange, onNext, onPrev, onComplete
       return (
         <button type="button" onClick={click}
           className="w-full h-full font-semibold transition-all hover:opacity-90 active:scale-[0.99] inline-flex items-center justify-center gap-2"
-          style={{ ...buttonVariantStyle(ap.variant, config.buttonColor || '#3b82f6'), fontSize, borderRadius: ap.radius }}>
+          style={{ ...buttonVariantStyle(ap.variant, config.buttonColor || '#60a5fa'), fontSize, borderRadius: ap.radius }}>
           {ButtonIcon && <ButtonIcon size={Math.round(fontSize * 1.15)} className="flex-shrink-0" />}
           {config.buttonText || 'Next'}
         </button>

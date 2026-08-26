@@ -8,12 +8,15 @@ import {
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
+import { fmtDuration } from '../components/apps/appModel';
 
 interface DeptViewData {
   department: { id: string; name: string; color: string; manager_name: string; description: string; headcount: number };
   kpis: {
     completed_today: number; active_now: number; pass_rate: number | null;
-    avg_cycle_time: number; wos_on_track: number; wos_total: number;
+    // `avg_cycle_time` is whole minutes and reads 0 for anything under 30
+    // seconds; `avg_cycle_seconds` is what a screen should render.
+    avg_cycle_time: number; avg_cycle_seconds: number | null; wos_on_track: number; wos_total: number;
   };
   stations: Array<{
     id: string; name: string; location: string; status: string;
@@ -152,7 +155,7 @@ export default function DepartmentView() {
         <KPICard icon={<CheckCircle2 size={18} className="text-green-600" />} bg="bg-green-50" label="Completed Today" value={kpis.completed_today} />
         <KPICard icon={<Activity size={18} className="text-blue-600" />} bg="bg-blue-50" label="Active Now" value={kpis.active_now} />
         <KPICard icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50" label="Pass Rate (7d)" value={kpis.pass_rate !== null ? `${kpis.pass_rate}%` : '—'} />
-        <KPICard icon={<Clock size={18} className="text-orange-600" />} bg="bg-orange-50" label="Avg Cycle Time" value={kpis.avg_cycle_time ? `${kpis.avg_cycle_time}m` : '—'} />
+        <KPICard icon={<Clock size={18} className="text-orange-600" />} bg="bg-orange-50" label="Avg Cycle Time" value={kpis.avg_cycle_seconds != null ? fmtDuration(kpis.avg_cycle_seconds) : '—'} />
         <KPICard icon={<Package size={18} className="text-indigo-600" />} bg="bg-indigo-50" label="WOs On Track" value={`${kpis.wos_on_track} / ${kpis.wos_total}`} />
       </div>
 

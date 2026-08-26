@@ -1,5 +1,6 @@
 const express = require('express');
 const db = require('../db');
+const { plantDayShift } = require('../plantDay');
 const { calcScheduleStatus } = require('./workorders');
 const { calcOEE } = require('./oee');
 const { teamOf: andonTeamOf, teamLabel: andonTeamLabel } = require('../andonTeams');
@@ -13,9 +14,12 @@ const router = express.Router();
 //
 // The fragment is spliced into whatever query the caller wrote, so every column
 // it names must exist on `completions` itself (`app_id`, `product_type_id`,
-// `work_order_id`, `station_id`) and must be written WITHOUT a table qualifier —
-// callers alias the table differently (or not at all), and a qualifier that does
-// not match the caller's alias is a 500 on a page a customer is reading.
+// `work_order_id`, `station_id`). Callers alias the table differently (or not at
+// all), so the qualifier is a parameter: pass the alias the caller used, or
+// nothing when the query has no other table in scope. A qualifier that does not
+// match the caller's alias is a 500 on a page a customer is reading — and an
+// UNqualified `app_id` in a query that also joins `work_orders` is an
+// "ambiguous column name" 500 for exactly the same reason.
 //
 // `completions` has no department_id. A completion belongs to its work order's
 // department, falling back to its station's department when the work order has
@@ -32,29 +36,94 @@ const router = express.Router();
 // for a completion whose work order carries no department and whose station
 // carries none. Nothing is silently filed under whichever department is on
 // screen.
-const DEPARTMENT_COMPLETION_CLAUSE = `(
-    work_order_id IN (SELECT id FROM work_orders WHERE company_id = ? AND department_id = ?)
+function departmentCompletionClause(p) {
+  return `(
+    ${p}work_order_id IN (SELECT id FROM work_orders WHERE company_id = ? AND department_id = ?)
     OR (
-      (work_order_id IS NULL
-       OR work_order_id NOT IN (SELECT id FROM work_orders WHERE company_id = ? AND department_id IS NOT NULL))
-      AND station_id IN (SELECT id FROM stations WHERE company_id = ? AND department_id = ?)
+      (${p}work_order_id IS NULL
+       OR ${p}work_order_id NOT IN (SELECT id FROM work_orders WHERE company_id = ? AND department_id IS NOT NULL))
+      AND ${p}station_id IN (SELECT id FROM stations WHERE company_id = ? AND department_id = ?)
     )
   )`;
+}
 
-function completionFilter(req) {
+// A completion's SITE, written the same alias-agnostic way. Site follows a
+// different rule from department and app on purpose, and it is the rule the
+// rest of this file already uses (`/plant-view`, `/manager-view`, GET
+// /departments): a record with no site belongs to the whole company and stays
+// visible under every site, so selecting the auto-created primary site never
+// empties the page for a company that has never used sites. A record belonging
+// to a DIFFERENT site is excluded.
+function siteCompletionClause(p) {
+  return `(
+    ${p}work_order_id IN (SELECT id FROM work_orders WHERE company_id = ? AND (site_id = ? OR site_id IS NULL))
+    OR (
+      (${p}work_order_id IS NULL
+       OR ${p}work_order_id NOT IN (SELECT id FROM work_orders WHERE company_id = ? AND site_id IS NOT NULL))
+      AND (
+        ${p}station_id IS NULL
+        OR ${p}station_id IN (SELECT id FROM stations WHERE company_id = ? AND (site_id = ? OR site_id IS NULL))
+      )
+    )
+  )`;
+}
+
+/**
+ * @param req   the request, read for ?app_id / ?product_type_id / ?department_id
+ * @param alias table alias (or table name) to qualify the columns with. Pass it
+ *              whenever the caller's query joins another table that also has an
+ *              `app_id` column — `work_orders` does, and an unqualified
+ *              `app_id = ?` against that join is an "ambiguous column name" 500.
+ */
+function completionFilter(req, alias = '') {
+  const p = alias ? `${alias}.` : '';
   const clauses = [];
   const params = [];
-  if (req.query.app_id) { clauses.push('app_id = ?'); params.push(req.query.app_id); }
-  if (req.query.product_type_id) { clauses.push('product_type_id = ?'); params.push(req.query.product_type_id); }
+  if (req.query.app_id) { clauses.push(`${p}app_id = ?`); params.push(req.query.app_id); }
+  if (req.query.product_type_id) { clauses.push(`${p}product_type_id = ?`); params.push(req.query.product_type_id); }
   if (req.query.department_id) {
-    clauses.push(DEPARTMENT_COMPLETION_CLAUSE);
+    clauses.push(departmentCompletionClause(p));
     params.push(
       req.companyId, req.query.department_id,   // work order's own department
       req.companyId,                            // …unless that work order has none
       req.companyId, req.query.department_id,   // …then fall back to the station's
     );
   }
+  if (req.query.site_id) {
+    clauses.push(siteCompletionClause(p));
+    params.push(
+      req.companyId, req.query.site_id,         // work order's own site (or none)
+      req.companyId,                            // …unless that work order has one
+      req.companyId, req.query.site_id,         // …then fall back to the station's
+    );
+  }
   return { clause: clauses.length ? ' AND ' + clauses.join(' AND ') : '', params };
+}
+
+// ─── Work-order scope ─────────────────────────────────────────────────────────
+// The same page scope, expressed against `work_orders` instead of `completions`.
+// A work order carries both dimensions itself, so no fallback is needed — but
+// the same honesty rule applies: a work order with no department (or no app) is
+// not evidence about any one department (or app), so it drops out of a specific
+// selection instead of being filed under whichever one is on screen.
+//
+// Cross-tenant safety comes from the caller's own `company_id = ?`: an id
+// belonging to another company simply matches no row here, it never widens.
+function workOrderScope(req, alias = 'wo') {
+  const a = alias ? `${alias}.` : '';
+  const clauses = [];
+  const params = [];
+  if (req.query.department_id) { clauses.push(`${a}department_id = ?`); params.push(req.query.department_id); }
+  if (req.query.app_id)        { clauses.push(`${a}app_id = ?`);        params.push(req.query.app_id); }
+  // Site is not a dimension in the same sense: a work order with no site is not
+  // ambiguous, it simply predates sites, so it stays visible under every one.
+  if (req.query.site_id)       { clauses.push(`(${a}site_id = ? OR ${a}site_id IS NULL)`); params.push(req.query.site_id); }
+  return { clause: clauses.length ? ' AND ' + clauses.join(' AND ') : '', params };
+}
+
+/** True when the request asked for anything narrower than the whole plant. */
+function isScoped(req) {
+  return !!(req.query.department_id || req.query.app_id);
 }
 
 // Clamp a user-supplied ?days= value to a sane integer — parseInt('abc') is NaN
@@ -68,8 +137,11 @@ function safeDays(value, fallback) {
 router.get('/overview', (req, res) => {
   const cid = req.companyId;
   const f = completionFilter(req);
+  // The plant's day, not Greenwich's: bound to both sides of every "today"
+  // comparison so a second-shift crew's counters don't reset mid-shift.
+  const day = plantDayShift(cid);
   const totalCompletions  = db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed'${f.clause}`).get(cid, ...f.params).c;
-  const todayCompletions  = db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed' AND date(completed_at)=date('now')${f.clause}`).get(cid, ...f.params).c;
+  const todayCompletions  = db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed' AND date(completed_at, ?)=date('now', ?)${f.clause}`).get(cid, day, day, ...f.params).c;
   const inProgress        = db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='in_progress'${f.clause}`).get(cid, ...f.params).c;
   const totalApps         = db.prepare("SELECT COUNT(*) as c FROM apps WHERE company_id = ?").get(cid).c;
   const publishedApps     = db.prepare("SELECT COUNT(*) as c FROM apps WHERE company_id = ? AND status='published'").get(cid).c;
@@ -79,7 +151,18 @@ router.get('/overview', (req, res) => {
     SELECT AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60) as avg_minutes
     FROM completions WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL${f.clause}
   `).get(cid, ...f.params);
-  const avgCycleTime = cycleTimeResult?.avg_minutes ? Math.round(cycleTimeResult.avg_minutes) : null;
+  // Report the average in SECONDS. Rounding to whole minutes here threw away
+  // the only precision a short operation has: a press, a pick-and-place or a
+  // visual check averaging twelve seconds came back as 0 and the page printed
+  // "0m" for a run that plainly took time. The client picks the unit.
+  //
+  // `avgCycleTime` (whole minutes) stays on the payload for anything already
+  // reading it, but nothing should render it — it is 0 for every sub-30-second
+  // operation, which is exactly the lie above.
+  const avgCycleSeconds = cycleTimeResult?.avg_minutes != null
+    ? Math.round(cycleTimeResult.avg_minutes * 60)
+    : null;
+  const avgCycleTime = avgCycleSeconds === null ? null : Math.round(cycleTimeResult.avg_minutes);
 
   // Pass rate over every completed run that recorded a QC result (a run with
   // both a Pass and a Fail counts once, as a fail). No QC results = null, so
@@ -94,7 +177,7 @@ router.get('/overview', (req, res) => {
   const totalQC  = passCount + failCount;
   const passRate = totalQC > 0 ? Math.round((passCount / totalQC) * 100) : null;
 
-  res.json({ totalCompletions, todayCompletions, inProgress, totalApps, publishedApps, activeStations, avgCycleTime, passRate, qcSampleSize: totalQC });
+  res.json({ totalCompletions, todayCompletions, inProgress, totalApps, publishedApps, activeStations, avgCycleTime, avgCycleSeconds, passRate, qcSampleSize: totalQC });
 });
 
 // ─── GET /throughput ──────────────────────────────────────────────────────────
@@ -142,7 +225,8 @@ router.get('/operator-performance', (req, res) => {
     SELECT
       operator_name,
       COUNT(*) as completions,
-      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_cycle_minutes
+      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_cycle_minutes,
+      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 86400)) as avg_cycle_seconds
     FROM completions
     WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL${f.clause}
     GROUP BY operator_name
@@ -162,6 +246,7 @@ router.get('/app-performance', (req, res) => {
       app_name,
       COUNT(*) as completions,
       ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_cycle_minutes,
+      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 86400)) as avg_cycle_seconds,
       COUNT(CASE WHEN status='abandoned' THEN 1 END) as abandoned_count
     FROM completions
     WHERE company_id = ?${f.clause}
@@ -275,10 +360,27 @@ router.get('/manager-view', (req, res) => {
 });
 
 // ─── GET /plant-view ──────────────────────────────────────────────────────────
+//
+// Scope: ?site_id (as before) plus ?department_id and ?app_id — the Command
+// Center's page filter. EVERY figure in the response honours all three. A
+// half-scoped floor view — department cards narrowed while the headline tiles
+// stay plant-wide — reads to a manager as "that is my department's number",
+// which is worse than offering no filter at all.
 
 router.get('/plant-view', (req, res) => {
   const cid = req.companyId;
-  const { site_id } = req.query;
+  const { site_id, department_id, app_id } = req.query;
+  // The plant's day, not Greenwich's: bound to both sides of every "today"
+  // comparison so a second-shift crew's counters don't reset mid-shift.
+  const day = plantDayShift(cid);
+
+  // Page scope, expressed twice because two of the queries below join
+  // `work_orders` (which has an `app_id` of its own): once qualified for the
+  // queries that read `completions` by table name, once for those that alias it
+  // `c`. Plus the work-order-side scope for everything schedule-related.
+  const cf  = completionFilter(req, 'completions');
+  const cfc = completionFilter(req, 'c');
+  const wof = workOrderScope(req, 'wo');
 
   // Site filter for completions, joined through their work order or station
   // (a completion's "site" = its work order's site, falling back to its station's site).
@@ -295,25 +397,30 @@ router.get('/plant-view', (req, res) => {
   // KPIs
   const todayCompleted = db.prepare(`
     SELECT COUNT(*) as c FROM completions ${siteJoin}
-    WHERE completions.company_id = ? AND completions.status='completed' AND date(completions.completed_at)=date('now')${siteClause}
-  `).get(cid, ...siteParams).c;
+    WHERE completions.company_id = ? AND completions.status='completed' AND date(completions.completed_at, ?)=date('now', ?)${siteClause}${cf.clause}
+  `).get(cid, day, day, ...siteParams, ...cf.params).c;
   const activeNow = db.prepare(`
     SELECT COUNT(*) as c FROM completions ${siteJoin}
-    WHERE completions.company_id = ? AND completions.status='in_progress'${siteClause}
-  `).get(cid, ...siteParams).c;
+    WHERE completions.company_id = ? AND completions.status='in_progress'${siteClause}${cf.clause}
+  `).get(cid, ...siteParams, ...cf.params).c;
 
   const ctRow = db.prepare(`
     SELECT AVG((julianday(completions.completed_at) - julianday(completions.started_at)) * 24 * 60) as avg_minutes
     FROM completions ${siteJoin}
-    WHERE completions.company_id = ? AND completions.status='completed' AND completions.completed_at IS NOT NULL${siteClause}
-  `).get(cid, ...siteParams);
-  const avgCycleTime = ctRow?.avg_minutes ? Math.round(ctRow.avg_minutes) : null;
+    WHERE completions.company_id = ? AND completions.status='completed' AND completions.completed_at IS NOT NULL${siteClause}${cf.clause}
+  `).get(cid, ...siteParams, ...cf.params);
+  // Seconds, for the same reason as /overview: rounding to whole minutes first
+  // renders every sub-30-second operation as "0m", and a press, a pick-place or
+  // a visual check is routinely under a minute. `avg_cycle_time` stays on the
+  // payload in minutes for anything already reading it; nothing should render it.
+  const avgCycleSeconds = ctRow?.avg_minutes != null ? Math.round(ctRow.avg_minutes * 60) : null;
+  const avgCycleTime = avgCycleSeconds === null ? null : Math.round(ctRow.avg_minutes);
 
   // Pass rate over the last 7 days, counting only completions with explicit QC results
   const pfRows = db.prepare(`
     SELECT completions.data as data FROM completions ${siteJoin}
-    WHERE completions.company_id = ? AND completions.status='completed' AND completions.completed_at >= datetime('now', '-7 days')${siteClause}
-  `).all(cid, ...siteParams);
+    WHERE completions.company_id = ? AND completions.status='completed' AND completions.completed_at >= datetime('now', '-7 days')${siteClause}${cf.clause}
+  `).all(cid, ...siteParams, ...cf.params);
   let pass = 0, fail = 0;
   for (const row of pfRows) {
     const vals = Object.values(JSON.parse(row.data));
@@ -330,8 +437,8 @@ router.get('/plant-view', (req, res) => {
     FROM work_orders wo
     LEFT JOIN departments d ON d.id = wo.department_id
     LEFT JOIN apps        a ON a.id = wo.app_id
-    WHERE wo.company_id = ? AND wo.status != 'cancelled'${site_id ? ' AND (wo.site_id = ? OR wo.site_id IS NULL)' : ''}
-  `).all(cid, ...siteParams).map(wo => ({ ...wo, schedule_status: calcScheduleStatus(wo) }));
+    WHERE wo.company_id = ? AND wo.status != 'cancelled'${site_id ? ' AND (wo.site_id = ? OR wo.site_id IS NULL)' : ''}${wof.clause}
+  `).all(cid, ...siteParams, ...wof.params).map(wo => ({ ...wo, schedule_status: calcScheduleStatus(wo) }));
 
   const woSummary = { on_track: 0, at_risk: 0, behind: 0, not_started: 0, completed: 0 };
   for (const wo of allWOs) {
@@ -345,7 +452,13 @@ router.get('/plant-view', (req, res) => {
 
   // Department performance. A completion belongs to its work order's department,
   // falling back to its station's department when it ran without a work order.
-  const depts = db.prepare(`SELECT * FROM departments WHERE company_id = ?${site_id ? ' AND (site_id = ? OR site_id IS NULL)' : ''}`).all(cid, ...siteParams);
+  // Picking one department in the page filter narrows this list to that card —
+  // showing six cards under a one-department scope would contradict every other
+  // number on the page.
+  const depts = db.prepare(`
+    SELECT * FROM departments
+    WHERE company_id = ?${site_id ? ' AND (site_id = ? OR site_id IS NULL)' : ''}${department_id ? ' AND id = ?' : ''}
+  `).all(cid, ...siteParams, ...(department_id ? [department_id] : []));
 
   // Per-department completion stats, computed in two grouped passes instead of
   // two queries per department (an N+1 that scaled with the department count).
@@ -358,9 +471,9 @@ router.get('/plant-view', (req, res) => {
     FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN stations st    ON st.id = c.station_id
-    WHERE c.company_id = ? AND c.status = 'completed' AND date(c.completed_at) = date('now')
+    WHERE c.company_id = ? AND c.status = 'completed' AND date(c.completed_at, ?) = date('now', ?)${cfc.clause}
     GROUP BY COALESCE(wo.department_id, st.department_id)
-  `).all(cid)) {
+  `).all(cid, day, day, ...cfc.params)) {
     if (r.dept_id != null) todayCountByDept[r.dept_id] = r.c;
   }
   const avgCycleByDept = {};
@@ -370,9 +483,9 @@ router.get('/plant-view', (req, res) => {
     FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN stations st    ON st.id = c.station_id
-    WHERE c.company_id = ? AND c.status = 'completed' AND c.completed_at IS NOT NULL
+    WHERE c.company_id = ? AND c.status = 'completed' AND c.completed_at IS NOT NULL${cfc.clause}
     GROUP BY COALESCE(wo.department_id, st.department_id)
-  `).all(cid)) {
+  `).all(cid, ...cfc.params)) {
     if (r.dept_id != null) avgCycleByDept[r.dept_id] = r.avg_minutes;
   }
 
@@ -380,7 +493,13 @@ router.get('/plant-view', (req, res) => {
     const deptWOs = allWOs.filter(wo => wo.department_id === dept.id);
 
     const completionCountToday = todayCountByDept[dept.id] || 0;
-    const avgCycleDept = avgCycleByDept[dept.id] ? Math.round(avgCycleByDept[dept.id]) : 0;
+    // Seconds, and null when there is genuinely nothing to average. Rounding to
+    // whole minutes made a department averaging 4 seconds indistinguishable
+    // from one that has never run — the screen said "116 done today" and "no
+    // runs yet" side by side.
+    const rawAvgDept = avgCycleByDept[dept.id];
+    const avgCycleSecondsDept = rawAvgDept != null ? Math.round(rawAvgDept * 60) : null;
+    const avgCycleDept = avgCycleSecondsDept === null ? 0 : Math.round(rawAvgDept);
 
     const onTrack = deptWOs.filter(wo => wo.schedule_status === 'on_track' || wo.schedule_status === 'completed').length;
     const onTrackPct = deptWOs.length > 0 ? Math.round((onTrack / deptWOs.length) * 100) : null;
@@ -398,7 +517,10 @@ router.get('/plant-view', (req, res) => {
       department:       dept.name,
       color:            dept.color,
       completion_count: completionCountToday,
+      /** Whole minutes; 0 for anything under 30 seconds. Do not render it. */
       avg_cycle_time:   avgCycleDept,
+      /** The one to render. null when nothing in this department has finished. */
+      avg_cycle_seconds: avgCycleSecondsDept,
       takt_time:        taktTime,
       on_track_count:   onTrack,
       total_count:      deptWOs.length,
@@ -413,10 +535,10 @@ router.get('/plant-view', (req, res) => {
       COUNT(*) as count
     FROM completions ${siteJoin}
     WHERE completions.company_id = ? AND completions.status = 'completed'
-      AND completions.completed_at >= datetime('now', '-24 hours')${siteClause}
+      AND completions.completed_at >= datetime('now', '-24 hours')${siteClause}${cf.clause}
     GROUP BY strftime('%Y-%m-%dT%H:00:00', completions.completed_at)
     ORDER BY hour ASC
-  `).all(cid, ...siteParams);
+  `).all(cid, ...siteParams, ...cf.params);
 
   // Active alerts: work orders running behind or past their scheduled end
   const activeAlerts = allWOs
@@ -442,10 +564,10 @@ router.get('/plant-view', (req, res) => {
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN stations st    ON st.id = c.station_id
     LEFT JOIN departments d  ON d.id  = COALESCE(wo.department_id, st.department_id)
-    WHERE c.company_id = ?${site_id ? ' AND (COALESCE(wo.site_id, st.site_id) = ? OR COALESCE(wo.site_id, st.site_id) IS NULL)' : ''}
+    WHERE c.company_id = ?${site_id ? ' AND (COALESCE(wo.site_id, st.site_id) = ? OR COALESCE(wo.site_id, st.site_id) IS NULL)' : ''}${cfc.clause}
     ORDER BY datetime(COALESCE(c.completed_at, c.started_at)) DESC
     LIMIT 15
-  `).all(cid, ...siteParams).map(c => {
+  `).all(cid, ...siteParams, ...cfc.params).map(c => {
     const end = c.completed_at ? new Date(c.completed_at) : new Date();
     const durationMinutes = Math.round(((end - new Date(c.started_at)) / 60000) * 10) / 10;
     return {
@@ -454,17 +576,28 @@ router.get('/plant-view', (req, res) => {
       operator_name:    c.operator_name,
       department:       c.department_name || 'Unassigned',
       completed_at:     c.completed_at || c.started_at,
+      /** Whole-ish minutes, kept for anything already reading it. */
       duration_minutes: durationMinutes,
+      /** The one to render: a six-second run is "6s", not "0.1m". */
+      duration_seconds: durationMinutes != null ? Math.round(durationMinutes * 60) : null,
       status:           c.status,
     };
   });
 
   res.json({
+    // Echoed back so the client can prove what the server actually applied
+    // rather than assuming a parameter it sent was honoured.
+    scope: {
+      site_id:       site_id || null,
+      department_id: department_id || null,
+      app_id:        app_id || null,
+    },
     kpis: {
       total_completed_today: todayCompleted,
       active_now:            activeNow,
       pass_rate:             passRate,
       avg_cycle_time:        avgCycleTime,
+      avg_cycle_seconds:     avgCycleSeconds,
       schedule_adherence:    scheduleAdherence,
       work_orders_on_track:  woSummary.on_track,
       work_orders_total:     allWOs.length,
@@ -794,12 +927,40 @@ router.get('/completion/:id', (req, res) => {
 });
 
 // ─── GET /daily-brief — cross-module morning briefing for the dashboard ──────
+//
+// Scope: ?department_id and ?app_id — the Command Center's page filter. Every
+// number and every list below honours both, so the page can never show a
+// department's KPI tiles next to a plant-wide attention list.
+//
+// Rows that carry no value for a filtered dimension are set aside rather than
+// filed under whichever department or app happens to be on screen (the same
+// rule the completion filter above follows). Low stock, late POs and — under an
+// app filter — down stations have no such dimension at all, so they can only be
+// set aside; `attention_plant_wide_hidden` counts exactly how many, and the
+// Command Center says so on screen instead of quietly dropping them.
 
 router.get('/daily-brief', (req, res) => {
   const cid = req.companyId;
+  // The plant's day, not Greenwich's: bound to both sides of every "today"
+  // comparison so a second-shift crew's counters don't reset mid-shift.
+  const day = plantDayShift(cid);
   const planRow = db.prepare('SELECT tier FROM plan WHERE company_id = ?').get(cid);
   const { config: appConfig } = require('../config');
   const isPro = appConfig.earlyAccess || (planRow && planRow.tier !== 'free');
+
+  const deptId = req.query.department_id || null;
+  const appId  = req.query.app_id || null;
+  const siteId = req.query.site_id || null;
+  // `scoped` drives the set-aside counting below, and site deliberately does not
+  // set it: a row with no site is not ambiguous evidence the way a row with no
+  // department is — it simply predates sites and stays visible under every one.
+  const scoped = !!(deptId || appId);
+  const cf = completionFilter(req); // no joins in the KPI queries — no alias needed
+
+  // What the filter had to set aside for having no department / no app at all.
+  let hiddenCount = 0;
+  const hiddenKinds = new Set();
+  const setAside = (n, kind) => { if (n > 0) { hiddenCount += n; hiddenKinds.add(kind); } };
 
   // ── Needs attention: everything that should change someone's plan today
   const attention = [];
@@ -809,17 +970,32 @@ router.get('/daily-brief', (req, res) => {
     FROM work_orders wo
     LEFT JOIN departments d ON d.id = wo.department_id
     WHERE wo.company_id = ? AND wo.status NOT IN ('completed', 'cancelled')
-  `).all(cid);
+      ${siteId ? 'AND (wo.site_id = ? OR wo.site_id IS NULL)' : ''}
+  `).all(cid, ...(siteId ? [siteId] : []));
+
+  // A work order with no department is not evidence about any one department;
+  // same for one with no app. It drops out of a specific scope and is counted.
+  const woInScope = wo => (!deptId || wo.department_id === deptId) && (!appId || wo.app_id === appId);
+  const woDimensionless = wo => (!!deptId && !wo.department_id) || (!!appId && !wo.app_id);
+  const scopedWOs = activeWOs.filter(woInScope);
+
   // Late work orders, most urgent first (overdue before behind, then by due date)
   // and capped — a triage list a supervisor can actually work through beats a
   // hundred-row wall. Anything beyond the cap is summarised in one honest row.
   const WO_ATTENTION_CAP = 6;
-  const lateWOs = activeWOs
+  const isLate = ss => ss === 'overdue' || ss === 'behind';
+  const lateWOs = scopedWOs
     .map(wo => ({ wo, ss: calcScheduleStatus(wo) }))
-    .filter(({ ss }) => ss === 'overdue' || ss === 'behind')
+    .filter(({ ss }) => isLate(ss))
     .sort((a, b) =>
       (a.ss === 'overdue' ? 0 : 1) - (b.ss === 'overdue' ? 0 : 1) ||
       String(a.wo.scheduled_end ?? '').localeCompare(String(b.wo.scheduled_end ?? '')));
+  if (scoped) {
+    setAside(
+      activeWOs.filter(wo => woDimensionless(wo) && isLate(calcScheduleStatus(wo))).length,
+      'unassigned work orders',
+    );
+  }
 
   for (const { wo, ss } of lateWOs.slice(0, WO_ATTENTION_CAP)) {
     attention.push({
@@ -843,6 +1019,18 @@ router.get('/daily-brief', (req, res) => {
 
   // Open help requests (Andon) — someone on the floor is waiting for a person.
   // These outrank most things: they are a human standing still.
+  // A call's department is its own, falling back to its station's — the same
+  // COALESCE the Andon board uses. Scoped in SQL because the list is capped:
+  // filtering after the LIMIT would under-report a busy department.
+  const callDeptExpr = 'COALESCE(a.department_id, s.department_id)';
+  const callSiteExpr = 'COALESCE(wo.site_id, s.site_id)';
+  const callScope = [
+    deptId ? `${callDeptExpr} = ?` : null,
+    appId  ? 'a.app_id = ?' : null,
+    siteId ? `(${callSiteExpr} = ? OR ${callSiteExpr} IS NULL)` : null,
+  ].filter(Boolean);
+  // dept, then app, then site — the same order every scoped query binds them in
+  const scopeParams = [deptId, appId, siteId].filter(Boolean);
   const openCalls = db.prepare(`
     SELECT a.id, a.team, a.type, a.target_type, a.status, a.title, a.step_name, a.created_by,
            a.department_id, d.name AS department_name, s.name AS station_name,
@@ -854,8 +1042,20 @@ router.get('/daily-brief', (req, res) => {
     LEFT JOIN work_orders wo ON wo.id = a.work_order_id
     LEFT JOIN apps ap        ON ap.id = a.app_id
     WHERE a.company_id = ? AND a.status IN ('open', 'acknowledged')
+      ${callScope.length ? 'AND ' + callScope.join(' AND ') : ''}
     ORDER BY a.created_at ASC LIMIT 20
-  `).all(cid);
+  `).all(cid, ...scopeParams);
+  if (scoped) {
+    const missing = [
+      deptId ? `${callDeptExpr} IS NULL` : null,
+      appId  ? 'a.app_id IS NULL' : null,
+    ].filter(Boolean);
+    setAside(db.prepare(`
+      SELECT COUNT(*) AS c FROM andon_calls a
+      LEFT JOIN stations s ON s.id = a.station_id
+      WHERE a.company_id = ? AND a.status IN ('open', 'acknowledged') AND (${missing.join(' OR ')})
+    `).get(cid).c, 'unrouted help requests');
+  }
   for (const c of openCalls) {
     const team = andonTeamOf(c);
     const isDept = c.target_type === 'department' && !!c.department_name;
@@ -887,7 +1087,27 @@ router.get('/daily-brief', (req, res) => {
   }
 
   // Capped and ordered: longest-down first, so the list stays a triage list.
-  const downStations = db.prepare(`SELECT id, name, current_status, current_status_since FROM stations WHERE company_id = ? AND current_status = 'down' ORDER BY current_status_since ASC LIMIT 10`).all(cid);
+  // A station belongs to a department but to no app — under an app filter the
+  // whole category is set aside rather than shown as if it were that app's.
+  const downStations = appId ? [] : db.prepare(`
+    SELECT id, name, current_status, current_status_since FROM stations
+    WHERE company_id = ? AND current_status = 'down'${deptId ? ' AND department_id = ?' : ''}
+      ${siteId ? 'AND (site_id = ? OR site_id IS NULL)' : ''}
+    ORDER BY current_status_since ASC LIMIT 10
+  `).all(cid, ...(deptId ? [deptId] : []), ...(siteId ? [siteId] : []));
+  if (scoped) {
+    // Under an app filter every down station is set aside (a station has no app),
+    // narrowed to the chosen department when there is one. Under a department
+    // filter alone only the stations that belong to no department are set aside.
+    const downHidden = appId
+      ? (deptId ? ' AND department_id = ?' : '')
+      : ' AND department_id IS NULL';
+    setAside(db.prepare(`
+      SELECT COUNT(*) AS c FROM stations
+      WHERE company_id = ? AND current_status = 'down'${downHidden}
+    `).get(cid, ...(appId && deptId ? [deptId] : [])).c,
+    appId ? 'down stations' : 'stations with no department');
+  }
   for (const st of downStations) {
     const mins = st.current_status_since ? Math.floor((Date.now() - new Date(st.current_status_since).getTime()) / 60000) : null;
     attention.push({
@@ -900,11 +1120,39 @@ router.get('/daily-brief', (req, res) => {
   }
 
   if (isPro) {
+    // An NCR's department comes from its work order, falling back to the
+    // department its app belongs to; its app from the NCR itself, falling back
+    // to its work order's.
+    const ncrDeptExpr = 'COALESCE(wo.department_id, ap.department_id)';
+    const ncrAppExpr  = 'COALESCE(n.app_id, wo.app_id)';
+    const ncrSiteExpr = 'wo.site_id';
+    const ncrScope = [
+      deptId ? `${ncrDeptExpr} = ?` : null,
+      appId  ? `${ncrAppExpr} = ?` : null,
+      siteId ? `(${ncrSiteExpr} = ? OR ${ncrSiteExpr} IS NULL)` : null,
+    ].filter(Boolean);
     const criticalNCRs = db.prepare(`
-      SELECT id, ncr_number, title, due_date FROM ncrs
-      WHERE company_id = ? AND severity = 'critical' AND status NOT IN ('resolved', 'closed')
-      ORDER BY created_at DESC LIMIT 10
-    `).all(cid);
+      SELECT n.id, n.ncr_number, n.title, n.due_date
+      FROM ncrs n
+      LEFT JOIN work_orders wo ON wo.id = n.work_order_id
+      LEFT JOIN apps ap        ON ap.id = COALESCE(n.app_id, wo.app_id)
+      WHERE n.company_id = ? AND n.severity = 'critical' AND n.status NOT IN ('resolved', 'closed')
+        ${ncrScope.length ? 'AND ' + ncrScope.join(' AND ') : ''}
+      ORDER BY n.created_at DESC LIMIT 10
+    `).all(cid, ...scopeParams);
+    if (scoped) {
+      const missing = [
+        deptId ? `${ncrDeptExpr} IS NULL` : null,
+        appId  ? `${ncrAppExpr} IS NULL` : null,
+      ].filter(Boolean);
+      setAside(db.prepare(`
+        SELECT COUNT(*) AS c FROM ncrs n
+        LEFT JOIN work_orders wo ON wo.id = n.work_order_id
+        LEFT JOIN apps ap        ON ap.id = COALESCE(n.app_id, wo.app_id)
+        WHERE n.company_id = ? AND n.severity = 'critical' AND n.status NOT IN ('resolved', 'closed')
+          AND (${missing.join(' OR ')})
+      `).get(cid).c, 'unlinked critical NCRs');
+    }
     for (const n of criticalNCRs) {
       attention.push({
         type: 'ncr_critical',
@@ -915,7 +1163,10 @@ router.get('/daily-brief', (req, res) => {
       });
     }
 
-    const lowStock = db.prepare(`
+    // Stock and purchasing carry neither a department nor an app. There is no
+    // honest way to show them under a narrowed scope, so they are set aside and
+    // counted — the page tells the manager they exist.
+    const lowStock = scoped ? [] : db.prepare(`
       SELECT i.id, i.sku, i.name, i.reorder_point, COALESCE(SUM(sl.quantity), 0) as on_hand
       FROM items i
       LEFT JOIN stock_levels sl ON sl.item_id = i.id
@@ -925,6 +1176,18 @@ router.get('/daily-brief', (req, res) => {
       ORDER BY (on_hand / i.reorder_point) ASC
       LIMIT 10
     `).all(cid);
+    if (scoped) {
+      setAside(db.prepare(`
+        SELECT COUNT(*) AS c FROM (
+          SELECT i.id, i.reorder_point, COALESCE(SUM(sl.quantity), 0) as on_hand
+          FROM items i
+          LEFT JOIN stock_levels sl ON sl.item_id = i.id
+          WHERE i.company_id = ? AND i.is_active = 1 AND i.reorder_point > 0
+          GROUP BY i.id
+          HAVING on_hand <= i.reorder_point
+        )
+      `).get(cid).c, 'low stock');
+    }
     for (const item of lowStock) {
       attention.push({
         type: 'stock_low',
@@ -935,13 +1198,19 @@ router.get('/daily-brief', (req, res) => {
       });
     }
 
-    const latePOs = db.prepare(`
+    const latePOs = scoped ? [] : db.prepare(`
       SELECT po.id, po.po_number, po.expected_date, v.name AS vendor_name
       FROM purchase_orders po
       LEFT JOIN vendors v ON v.id = po.vendor_id
       WHERE po.company_id = ? AND po.status IN ('sent', 'partial') AND po.expected_date < date('now')
       ORDER BY po.expected_date ASC LIMIT 10
     `).all(cid);
+    if (scoped) {
+      setAside(db.prepare(`
+        SELECT COUNT(*) AS c FROM purchase_orders po
+        WHERE po.company_id = ? AND po.status IN ('sent', 'partial') AND po.expected_date < date('now')
+      `).get(cid).c, 'late purchase orders');
+    }
     for (const po of latePOs) {
       attention.push({
         type: 'po_late',
@@ -959,21 +1228,27 @@ router.get('/daily-brief', (req, res) => {
   attention.sort((a, b) => attnRank(a) - attnRank(b));
 
   // ── KPIs with deltas
-  const completedToday = db.prepare("SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed' AND date(completed_at)=date('now')").get(cid).c;
+  const completedToday = db.prepare(`
+    SELECT COUNT(*) as c FROM completions
+    WHERE company_id = ? AND status='completed' AND date(completed_at, ?)=date('now', ?)${cf.clause}
+  `).get(cid, day, day, ...cf.params).c;
   const weekAvgRow = db.prepare(`
     SELECT COUNT(*) / 7.0 as avg
     FROM completions
-    WHERE company_id = ? AND status='completed' AND date(completed_at) >= date('now', '-7 days') AND date(completed_at) < date('now')
-  `).get(cid);
+    WHERE company_id = ? AND status='completed' AND date(completed_at, ?) >= date('now', ?, '-7 days') AND date(completed_at, ?) < date('now', ?)${cf.clause}
+  `).get(cid, day, day, day, day, ...cf.params);
   const weekAvg = weekAvgRow?.avg || 0;
   const vsAvgPct = weekAvg > 0 ? Math.round(((completedToday - weekAvg) / weekAvg) * 100) : null;
 
-  const activeNow = db.prepare("SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='in_progress'").get(cid).c;
+  const activeNow = db.prepare(`
+    SELECT COUNT(*) as c FROM completions
+    WHERE company_id = ? AND status='in_progress'${cf.clause}
+  `).get(cid, ...cf.params).c;
 
   const pfRows = db.prepare(`
     SELECT data FROM completions
-    WHERE company_id = ? AND status='completed' AND completed_at >= datetime('now', '-7 days')
-  `).all(cid);
+    WHERE company_id = ? AND status='completed' AND completed_at >= datetime('now', '-7 days')${cf.clause}
+  `).all(cid, ...cf.params);
   let pass = 0, fail = 0;
   for (const row of pfRows) {
     const vals = Object.values(JSON.parse(row.data));
@@ -983,7 +1258,7 @@ router.get('/daily-brief', (req, res) => {
   const passRate7d = (pass + fail) > 0 ? Math.round((pass / (pass + fail)) * 100) : null;
 
   const woSummary = { on_track: 0, completed: 0, total: 0 };
-  for (const wo of activeWOs) {
+  for (const wo of scopedWOs) {
     const ss = calcScheduleStatus(wo);
     woSummary.total++;
     if (ss === 'on_track' || ss === 'completed') woSummary.on_track++;
@@ -991,7 +1266,7 @@ router.get('/daily-brief', (req, res) => {
   const scheduleAdherence = woSummary.total > 0 ? Math.round((woSummary.on_track / woSummary.total) * 100) : null;
 
   // ── Due in the next 48 hours
-  const dueSoon = activeWOs
+  const dueSoon = scopedWOs
     .filter(wo => {
       if (!wo.scheduled_end) return false;
       const hours = (new Date(wo.scheduled_end) - Date.now()) / 3600000;
@@ -1016,10 +1291,10 @@ router.get('/daily-brief', (req, res) => {
   const throughput = db.prepare(`
     SELECT date(completed_at) as date, COUNT(*) as count
     FROM completions
-    WHERE company_id = ? AND status='completed' AND date(completed_at) >= date('now', '-6 days')
+    WHERE company_id = ? AND status='completed' AND date(completed_at) >= date('now', '-6 days')${cf.clause}
     GROUP BY date(completed_at)
     ORDER BY date ASC
-  `).all(cid);
+  `).all(cid, ...cf.params);
   const days7 = [];
   for (let i = 6; i >= 0; i--) {
     const d = new Date();
@@ -1029,7 +1304,12 @@ router.get('/daily-brief', (req, res) => {
   }
 
   res.json({
+    // Echoed so the client can prove what the server actually applied instead of
+    // assuming a parameter it sent was honoured.
+    scope: { department_id: deptId, app_id: appId },
     attention,
+    attention_plant_wide_hidden: hiddenCount,
+    attention_plant_wide_kinds: [...hiddenKinds],
     kpis: {
       completed_today: completedToday,
       vs_7day_avg_pct: vsAvgPct,
@@ -1052,6 +1332,9 @@ router.get('/department/:id', (req, res) => {
   const cid = req.companyId;
   const dept = db.prepare('SELECT * FROM departments WHERE id = ? AND company_id = ?').get(req.params.id, cid);
   if (!dept) return res.status(404).json({ error: 'Department not found' });
+  // The plant's day, not Greenwich's: bound to both sides of every "today"
+  // comparison so a second-shift crew's counters don't reset mid-shift.
+  const day = plantDayShift(cid);
 
   // Completions attribute to a department via their work order, falling back
   // to their station's department when run without a work order.
@@ -1062,14 +1345,16 @@ router.get('/department/:id', (req, res) => {
     WHERE c.company_id = ? AND COALESCE(wo.department_id, st.department_id) = ?
   `;
 
-  const completedToday = db.prepare(`SELECT COUNT(*) as c ${DEPT_COMPLETION_JOIN} AND c.status='completed' AND date(c.completed_at)=date('now')`).get(cid, dept.id).c;
+  const completedToday = db.prepare(`SELECT COUNT(*) as c ${DEPT_COMPLETION_JOIN} AND c.status='completed' AND date(c.completed_at, ?)=date('now', ?)`).get(cid, dept.id, day, day).c;
   const activeNow      = db.prepare(`SELECT COUNT(*) as c ${DEPT_COMPLETION_JOIN} AND c.status='in_progress'`).get(cid, dept.id).c;
 
   const ctRow = db.prepare(`
     SELECT AVG((julianday(c.completed_at) - julianday(c.started_at)) * 24 * 60) as avg_minutes
     ${DEPT_COMPLETION_JOIN} AND c.status='completed' AND c.completed_at IS NOT NULL
   `).get(cid, dept.id);
-  const avgCycleTime = ctRow?.avg_minutes ? Math.round(ctRow.avg_minutes) : null;
+  // Seconds, for the same reason as /overview — see the note there.
+  const avgCycleSeconds = ctRow?.avg_minutes != null ? Math.round(ctRow.avg_minutes * 60) : null;
+  const avgCycleTime = avgCycleSeconds === null ? null : Math.round(ctRow.avg_minutes);
 
   const pfRows = db.prepare(`SELECT c.data ${DEPT_COMPLETION_JOIN} AND c.status='completed' AND c.completed_at >= datetime('now', '-7 days')`).all(cid, dept.id);
   let pass = 0, fail = 0;
@@ -1173,6 +1458,7 @@ router.get('/department/:id', (req, res) => {
       active_now:      activeNow,
       pass_rate:       passRate,
       avg_cycle_time:  avgCycleTime,
+      avg_cycle_seconds: avgCycleSeconds,
       wos_on_track:    wosOnTrack,
       wos_total:       workOrders.length,
     },

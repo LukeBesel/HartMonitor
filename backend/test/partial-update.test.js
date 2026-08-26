@@ -273,3 +273,56 @@ describe('PUT /capa/:id partial updates', () => {
     assert.ok(list.json.some(c => c.id === capaId), 'CAPA left this company');
   });
 });
+
+// ─── Constraint failures answer the request instead of blaming the server ─────
+// Blanking a field the database requires, or sending a status word its CHECK
+// forbids, used to come back as a bare 500 "Internal server error". That tells
+// the person at the screen nothing, and reads as the app being broken rather
+// than the save being refused. These are statements about the request, so they
+// belong in the 4xx range with the column named.
+
+describe('a rule the database enforces comes back as a 4xx, not a 500', () => {
+  let ideaId;
+
+  before(async () => {
+    const r = await api('POST', '/api/kaizen', {
+      token,
+      body: {
+        title: 'Reduce scrap on line 2', description: 'Track the top three defect codes',
+        category: 'quality',
+      },
+    });
+    assert.equal(r.status, 201, `kaizen create failed: ${JSON.stringify(r.json)}`);
+    ideaId = r.json.id;
+  });
+
+  it('blanking a required field is a 400 naming the field', async () => {
+    const r = await api('PUT', `/api/kaizen/${ideaId}`, { token, body: { title: '' } });
+    assert.equal(r.status, 400, `expected 400, got ${r.status} ${JSON.stringify(r.json)}`);
+    assert.equal(r.json.code, 'FIELD_REQUIRED');
+    assert.match(r.json.error, /title/, `the message should name the field: ${r.json.error}`);
+    assert.doesNotMatch(r.json.error, /Internal server error/i);
+  });
+
+  it('a status word the column forbids is a 400, not a 500', async () => {
+    const r = await api('PUT', `/api/kaizen/${ideaId}`, { token, body: { status: 'not-a-real-status' } });
+    assert.ok(r.status >= 400 && r.status < 500, `expected a 4xx, got ${r.status} ${JSON.stringify(r.json)}`);
+    assert.doesNotMatch(String(r.json.error), /Internal server error/i);
+  });
+
+  it('the refused save leaves the row exactly as it was', async () => {
+    // A rejected write that half-applied would be worse than a 500.
+    const r = await api('GET', `/api/kaizen/${ideaId}`, { token });
+    assert.equal(r.status, 200);
+    assert.equal(r.json.title, 'Reduce scrap on line 2', 'the title survived the refused blanking');
+    assert.notEqual(r.json.status, 'not-a-real-status', 'the forbidden status was never stored');
+  });
+
+  it('never leaks a stack trace or a SQL statement to the client', async () => {
+    const r = await api('PUT', `/api/kaizen/${ideaId}`, { token, body: { title: '' } });
+    const body = JSON.stringify(r.json);
+    for (const leak of ['SqliteError', 'at Object', 'UPDATE ', 'node_modules']) {
+      assert.ok(!body.includes(leak), `response leaked ${leak}: ${body}`);
+    }
+  });
+});

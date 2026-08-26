@@ -19,12 +19,15 @@ Object.defineProperty(window, 'matchMedia', {
   })),
 });
 
-// Mock ResizeObserver
-global.ResizeObserver = vi.fn().mockImplementation(() => ({
-  observe: vi.fn(),
-  unobserve: vi.fn(),
-  disconnect: vi.fn(),
-}));
+// Mock ResizeObserver. This has to be a real class: components call
+// `new ResizeObserver(cb)`, and an arrow-function mock is not constructible —
+// it throws before the component ever renders.
+class MockResizeObserver implements ResizeObserver {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+global.ResizeObserver = MockResizeObserver;
 
 // Suppress console.error in tests (uncomment if tests are noisy)
 // const originalError = console.error;

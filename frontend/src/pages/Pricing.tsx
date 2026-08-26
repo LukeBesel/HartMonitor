@@ -34,7 +34,6 @@ export default function Pricing() {
 
   useEffect(() => {
     loadPricing();
-    document.title = 'Pricing — HartMonitor';
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

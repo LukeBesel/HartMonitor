@@ -1,4 +1,4 @@
-import { useEffect, ReactNode } from 'react';
+import { ReactNode } from 'react';
 import MarketingNav from './MarketingNav';
 import MarketingFooter from './MarketingFooter';
 
@@ -7,8 +7,6 @@ import MarketingFooter from './MarketingFooter';
 export default function LegalShell({ title, updated, children }: {
   title: string; updated: string; children: ReactNode;
 }) {
-  useEffect(() => { document.title = `${title} — HartMonitor`; }, [title]);
-
   return (
     <div className="bg-[#060911] text-white antialiased min-h-screen flex flex-col">
       <MarketingNav />

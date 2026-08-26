@@ -1,10 +1,13 @@
 import { useEffect, useState, useCallback, useMemo } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   ShieldAlert, CheckCircle2, Truck, DollarSign, Smile, Leaf,
   Plus, Search, X, ChevronRight, Lightbulb,
   Users, Target, Edit3, Trash2, LayoutList, LayoutGrid,
+  FolderKanban, Rocket,
 } from 'lucide-react';
 import { api } from '../api/client';
+import type { CIProject } from '../types';
 import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
 import DepartmentFilter from '../components/shared/DepartmentFilter';
 
@@ -311,7 +314,7 @@ function SubmitIdeaModal({ departments, onClose, onSubmitted }: SubmitIdeaModalP
           <button
             onClick={handleSubmit}
             disabled={saving}
-            className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-base font-semibold hover:bg-green-700 transition-colors disabled:opacity-50"
+            className="inline-flex items-center gap-2 px-6 py-3 bg-green-700 text-white rounded-xl text-base font-semibold hover:bg-green-800 transition-colors disabled:opacity-50"
           >
             <Plus className="w-5 h-5" />
             {saving ? 'Submitting…' : 'Submit Idea'}
@@ -326,12 +329,44 @@ function SubmitIdeaModal({ departments, onClose, onSubmitted }: SubmitIdeaModalP
 
 interface IdeaSidePanelProps {
   idea: KaizenIdea;
+  /** CI projects already started from this idea — the other half of the link. */
+  projects: CIProject[];
   onClose: () => void;
   onUpdated: () => void;
   onDeleted: () => void;
+  onProjectStarted: () => void;
 }
 
-function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelProps) {
+function IdeaSidePanel({ idea, projects, onClose, onUpdated, onDeleted, onProjectStarted }: IdeaSidePanelProps) {
+  const navigate = useNavigate();
+  const [startingProject, setStartingProject] = useState(false);
+  const [projectError, setProjectError] = useState('');
+
+  // An idea is where improvement work STARTS; the project is where it gets
+  // executed. Carry across everything the idea already knows so nobody retypes
+  // it, and stamp kaizen_idea_id so both screens can show the link.
+  const startProject = async () => {
+    setStartingProject(true);
+    setProjectError('');
+    try {
+      const project = await api.createCIProject({
+        name: idea.title,
+        description: idea.description,
+        status: 'planning',
+        department_id: idea.department_id ?? null,
+        owner_name: idea.champion_name || idea.submitter_name || '',
+        kaizen_idea_id: idea.id,
+        target_date: idea.target_date ?? null,
+        estimated_savings: idea.estimated_savings || 0,
+      });
+      onProjectStarted();
+      navigate(`/ci-projects/${project.id}`);
+    } catch (e: unknown) {
+      setProjectError((e as Error).message || 'Could not start a project from this idea');
+      setStartingProject(false);
+    }
+  };
+
   const [championName, setChampionName] = useState(idea.champion_name ?? '');
   const [status, setStatus] = useState<KaizenIdea['status']>(idea.status);
   const [targetDate, setTargetDate] = useState(idea.target_date ?? '');
@@ -351,13 +386,17 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
     setSaving(true);
     setSaveError('');
     try {
+      // '' not `undefined`: JSON.stringify DROPS an undefined key, and the
+      // server only writes the columns the body names — so sending undefined
+      // for a field someone just emptied means the clear never happens and the
+      // old value comes back on the next load. '' is what "cleared" looks like.
       await api.updateKaizenIdea(idea.id, {
-        champion_name: championName.trim() || undefined,
+        champion_name: championName.trim(),
         status,
-        target_date: targetDate || undefined,
+        target_date: targetDate,
         actual_savings: actualSavings ? parseFloat(actualSavings) : 0,
-        before_description: beforeDesc.trim() || undefined,
-        after_description: afterDesc.trim() || undefined,
+        before_description: beforeDesc.trim(),
+        after_description: afterDesc.trim(),
       });
       onUpdated();
     } catch (e: unknown) {
@@ -444,6 +483,47 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
                 <p className="text-emerald-700 font-medium">{formatCurrency(idea.estimated_savings)}</p>
               </div>
             )}
+          </div>
+
+          <hr className="border-gray-200" />
+
+          {/* CI projects — where this idea gets executed */}
+          <div>
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center gap-1.5 mb-2">
+              <FolderKanban className="w-3.5 h-3.5" /> CI Projects
+            </p>
+            {projects.length > 0 ? (
+              <div className="space-y-2 mb-3">
+                {projects.map(p => (
+                  <Link
+                    key={p.id}
+                    to={`/ci-projects/${p.id}`}
+                    className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 hover:border-blue-300 transition-colors"
+                  >
+                    <span className="font-mono text-[11px] text-blue-700 shrink-0">{p.number}</span>
+                    <span className="text-sm text-gray-800 truncate flex-1">{p.name}</span>
+                    <span className="text-[11px] text-gray-500 shrink-0">
+                      {/* A project with no tasks has no percent complete — say so. */}
+                      {p.task_count > 0 && p.progress !== null ? `${p.progress}%` : 'no tasks'}
+                    </span>
+                    <ChevronRight className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                  </Link>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-gray-400 mb-3 leading-relaxed">
+                No project has been started from this idea yet. A project gives it an owner, a schedule and a Gantt chart.
+              </p>
+            )}
+            {projectError && <div className="text-red-700 text-xs mb-2">{projectError}</div>}
+            <button
+              onClick={startProject}
+              disabled={startingProject}
+              className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 w-full justify-center"
+            >
+              <Rocket className="w-4 h-4" />
+              {startingProject ? 'Starting…' : projects.length > 0 ? 'Start another project' : 'Start a project from this idea'}
+            </button>
           </div>
 
           <hr className="border-gray-200" />
@@ -586,10 +666,12 @@ function IdeaSidePanel({ idea, onClose, onUpdated, onDeleted }: IdeaSidePanelPro
 
 interface IdeaListCardProps {
   idea: KaizenIdea;
+  /** Projects started from this idea — shown so the link reads from both sides. */
+  projects: CIProject[];
   onClick: () => void;
 }
 
-function IdeaListCard({ idea, onClick }: IdeaListCardProps) {
+function IdeaListCard({ idea, projects, onClick }: IdeaListCardProps) {
   const catCfg = catOf(idea.category);
   const statCfg = statusOf(idea.status);
   const Icon = catCfg.icon;
@@ -620,6 +702,12 @@ function IdeaListCard({ idea, onClick }: IdeaListCardProps) {
             <span>{idea.department_name}</span>
           )}
           <span>{timeAgo(idea.created_at)}</span>
+          {projects.length > 0 && (
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 ring-1 ring-inset ring-blue-200 font-medium">
+              <FolderKanban className="w-3 h-3" />
+              {projects.length === 1 ? '1 project' : `${projects.length} projects`}
+            </span>
+          )}
         </div>
       </div>
 
@@ -647,10 +735,11 @@ function IdeaListCard({ idea, onClick }: IdeaListCardProps) {
 
 interface IdeaGridCardProps {
   idea: KaizenIdea;
+  projects: CIProject[];
   onClick: () => void;
 }
 
-function IdeaGridCard({ idea, onClick }: IdeaGridCardProps) {
+function IdeaGridCard({ idea, projects, onClick }: IdeaGridCardProps) {
   const catCfg = catOf(idea.category);
   const statCfg = statusOf(idea.status);
   const Icon = catCfg.icon;
@@ -681,6 +770,12 @@ function IdeaGridCard({ idea, onClick }: IdeaGridCardProps) {
         <p>{idea.submitter_name}</p>
         {idea.estimated_savings > 0 && (
           <p className="text-emerald-700 font-medium">{formatCurrency(idea.estimated_savings)}</p>
+        )}
+        {projects.length > 0 && (
+          <p className="inline-flex items-center gap-1 mt-1 text-blue-700 font-medium">
+            <FolderKanban className="w-3 h-3" />
+            {projects.length === 1 ? '1 project' : `${projects.length} projects`}
+          </p>
         )}
       </div>
     </div>
@@ -713,6 +808,9 @@ function SummaryCard({ label, value, color = 'text-gray-900', icon }: SummaryCar
 export default function Kaizen() {
   const [ideas, setIdeas] = useState<KaizenIdea[]>([]);
   const [summary, setSummary] = useState<KaizenSummary | null>(null);
+  // Every CI project, so an idea card can say whether work was ever started
+  // from it without a fetch per row.
+  const [projects, setProjects] = useState<CIProject[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [search, setSearch] = useState('');
@@ -747,14 +845,35 @@ export default function Kaizen() {
     }
   }, []);
 
+  const fetchProjects = useCallback(async () => {
+    try {
+      setProjects(await api.getCIProjects());
+    } catch {
+      // The Ideas list still works without the project links.
+    }
+  }, []);
+
   useEffect(() => {
-    Promise.all([fetchIdeas(), fetchSummary()]).finally(() => setLoading(false));
-  }, [fetchIdeas, fetchSummary]);
+    Promise.all([fetchIdeas(), fetchSummary(), fetchProjects()]).finally(() => setLoading(false));
+  }, [fetchIdeas, fetchSummary, fetchProjects]);
 
   const handleRefresh = () => {
     fetchIdeas();
     fetchSummary();
+    fetchProjects();
   };
+
+  /** idea id → the projects started from it. */
+  const projectsByIdea = useMemo(() => {
+    const map = new Map<string, CIProject[]>();
+    for (const p of projects) {
+      if (!p.kaizen_idea_id) continue;
+      const list = map.get(p.kaizen_idea_id);
+      if (list) list.push(p);
+      else map.set(p.kaizen_idea_id, [p]);
+    }
+    return map;
+  }, [projects]);
 
   // Everything the chosen department owns, before the status/category/search
   // chips are applied — this is what the summary strip counts.
@@ -821,7 +940,7 @@ export default function Kaizen() {
         </div>
         <button
           onClick={() => setShowSubmitModal(true)}
-          className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-base font-semibold hover:bg-green-700 transition-colors"
+          className="inline-flex items-center gap-2 px-6 py-3 bg-green-700 text-white rounded-xl text-base font-semibold hover:bg-green-800 transition-colors"
         >
           <Plus className="w-5 h-5" />
           Submit Idea
@@ -962,7 +1081,7 @@ export default function Kaizen() {
                 </button>
                 <button
                   onClick={() => setShowSubmitModal(true)}
-                  className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-base font-semibold hover:bg-green-700 transition-colors"
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-green-700 text-white rounded-xl text-base font-semibold hover:bg-green-800 transition-colors"
                 >
                   <Plus className="w-5 h-5" />
                   Submit Idea
@@ -991,7 +1110,7 @@ export default function Kaizen() {
               </p>
               <button
                 onClick={() => setShowSubmitModal(true)}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-xl text-base font-semibold hover:bg-green-700 transition-colors"
+                className="inline-flex items-center gap-2 px-6 py-3 bg-green-700 text-white rounded-xl text-base font-semibold hover:bg-green-800 transition-colors"
               >
                 <Plus className="w-5 h-5" />
                 Submit Your First Idea
@@ -1005,6 +1124,7 @@ export default function Kaizen() {
             <IdeaListCard
               key={idea.id}
               idea={idea}
+              projects={projectsByIdea.get(idea.id) ?? []}
               onClick={() => setSelectedIdea(idea)}
             />
           ))}
@@ -1015,6 +1135,7 @@ export default function Kaizen() {
             <IdeaGridCard
               key={idea.id}
               idea={idea}
+              projects={projectsByIdea.get(idea.id) ?? []}
               onClick={() => setSelectedIdea(idea)}
             />
           ))}
@@ -1025,6 +1146,8 @@ export default function Kaizen() {
       {selectedIdea && (
         <IdeaSidePanel
           idea={selectedIdea}
+          projects={projectsByIdea.get(selectedIdea.id) ?? []}
+          onProjectStarted={fetchProjects}
           onClose={() => setSelectedIdea(null)}
           onUpdated={() => {
             handleRefresh();

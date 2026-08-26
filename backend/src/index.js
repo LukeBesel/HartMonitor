@@ -57,6 +57,7 @@ const capaRouter         = require('./routes/capa');
 const maintenanceRouter  = require('./routes/maintenance');
 const shiftsRouter       = require('./routes/shifts');
 const kaizenRouter       = require('./routes/kaizen');
+const ciProjectsRouter   = require('./routes/ci-projects');
 const modulesRouter      = require('./routes/modules');
 const bomsRouter         = require('./routes/boms');
 const kitsRouter         = require('./routes/kits');
@@ -84,9 +85,10 @@ const PORT = config.port;
 app.use(cookieParser());
 app.use(pinoHttp({ logger }));
 
-// Behind a single platform proxy (Railway/Render/nginx) — needed so rate
-// limiting and logging see the real client IP, not the proxy's.
-app.set('trust proxy', 1);
+// Needed so rate limiting and logging see the real client IP, not the proxy's.
+// Deliberately counted in hops rather than left on — see config.trustProxy for
+// why believing one hop too many hands a caller a free rate-limit bypass.
+app.set('trust proxy', config.trustProxy);
 
 // Security headers. CSP is left off because the SPA relies heavily on inline
 // styles; the other protections (HSTS, no-sniff, frameguard, etc.) still apply.
@@ -130,11 +132,25 @@ function corsDelegate(req, cb) {
 app.use(cors(corsDelegate));
 
 // ─── Rate limiting ────────────────────────────────────────────────────────────
+const { apiRateKey, isSessionKey, apiKeyRateKey } = require('./middleware/rateLimitKey');
+
+// Two ceilings, because the two kinds of caller are not comparable — see
+// config.rateLimit for how each number was arrived at.
+const { authenticatedMax: AUTHENTICATED_MAX, anonymousMax: ANONYMOUS_MAX } = config.rateLimit;
+
+// The key is resolved once per request and reused for the ceiling, so the two
+// can never disagree about who is being counted.
+const rateKeyFor = (req) => (req._apiRateKey ??= apiRateKey(req));
+
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 1000,                       // generous; protects against runaway clients
+  keyGenerator: rateKeyFor,
+  limit: (req) => (isSessionKey(rateKeyFor(req)) ? AUTHENTICATED_MAX : ANONYMOUS_MAX),
   standardHeaders: true,
   legacyHeaders: false,
+  // A different code from the auth limiter's on purpose: a client may back off
+  // and retry this one, but must never auto-retry a rejected credential attempt.
+  message: { error: 'Too many requests. Please wait a moment and try again.', code: 'API_RATE_LIMITED' },
 });
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -189,7 +205,13 @@ app.use('/api/game',          gameRouter);  // public — no auth required
 app.get('/api/public/pricing', (_req, res) => res.json(PRICING));
 
 // Enterprise API v1 — authenticated with a long-lived API key, not a session.
-const apiKeyLimiter = rateLimit({ windowMs: 60 * 1000, max: 1000, standardHeaders: true, legacyHeaders: false });
+const apiKeyLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 1000,
+  keyGenerator: apiKeyRateKey,   // per key, not per corporate egress IP
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 app.use('/api/v1', apiKeyLimiter, apiKeyAuth, v1Router);
 
 app.use('/api',               requireAuth); // protect everything below
@@ -217,7 +239,13 @@ app.use('/api/messages',      messagesRouter);
 app.use('/api/sites',         sitesRouter);
 app.use('/api/permissions',   permissionsRouter);
 app.use('/api/developer',     developerRouter);
-app.use('/api/admin',         requireRole('developer'), adminRouter);
+// No role gate on the mount. The router carries its own: requirePlatformStaff
+// answers 404 for anyone who is not HartMonitor staff, so a customer never
+// learns this console exists. A `requireRole('developer')` here ran FIRST and
+// answered 403 "Requires developer role" — which tells a curious manager both
+// that the endpoint is real and what unlocks it. The one customer-facing route
+// in that file, GET /pending-resets, carries the developer gate itself.
+app.use('/api/admin',         adminRouter);
 app.use('/api/notifications', notificationsRouter);
 app.use('/api/routings',      requirePlan('pro'), routingsRouter);
 app.use('/api/upload',        uploadRouter);
@@ -229,6 +257,9 @@ app.use('/api/capa',          requirePlan('pro'), writeRole('operator'),   capaR
 app.use('/api/maintenance',   requirePlan('pro'), writeRole('supervisor'), maintenanceRouter);
 app.use('/api/shifts',        writeRole('operator'),   shiftsRouter);
 app.use('/api/kaizen',        writeRole('operator'),   kaizenRouter);
+// CI projects live in the same workspace as Kaizen ideas and carry the same
+// gate: any authenticated member can read the plan, operators and up can edit it.
+app.use('/api/ci-projects',   writeRole('operator'),   ciProjectsRouter);
 app.use('/api/modules',       modulesRouter);
 // BOM/kitting — reads open to any authenticated member; writes role-gated
 // per-route inside the routers (supervisor for BOM edits / kit generation,
@@ -266,10 +297,43 @@ app.get('*', (_req, res) => {
 // ─── Central error handler ────────────────────────────────────────────────────
 // Catches thrown/async errors so the process never crashes and stack traces are
 // never leaked to clients in production.
+// A constraint the database enforces is a statement about the REQUEST, not a
+// server fault: a required field arrived empty, a status word the column does
+// not accept, a foreign id that is not there. Those were all surfacing as a
+// bare 500 "Internal server error", which tells the person at the screen
+// nothing and reads as the app being broken. Map them to 4xx with the column
+// named — in production too, since a column name is not a stack trace.
+function constraintFailure(err) {
+  const code = err.code || '';
+  if (!code.startsWith('SQLITE_CONSTRAINT')) return null;
+  // better-sqlite3 messages read like
+  //   "NOT NULL constraint failed: kaizen_ideas.title"
+  //   "CHECK constraint failed: status"
+  const field = (/failed:\s*(?:\w+\.)?([\w]+)/.exec(err.message) || [])[1] || '';
+  const named = field ? `'${field}'` : 'A field';
+  if (code === 'SQLITE_CONSTRAINT_NOTNULL') {
+    return { status: 400, code: 'FIELD_REQUIRED', error: `${named} is required and cannot be cleared.` };
+  }
+  if (code === 'SQLITE_CONSTRAINT_CHECK') {
+    return { status: 400, code: 'FIELD_NOT_ALLOWED', error: `${named} was given a value this field does not accept.` };
+  }
+  if (code === 'SQLITE_CONSTRAINT_FOREIGNKEY') {
+    return { status: 400, code: 'REFERENCE_NOT_FOUND', error: 'That references a record that does not exist.' };
+  }
+  if (code === 'SQLITE_CONSTRAINT_UNIQUE' || code === 'SQLITE_CONSTRAINT_PRIMARYKEY') {
+    return { status: 409, code: 'DUPLICATE', error: `${named} is already taken.` };
+  }
+  return { status: 400, code: 'CONSTRAINT_FAILED', error: 'That change was rejected by a data rule.' };
+}
+
 // eslint-disable-next-line no-unused-vars
 app.use((err, req, res, _next) => {
   console.error('[error]', req.method, req.originalUrl, '-', err.message);
   if (res.headersSent) return;
+  const mapped = constraintFailure(err);
+  if (mapped) {
+    return res.status(mapped.status).json({ error: mapped.error, code: mapped.code });
+  }
   const status = err.status || 500;
   res.status(status).json({
     error: config.isProd ? 'Internal server error' : err.message,

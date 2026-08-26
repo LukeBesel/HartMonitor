@@ -591,10 +591,6 @@ export default function ReceivingPortal() {
   const [receiptModal, setReceiptModal] = useState<{ po: PurchaseOrder; receipts: ReceiptEntry[] } | null>(null);
   const [tab, setTab] = useState<'pending' | 'received'>('pending');
 
-  useEffect(() => {
-    document.title = 'Receiving Portal — HartMonitor';
-  }, []);
-
   const loadData = async () => {
     try {
       const today = new Date().toISOString().slice(0, 10);

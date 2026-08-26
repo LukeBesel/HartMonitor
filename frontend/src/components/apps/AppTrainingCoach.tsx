@@ -11,9 +11,9 @@ import {
   Check, ChevronDown, ChevronUp, X, ArrowRight, GraduationCap,
   Sparkles, RefreshCw, PartyPopper,
 } from 'lucide-react';
-import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useModules } from '../../context/ModulesContext';
+import { useCompanySetting } from '../../context/BrandingContext';
 import { ONBOARDING_DONE_EVENT } from '../shared/OnboardingWizard';
 import { useAppTraining, TrainingStepId } from './useAppTraining';
 
@@ -195,7 +195,7 @@ export default function AppTrainingCoach() {
           <GraduationCap size={16} />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Guided training</div>
+          <div className="text-[10px] font-semibold uppercase tracking-wider text-gray-500">Guided training</div>
           <h3 className="text-[14px] font-bold text-gray-900 leading-tight">Build your first app</h3>
         </div>
         <div className="flex items-center gap-0.5 flex-shrink-0">
@@ -203,7 +203,7 @@ export default function AppTrainingCoach() {
             onClick={training.refresh}
             title="Re-check my progress"
             aria-label="Re-check my progress"
-            className="p-1.5 rounded-lg text-gray-300 hover:text-gray-600 hover:bg-gray-100"
+            className="p-1.5 rounded-lg text-gray-500 hover:text-gray-800 hover:bg-gray-100"
           >
             <RefreshCw size={13} className={training.loading ? 'animate-spin' : ''} />
           </button>
@@ -211,7 +211,7 @@ export default function AppTrainingCoach() {
             onClick={() => { training.setCollapsed(true); setManuallyOpened(false); }}
             title="Minimize"
             aria-label="Minimize training"
-            className="p-1.5 rounded-lg text-gray-300 hover:text-gray-600 hover:bg-gray-100"
+            className="p-1.5 rounded-lg text-gray-500 hover:text-gray-800 hover:bg-gray-100"
           >
             <ChevronDown size={15} />
           </button>
@@ -219,7 +219,7 @@ export default function AppTrainingCoach() {
             onClick={training.dismiss}
             title="Dismiss training"
             aria-label="Dismiss training"
-            className="p-1.5 rounded-lg text-gray-300 hover:text-gray-600 hover:bg-gray-100"
+            className="p-1.5 rounded-lg text-gray-500 hover:text-gray-800 hover:bg-gray-100"
           >
             <X size={15} />
           </button>
@@ -228,7 +228,7 @@ export default function AppTrainingCoach() {
 
       {/* Progress */}
       <div className="px-4 pt-3">
-        <div className="flex items-center justify-between text-[11px] font-medium text-gray-400 mb-1.5">
+        <div className="flex items-center justify-between text-[11px] font-medium text-gray-500 mb-1.5">
           <span>{doneCount} of {total} complete</span>
           <span className="tabular-nums">{pct}%</span>
         </div>
@@ -253,7 +253,7 @@ export default function AppTrainingCoach() {
                       ? 'bg-green-100 text-green-600'
                       : isActive
                         ? 'text-white'
-                        : 'bg-gray-100 text-gray-400'
+                        : 'bg-gray-100 text-gray-600'
                   }`}
                   style={isActive && !m.done ? { backgroundColor: 'var(--accent)' } : undefined}
                 >
@@ -261,7 +261,7 @@ export default function AppTrainingCoach() {
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className={`text-[13px] leading-snug ${
-                    m.done ? 'text-gray-400 line-through' : isActive ? 'font-semibold text-gray-900' : 'text-gray-600'
+                    m.done ? 'text-gray-500 line-through' : isActive ? 'font-semibold text-gray-900' : 'text-gray-600'
                   }`}>
                     {m.def.title}
                   </div>
@@ -285,7 +285,7 @@ export default function AppTrainingCoach() {
 
       {active && (
         <div className="px-4 pb-3 -mt-1">
-          <p className="text-[11px] text-gray-400 flex items-start gap-1.5 leading-snug">
+          <p className="text-[11px] text-gray-500 flex items-start gap-1.5 leading-snug">
             <Sparkles size={12} className="mt-0.5 flex-shrink-0" />
             Steps tick themselves off from your real account — nothing here is self-reported.
           </p>
@@ -319,19 +319,20 @@ function useIsNarrow(): boolean {
 function useWelcomeDone(role: string | undefined): boolean {
   const showsWelcome = role === 'manager' || role === 'developer';
   const [done, setDone] = useState(!showsWelcome);
+  // Read off the settings the branding provider already holds rather than
+  // asking /api/config for the same bag a third time on every page load.
+  const { value: completedFlag, status: settingsStatus } = useCompanySetting('onboarding_completed');
 
   useEffect(() => {
     if (!showsWelcome) { setDone(true); return; }
-    let cancelled = false;
     const truthy = (v: unknown) => ['true', '1', 'yes'].includes(String(v ?? '').toLowerCase());
-    api.getCompanySettings()
-      .then(settings => { if (!cancelled) setDone(truthy(settings?.onboarding_completed)); })
-      // If settings can't be read we'd rather coach than go silent.
-      .catch(() => { if (!cancelled) setDone(true); });
+    // If the flag can't be read we'd rather coach than go silent.
+    if (settingsStatus === 'ready') setDone(truthy(completedFlag));
+    else if (settingsStatus === 'error') setDone(true);
     const onFinished = () => setDone(true);
     window.addEventListener(ONBOARDING_DONE_EVENT, onFinished);
-    return () => { cancelled = true; window.removeEventListener(ONBOARDING_DONE_EVENT, onFinished); };
-  }, [showsWelcome]);
+    return () => window.removeEventListener(ONBOARDING_DONE_EVENT, onFinished);
+  }, [showsWelcome, settingsStatus, completedFlag]);
 
   return done;
 }

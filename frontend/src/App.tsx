@@ -17,6 +17,8 @@ import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import MessageToast from './components/shared/MessageToast';
 import FirstRunLanding from './components/apps/FirstRunLanding';
 import AppTrainingCoach from './components/apps/AppTrainingCoach';
+import AppLoading from './components/shared/AppLoading';
+import DocumentTitle from './components/shared/DocumentTitle';
 
 // Code-split the rest of the pages so the initial load only ships the shell,
 // login, and landing dashboard. Heavy chart pages load on demand.
@@ -72,19 +74,13 @@ const CAPA                 = lazy(() => import('./pages/CAPA'));
 const Maintenance          = lazy(() => import('./pages/Maintenance'));
 const ShiftNotes           = lazy(() => import('./pages/ShiftNotes'));
 const Kaizen               = lazy(() => import('./pages/Kaizen'));
+const CIProjects           = lazy(() => import('./pages/CIProjects'));
 const Admin                = lazy(() => import('./pages/Admin'));
-
-function Spinner() {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50">
-      <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-    </div>
-  );
-}
+const NotFound             = lazy(() => import('./pages/NotFound'));
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
-  if (loading) return <Spinner />;
+  if (loading) return <AppLoading />;
   if (!user) return <Navigate to="/login" replace />;
   return <>{children}</>;
 }
@@ -93,7 +89,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 // the Operator Portal instead of analytics, settings, etc.
 function ReportPortalRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, canAccessReportPortal } = useAuth();
-  if (loading) return <Spinner />;
+  if (loading) return <AppLoading />;
   if (!user) return <Navigate to="/login" replace />;
   if (!canAccessReportPortal) return <Navigate to="/operator" replace />;
   return <>{children}</>;
@@ -103,7 +99,7 @@ function ReportPortalRoute({ children }: { children: React.ReactNode }) {
 // off. Visiting a disabled module's URL bounces to the Command Center.
 function ModuleGate({ module, children }: { module: string; children: React.ReactNode }) {
   const { isEnabled, loading } = useModules();
-  if (loading) return <Spinner />;
+  if (loading) return <AppLoading />;
   if (!isEnabled(module)) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
 }
@@ -111,7 +107,7 @@ function ModuleGate({ module, children }: { module: string; children: React.Reac
 // The Operator Portal. Open to every role except view-only viewers.
 function OperatorRoute({ children }: { children: React.ReactNode }) {
   const { user, loading, canAccessOperatorPortal } = useAuth();
-  if (loading) return <Spinner />;
+  if (loading) return <AppLoading />;
   if (!user) return <Navigate to="/login" replace />;
   if (!canAccessOperatorPortal) return <Navigate to="/dashboard" replace />;
   return <>{children}</>;
@@ -130,12 +126,13 @@ export default function App() {
         <MessagesProvider>
         <ToastProvider>
           <BrowserRouter>
+            <DocumentTitle />
             <MessageToast />
             {/* Builder-first guided training. Self-gating: it only shows on the
                 apps surfaces, for people who can build, until it is finished
                 or dismissed. */}
             <AppTrainingCoach />
-            <Suspense fallback={<Spinner />}>
+            <Suspense fallback={<AppLoading />}>
             <ErrorBoundary>
             <Routes>
               {/* Public marketing site */}
@@ -216,8 +213,14 @@ export default function App() {
                 <Route path="/maintenance/:tab" element={<ModuleGate module="maintenance"><Maintenance /></ModuleGate>} />
                 <Route path="/shift-notes" element={<ModuleGate module="shifts"><ShiftNotes /></ModuleGate>} />
                 <Route path="/kaizen" element={<ModuleGate module="kaizen"><Kaizen /></ModuleGate>} />
+                <Route path="/ci-projects" element={<ModuleGate module="kaizen"><CIProjects /></ModuleGate>} />
+                <Route path="/ci-projects/:id" element={<ModuleGate module="kaizen"><CIProjects /></ModuleGate>} />
                 <Route path="/admin" element={<Admin />} />
-                <Route path="*" element={<Navigate to="/dashboard" replace />} />
+                {/* A URL that matches nothing says so, instead of quietly
+                    landing people on the Command Center as though their stale
+                    bookmark had worked. Still inside the auth guard above, so a
+                    signed-out visitor gets the login screen, not a 404. */}
+                <Route path="*" element={<NotFound />} />
               </Route>
             </Routes>
             </ErrorBoundary>

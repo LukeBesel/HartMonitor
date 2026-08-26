@@ -260,13 +260,20 @@ router.post('/logout', requireAuth, (req, res) => {
 // ─── GET /me ──────────────────────────────────────────────────────────────────
 
 router.get('/me', requireAuth, (req, res) => {
-  const user = db.prepare('SELECT id, email, display_name, role, company_id, last_login, created_at FROM users WHERE id = ?').get(req.user.id);
+  const user = db.prepare('SELECT id, email, display_name, role, company_id, last_login, created_at, is_platform_staff FROM users WHERE id = ?').get(req.user.id);
   if (!user) return res.status(404).json({ error: 'User not found' });
   const company = db.prepare("SELECT value FROM org_settings WHERE company_id = ? AND key = 'company_name'").get(req.companyId);
   // Kiosk lock: when on, operator-role users are confined to the Operator
   // Portal / App Player and never see the management dashboards.
   const kiosk = db.prepare("SELECT value FROM org_settings WHERE company_id = ? AND key = 'operator_kiosk_lock'").get(req.companyId);
-  res.json({ ...user, company_name: company?.value || 'HartMonitor', kiosk_lock: kiosk?.value === 'true' });
+  // is_platform_staff decides whether the operator console is offered at all.
+  // Sent as a real boolean so the client never has to guess at 0/1 truthiness.
+  res.json({
+    ...user,
+    is_platform_staff: user.is_platform_staff === 1,
+    company_name: company?.value || 'HartMonitor',
+    kiosk_lock: kiosk?.value === 'true',
+  });
 });
 
 // ─── PUT /change-password ─────────────────────────────────────────────────────

@@ -23,7 +23,8 @@ import type {
 } from '../../types';
 import { api } from '../../api/client';
 import TableImportModal from '../shared/TableImportModal';
-import { BUTTON_ICONS, defaultLayout } from '../app/WidgetView';
+import { BUTTON_ICONS, buttonLabelContrast, defaultLayout, WIDGET_GROUND } from '../app/WidgetView';
+import { contrastRatio, readableInk, LIGHT_INK } from '../../utils/contrast';
 import { WIDGET_META, INPUT_WIDGET_TYPES } from './WidgetPalette';
 import { inferVariableType, VARIABLE_NAME_RE } from './VariablesPanel';
 import { eventsFor, TriggerAttachment } from './TriggerEditor';
@@ -111,6 +112,37 @@ function ColorField({ label, value, fallback, onChange }: { label: string; value
         <input className="wb-input flex-1 font-mono" style={{ fontSize: 12 }} value={value || fallback} onChange={e => onChange(e.target.value)} />
       </div>
     </Field>
+  );
+}
+
+/** What the picked button color will actually look like on the floor.
+ *
+ *  The label color is chosen from the fill rather than left to the author, so
+ *  this states which ink won and at what ratio instead of asking anyone to
+ *  guess. The one thing auto-ink cannot rescue is a fill that disappears into
+ *  the player's near-black shell, so that gets a warning of its own — WCAG 2.2
+ *  wants 3:1 for a control's own boundary. */
+function ButtonColorReadout({ color }: { color: string }) {
+  const label = buttonLabelContrast(color);
+  const onShell = contrastRatio(color, WIDGET_GROUND);
+  if (label === null) return null;
+  const inkName = readableInk(color) === LIGHT_INK ? 'White' : 'Dark';
+  return (
+    <div className="-mt-1 space-y-1">
+      <p className="text-muted" style={{ fontSize: 11.5 }}>
+        {inkName} label, <span className="tnum">{label.toFixed(1)}:1</span> — picked automatically so the
+        text stays readable on the floor.
+      </p>
+      {onShell !== null && onShell < 3 && (
+        <p className="flex items-start gap-1.5 text-warn-ink" style={{ fontSize: 11.5 }}>
+          <AlertTriangle size={12} className="flex-shrink-0 mt-0.5" />
+          <span>
+            This color nearly matches the player background (<span className="tnum">{onShell.toFixed(1)}:1</span>),
+            so the button itself is hard to find. Pick a brighter one.
+          </span>
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -541,7 +573,8 @@ function WidgetTab({ app, widget, activeStepIdx, canEdit, onTab, onUpdateWidget,
               );
             })()}
           </div>
-          <ColorField label="Color" value={config.buttonColor} fallback="#3b82f6" onChange={v => setConfig({ buttonColor: v })} />
+          <ColorField label="Color" value={config.buttonColor} fallback="#60a5fa" onChange={v => setConfig({ buttonColor: v })} />
+          <ButtonColorReadout color={config.buttonColor || '#60a5fa'} />
           <Field label="Style">
             <div className="seg w-full">
               {(['solid', 'outline', 'ghost'] as const).map(v => (

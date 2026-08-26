@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import App from './App.tsx'
 import './index.css'
 import { isStaleChunkError, takeStaleChunkReload } from './utils/staleChunk'
+import { installAccentTokens } from './utils/accentTokens'
 
 // Every deploy replaces the hashed chunk filenames. A tab that was already open
 // across that deploy — an operator with the player up mid-shift, or a phone
@@ -11,11 +12,15 @@ import { isStaleChunkError, takeStaleChunkReload } from './utils/staleChunk'
 // Unable to preload CSS for /assets/AppPlayer-<hash>.css". Vite fires
 // `vite:preloadError` for precisely this case, so take the new build instead of
 // showing the operator a dead screen.
-window.addEventListener('vite:preloadError', event => {
-  if (takeStaleChunkReload()) {
-    event.preventDefault();   // don't let it surface as a crash; we're reloading
-    window.location.reload();
-  }
+window.addEventListener('vite:preloadError', () => {
+  // Deliberately NOT event.preventDefault(). Vite's helper only rethrows the
+  // error when the event is un-cancelled; cancelling it makes __vitePreload
+  // RESOLVE with undefined, so React.lazy then reads `.default` off undefined
+  // and the boundary shows "Cannot read properties of undefined" — a worse
+  // message than the one we set out to remove, for the whole duration of the
+  // reload navigation. Letting the real error through means the boundary can
+  // recognise it and show "A new version is available" while we reload.
+  if (takeStaleChunkReload()) window.location.reload();
 });
 
 // The same failure can arrive as a plain unhandled rejection (a dynamic import
@@ -26,6 +31,11 @@ window.addEventListener('unhandledrejection', event => {
     window.location.reload();
   }
 });
+
+// The theme applies the tenant's accent as inline custom properties on <html>,
+// which outrank any stylesheet, so the contrast-safe forms of that accent have
+// to be derived here rather than declared in CSS.
+installAccentTokens();
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
