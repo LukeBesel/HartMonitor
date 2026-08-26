@@ -137,7 +137,7 @@ export default function Departments() {
   const secondsSinceRefresh = Math.floor((Date.now() - lastRefresh.getTime()) / 1000);
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="p-4 sm:p-6 space-y-6">
       <ModuleOnboarding
         moduleId="departments"
         title="Department View"
@@ -163,12 +163,14 @@ export default function Departments() {
             <p className="text-xs text-gray-500 mt-0.5">Live job status by department</p>
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          {/* Department selector */}
+        {/* One row of controls, and on a phone the three destination buttons
+            drop to their icons rather than stacking into three more rows. */}
+        <div className="flex flex-wrap items-center gap-2">
           <select
             value={selectedDeptId}
             onChange={e => setSelectedDeptId(e.target.value)}
-            className="input-field text-sm"
+            className="input-field text-sm w-auto"
+            aria-label="Department"
           >
             <option value="">— Select department —</option>
             {departments.map(d => (
@@ -186,7 +188,7 @@ export default function Departments() {
                 title="Stations, live OEE, hourly output and quality for this department"
               >
                 <BarChart2 size={14} />
-                <span>Full department view</span>
+                <span className="hidden sm:inline">Full view</span>
               </Link>
               <Link
                 to={`/departments/${selectedDeptId}/tv`}
@@ -194,7 +196,7 @@ export default function Departments() {
                 title="Open full-screen TV mode for this department"
               >
                 <Tv size={14} />
-                <span>TV Mode</span>
+                <span className="hidden sm:inline">TV</span>
               </Link>
             </>
           )}
@@ -204,10 +206,11 @@ export default function Departments() {
             title="Create and configure workstations"
           >
             <Cpu size={14} />
-            <span>Stations</span>
+            <span className="hidden sm:inline">Stations</span>
           </Link>
           <button
             onClick={() => loadWorkOrders(true)}
+            title="Refresh now"
             className="flex items-center gap-2 px-3 py-2 bg-white border border-gray-200 rounded-lg text-sm text-gray-600 hover:bg-gray-50 shadow-sm"
           >
             <RefreshCw size={14} className={refreshing ? 'animate-spin text-blue-500' : ''} />
@@ -245,37 +248,36 @@ export default function Departments() {
         </div>
       ) : (
         <>
-          {/* Who this department's help requests reach */}
-          <DepartmentTeam
-            key={selectedDeptId}
-            departmentId={selectedDeptId}
-            departmentName={selectedDept?.name ?? 'this department'}
-          />
-
-          {/* Metrics row */}
-          <div className="grid grid-cols-3 gap-4">
-            <div className="card p-5">
-              <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center mb-3">
-                <Activity size={18} className="text-blue-600" />
+          {/* Metrics row. The three labels used to repeat "Work Orders" and
+              wrapped to three lines each on a phone; the caption says it once
+              so the cards can stay one line wide. Every figure counts WORK
+              ORDERS — not runs, which the Command Center reports. */}
+          <div>
+            <h2 className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2">
+              Work orders in {selectedDept?.name ?? 'this department'}
+            </h2>
+            <div className="grid grid-cols-3 gap-3 sm:gap-4">
+              <div className="card p-4 sm:p-5">
+                <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center mb-3">
+                  <Activity size={18} className="text-blue-600" />
+                </div>
+                <div className="text-2xl font-bold text-gray-900">{inProgress.length}</div>
+                <div className="text-xs text-gray-500 mt-0.5">In progress</div>
               </div>
-              <div className="text-2xl font-bold text-gray-900">{inProgress.length}</div>
-              <div className="text-xs text-gray-500 mt-0.5">Work Orders In Progress</div>
-            </div>
-            <div className="card p-5">
-              <div className="w-9 h-9 bg-green-50 rounded-lg flex items-center justify-center mb-3">
-                <CheckCircle2 size={18} className="text-green-600" />
+              <div className="card p-4 sm:p-5">
+                <div className="w-9 h-9 bg-green-50 rounded-lg flex items-center justify-center mb-3">
+                  <CheckCircle2 size={18} className="text-green-600" />
+                </div>
+                <div className="text-2xl font-bold text-gray-900">{completedToday}</div>
+                <div className="text-xs text-gray-500 mt-0.5">Finished today</div>
               </div>
-              {/* Work orders finished today — NOT the run count, which the
-                  Command Center and the full department view report. */}
-              <div className="text-2xl font-bold text-gray-900">{completedToday}</div>
-              <div className="text-xs text-gray-500 mt-0.5">Work Orders Finished Today</div>
-            </div>
-            <div className="card p-5">
-              <div className="w-9 h-9 bg-amber-50 rounded-lg flex items-center justify-center mb-3">
-                <Calendar size={18} className="text-amber-600" />
+              <div className="card p-4 sm:p-5">
+                <div className="w-9 h-9 bg-amber-50 rounded-lg flex items-center justify-center mb-3">
+                  <Calendar size={18} className="text-amber-600" />
+                </div>
+                <div className="text-2xl font-bold text-gray-900">{upcoming.length}</div>
+                <div className="text-xs text-gray-500 mt-0.5">Not started</div>
               </div>
-              <div className="text-2xl font-bold text-gray-900">{upcoming.length}</div>
-              <div className="text-xs text-gray-500 mt-0.5">Work Orders Not Started</div>
             </div>
           </div>
 
@@ -391,6 +393,17 @@ export default function Departments() {
               </div>
             )}
           </div>
+
+          {/* Who this department's help requests reach.
+              Last on the page on purpose. It is a setup panel, not production
+              status, and on a phone its "nobody is here yet" state is a whole
+              screen of scrolling between the reader and the numbers they came
+              for. Work first, then who to call about it. */}
+          <DepartmentTeam
+            key={selectedDeptId}
+            departmentId={selectedDeptId}
+            departmentName={selectedDept?.name ?? 'this department'}
+          />
         </>
       )}
     </div>

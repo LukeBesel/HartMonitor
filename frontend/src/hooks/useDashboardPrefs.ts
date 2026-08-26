@@ -2,19 +2,22 @@ import { useState } from 'react';
 
 const HIDDEN_KEY = 'hm_hidden_dashboard';
 
+// `floor`, `floor_departments` and `floor_throughput` are retired ids from the
+// old collapsible "Live Floor View". The department cards are now the way into
+// the page, so hiding them would leave nothing to click, and the hourly chart
+// became a range on the one Output card. The union keeps the old names so a
+// preferences blob written by an earlier build still reads back cleanly.
 export type DashboardSectionId =
   | 'attention' | 'kpis' | 'floor' | 'floor_departments' | 'floor_throughput'
   | 'floor_activity' | 'due_soon' | 'output';
 
+// Listed in the order they appear on the page, so the panel reads as a map of it.
 export const DASHBOARD_SECTIONS: { id: DashboardSectionId; label: string; description: string }[] = [
-  { id: 'attention',         label: 'Needs Attention',     description: 'Overdue work orders, down stations, critical alerts' },
-  { id: 'kpis',              label: 'Key Metrics',          description: 'Completed today, schedule adherence, pass rate, active now' },
-  { id: 'floor',             label: 'Live Floor View',      description: 'Real-time plant status section (master toggle)' },
-  { id: 'floor_departments', label: '— Department Cards',   description: 'Live performance by department inside the floor view' },
-  { id: 'floor_throughput',  label: '— Hourly Throughput',  description: 'Units-per-hour chart inside the floor view' },
-  { id: 'floor_activity',    label: '— Alerts & Completions', description: 'Active alerts and recent completions inside the floor view' },
-  { id: 'due_soon',          label: 'Due in 48 Hours',      description: 'Work orders coming due soon' },
-  { id: 'output',            label: 'Output Chart',         description: 'Completions over the last 7 days' },
+  { id: 'attention',      label: 'Needs Attention',   description: 'Overdue work orders, down stations, help requests' },
+  { id: 'kpis',           label: 'Today at a Glance', description: 'Finished, running, average cycle time, pass rate' },
+  { id: 'floor_activity', label: 'Latest Runs',       description: 'Each run as it lands, with the time it took' },
+  { id: 'output',         label: 'Output Chart',      description: 'Runs finished over the last 24 hours or 7 days' },
+  { id: 'due_soon',       label: 'Due in 48 Hours',   description: 'Work orders coming due, and schedule health' },
 ];
 
 function loadHidden(): Set<DashboardSectionId> {

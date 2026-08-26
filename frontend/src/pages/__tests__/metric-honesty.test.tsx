@@ -268,6 +268,8 @@ describe('the shared duration formatter is the only one', () => {
     const here = path.dirname(fileURLToPath(import.meta.url));
     const src = await fs.readFile(path.join(here, '..', 'Dashboard.tsx'), 'utf8');
     expect(src).not.toMatch(/function\s+fmtDuration\s*\(/);
-    expect(src).toMatch(/import \{ fmtDuration \} from '\.\.\/components\/apps\/appModel'/);
+    // The import may carry other appModel helpers alongside it — what matters
+    // is that fmtDuration comes from the one shared module.
+    expect(src).toMatch(/import \{[^}]*\bfmtDuration\b[^}]*\} from '\.\.\/components\/apps\/appModel'/);
   });
 });
