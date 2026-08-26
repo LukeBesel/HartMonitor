@@ -21,8 +21,12 @@ import { usePlan } from '../context/PlanContext';
 import { useToast } from '../context/ToastContext';
 import {
   appShape, orderedSteps, widgetsOf, widgetTypeLabel, isCaptureWidget,
-  fmtDateTime, fmtDuration, fmtRelative, pluralize,
+  elapsedSeconds, fmtDateTime, fmtDuration, fmtRelative, measuredSeconds, pluralize,
 } from '../components/apps/appModel';
+import useAutoRefresh from '../hooks/useAutoRefresh';
+import LastRefreshed from '../components/shared/LastRefreshed';
+
+const REFRESH_MS = 60_000;
 
 export default function AppDetail() {
   const { id } = useParams<{ id: string }>();
@@ -38,16 +42,28 @@ export default function AppDetail() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const load = useCallback(() => {
-    if (!id) return Promise.resolve();
-    setError(null);
-    return api.getAppDetail(id)
-      .then(setData)
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : 'Failed to load this app'))
-      .finally(() => setLoading(false));
+  const load = useCallback(async () => {
+    if (!id) return;
+    try {
+      setData(await api.getAppDetail(id));
+      setError(null);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to load this app');
+      throw err; // let useAutoRefresh keep the freshness stamp honestly stale
+    } finally {
+      setLoading(false);
+    }
   }, [id]);
 
-  useEffect(() => { load(); }, [load]);
+  const { lastRefreshed, refreshing, refresh } = useAutoRefresh(load, REFRESH_MS);
+
+  // Runs still on the bench report how long they have been open, so the clock
+  // has to move between polls or a live row reads as frozen.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, []);
 
   const handleDuplicate = async () => {
     if (!id) return;
@@ -87,7 +103,7 @@ export default function AppDetail() {
     try {
       await api.publishApp(data.app.id);
       addToast(`"${data.app.name}" is live — operators see it now`, 'success');
-      await load();
+      await refresh();
     } catch (err: unknown) {
       addToast(err instanceof Error ? err.message : 'Failed to publish app', 'error');
     } finally {
@@ -122,7 +138,7 @@ export default function AppDetail() {
             title="Couldn't open this app"
             description={error || 'It may have been deleted, or it belongs to another company.'}
             action={
-              <button onClick={() => { setLoading(true); load(); }} className="btn-secondary">
+              <button onClick={() => { setLoading(true); void refresh(); }} className="btn-secondary">
                 <RefreshCw size={14} /> Retry
               </button>
             }
@@ -158,11 +174,15 @@ export default function AppDetail() {
         subtitle={app.description || 'No description yet — add one in the builder so your team knows when to use this app.'}
         actions={
           <>
+            <LastRefreshed at={lastRefreshed} refreshing={refreshing} onRefresh={() => void refresh()} />
             {canEdit && (
               <Link to={`/apps/${app.id}/build`} className="btn-secondary">
                 <Edit3 size={14} /> Edit
               </Link>
             )}
+            <Link to={`/apps/${app.id}/history`} className="btn-secondary">
+              <History size={14} /> Run history
+            </Link>
             <Link to={`/apps/${app.id}/analytics`} className="btn-secondary">
               <BarChart2 size={14} /> Analytics
             </Link>
@@ -188,9 +208,6 @@ export default function AppDetail() {
           <button onClick={handleSaveAsTemplate} disabled={busy} className="btn-secondary text-xs">
             <Layers size={13} /> Save as template
           </button>
-          <Link to={`/apps/${app.id}/history`} className="btn-secondary text-xs">
-            <History size={13} /> Run history
-          </Link>
           <button
             onClick={() => api.downloadAppCompletions(app.id).catch((e: unknown) =>
               addToast(e instanceof Error ? e.message : 'Export failed', 'error'))}
@@ -201,17 +218,36 @@ export default function AppDetail() {
         </div>
       )}
 
-      {/* What it has done — counted from this company's completions */}
+      {/* What it has done — counted from this company's completions.
+          `avg_duration_s` arrives as wall clock between start and finish, so a
+          run opened and closed inside one second averages to 0. Zero is not a
+          run time; it is the shape of "nobody timed it", and measuredSeconds
+          turns it back into the "—" Run History already shows for those runs. */}
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-        <Stat icon={Activity} label="Runs, all time" value={String(stats.runs_total)} />
-        <Stat icon={Clock} label="Runs last 7 days" value={String(stats.runs_7d)} />
-        <Stat icon={Loader2} label="Avg run time" value={fmtDuration(stats.avg_duration_s)} />
+        <Stat
+          icon={Clock}
+          label="Avg run time"
+          value={fmtDuration(measuredSeconds(stats.avg_duration_s))}
+          hint={measuredSeconds(stats.avg_duration_s) === null
+            ? (stats.runs_total === 0 ? 'Nobody has run this app yet' : 'No finished run was timed')
+            : 'Averaged over completed runs'}
+          unknown={measuredSeconds(stats.avg_duration_s) === null}
+        />
         <Stat
           icon={CheckCircle2}
           label="First-pass yield"
           value={stats.first_pass_yield === null ? '—' : `${stats.first_pass_yield}%`}
-          hint={stats.first_pass_yield === null ? 'No pass/fail checks captured yet' : undefined}
+          hint={stats.first_pass_yield === null ? 'No pass/fail check recorded' : 'Runs whose checks all passed'}
+          unknown={stats.first_pass_yield === null}
           tone={stats.first_pass_yield !== null && stats.first_pass_yield >= 95 ? 'good' : undefined}
+        />
+        <Stat icon={Activity} label="Runs, all time" value={String(stats.runs_total)} />
+        <Stat
+          icon={Loader2}
+          label="Running now"
+          value={String(stats.in_progress)}
+          hint={stats.in_progress > 0 ? 'Open on the floor right now' : 'Nothing on the bench'}
+          tone={stats.in_progress > 0 ? 'live' : undefined}
         />
         <Stat icon={Users} label="Operators" value={String(stats.operator_count)} />
       </div>
@@ -384,8 +420,17 @@ export default function AppDetail() {
                         >
                           {[run.work_order_number, run.product_type_name, run.station_name].filter(Boolean).join(' · ') || '—'}
                         </td>
-                        <td className="px-1 py-2 text-[13px] text-gray-700 text-right tabular-nums whitespace-nowrap">
-                          {fmtDuration(run.duration_s)}
+                        <td className="px-1 py-2 text-[13px] text-right tabular-nums whitespace-nowrap">
+                          {run.status === 'in_progress' ? (
+                            <span className="text-blue-600 font-semibold">
+                              {fmtDuration(elapsedSeconds(run.started_at, now))}
+                              <span className="text-[10px] font-normal text-blue-500"> so far</span>
+                            </span>
+                          ) : measuredSeconds(run.duration_s) === null ? (
+                            <span className="text-gray-400" title="this run was never timed">—</span>
+                          ) : (
+                            <span className="text-gray-700">{fmtDuration(measuredSeconds(run.duration_s))}</span>
+                          )}
                         </td>
                         <td className="px-1 py-2"><RunStatus status={run.status} /></td>
                         <td className="px-1 py-2 text-right">
@@ -514,8 +559,15 @@ export default function AppDetail() {
                         {' · last '}{fmtRelative(op.last_run_at)}
                       </span>
                     </span>
-                    <span className="text-[12px] text-gray-500 tabular-nums flex-shrink-0">
-                      {fmtDuration(op.avg_duration_s)}
+                    <span
+                      className={`text-[12px] tabular-nums flex-shrink-0 ${
+                        measuredSeconds(op.avg_duration_s) === null ? 'text-gray-400' : 'text-gray-500'
+                      }`}
+                      title={measuredSeconds(op.avg_duration_s) === null
+                        ? 'none of their runs was timed'
+                        : 'average run time'}
+                    >
+                      {fmtDuration(measuredSeconds(op.avg_duration_s))}
                     </span>
                   </li>
                 ))}
@@ -533,13 +585,21 @@ export default function AppDetail() {
             <dl className="grid grid-cols-2 gap-3">
               <MiniStat label="Runs started" value={String(stats.runs_30d)} />
               <MiniStat label="Completed" value={String(stats.completed_30d)} />
-              <MiniStat label="Avg run time" value={fmtDuration(stats.avg_duration_30d_s)} />
+              <MiniStat
+                label="Avg run time"
+                value={fmtDuration(measuredSeconds(stats.avg_duration_30d_s))}
+                unknown={measuredSeconds(stats.avg_duration_30d_s) === null}
+              />
               <MiniStat label="Abandoned, all time" value={String(stats.abandoned)} />
             </dl>
             <p className="text-[11px] text-gray-400 mt-3">
+              {/* The recent-volume figure the tile row used to carry: it answers
+                  "is this still in use", which belongs beside the other volume
+                  counts rather than beside the cycle time. */}
+              {pluralize(stats.runs_7d, 'run')} in the last 7 days
               {stats.first_run_at
-                ? <>First run {fmtRelative(stats.first_run_at)} · last run {fmtRelative(stats.last_run_at)}</>
-                : 'No runs recorded yet.'}
+                ? <> · first run {fmtRelative(stats.first_run_at)} · last run {fmtRelative(stats.last_run_at)}</>
+                : ' · nothing recorded yet.'}
             </p>
           </section>
         </div>
@@ -550,26 +610,35 @@ export default function AppDetail() {
 
 // ── Pieces ───────────────────────────────────────────────────────────────────
 
-function Stat({ icon: Icon, label, value, hint, tone }: {
-  icon: React.ElementType; label: string; value: string; hint?: string; tone?: 'good';
+function Stat({ icon: Icon, label, value, hint, tone, unknown }: {
+  icon: React.ElementType; label: string; value: string; hint?: string;
+  tone?: 'good' | 'live'; unknown?: boolean;
 }) {
+  const valueColor = unknown ? 'text-gray-400'
+    : tone === 'good' ? 'text-green-600'
+      : tone === 'live' ? 'text-blue-600'
+        : 'text-gray-900';
   return (
-    <div className="card px-4 py-3" title={hint}>
+    <div className="card px-4 py-3 min-w-0" title={hint}>
       <div className="flex items-center gap-2 text-[11px] text-gray-400">
-        <Icon size={12} /> {label}
+        {tone === 'live'
+          ? <span className="w-2 h-2 rounded-full bg-blue-500 live-pulse flex-shrink-0" aria-hidden="true" />
+          : <Icon size={12} className="flex-shrink-0" />}
+        <span className="truncate">{label}</span>
       </div>
-      <div className={`text-xl font-bold mt-1 tabular-nums ${tone === 'good' ? 'text-green-600' : 'text-gray-900'}`}>
-        {value}
-      </div>
+      <div className={`text-xl font-bold mt-1 tabular-nums ${valueColor}`}>{value}</div>
+      {hint && <div className="text-[10px] text-gray-400 mt-0.5 truncate" title={hint}>{hint}</div>}
     </div>
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+function MiniStat({ label, value, unknown }: { label: string; value: string; unknown?: boolean }) {
   return (
     <div className="rounded-lg bg-gray-50 px-3 py-2">
       <dt className="text-[11px] text-gray-400">{label}</dt>
-      <dd className="text-[15px] font-semibold text-gray-900 tabular-nums mt-0.5">{value}</dd>
+      <dd className={`text-[15px] font-semibold tabular-nums mt-0.5 ${unknown ? 'text-gray-400' : 'text-gray-900'}`}>
+        {value}
+      </dd>
     </div>
   );
 }
@@ -609,7 +678,7 @@ function RunStatus({ status }: { status: 'in_progress' | 'completed' | 'abandone
   }
   return (
     <span className="inline-flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded bg-blue-50 text-blue-600">
-      <Loader2 size={10} /> In progress
+      <span className="w-1.5 h-1.5 rounded-full bg-blue-500 live-pulse" aria-hidden="true" /> Running now
     </span>
   );
 }

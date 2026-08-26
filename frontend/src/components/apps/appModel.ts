@@ -158,3 +158,104 @@ export function fmtDuration(seconds: number | null | undefined): string {
 export function pluralize(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
 }
+
+// ── Measured vs. unmeasured ──────────────────────────────────────────────────
+
+/**
+ * Guard for any duration a customer is about to read.
+ *
+ * The apps endpoints measure a run by wall clock between started_at and
+ * completed_at, so a run opened and closed inside the same second comes back as
+ * 0 — and an average taken over runs like that comes back as 0 too. Zero
+ * seconds is not a cycle time anybody can act on; it is the shape of "nobody
+ * timed this". The run-history endpoint already draws that line in SQL (it
+ * averages only durations greater than zero) and its page prints "—", so
+ * without this guard the same run reads "0s" on four screens and "—" on the
+ * fifth. Everything reporting a measured duration passes through here first.
+ *
+ * Takt is configured rather than measured, so it does NOT belong here: a step
+ * with no takt is already null, and this would say the same thing less clearly.
+ */
+export function measuredSeconds(seconds: number | null | undefined): number | null {
+  if (seconds === null || seconds === undefined) return null;
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return seconds;
+}
+
+/** Per-step timers a run recorded, keyed by step index, oldest shape included. */
+export type StepTimes = Record<string | number, unknown> | null | undefined;
+
+/** The per-step timers as seconds, indexed by step order. Unrecorded → null. */
+export function stepSecondsByIndex(stepTimes: StepTimes): (number | null)[] {
+  const out: (number | null)[] = [];
+  for (const [key, raw] of Object.entries(stepTimes ?? {})) {
+    const idx = Number(key);
+    if (!Number.isInteger(idx) || idx < 0) continue;
+    const value = Number(raw);
+    while (out.length <= idx) out.push(null);
+    out[idx] = Number.isFinite(value) ? value : null;
+  }
+  return out;
+}
+
+/** Sum of the per-step timers, or null when no step was ever timed. */
+export function stepTimesTotal(stepTimes: StepTimes): number | null {
+  let total = 0;
+  for (const seconds of stepSecondsByIndex(stepTimes)) {
+    if (seconds !== null && seconds > 0) total += seconds;
+  }
+  return measuredSeconds(total);
+}
+
+/**
+ * How long one run took, by the same definition GET /completions/app/:id/history
+ * uses in SQL: the per-step timers when they add up to anything, otherwise the
+ * wall clock from start to finish, otherwise null. Keeping the two in step is
+ * what stops a run's own page disagreeing with the history row that links to it.
+ *
+ * A run still on the bench is not a short run — it has no length yet. Ask
+ * `elapsedSeconds` for that one.
+ */
+export function runDurationSeconds(run: {
+  started_at?: string | null;
+  completed_at?: string | null;
+  step_times?: StepTimes;
+  status?: string | null;
+}): number | null {
+  const fromSteps = stepTimesTotal(run.step_times);
+  if (fromSteps !== null) return fromSteps;
+  if (run.status === 'in_progress') return null;
+  const started = parseServerTime(run.started_at);
+  const finished = parseServerTime(run.completed_at);
+  if (!started || !finished) return null;
+  return measuredSeconds((finished.getTime() - started.getTime()) / 1000);
+}
+
+/** Seconds a still-open run has been on the bench, counted from `now`. */
+export function elapsedSeconds(startedAt: string | null | undefined, now: number = Date.now()): number | null {
+  const started = parseServerTime(startedAt);
+  if (!started) return null;
+  return measuredSeconds((now - started.getTime()) / 1000);
+}
+
+/**
+ * Axis ticks for a duration scale, landing on values a person reads without
+ * doing arithmetic: 30s, 1m, 5m, 15m, 1h — never recharts' default "1m 5s,
+ * 2m 10s, 3m 15s", which is arithmetically even and humanly useless.
+ *
+ * Returns ticks from zero to the first step at or past `maxSeconds`, so the
+ * caller can hand recharts both `ticks` and a matching `domain`.
+ */
+export function durationTicks(maxSeconds: number, target = 5): number[] {
+  if (!Number.isFinite(maxSeconds) || maxSeconds <= 0) return [0];
+  const STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 21600, 43200, 86400];
+  const step = STEPS.find(s => maxSeconds / s <= target) ?? STEPS[STEPS.length - 1];
+  const ticks: number[] = [];
+  // Always step past the top of the range, so the longest bar sits inside the
+  // axis rather than running off the end of it.
+  for (let v = 0; ; v += step) {
+    ticks.push(v);
+    if (v >= maxSeconds) break;
+  }
+  return ticks;
+}

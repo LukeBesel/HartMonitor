@@ -15,7 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Activity, AppWindow, BarChart2, CheckCircle2, ChevronRight, Clock, Download,
-  ListChecks, Play, Plus, RefreshCw, SlidersHorizontal, TrendingUp, User,
+  ListChecks, Play, Plus, RefreshCw, SlidersHorizontal, TrendingUp, User, XCircle,
 } from 'lucide-react';
 import { api } from '../api/client';
 import type { AppAnalyticsParams, AppAnalyticsResponse } from '../api/client';
@@ -29,7 +29,9 @@ import EmptyState from '../components/shared/EmptyState';
 import StatCard from '../components/shared/StatCard';
 import LastRefreshed from '../components/shared/LastRefreshed';
 import { useCoachDocked } from '../components/apps/AppTrainingCoach';
-import { fmtDateTime, fmtDuration, fmtRelative, pluralize } from '../components/apps/appModel';
+import {
+  elapsedSeconds, fmtDateTime, fmtDuration, fmtRelative, measuredSeconds, pluralize,
+} from '../components/apps/appModel';
 import {
   DAY_PRESETS, DEFAULT_FILTERS, buildAppOptions, buildHeadlineMetrics, emptyReasonFor,
   fieldSampleSize, filtersToQuery, hasNarrowingFilters, readSelectedAppId, resolveAppId,
@@ -66,7 +68,7 @@ function statusBadgeClass(status: string): string {
 }
 
 function statusLabel(status: string): string {
-  if (status === 'in_progress') return 'In progress';
+  if (status === 'in_progress') return 'Running now';
   return status.charAt(0).toUpperCase() + status.slice(1);
 }
 
@@ -78,6 +80,14 @@ export default function AppsDashboard() {
   // rather than let it sit on top of the runs table.
   const coachDocked = useCoachDocked();
   const dept = useDepartmentFilter('apps-dashboard');
+
+  // Runs still on the bench report how long they have been open, which only
+  // reads as live if the number moves between polls.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(tick);
+  }, []);
 
   const [apps, setApps] = useState<DashboardAppOption[]>([]);
   const [appsLoaded, setAppsLoaded] = useState(false);
@@ -216,6 +226,13 @@ export default function AppsDashboard() {
 
   const metrics = current ? buildHeadlineMetrics(current.totals, current.days) : [];
   const options = pickable?.appId === activeId ? pickable.options : undefined;
+  const runningNow = (current?.recent_runs ?? []).filter(r => r.status === 'in_progress');
+  // What went wrong in this slice: failures the server counted per pass/fail
+  // widget, plus runs nobody finished. Nothing here is inferred from a total.
+  const failedChecks = (current?.fields ?? [])
+    .filter(f => f.kind === 'boolean' && (f.stats.fail ?? 0) > 0)
+    .map(f => ({ label: f.label, fail: f.stats.fail ?? 0, of: (f.stats.pass ?? 0) + (f.stats.fail ?? 0) }))
+    .sort((a, b) => b.fail - a.fail);
 
   return (
     <div className={`min-h-screen bg-[#f8fafc] p-6 space-y-6 transition-[padding] ${coachDocked ? 'lg:pr-[392px]' : ''}`}>
@@ -426,6 +443,40 @@ export default function AppsDashboard() {
             ))}
           </div>
 
+          {/* ── Live: what is on the bench right now ────────────────────── */}
+          {runningNow.length > 0 && (
+            <section className="card border-blue-100 bg-blue-50/40 p-4">
+              <div className="flex items-center gap-2 mb-3 flex-wrap">
+                <span className="w-2 h-2 rounded-full bg-blue-500 live-pulse" aria-hidden="true" />
+                <h2 className="font-semibold text-gray-900 text-sm">On the bench right now</h2>
+                <span className="text-xs text-gray-500">{pluralize(runningNow.length, 'run')} in progress</span>
+              </div>
+              <ul className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
+                {runningNow.map(run => (
+                  <li key={run.id}>
+                    <Link
+                      to={`/completions/${run.id}`}
+                      className="flex items-center gap-3 rounded-xl bg-white border border-blue-100 px-3 py-2 hover:border-blue-200 transition-colors"
+                    >
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-[13px] font-medium text-gray-900 truncate">
+                          {run.operator_name || 'Unknown operator'}
+                        </span>
+                        <span className="block text-[11px] text-gray-400 truncate">
+                          {run.work_order_number ? `${run.work_order_number} · ` : ''}
+                          started {fmtRelative(run.started_at).toLowerCase()}
+                        </span>
+                      </span>
+                      <span className="text-sm font-bold text-blue-600 tabular-nums flex-shrink-0">
+                        {fmtDuration(elapsedSeconds(run.started_at, now))}
+                      </span>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
+
           {/* items-start: each card hugs its own content instead of stretching to
               match the taller one, which left a half-empty operator panel. */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
@@ -450,8 +501,15 @@ export default function AppsDashboard() {
                           <div className="h-full rounded bg-indigo-500" style={{ width: `${(op.runs / max) * 100}%` }} />
                         </div>
                         <span className="text-xs font-semibold text-gray-900 tabular-nums w-8 text-right">{op.runs}</span>
-                        <span className="text-[11px] text-gray-400 w-20 truncate" title="average cycle time">
-                          {op.avg_duration_s === null ? '— avg' : `avg ${fmtDuration(op.avg_duration_s)}`}
+                        <span
+                          className="text-[11px] text-gray-400 w-20 truncate"
+                          title={measuredSeconds(op.avg_duration_s) === null
+                            ? 'none of their runs was timed'
+                            : 'average cycle time'}
+                        >
+                          {measuredSeconds(op.avg_duration_s) === null
+                            ? '— avg'
+                            : `avg ${fmtDuration(measuredSeconds(op.avg_duration_s))}`}
                         </span>
                       </div>
                     );
@@ -500,6 +558,37 @@ export default function AppsDashboard() {
             </section>
           </div>
 
+          {/* ── What went wrong in this slice ────────────────────────────── */}
+          {(failedChecks.length > 0 || current.totals.abandoned > 0) && (
+            <section className="card p-5">
+              <div className="flex items-center gap-2 mb-1">
+                <XCircle size={16} className="text-gray-400" />
+                <h2 className="font-semibold text-gray-900">What went wrong</h2>
+              </div>
+              <p className="text-[11px] text-gray-400 mb-4">Failed checks and runs nobody finished, in this window.</p>
+              <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                {failedChecks.map(f => (
+                  <li key={f.label} className="flex items-center gap-3 rounded-xl border border-red-100 bg-red-50/50 px-3 py-2">
+                    <XCircle size={14} className="text-red-500 flex-shrink-0" />
+                    <span className="text-[13px] text-gray-900 min-w-0 flex-1 truncate" title={f.label}>{f.label}</span>
+                    <span className="text-xs font-semibold text-red-600 tabular-nums flex-shrink-0">
+                      {f.fail} failed of {f.of}
+                    </span>
+                  </li>
+                ))}
+                {current.totals.abandoned > 0 && (
+                  <li className="flex items-center gap-3 rounded-xl border border-amber-100 bg-amber-50/50 px-3 py-2">
+                    <Activity size={14} className="text-amber-500 flex-shrink-0" />
+                    <span className="text-[13px] text-gray-900 min-w-0 flex-1">Runs nobody finished</span>
+                    <span className="text-xs font-semibold text-amber-700 tabular-nums flex-shrink-0">
+                      {current.totals.abandoned} abandoned
+                    </span>
+                  </li>
+                )}
+              </ul>
+            </section>
+          )}
+
           {/* The runs themselves */}
           <section className="card overflow-hidden">
             <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-100">
@@ -528,20 +617,38 @@ export default function AppsDashboard() {
                   {current.recent_runs.map(run => (
                     <tr
                       key={run.id}
-                      className="hover:bg-gray-50 transition-colors cursor-pointer"
+                      className={`transition-colors cursor-pointer ${
+                        run.status === 'in_progress' ? 'bg-blue-50/40 hover:bg-blue-50/70' : 'hover:bg-gray-50'
+                      }`}
                       onClick={() => navigate(`/completions/${run.id}`)}
                       data-testid="dashboard-run-row"
                     >
                       <td className="px-4 py-3 text-xs text-gray-600 whitespace-nowrap">{fmtDateTime(run.started_at)}</td>
                       <td className="px-4 py-3 text-xs text-gray-700">{run.operator_name || <span className="text-gray-400">—</span>}</td>
-                      <td className="px-4 py-3 text-xs font-medium text-gray-900 tabular-nums">
-                        {/* An unfinished run has no duration to report — not a zero. */}
-                        {run.duration_s === null ? <span className="text-gray-400" title="run has not finished">—</span> : fmtDuration(run.duration_s)}
+                      <td className="px-4 py-3 text-xs font-medium tabular-nums whitespace-nowrap">
+                        {/* An unfinished run has no duration to report — it has an
+                            elapsed time, which is a different thing; and a finished
+                            run nobody timed reads "—" rather than a zero. */}
+                        {run.status === 'in_progress' ? (
+                          <span className="text-blue-600 font-semibold">
+                            {fmtDuration(elapsedSeconds(run.started_at, now))}
+                            <span className="text-[10px] font-normal text-blue-500"> and counting</span>
+                          </span>
+                        ) : measuredSeconds(run.duration_s) === null ? (
+                          <span className="text-gray-400" title="this run was never timed">—</span>
+                        ) : (
+                          <span className="text-gray-900">{fmtDuration(measuredSeconds(run.duration_s))}</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-xs text-gray-600">{run.work_order_number || <span className="text-gray-400">—</span>}</td>
                       <td className="px-4 py-3 text-xs text-gray-600">{run.product_type_name || <span className="text-gray-400">—</span>}</td>
                       <td className="px-4 py-3">
-                        <span className={statusBadgeClass(run.status)}>{statusLabel(run.status)}</span>
+                        <span className={statusBadgeClass(run.status)}>
+                          {run.status === 'in_progress' && (
+                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500 live-pulse" aria-hidden="true" />
+                          )}
+                          {statusLabel(run.status)}
+                        </span>
                       </td>
                       <td className="px-4 py-3 text-right">
                         <span className="text-xs text-indigo-600 flex items-center justify-end gap-0.5">

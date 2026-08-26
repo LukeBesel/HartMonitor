@@ -9,7 +9,7 @@
 
 import type { AppAnalyticsResponse, AppRunStats } from '../../api/client';
 import type { App } from '../../types';
-import { fmtDuration, parseServerTime, pluralize } from './appModel';
+import { fmtDuration, measuredSeconds, parseServerTime, pluralize } from './appModel';
 
 // ─── App options (the picker at the top) ─────────────────────────────────────
 
@@ -161,12 +161,30 @@ export function buildHeadlineMetrics(
 
   return [
     {
-      key: 'runs',
-      label: 'Runs started',
-      value: String(totals.runs),
-      note: noRuns
-        ? `nothing started in the last ${days} days`
-        : `${totals.abandoned} abandoned`,
+      key: 'avg_cycle',
+      label: 'Avg cycle time',
+      // The server averages wall clock between start and finish, so runs that
+      // opened and closed inside one second average out to 0. Zero seconds is
+      // not a cycle time anyone can act on — it is the shape of "nobody timed
+      // it", which is exactly what Run History reports as "—". Treat it the
+      // same here rather than letting one screen print 0s for what another
+      // screen calls unknown.
+      value: measuredSeconds(totals.avg_duration_s) === null
+        ? null
+        : fmtDuration(measuredSeconds(totals.avg_duration_s)),
+      note: measuredSeconds(totals.avg_duration_s) === null
+        ? (noRuns ? 'no runs in this window'
+          : totals.completed === 0 ? 'no run has finished yet'
+            : 'no finished run was timed')
+        : `over ${pluralize(totals.completed, 'completed run')}`,
+    },
+    {
+      key: 'first_pass_yield',
+      label: 'First-pass yield',
+      value: totals.first_pass_yield === null ? null : `${Math.round(totals.first_pass_yield)}%`,
+      note: totals.first_pass_yield === null
+        ? (noRuns ? 'no runs in this window' : 'no pass/fail check recorded')
+        : 'runs whose checks all passed',
     },
     {
       key: 'completed',
@@ -178,20 +196,12 @@ export function buildHeadlineMetrics(
         : `${Math.round((totals.completed / totals.runs) * 100)}% of runs started`,
     },
     {
-      key: 'avg_cycle',
-      label: 'Avg cycle time',
-      value: totals.avg_duration_s === null ? null : fmtDuration(totals.avg_duration_s),
-      note: totals.avg_duration_s === null
-        ? (noRuns ? 'no runs in this window' : 'no run has finished yet')
-        : `over ${pluralize(totals.completed, 'completed run')}`,
-    },
-    {
-      key: 'first_pass_yield',
-      label: 'First-pass yield',
-      value: totals.first_pass_yield === null ? null : `${Math.round(totals.first_pass_yield)}%`,
-      note: totals.first_pass_yield === null
-        ? (noRuns ? 'no runs in this window' : 'no pass/fail check recorded')
-        : 'runs whose checks all passed',
+      key: 'runs',
+      label: 'Runs started',
+      value: String(totals.runs),
+      note: noRuns
+        ? `nothing started in the last ${days} days`
+        : `${totals.abandoned} abandoned`,
     },
   ];
 }
