@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { requireRole } = require('../middleware/auth');
+const { plantDayShift, plantToday, plantDateFn } = require('../plantDay');
 
 const router = express.Router();
 
@@ -29,13 +30,26 @@ function isValidDate(s) {
   return typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
 }
 
+// The board is addressed by a calendar day, and that day is the plant's — the
+// same one analytics.js and oee.js count "today" on. Two things follow. The
+// default date is today where the factory is, not today at Greenwich, so a shop
+// in Berlin does not open the board on tomorrow's blank page at 02:00 local.
+// And every stored timestamp is shifted onto the plant clock before its day is
+// read, so a run finished at 21:00 in Detroit belongs to the shift that ran it
+// rather than to the next calendar day. This is what the department TV board
+// hanging on the wall reads: it used to be the one screen still on UTC, showing
+// 6 where the Command Center and the department page both showed 60.
+//
+// Columns that hold a *date* rather than an instant — sqdc_entries.entry_date —
+// are compared as-is. A date has no clock to shift.
+
 // ─── GET /api/sqdc?date=YYYY-MM-DD&department_id= ──────────────────────────────
 // Aggregates the four classic lean board metrics for a single day, scoped to the
 // company (and optionally a department) — Safety, Quality, Delivery, Cost.
 
 router.get('/', (req, res) => {
   const cid = req.companyId;
-  const date = isValidDate(req.query.date) ? req.query.date : new Date().toISOString().slice(0, 10);
+  const date = isValidDate(req.query.date) ? req.query.date : plantToday(cid);
   const deptId = req.query.department_id || null;
 
   // Hourly labor rate used for the labor-cost estimate. Pulled from org/company
@@ -48,25 +62,32 @@ router.get('/', (req, res) => {
   const deptClause = deptId ? ` AND ${COMPLETION_DEPT} = ?` : '';
   const deptParam = deptId ? [deptId] : [];
 
+  // Bound to both sides of every day comparison below, so `date` and the stored
+  // timestamp are read off the same clock.
+  const day = plantDayShift(cid);
+  const plantDate = plantDateFn(cid);
+
   // ─── SAFETY ──────────────────────────────────────────────────────────────
   // Safety NCRs are those whose source is 'safety' (case-insensitive). We also
   // surface NCRs created on the date so the board reflects "what happened today".
   const safetyOnDate = db.prepare(`
     SELECT id, ncr_number, title, severity, status, source, created_at
     FROM ncrs
-    WHERE company_id = ? AND lower(source) = 'safety' AND date(created_at) = ?
+    WHERE company_id = ? AND lower(source) = 'safety' AND date(created_at, ?) = ?
     ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'major' THEN 2 ELSE 3 END, created_at DESC
-  `).all(cid, date);
+  `).all(cid, day, date);
 
   // Days since the most recent safety incident (relative to the selected date).
   const lastSafety = db.prepare(`
-    SELECT date(created_at) AS d FROM ncrs
-    WHERE company_id = ? AND lower(source) = 'safety' AND date(created_at) <= ?
+    SELECT date(created_at, ?) AS d FROM ncrs
+    WHERE company_id = ? AND lower(source) = 'safety' AND date(created_at, ?) <= ?
     ORDER BY created_at DESC LIMIT 1
-  `).get(cid, date);
+  `).get(day, cid, day, date);
   let daysSinceIncident = null;
   if (lastSafety?.d) {
-    const diff = Math.round((new Date(date + 'T00:00:00').getTime() - new Date(lastSafety.d + 'T00:00:00').getTime()) / 86400000);
+    // Both ends pinned to UTC so the subtraction counts whole days whatever the
+    // server's own clock is set to.
+    const diff = Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${lastSafety.d}T00:00:00Z`)) / 86400000);
     daysSinceIncident = Math.max(0, diff);
   }
 
@@ -83,8 +104,8 @@ router.get('/', (req, res) => {
     FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN stations    st ON st.id = c.station_id
-    WHERE c.company_id = ? AND c.status = 'completed' AND date(c.completed_at) = ?${deptClause}
-  `).all(cid, date, ...deptParam);
+    WHERE c.company_id = ? AND c.status = 'completed' AND date(c.completed_at, ?) = ?${deptClause}
+  `).all(cid, day, date, ...deptParam);
 
   let pass = 0, fail = 0;
   for (const r of qcRows) {
@@ -96,11 +117,11 @@ router.get('/', (req, res) => {
   const passRate = inspected > 0 ? Math.round((pass / inspected) * 100) : null;
 
   const ncrsOpened = db.prepare(
-    `SELECT COUNT(*) AS c FROM ncrs WHERE company_id = ? AND date(created_at) = ?`
-  ).get(cid, date).c;
+    `SELECT COUNT(*) AS c FROM ncrs WHERE company_id = ? AND date(created_at, ?) = ?`
+  ).get(cid, day, date).c;
   const ncrsClosed = db.prepare(
-    `SELECT COUNT(*) AS c FROM ncrs WHERE company_id = ? AND status IN ('resolved','closed') AND date(resolved_at) = ?`
-  ).get(cid, date).c;
+    `SELECT COUNT(*) AS c FROM ncrs WHERE company_id = ? AND status IN ('resolved','closed') AND date(resolved_at, ?) = ?`
+  ).get(cid, day, date).c;
 
   const quality = {
     pass_rate: passRate,            // null = nothing inspected on the date
@@ -119,29 +140,31 @@ router.get('/', (req, res) => {
     SELECT wo.id, wo.work_order_number, wo.part_name, wo.status,
            wo.scheduled_end, wo.quantity, wo.quantity_completed, wo.updated_at
     FROM work_orders wo
-    WHERE wo.company_id = ? AND date(wo.scheduled_end) = ? AND wo.status != 'cancelled'${woDeptClause}
-  `).all(cid, date, ...deptParam);
+    WHERE wo.company_id = ? AND date(wo.scheduled_end, ?) = ? AND wo.status != 'cancelled'${woDeptClause}
+  `).all(cid, day, date, ...deptParam);
 
   const dueCount = dueRows.length;
   const completedOfDue = dueRows.filter(w => w.status === 'completed').length;
-  // On-time = completed and the completion (updated_at) landed on/before the due day.
-  const onTime = dueRows.filter(
-    w => w.status === 'completed' && w.updated_at && w.updated_at.slice(0, 10) <= w.scheduled_end.slice(0, 10)
-  ).length;
+  // On-time = completed and the completion (updated_at) landed on/before the due
+  // day. Both stamps are read off the plant clock, so an evening finish in a
+  // zone behind UTC is not counted a day late.
+  const onTimeOf = w =>
+    w.status === 'completed' && !!w.updated_at && plantDate(w.updated_at) <= plantDate(w.scheduled_end);
+  const onTime = dueRows.filter(onTimeOf).length;
   const onTimePct = dueCount > 0 ? Math.round((onTime / dueCount) * 100) : null;
 
   // Overdue right now: past their due date, not finished. Counted against the date.
   const overdue = db.prepare(`
     SELECT COUNT(*) AS c FROM work_orders wo
     WHERE wo.company_id = ? AND wo.status NOT IN ('completed','cancelled')
-      AND wo.scheduled_end IS NOT NULL AND date(wo.scheduled_end) < ?${woDeptClause}
-  `).get(cid, date, ...deptParam).c;
+      AND wo.scheduled_end IS NOT NULL AND date(wo.scheduled_end, ?) < ?${woDeptClause}
+  `).get(cid, day, date, ...deptParam).c;
 
   // Completed on the date (regardless of original due date) — throughput signal.
   const completedOnDate = db.prepare(`
     SELECT COUNT(*) AS c FROM work_orders wo
-    WHERE wo.company_id = ? AND wo.status = 'completed' AND date(wo.updated_at) = ?${woDeptClause}
-  `).get(cid, date, ...deptParam).c;
+    WHERE wo.company_id = ? AND wo.status = 'completed' AND date(wo.updated_at, ?) = ?${woDeptClause}
+  `).get(cid, day, date, ...deptParam).c;
 
   const delivery = {
     due_count: dueCount,
@@ -154,7 +177,7 @@ router.get('/', (req, res) => {
       work_order_number: w.work_order_number,
       part_name: w.part_name,
       status: w.status,
-      on_time: w.status === 'completed' && w.updated_at && w.updated_at.slice(0, 10) <= w.scheduled_end.slice(0, 10),
+      on_time: onTimeOf(w),
     })),
   };
 
@@ -168,8 +191,8 @@ router.get('/', (req, res) => {
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN stations    st ON st.id = c.station_id
     WHERE c.company_id = ? AND c.status = 'completed'
-      AND c.completed_at IS NOT NULL AND date(c.completed_at) = ?${deptClause}
-  `).get(cid, date, ...deptParam);
+      AND c.completed_at IS NOT NULL AND date(c.completed_at, ?) = ?${deptClause}
+  `).get(cid, day, date, ...deptParam);
 
   const laborHours = Math.round((costRow?.labor_hours || 0) * 10) / 10;
   const units = costRow?.units || 0;
@@ -187,16 +210,19 @@ router.get('/', (req, res) => {
   // ─── 7-day trend (ending on the selected date) for small sparklines ───────
   const trend = [];
   for (let i = 6; i >= 0; i--) {
-    const d = new Date(date + 'T00:00:00');
-    d.setDate(d.getDate() - i);
+    // Pinned to UTC on both ends. Parsing 'YYYY-MM-DD' as local time and then
+    // reading it back through toISOString() slides the whole sparkline a day on
+    // any host whose own clock is not set to UTC.
+    const d = new Date(`${date}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - i);
     const ds = d.toISOString().slice(0, 10);
 
     const tQc = db.prepare(`
       SELECT c.data FROM completions c
       LEFT JOIN work_orders wo ON wo.id = c.work_order_id
       LEFT JOIN stations    st ON st.id = c.station_id
-      WHERE c.company_id = ? AND c.status = 'completed' AND date(c.completed_at) = ?${deptClause}
-    `).all(cid, ds, ...deptParam);
+      WHERE c.company_id = ? AND c.status = 'completed' AND date(c.completed_at, ?) = ?${deptClause}
+    `).all(cid, day, ds, ...deptParam);
     let p = 0, fl = 0;
     for (const r of tQc) {
       const pf = passFailOf(r.data);
@@ -207,12 +233,12 @@ router.get('/', (req, res) => {
       SELECT COUNT(*) AS c FROM completions c
       LEFT JOIN work_orders wo ON wo.id = c.work_order_id
       LEFT JOIN stations    st ON st.id = c.station_id
-      WHERE c.company_id = ? AND c.status = 'completed' AND date(c.completed_at) = ?${deptClause}
-    `).get(cid, ds, ...deptParam).c;
+      WHERE c.company_id = ? AND c.status = 'completed' AND date(c.completed_at, ?) = ?${deptClause}
+    `).get(cid, day, ds, ...deptParam).c;
 
     const tSafety = db.prepare(
-      `SELECT COUNT(*) AS c FROM ncrs WHERE company_id = ? AND lower(source) = 'safety' AND date(created_at) = ?`
-    ).get(cid, ds).c;
+      `SELECT COUNT(*) AS c FROM ncrs WHERE company_id = ? AND lower(source) = 'safety' AND date(created_at, ?) = ?`
+    ).get(cid, day, ds).c;
 
     trend.push({
       date: ds,
@@ -241,7 +267,7 @@ router.post('/entries', requireRole('supervisor'), (req, res) => {
     return res.status(400).json({ error: 'category must be one of: ' + SQDC_CATEGORIES.join(', ') });
   }
 
-  const entryDate = isValidDate(b.entry_date) ? b.entry_date : new Date().toISOString().slice(0, 10);
+  const entryDate = isValidDate(b.entry_date) ? b.entry_date : plantToday(cid);
 
   // Validate department belongs to the company when supplied.
   let deptId = b.department_id || null;
@@ -288,12 +314,14 @@ router.get('/:category/detail', (req, res) => {
   if (!SQDC_CATEGORIES.includes(category)) {
     return res.status(404).json({ error: 'Unknown SQDC category' });
   }
-  const date = isValidDate(req.query.date) ? req.query.date : new Date().toISOString().slice(0, 10);
+  const date = isValidDate(req.query.date) ? req.query.date : plantToday(cid);
   const deptId = req.query.department_id || null;
 
   const deptClause = deptId ? ` AND ${COMPLETION_DEPT} = ?` : '';
   const deptParam = deptId ? [deptId] : [];
   const woDeptClause = deptId ? ' AND wo.department_id = ?' : '';
+  const day = plantDayShift(cid);
+  const plantDate = plantDateFn(cid);
 
   // Department name lookup for labelling.
   const deptNames = {};
@@ -317,12 +345,12 @@ router.get('/:category/detail', (req, res) => {
     // Derived: safety-sourced NCRs created on the date, grouped by area.
     const ncrs = db.prepare(`
       SELECT n.id, n.ncr_number, n.title, n.severity, n.status, n.source,
-             date(n.created_at) AS date, wo.department_id
+             date(n.created_at, ?) AS date, wo.department_id
       FROM ncrs n
       LEFT JOIN work_orders wo ON wo.id = n.work_order_id
-      WHERE n.company_id = ? AND lower(n.source) = 'safety' AND date(n.created_at) = ?
+      WHERE n.company_id = ? AND lower(n.source) = 'safety' AND date(n.created_at, ?) = ?
       ORDER BY n.created_at DESC
-    `).all(cid, date);
+    `).all(day, cid, day, date);
 
     // Count manual events by subtype.
     const byType = { near_miss: 0, reportable: 0, first_aid: 0, other: 0 };
@@ -360,8 +388,8 @@ router.get('/:category/detail', (req, res) => {
       FROM completions c
       LEFT JOIN work_orders wo ON wo.id = c.work_order_id
       LEFT JOIN stations    st ON st.id = c.station_id
-      WHERE c.company_id = ? AND c.status = 'completed' AND date(c.completed_at) = ?${deptClause}
-    `).all(cid, date, ...deptParam);
+      WHERE c.company_id = ? AND c.status = 'completed' AND date(c.completed_at, ?) = ?${deptClause}
+    `).all(cid, day, date, ...deptParam);
 
     let pass = 0, fail = 0;
     const byDept = {};
@@ -375,11 +403,11 @@ router.get('/:category/detail', (req, res) => {
     const inspected = pass + fail;
 
     const ncrsOpened = db.prepare(
-      `SELECT COUNT(*) AS c FROM ncrs WHERE company_id = ? AND date(created_at) = ?`
-    ).get(cid, date).c;
+      `SELECT COUNT(*) AS c FROM ncrs WHERE company_id = ? AND date(created_at, ?) = ?`
+    ).get(cid, day, date).c;
     const ncrsClosed = db.prepare(
-      `SELECT COUNT(*) AS c FROM ncrs WHERE company_id = ? AND status IN ('resolved','closed') AND date(resolved_at) = ?`
-    ).get(cid, date).c;
+      `SELECT COUNT(*) AS c FROM ncrs WHERE company_id = ? AND status IN ('resolved','closed') AND date(resolved_at, ?) = ?`
+    ).get(cid, day, date).c;
 
     breakdown.pass_count = pass;
     breakdown.fail_count = fail;
@@ -398,23 +426,21 @@ router.get('/:category/detail', (req, res) => {
       SELECT wo.id, wo.work_order_number, wo.part_name, wo.status,
              wo.scheduled_end, wo.updated_at, wo.department_id
       FROM work_orders wo
-      WHERE wo.company_id = ? AND date(wo.scheduled_end) = ? AND wo.status != 'cancelled'${woDeptClause}
-    `).all(cid, date, ...deptParam);
+      WHERE wo.company_id = ? AND date(wo.scheduled_end, ?) = ? AND wo.status != 'cancelled'${woDeptClause}
+    `).all(cid, day, date, ...deptParam);
 
-    const onTime = dueRows.filter(
-      w => w.status === 'completed' && w.updated_at && w.updated_at.slice(0, 10) <= w.scheduled_end.slice(0, 10)
-    ).length;
-    const lateOrders = dueRows.filter(
-      w => !(w.status === 'completed' && w.updated_at && w.updated_at.slice(0, 10) <= w.scheduled_end.slice(0, 10))
-    );
+    const onTimeOf = w =>
+      w.status === 'completed' && !!w.updated_at && plantDate(w.updated_at) <= plantDate(w.scheduled_end);
+    const onTime = dueRows.filter(onTimeOf).length;
+    const lateOrders = dueRows.filter(w => !onTimeOf(w));
 
     const overdueRows = db.prepare(`
       SELECT wo.work_order_number, wo.part_name, wo.scheduled_end, wo.department_id, wo.status
       FROM work_orders wo
       WHERE wo.company_id = ? AND wo.status NOT IN ('completed','cancelled')
-        AND wo.scheduled_end IS NOT NULL AND date(wo.scheduled_end) < ?${woDeptClause}
+        AND wo.scheduled_end IS NOT NULL AND date(wo.scheduled_end, ?) < ?${woDeptClause}
       ORDER BY wo.scheduled_end ASC LIMIT 25
-    `).all(cid, date, ...deptParam);
+    `).all(cid, day, date, ...deptParam);
 
     breakdown.due_count = dueRows.length;
     breakdown.on_time_count = onTime;
@@ -445,9 +471,9 @@ router.get('/:category/detail', (req, res) => {
       LEFT JOIN work_orders wo ON wo.id = c.work_order_id
       LEFT JOIN stations    st ON st.id = c.station_id
       WHERE c.company_id = ? AND c.status = 'completed'
-        AND c.completed_at IS NOT NULL AND date(c.completed_at) = ?${deptClause}
+        AND c.completed_at IS NOT NULL AND date(c.completed_at, ?) = ?${deptClause}
       GROUP BY dept_id
-    `).all(cid, date, ...deptParam);
+    `).all(cid, day, date, ...deptParam);
 
     let totalHours = 0, totalUnits = 0;
     const byDept = rows.map(r => {
@@ -482,10 +508,12 @@ router.get('/:category/detail', (req, res) => {
 router.get('/department/:id', (req, res) => {
   const cid = req.companyId;
   const deptId = req.params.id;
-  const date = isValidDate(req.query.date) ? req.query.date : new Date().toISOString().slice(0, 10);
+  const date = isValidDate(req.query.date) ? req.query.date : plantToday(cid);
 
   const dept = db.prepare('SELECT id, name, color, manager_name FROM departments WHERE id = ? AND company_id = ?').get(deptId, cid);
   if (!dept) return res.status(404).json({ error: 'Department not found' });
+
+  const day = plantDayShift(cid);
 
   // Live work-order status counts for the department.
   const running = db.prepare(
@@ -499,18 +527,18 @@ router.get('/department/:id', (req, res) => {
     SELECT COUNT(*) AS c FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN stations    st ON st.id = c.station_id
-    WHERE c.company_id = ? AND ${COMPLETION_DEPT} = ? AND c.status = 'completed' AND date(c.completed_at) = ?
-  `).get(cid, deptId, date).c;
+    WHERE c.company_id = ? AND ${COMPLETION_DEPT} = ? AND c.status = 'completed' AND date(c.completed_at, ?) = ?
+  `).get(cid, deptId, day, date).c;
 
   // Hourly throughput for the date.
   const hourlyRows = db.prepare(`
-    SELECT CAST(strftime('%H', c.completed_at) AS INTEGER) AS hour, COUNT(*) AS count
+    SELECT CAST(strftime('%H', c.completed_at, ?) AS INTEGER) AS hour, COUNT(*) AS count
     FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN stations    st ON st.id = c.station_id
-    WHERE c.company_id = ? AND ${COMPLETION_DEPT} = ? AND c.status = 'completed' AND date(c.completed_at) = ?
+    WHERE c.company_id = ? AND ${COMPLETION_DEPT} = ? AND c.status = 'completed' AND date(c.completed_at, ?) = ?
     GROUP BY hour
-  `).all(cid, deptId, date);
+  `).all(day, cid, deptId, day, date);
   const hourMap = {};
   for (const r of hourlyRows) hourMap[r.hour] = r.count;
   const hourly = [];
@@ -548,10 +576,10 @@ router.get('/department/:id', (req, res) => {
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN stations    st ON st.id = c.station_id
     WHERE c.company_id = ? AND ${COMPLETION_DEPT} = ? AND c.status = 'completed'
-      AND c.completed_at IS NOT NULL AND date(c.completed_at) = ?
+      AND c.completed_at IS NOT NULL AND date(c.completed_at, ?) = ?
       AND (julianday(c.completed_at) - julianday(c.started_at)) > 0
     ORDER BY duration_minutes ASC LIMIT 5
-  `).all(cid, deptId, date);
+  `).all(cid, deptId, day, date);
 
   // ─── Behind-takt detector ──────────────────────────────────────────────────
   // Flag jobs whose actual cycle time exceeds the takt target. Two sources:
@@ -571,9 +599,9 @@ router.get('/department/:id', (req, res) => {
       AND wo.takt_time_minutes IS NOT NULL AND wo.takt_time_minutes > 0
       AND (
         c.status = 'in_progress'
-        OR (c.status = 'completed' AND c.completed_at IS NOT NULL AND date(c.completed_at) = ?)
+        OR (c.status = 'completed' AND c.completed_at IS NOT NULL AND date(c.completed_at, ?) = ?)
       )
-  `).all(cid, deptId, date);
+  `).all(cid, deptId, day, date);
 
   const nowMs = Date.now();
   const behindTakt = [];

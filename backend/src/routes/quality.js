@@ -1,6 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { plantDayShift } = require('../plantDay');
 const { logActivity } = require('../activity');
 const { notify } = require('../notifications');
 const { deliverWebhooks } = require('../webhooks');
@@ -85,7 +86,10 @@ router.get('/summary', (req, res) => {
   const resolved = db.prepare("SELECT COUNT(*) as c FROM ncrs WHERE company_id = ? AND status = 'resolved'").get(cid).c;
   const closed   = db.prepare("SELECT COUNT(*) as c FROM ncrs WHERE company_id = ? AND status = 'closed'").get(cid).c;
   const critical = db.prepare("SELECT COUNT(*) as c FROM ncrs WHERE company_id = ? AND severity = 'critical' AND status NOT IN ('closed')").get(cid).c;
-  const overdue  = db.prepare("SELECT COUNT(*) as c FROM ncrs WHERE company_id = ? AND due_date < date('now') AND status NOT IN ('resolved','closed')").get(cid).c;
+  // due_date is a calendar date somebody typed, not an instant, so it is not
+  // shifted — but "before today" has to mean before today AT THE PLANT, or a
+  // shop east of Greenwich reads yesterday's overdue count all morning.
+  const overdue  = db.prepare("SELECT COUNT(*) as c FROM ncrs WHERE company_id = ? AND due_date < date('now', ?) AND status NOT IN ('resolved','closed')").get(cid, plantDayShift(cid)).c;
   const by_source = db.prepare("SELECT source, COUNT(*) as count FROM ncrs WHERE company_id = ? GROUP BY source ORDER BY count DESC").all(cid);
   const by_severity = db.prepare("SELECT severity, COUNT(*) as count FROM ncrs WHERE company_id = ? AND status NOT IN ('closed') GROUP BY severity").all(cid);
   res.json({ total, open, investigating, resolved, closed, critical, overdue, by_source, by_severity });

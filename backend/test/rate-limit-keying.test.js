@@ -124,8 +124,12 @@ test('one user burning their budget does not touch another user on the same IP',
   assert.ok(b.remaining > 0);
 });
 
-test('the credential throttle is unchanged: still per IP, still far stricter', async () => {
-  // Two signups already spent two of the twenty attempts this limiter allows.
+test('the credential throttle is counted per ACCOUNT, so one login cannot lock out a site', async () => {
+  // Guessing a password is an attack on one account, and the ceiling that stops
+  // it is counted per account. The old limiter counted per IP, which for a
+  // customer is per FACTORY — twenty people signing in at 6am through one NAT
+  // gateway, a couple of them mistyping, locked the plant out of its own MES for
+  // fifteen minutes.
   let rejected = null;
   for (let i = 0; i < 30 && !rejected; i++) {
     const r = await call('/api/auth/login', {
@@ -134,10 +138,10 @@ test('the credential throttle is unchanged: still per IP, still far stricter', a
     });
     if (r.status === 429) rejected = r;
   }
-  assert.ok(rejected, 'repeated failed logins from one IP are cut off');
+  assert.ok(rejected, 'repeated failed logins against one account are cut off');
   assert.equal(rejected.json.code, 'RATE_LIMITED', 'the credential limiter, not the general one');
 
-  // And holding a valid session does not buy a way past it.
+  // Holding a valid session does not buy a way past it.
   const withSession = await call('/api/auth/login', {
     method: 'POST',
     token: tokenB,
@@ -145,6 +149,32 @@ test('the credential throttle is unchanged: still per IP, still far stricter', a
   });
   assert.equal(withSession.status, 429);
   assert.equal(withSession.json.code, 'RATE_LIMITED');
+
+  // Nor does dressing the same address up differently — the account is the key,
+  // not the spelling of the address.
+  const cased = await call('/api/auth/login', {
+    method: 'POST',
+    body: { email: '  A@Rate.TEST ', password: 'wrong-password' },
+  });
+  assert.equal(cased.status, 429, 'a@rate.test and A@Rate.TEST are one account, not two budgets');
+
+  // …and the colleague at the next bench, on the same IP, is untouched. This is
+  // the failure the whole change exists to prevent: a locked-out account must
+  // not be a locked-out site.
+  const colleague = await call('/api/auth/login', {
+    method: 'POST',
+    body: { email: 'b@rate.test', password: 'wrong-password' },
+  });
+  assert.equal(colleague.status, 401,
+    'a different account from the same address still gets to try');
+
+  // And a correct password is not an "attempt" at anything, so a whole shift
+  // signing in together never spends the budget at all.
+  const real = await call('/api/auth/login', {
+    method: 'POST',
+    body: { email: 'b@rate.test', password: 'supersecret1' },
+  });
+  assert.equal(real.status, 200, 'the right password still works on a busy morning');
 });
 
 test('nothing a caller can invent buys a fresh bucket', async () => {

@@ -200,7 +200,23 @@ describe('the public demo sandbox is a credible factory', () => {
     assert.ok(st1, 'Station 1 seeded');
     const m = st1.oee;
 
-    assert.equal(m.measurable, true, 'the showcase station must have a measurable OEE');
+    // The sandbox will not seed work into hours the clock has not reached, so
+    // within the first few minutes of the day there is genuinely nothing to
+    // measure. The honest answer then is to say so — and that is a contract
+    // worth asserting, not a hole to skip past. Demanding a measurable OEE at
+    // every hour is what made this suite go red every night after UTC midnight
+    // while passing all afternoon.
+    if (!m.measurable) {
+      assert.equal(m.completions_today, 0,
+        'unmeasurable only because the day has not started, not for any other reason');
+      assert.equal(m.performance, null, 'no window, no performance — never a clamped 100%');
+      assert.equal(m.quality, null);
+      assert.equal(m.oee, null);
+      assert.ok(m.missing.includes('an inspected run today'),
+        `the screen must say what is missing, got ${JSON.stringify(m.missing)}`);
+      return;
+    }
+
     assert.deepEqual(m.missing, [], 'nothing is missing to measure it');
 
     // The seed's own arithmetic: enough completions today to match the runtime
@@ -218,11 +234,20 @@ describe('the public demo sandbox is a credible factory', () => {
     const product = Math.round((m.availability / 100) * (m.performance / 100) * (m.quality / 100) * 100);
     assert.equal(m.oee, product, 'OEE is computed from availability × performance × quality');
 
-    // Output has to be consistent with the ideal cycle and the planned day,
-    // which is what performance divides.
+    // Output has to be consistent with the ideal cycle and the window that
+    // performance divides — recomputed WITHOUT the clamp, so a seed that packed
+    // more work into the window than it can hold is caught rather than hidden
+    // behind a flattering 100%.
     const expected = Math.round((m.completions_today * st1.ideal_cycle_seconds) / (m.uptime_minutes * 60) * 100);
     assert.equal(m.performance, expected, 'performance follows from the seeded completions');
-    assert.ok(m.completions_today >= 5, 'a shift on the board, not two runs');
+
+    // A shift on the board, not two runs — as much of one as the day has had
+    // time for. The number is the hour's, not a constant, which is why it is
+    // read off the window the demo reports instead of hard-coded.
+    assert.ok(m.completions_today >= 1, 'the bench has finished something');
+    if (m.uptime_minutes >= 60) {
+      assert.ok(m.completions_today >= 5, 'an hour of shift is worth at least five units');
+    }
   });
 
   it('keeps the work order, the kit and the day’s output telling one story', async () => {
@@ -254,7 +279,18 @@ describe('the public demo sandbox is a credible factory', () => {
     const oee = await api('GET', '/api/oee', { token });
     const st1 = oee.json.find(s => s.name === 'Station 1');
     const overview = await api('GET', '/api/analytics/overview', { token });
+    // The overview's window is all time, and the seed always lays down four
+    // previous full days, so this one is never empty whatever the hour.
     assert.ok(overview.json.passRate !== null, 'the demo records inspections');
+
+    // The station's window is today. In the first minutes of the day it has
+    // inspected nothing, and reports null rather than borrowing the plant's
+    // number — there is nothing to contradict.
+    if (st1.oee.quality === null) {
+      assert.ok(st1.oee.missing.includes('an inspected run today'));
+      return;
+    }
+
     // Different windows (today vs all time), so not equal — but a customer must
     // not see 96% next to 50%.
     assert.ok(Math.abs(overview.json.passRate - st1.oee.quality) <= 10,

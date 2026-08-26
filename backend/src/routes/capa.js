@@ -1,6 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { plantToday } = require('../plantDay');
 const { logActivity } = require('../activity');
 const { buildUpdate, nextValue } = require('../patch');
 
@@ -63,7 +64,10 @@ router.get('/', (req, res) => {
 // ─── GET /capa/summary ────────────────────────────────────────────────────────
 
 router.get('/summary', (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
+  // Today at the plant. due_date and closed_at are compared against it as
+  // stored — the dates themselves have no clock to shift, but which day counts
+  // as "now" does.
+  const today = plantToday(req.companyId);
   const monthStart = today.slice(0, 7) + '-01';
   const open = db.prepare("SELECT COUNT(*) as n FROM capa_items WHERE company_id = ? AND status != 'closed'").get(req.companyId).n;
   const overdue = db.prepare("SELECT COUNT(*) as n FROM capa_items WHERE company_id = ? AND status != 'closed' AND due_date < ?").get(req.companyId, today).n;

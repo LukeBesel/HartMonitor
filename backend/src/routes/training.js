@@ -1,6 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { plantDayShift } = require('../plantDay');
 
 const router = express.Router();
 
@@ -29,18 +30,23 @@ router.get('/summary', (req, res) => {
     ? Math.round((certified_count / total_possible) * 100 * 10) / 10
     : 0;
 
+  // Expiry and target dates are calendar dates, so they are compared as stored.
+  // Only "today" moves onto the plant's clock — an expiry lapses at the start of
+  // the plant's day, not at midnight in Greenwich.
+  const day = plantDayShift(cid);
+
   // Records expiring within 30 days (training_records + certifications)
   const expiring_tr = db.prepare(
     `SELECT COUNT(*) as c FROM training_records
      WHERE company_id = ? AND expiry_date IS NOT NULL
-       AND date(expiry_date) BETWEEN date('now') AND date('now', '+30 days')`
-  ).get(cid).c;
+       AND date(expiry_date) BETWEEN date('now', ?) AND date('now', ?, '+30 days')`
+  ).get(cid, day, day).c;
 
   const expiring_cert = db.prepare(
     `SELECT COUNT(*) as c FROM certifications
      WHERE company_id = ? AND expiry_date IS NOT NULL
-       AND date(expiry_date) BETWEEN date('now') AND date('now', '+30 days')`
-  ).get(cid).c;
+       AND date(expiry_date) BETWEEN date('now', ?) AND date('now', ?, '+30 days')`
+  ).get(cid, day, day).c;
 
   const expiring_soon = expiring_tr + expiring_cert;
 
@@ -48,8 +54,8 @@ router.get('/summary', (req, res) => {
   const overdue_plans = db.prepare(
     `SELECT COUNT(*) as c FROM training_plans
      WHERE company_id = ? AND status IN ('pending','in_progress')
-       AND target_date IS NOT NULL AND date(target_date) < date('now')`
-  ).get(cid).c;
+       AND target_date IS NOT NULL AND date(target_date) < date('now', ?)`
+  ).get(cid, day).c;
 
   // Uncertified operators: operators who have fewer certified apps than total active apps
   const operators = db.prepare(
@@ -322,8 +328,8 @@ router.get('/plans', (req, res) => {
     UPDATE training_plans
     SET status = 'overdue', updated_at = datetime('now')
     WHERE company_id = ? AND status IN ('pending','in_progress')
-      AND target_date IS NOT NULL AND date(target_date) < date('now')
-  `).run(cid);
+      AND target_date IS NOT NULL AND date(target_date) < date('now', ?)
+  `).run(cid, plantDayShift(cid));
 
   const plans = db.prepare(`
     SELECT tp.*,

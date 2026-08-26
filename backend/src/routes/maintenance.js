@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { logActivity } = require('../activity');
+const { plantDayShift } = require('../plantDay');
 
 const router = express.Router();
 
@@ -80,7 +81,10 @@ router.delete('/assets/:id', (req, res) => {
 
 router.get('/pm', (req, res) => {
   const { asset_id, overdue } = req.query;
-  const today = new Date().toISOString().slice(0, 10);
+  // next_due_at is a full ISO instant (computeNextDue writes toISOString), so
+  // both sides of the day comparison shift onto the plant clock — a PM due
+  // tomorrow morning must not read as overdue all of this evening.
+  const day = plantDayShift(req.companyId);
   let sql = `
     SELECT p.*, a.name as asset_name, a.asset_number
     FROM pm_schedules p
@@ -89,7 +93,8 @@ router.get('/pm', (req, res) => {
   `;
   const params = [req.companyId];
   if (asset_id) { sql += ' AND p.asset_id = ?'; params.push(asset_id); }
-  if (overdue === 'true') { sql += ' AND p.next_due_at <= ?'; params.push(today); }
+  // Due strictly before today is overdue; due today still has the day to run.
+  if (overdue === 'true') { sql += " AND date(p.next_due_at, ?) < date('now', ?)"; params.push(day, day); }
   sql += ' ORDER BY p.next_due_at ASC NULLS LAST';
   res.json(db.prepare(sql).all(...params));
 });
@@ -225,12 +230,12 @@ router.delete('/work-orders/:id', (req, res) => {
 // ─── Summary ──────────────────────────────────────────────────────────────────
 
 router.get('/summary', (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
+  const day = plantDayShift(req.companyId);
   const open_wos = db.prepare("SELECT COUNT(*) as n FROM maintenance_work_orders WHERE company_id = ? AND status NOT IN ('completed','cancelled')").get(req.companyId).n;
   const critical_wos = db.prepare("SELECT COUNT(*) as n FROM maintenance_work_orders WHERE company_id = ? AND priority = 'critical' AND status NOT IN ('completed','cancelled')").get(req.companyId).n;
-  const overdue_pms = db.prepare('SELECT COUNT(*) as n FROM pm_schedules WHERE company_id = ? AND next_due_at <= ?').get(req.companyId, today).n;
+  const overdue_pms = db.prepare("SELECT COUNT(*) as n FROM pm_schedules WHERE company_id = ? AND date(next_due_at, ?) < date('now', ?)").get(req.companyId, day, day).n;
   const assets_count = db.prepare("SELECT COUNT(*) as n FROM assets WHERE company_id = ? AND status = 'active'").get(req.companyId).n;
-  const completed_today = db.prepare("SELECT COUNT(*) as n FROM maintenance_work_orders WHERE company_id = ? AND status = 'completed' AND date(completed_at) = ?").get(req.companyId, today).n;
+  const completed_today = db.prepare("SELECT COUNT(*) as n FROM maintenance_work_orders WHERE company_id = ? AND status = 'completed' AND date(completed_at, ?) = date('now', ?)").get(req.companyId, day, day).n;
   res.json({ open_wos, critical_wos, overdue_pms, assets_count, completed_today });
 });
 

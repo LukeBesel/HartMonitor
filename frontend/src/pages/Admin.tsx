@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Navigate } from 'react-router-dom';
 import {
   Users, Building2, Activity, Server, RefreshCw,
   Search, AlertCircle, TrendingUp, CheckCircle2,
@@ -8,6 +7,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
+import NotFound from './NotFound';
 import { SkeletonTable, SkeletonStats } from '../components/shared/Skeleton';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -639,10 +639,16 @@ export default function Admin() {
 
   // HartMonitor staff only. Deliberately NOT a role check: 'developer' is the
   // role the first user of every new signup is given, so gating on it opened
-  // this console to every customer owner. The API behind every panel here
-  // answers 404 to anyone without the flag, so this redirect and the server
-  // agree on who may be here.
-  if (!user?.is_platform_staff) return <Navigate to="/dashboard" replace />;
+  // this console to every customer owner.
+  //
+  // To anyone without the flag this address simply does not exist, and it has to
+  // LOOK that way. Every /api/admin/* route already answers a byte-identical 404
+  // rather than a 403, so the API gives nothing away — but a redirect to the
+  // Command Center did: /definitely-not-a-page renders "this page doesn't exist"
+  // while /admin quietly bounced, and the difference between the two is all a
+  // prober needs to learn the route is real. So this renders the same 404 the
+  // router renders for any address that matches nothing.
+  if (!user?.is_platform_staff) return <NotFound />;
 
   const [tab, setTab] = useState<Tab>('overview');
 

@@ -2,6 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { logActivity } = require('../activity');
+const { plantDayShift } = require('../plantDay');
 
 const router = express.Router();
 
@@ -232,8 +233,12 @@ function computeCardData(card, companyId, filters = {}) {
       switch (card.metric_key) {
         case 'total_completions':
           return { value: db.prepare(`SELECT COUNT(*) as c FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed'${scope.where}`).get(companyId, ...scope.params).c };
-        case 'today_completions':
-          return { value: db.prepare(`SELECT COUNT(*) as c FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND date(c.completed_at)=date('now')${scope.where}`).get(companyId, ...scope.params).c };
+        case 'today_completions': {
+          // The plant's today, so a custom dashboard tile agrees with the
+          // Command Center tile beside it instead of rolling over at midnight UTC.
+          const day = plantDayShift(companyId);
+          return { value: db.prepare(`SELECT COUNT(*) as c FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND date(c.completed_at, ?)=date('now', ?)${scope.where}`).get(companyId, day, day, ...scope.params).c };
+        }
         case 'active_runs':
           return { value: db.prepare(`SELECT COUNT(*) as c FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='in_progress'${scope.where}`).get(companyId, ...scope.params).c };
         case 'pass_rate': {
@@ -284,8 +289,8 @@ function computeCardData(card, companyId, filters = {}) {
           return { value: db.prepare(`
             SELECT COUNT(*) as c FROM pm_schedules p${join}
             WHERE p.company_id = ? AND p.next_due_at IS NOT NULL
-              AND date(p.next_due_at) <= date('now','+7 days')${where}
-          `).get(companyId, ...params).c };
+              AND date(p.next_due_at) <= date('now', ?, '+7 days')${where}
+          `).get(companyId, plantDayShift(companyId), ...params).c };
         }
         case 'training_coverage': {
           const t = trainingScope(appId, filters);

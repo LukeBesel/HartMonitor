@@ -80,4 +80,42 @@ function apiKeyRateKey(req) {
   return `ip:${ipKeyGenerator(req.ip)}`;
 }
 
-module.exports = { apiRateKey, apiKeyRateKey, isSessionKey, sessionUserId };
+/**
+ * Bucket key for the credential endpoints: the ACCOUNT being attempted.
+ *
+ * Guessing a password is an attack on one account, so the ceiling that stops it
+ * has to be counted per account — not per IP. A factory leaves the building
+ * through one NAT gateway, so an IP-keyed credential budget is a budget for the
+ * whole site: twenty people signing in at 6am with a couple of typos between
+ * them spent it, and everyone still standing at a tablet waited fifteen minutes.
+ * Meanwhile it did nothing extra against the actual threat, because one attacker
+ * with twenty addresses had twenty budgets.
+ *
+ * The account is taken from the submitted email, normalised the same way the
+ * login route normalises it (lowercase, trimmed) so `Bob@x.test` and
+ * `bob@x.test ` cannot be alternated for a fresh budget, and hashed so the store
+ * never holds a list of the addresses people are trying.
+ *
+ * change-password carries no email — it is authenticated — so the live session's
+ * user is the account there. Anything with neither falls back to the IP, which
+ * is the only handle left.
+ */
+function credentialRateKey(req) {
+  const email = req.body?.email;
+  if (typeof email === 'string' && email.trim()) {
+    return `acct:${crypto.createHash('sha256').update(email.toLowerCase().trim()).digest('hex').slice(0, 32)}`;
+  }
+  const userId = sessionUserId(req);
+  if (userId) return `acct-u:${userId}`;
+  return `ip:${ipKeyGenerator(req.ip)}`;
+}
+
+/** Bucket key for the per-site credential ceiling: always the client address. */
+function credentialIpKey(req) {
+  return `ip:${ipKeyGenerator(req.ip)}`;
+}
+
+module.exports = {
+  apiRateKey, apiKeyRateKey, isSessionKey, sessionUserId,
+  credentialRateKey, credentialIpKey,
+};
