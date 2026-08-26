@@ -9,7 +9,7 @@
 
 import type { AppAnalyticsResponse, AppRunStats } from '../../api/client';
 import type { App } from '../../types';
-import { fmtDuration, parseServerTime, pluralize } from './appModel';
+import { fmtDuration, parseServerTime, pluralize, durationBasisLabel } from './appModel';
 
 // ─── App options (the picker at the top) ─────────────────────────────────────
 
@@ -158,6 +158,7 @@ export function buildHeadlineMetrics(
   days: number,
 ): HeadlineMetric[] {
   const noRuns = totals.runs === 0;
+  const basisLabel = durationBasisLabel(totals.avg_duration_basis);
 
   return [
     {
@@ -178,11 +179,15 @@ export function buildHeadlineMetrics(
         : `${Math.round((totals.completed / totals.runs) * 100)}% of runs started`,
     },
     {
+      // The label names the measurement. Two different, both-correct numbers
+      // exist for the same runs (hands-on step time vs wall clock), and an
+      // unlabelled average is what made two screens look like they were
+      // contradicting each other. See backend/src/cycleTime.js.
       key: 'avg_cycle',
-      label: 'Avg cycle time',
+      label: basisLabel ? `Avg cycle time · ${basisLabel}` : 'Avg cycle time',
       value: totals.avg_duration_s === null ? null : fmtDuration(totals.avg_duration_s),
       note: totals.avg_duration_s === null
-        ? (noRuns ? 'no runs in this window' : 'no run has finished yet')
+        ? (noRuns ? 'no runs in this window' : 'no run has been timed yet')
         : `over ${pluralize(totals.completed, 'completed run')}`,
     },
     {

@@ -313,9 +313,15 @@ test('app history pages in the database and reports honest aggregates', async ()
   assert.ok(page3.json.completions.every(c => !ids1.includes(c.id)), 'pages do not overlap');
 
   // Durations come from step_times (30..41 seconds), so the rollups are known.
+  // The average is reported to a tenth of a second, not snapped to a whole one:
+  // the true mean of 30..41 is 35.5, and rounding it to 36 is the same habit
+  // that turned a measured sub-second operation into a fabricated "0s".
   assert.equal(page1.json.best_time, 30);
-  const expectedAvg = Math.round(Array.from({ length: 12 }, (_, i) => 30 + i).reduce((a, b) => a + b, 0) / 12);
+  const values = Array.from({ length: 12 }, (_, i) => 30 + i);
+  const expectedAvg = Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10) / 10;
+  assert.equal(expectedAvg, 35.5);
   assert.equal(page1.json.avg_duration, expectedAvg);
+  assert.equal(page1.json.avg_duration_basis, 'hands_on', 'and the rollup says what it measured');
   assert.equal(page1.json.step_averages[0].completion_count, 12);
   assert.equal(page1.json.step_averages[0].avg_duration_seconds, expectedAvg);
 

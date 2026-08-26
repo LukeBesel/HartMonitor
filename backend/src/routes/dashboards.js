@@ -1,6 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { avgRunSecondsSQL, roundSeconds } = require('../cycleTime');
 const { logActivity } = require('../activity');
 
 const router = express.Router();
@@ -252,9 +253,12 @@ function computeCardData(card, companyId, filters = {}) {
             : { value: null, empty_reason: 'No pass/fail results recorded yet' };
         }
         case 'avg_cycle': {
-          const row = db.prepare(`SELECT AVG((julianday(c.completed_at)-julianday(c.started_at))*24*60) as v FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND c.completed_at IS NOT NULL${scope.where}`).get(companyId, ...scope.params);
-          return row?.v
-            ? { value: Math.round(row.v * 10) / 10, suffix: 'm' }
+          const row = db.prepare(`SELECT ${avgRunSecondsSQL('c')} as v FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND c.completed_at IS NOT NULL${scope.where}`).get(companyId, ...scope.params);
+          // Null-checked, not truthiness-checked: a line averaging a few seconds
+          // per unit is a fast line, not an empty one, and `row?.v ? …` filed it
+          // under "No completed runs yet".
+          return row?.v != null
+            ? { value: Math.round((row.v / 60) * 10) / 10, seconds: roundSeconds(row.v), suffix: 'm' }
             : { value: null, empty_reason: 'No completed runs yet' };
         }
         case 'period_completions':
@@ -317,7 +321,7 @@ function computeCardData(card, companyId, filters = {}) {
       if (metric === 'cycle_time') {
         const rows = db.prepare(`
           SELECT date(c.completed_at) as date,
-            ROUND(AVG((julianday(c.completed_at)-julianday(c.started_at))*24*60),1) as value
+            ROUND(${avgRunSecondsSQL('c')} / 60.0, 1) as value
           FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND c.completed_at IS NOT NULL
             AND c.completed_at >= date('now','-'||?||' days')${scope.where}
           GROUP BY date(c.completed_at) ORDER BY date ASC
@@ -472,7 +476,7 @@ function computeCardData(card, companyId, filters = {}) {
       if (metric === 'cycle_time') {
         const rows = db.prepare(`
           SELECT c.operator_name as name,
-            ROUND(AVG((julianday(c.completed_at)-julianday(c.started_at))*24*60),1) as value
+            ROUND(${avgRunSecondsSQL('c')} / 60.0, 1) as value
           FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND c.completed_at IS NOT NULL${scope.where}
           GROUP BY c.operator_name HAVING COUNT(*) >= 3 ORDER BY value ASC LIMIT ?
         `).all(companyId, ...scope.params, limit);

@@ -3,6 +3,10 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { logActivity } = require('../activity');
 const { startRunReaper } = require('../runReaper');
+const {
+  roundSeconds, runSecondsSQL, runBasisSQL, avgRunSecondsSQL, avgRunBasisSQL,
+  handsOnSecondsSQL, elapsedSecondsSQL, elapsedSoFarSecondsSQL, stepTaktSeconds,
+} = require('../cycleTime');
 
 const router = express.Router();
 
@@ -78,27 +82,11 @@ router.get('/app/:appId/history', (req, res) => {
   // long as page 1 did, and got worse forever. Now the page query is LIMIT/OFFSET
   // and the rollups are SQL aggregates over json_each().
   //
-  // `duration` keeps its original definition: the summed step_times when they add
-  // up to anything, else the wall clock between started_at and completed_at.
-  // json_valid() guards every json_each() so one malformed legacy blob can't
-  // abort the whole query.
-  //
-  // A run we cannot time — one still in progress, or an old blob with neither
-  // step times nor a completed_at — falls through to NULL, not 0. Zero seconds
-  // is a measurement ("this took no time"); NULL is the truth ("we never timed
-  // it"), and it also keeps those runs out of AVG() instead of dragging the
-  // average toward zero.
-  const DURATION_SQL = `
-    CASE
-      WHEN COALESCE((SELECT SUM(CAST(je.value AS REAL)) FROM json_each(c.step_times) je
-                     WHERE json_valid(c.step_times)), 0) > 0
-        THEN CAST(ROUND((SELECT SUM(CAST(je.value AS REAL)) FROM json_each(c.step_times) je
-                         WHERE json_valid(c.step_times))) AS INTEGER)
-      WHEN c.completed_at IS NOT NULL AND c.started_at IS NOT NULL
-           AND (julianday(c.completed_at) - julianday(c.started_at)) > 0
-        THEN CAST(ROUND((julianday(c.completed_at) - julianday(c.started_at)) * 86400) AS INTEGER)
-      ELSE NULL
-    END`;
+  // How long a run took is decided in backend/src/cycleTime.js and nowhere else;
+  // read the model there. This page ships the canonical duration AND both
+  // measurements behind it, so the screen can name which one it is showing.
+  const DURATION_SQL = runSecondsSQL('c');
+
   // Legacy runs record Pass/Fail as plain values inside the data blob.
   const HAS_FAIL = `EXISTS (SELECT 1 FROM json_each(c.data) jd WHERE json_valid(c.data) AND jd.value = 'Fail')`;
   const HAS_PASS = `EXISTS (SELECT 1 FROM json_each(c.data) jd WHERE json_valid(c.data) AND jd.value = 'Pass')`;
@@ -114,14 +102,19 @@ router.get('/app/:appId/history', (req, res) => {
   const agg = db.prepare(`
     SELECT
       COUNT(*)                                                  AS total_runs,
-      -- Averaged over the SAME runs best_time is taken from. Averaging
-      -- unfiltered while the minimum filtered out zeros gave the same missing
-      -- data two different answers on one screen: "0s Avg Hands-On Time"
-      -- sitting next to "— Best Time · no run has been timed yet". A run with
-      -- no recorded duration was never timed; it is not a run that took zero
-      -- seconds, and it must not drag an average toward zero.
-      AVG(CASE WHEN ${DURATION_SQL} > 0 THEN ${DURATION_SQL} END) AS avg_duration,
-      MIN(CASE WHEN ${DURATION_SQL} > 0 THEN ${DURATION_SQL} END) AS best_time,
+      -- Averaged over the SAME runs best_time is taken from, and over the same
+      -- definition every other screen uses. AVG() and MIN() skip NULLs on their
+      -- own, which is exactly the rule: a run with no recorded duration was
+      -- never timed, it is not a run that took zero seconds, and it must not
+      -- drag an average toward zero. There is deliberately no "greater than
+      -- zero" guard here — the old one compared an already-rounded integer, so
+      -- every genuine sub-second run was thrown out as if it had never been
+      -- measured.
+      ${avgRunSecondsSQL('c')}          AS avg_duration,
+      ${avgRunBasisSQL('c')}            AS avg_duration_basis,
+      MIN(${DURATION_SQL})              AS best_time,
+      AVG(${handsOnSecondsSQL('c')})    AS avg_hands_on_seconds,
+      AVG(${elapsedSecondsSQL('c')})    AS avg_elapsed_seconds,
       SUM(CASE WHEN ${HAS_FAIL} THEN 1 ELSE 0 END)              AS fail_count,
       SUM(CASE WHEN ${HAS_FAIL} THEN 0 WHEN ${HAS_PASS} THEN 1 ELSE 0 END) AS pass_count
     FROM completions c
@@ -141,7 +134,11 @@ router.get('/app/:appId/history', (req, res) => {
   const pageRows = db.prepare(`
     SELECT c.id, c.operator_name, c.started_at, c.completed_at, c.status,
            wo.work_order_number,
-           ${DURATION_SQL} AS total_duration_seconds,
+           ${DURATION_SQL}                 AS total_duration_seconds,
+           ${runBasisSQL('c')}             AS duration_basis,
+           ${handsOnSecondsSQL('c')}       AS hands_on_seconds,
+           ${elapsedSecondsSQL('c')}       AS elapsed_seconds,
+           ${elapsedSoFarSecondsSQL('c')}  AS elapsed_so_far_seconds,
            ${PASS_FAIL_SQL} AS pass_fail
       FROM completions c
       LEFT JOIN work_orders wo ON wo.id = c.work_order_id
@@ -164,19 +161,25 @@ router.get('/app/:appId/history', (req, res) => {
     app_id: app.id,
     app_name: app.name,
     total_runs: totalRuns,
-    avg_duration: agg?.avg_duration != null ? Math.round(agg.avg_duration) : null,
-    best_time: agg?.best_time ?? null,
+    avg_duration: roundSeconds(agg?.avg_duration),
+    /** 'hands_on' | 'elapsed' | 'mixed' | null — what the average was measured with. */
+    avg_duration_basis: agg?.avg_duration_basis ?? null,
+    avg_hands_on_seconds: roundSeconds(agg?.avg_hands_on_seconds),
+    avg_elapsed_seconds: roundSeconds(agg?.avg_elapsed_seconds),
+    best_time: roundSeconds(agg?.best_time),
     pass_rate: qcTotal > 0 ? Math.round((agg.pass_count / qcTotal) * 100) : null,
     qc_sample_size: qcTotal,
     step_averages: steps.map((s, i) => ({
       step_id: s.id,
       step_name: s.name,
       step_order: i,
-      avg_duration_seconds: stepAgg.has(i) ? Math.round(stepAgg.get(i).avg_seconds || 0) : null,
+      // Rounded once, to a tenth: `Math.round(x || 0)` used to turn a step
+      // genuinely averaging 0.4 s into a fabricated "0s".
+      avg_duration_seconds: stepAgg.has(i) ? roundSeconds(stepAgg.get(i).avg_seconds) : null,
       // Legacy v1 blobs store step takt as `takt_time`, v2 as `takt_time_seconds`.
       // Neither present = no takt was ever set for this step, which is not the
       // same as a takt of zero.
-      takt_seconds: Number(s.takt_time_seconds ?? s.takt_time) || null,
+      takt_seconds: stepTaktSeconds(s),
       completion_count: stepAgg.has(i) ? stepAgg.get(i).n : 0,
     })),
     completions: pageRows.map(r => ({
@@ -184,7 +187,13 @@ router.get('/app/:appId/history', (req, res) => {
       operator_name: r.operator_name,
       started_at: r.started_at,
       completed_at: r.completed_at,
-      total_duration_seconds: r.total_duration_seconds ?? null,
+      total_duration_seconds: roundSeconds(r.total_duration_seconds),
+      /** Which measurement the duration above is — the screen labels it. */
+      duration_basis: r.duration_basis ?? null,
+      hands_on_seconds: roundSeconds(r.hands_on_seconds),
+      elapsed_seconds: roundSeconds(r.elapsed_seconds),
+      /** Only ever set on a run still open, and never shown as a "duration". */
+      elapsed_so_far_seconds: roundSeconds(r.elapsed_so_far_seconds),
       status: r.status,
       work_order_number: r.work_order_number || null,
       pass_fail: r.pass_fail || null,

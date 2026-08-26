@@ -2,6 +2,9 @@ import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import {
+  fmtDuration, fmtDateTime, fmtRelative, durationBasisLabel, durationBasisNote,
+} from '../components/apps/appModel';
+import {
   ArrowLeft, CheckCircle2, XCircle, Clock, User, Calendar,
   Package, ChevronRight, BarChart2, Layers, ExternalLink
 } from 'lucide-react';
@@ -12,14 +15,17 @@ import {
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
+// Every duration below is SECONDS and says so in its name, and every one of
+// them is nullable — a step nobody timed, or a takt nobody configured, is
+// unknown, not zero. See backend/src/cycleTime.js for the model.
 interface StepBreakdown {
   step_id: string;
   step_name: string;
   step_order: number;
-  duration_seconds: number;
-  takt_seconds: number;
-  variance_pct: number;
-  status: 'under' | 'on_target' | 'over';
+  duration_seconds: number | null;
+  takt_seconds: number | null;
+  variance_pct: number | null;
+  status: 'under' | 'on_target' | 'over' | 'unknown';
 }
 
 interface CompletionDetail {
@@ -28,10 +34,18 @@ interface CompletionDetail {
   app_name: string;
   operator_name: string;
   station_id: string | null;
+  station_name: string | null;
   started_at: string;
   completed_at: string | null;
   status: 'in_progress' | 'completed' | 'abandoned';
-  total_duration_seconds: number;
+  /** The canonical run duration. Null when this run was never timed. */
+  total_duration_seconds: number | null;
+  /** Which measurement the total is — the page labels it rather than leaving
+   *  a customer to guess why another screen shows a different number. */
+  duration_basis: 'hands_on' | 'elapsed' | null;
+  hands_on_seconds: number | null;
+  elapsed_seconds: number | null;
+  elapsed_so_far_seconds: number | null;
   work_order_id: string | null;
   work_order_number: string | null;
   step_breakdown: StepBreakdown[];
@@ -39,47 +53,21 @@ interface CompletionDetail {
   related_completions: Array<{
     id: string;
     operator_name: string;
-    completed_at: string;
-    total_duration_seconds: number;
+    started_at: string;
+    completed_at: string | null;
+    total_duration_seconds: number | null;
+    duration_basis: 'hands_on' | 'elapsed' | null;
     status: string;
   }>;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function fmtDuration(seconds: number) {
-  if (!seconds || seconds < 0) return '—';
-  if (seconds < 60) return `${seconds}s`;
-  if (seconds < 3600) {
-    const m = Math.floor(seconds / 60);
-    const s = seconds % 60;
-    return s > 0 ? `${m}m ${s}s` : `${m}m`;
-  }
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  return `${h}h ${m}m`;
-}
-
-function fmtDateTime(iso: string | null) {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return '—';
-  return d.toLocaleString([], {
-    month: 'short', day: 'numeric', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  });
-}
-
-function fmtTimeAgo(iso: string) {
-  if (!iso) return '—';
-  const t = new Date(iso).getTime();
-  if (isNaN(t)) return '—';
-  const diff = Date.now() - t;
-  if (diff < 60000) return 'just now';
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-  return new Date(iso).toLocaleDateString();
-}
+// Durations, timestamps and relative times all come from the shared model.
+// This page used to declare its own `fmtDuration`, whose `if (!seconds)` guard
+// turned a real zero-length takt into "—", and read SQLite's zone-less
+// timestamps as local time.
+const fmtTimeAgo = fmtRelative;
 
 function shortId(id: string) {
   return id.slice(0, 8).toUpperCase();
@@ -88,6 +76,10 @@ function shortId(id: string) {
 function stepBarColor(status: string) {
   if (status === 'under')     return '#22c55e';
   if (status === 'on_target') return '#3b82f6';
+  // No takt was ever set for this step, so there is no verdict to paint. Grey
+  // says "not measured against anything"; red would accuse it of missing a
+  // target nobody set.
+  if (status === 'unknown')   return '#cbd5e1';
   return '#ef4444';
 }
 
@@ -111,6 +103,7 @@ function variancePctLabel(pct: number | null | undefined) {
 function stepStatusIcon(status: string) {
   if (status === 'under')     return <CheckCircle2 size={14} className="text-green-500" />;
   if (status === 'on_target') return <CheckCircle2 size={14} className="text-blue-500" />;
+  if (status === 'unknown')   return <span className="text-gray-300" title="no takt configured for this step">—</span>;
   return <XCircle size={14} className="text-red-500" />;
 }
 
@@ -137,7 +130,9 @@ function StepTooltip({ active, payload, label }: any) {
         </div>
         <div className="flex justify-between gap-4">
           <span>Takt</span>
-          <span className="font-medium text-gray-900">{fmtDuration(d.takt_seconds)}</span>
+          <span className="font-medium text-gray-900">
+            {d.takt_seconds === null ? <span className="text-gray-400" title="no takt configured">—</span> : fmtDuration(d.takt_seconds)}
+          </span>
         </div>
         <div className="flex justify-between gap-4">
           <span>Variance</span>
@@ -198,13 +193,29 @@ export default function CompletionDetail() {
 
   const badge = statusBadge(completion.status);
   const steps = completion.step_breakdown ?? [];
+  const basisLabel = durationBasisLabel(completion.duration_basis);
+  // The measurement the headline is NOT showing, so both are on screen and a
+  // customer can see they are two facts rather than two answers.
+  const otherMeasurement = completion.duration_basis === 'hands_on'
+    ? (completion.elapsed_seconds === null
+        ? 'wall clock not recorded'
+        : `${fmtDuration(completion.elapsed_seconds)} wall clock, start to finish`)
+    : (completion.hands_on_seconds === null
+        ? 'no step timers recorded on this run'
+        : `${fmtDuration(completion.hands_on_seconds)} hands-on`);
   const capturedEntries = Object.entries(completion.captured_data ?? {});
-  const chartData = steps.map(s => ({
-    ...s,
-    duration_minutes: parseFloat((s.duration_seconds / 60).toFixed(2)),
-    takt_minutes: parseFloat((s.takt_seconds / 60).toFixed(2)),
-  }));
-  const maxTakt = steps.length > 0 ? Math.max(...steps.map(s => s.takt_seconds / 60)) : 0;
+  // Only steps that were actually timed can be plotted. A step with no recorded
+  // time is absent from the chart rather than drawn as a zero-length bar.
+  const chartData = steps
+    .filter(s => s.duration_seconds !== null)
+    .map(s => ({
+      ...s,
+      duration_minutes: parseFloat(((s.duration_seconds as number) / 60).toFixed(2)),
+      takt_minutes: s.takt_seconds === null ? null : parseFloat((s.takt_seconds / 60).toFixed(2)),
+    }));
+  const taktMinutes = steps.map(s => s.takt_seconds).filter((t): t is number => t !== null).map(t => t / 60);
+  // No takt anywhere ⇒ no reference line, rather than a line drawn at zero.
+  const maxTakt = taktMinutes.length > 0 ? Math.max(...taktMinutes) : null;
 
   return (
     <div className="min-h-screen bg-[#f8fafc] p-6 space-y-6">
@@ -251,15 +262,42 @@ export default function CompletionDetail() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 mt-6">
           <MetaItem icon={<User size={14} className="text-gray-400" />} label="Operator" value={completion.operator_name || 'Unknown'} />
           <MetaItem icon={<Calendar size={14} className="text-gray-400" />} label="Started" value={fmtDateTime(completion.started_at)} />
-          <MetaItem icon={<Clock size={14} className="text-gray-400" />} label="Total Duration" value={fmtDuration(completion.total_duration_seconds)} highlight />
+          {/* Two different measurements of one run genuinely exist, so this
+              names which one it is showing and offers the other beside it.
+              Unlabelled, the gap between them reads as the system contradicting
+              itself. */}
+          <MetaItem
+            icon={<Clock size={14} className="text-gray-400" />}
+            label={`Total Duration${basisLabel ? ` · ${basisLabel}` : ''}`}
+            value={completion.total_duration_seconds === null ? '—' : fmtDuration(completion.total_duration_seconds)}
+            note={completion.total_duration_seconds === null
+              ? 'this run was never timed'
+              : otherMeasurement}
+            title={durationBasisNote(completion.duration_basis)}
+            highlight
+          />
           {completion.work_order_number && (
             <MetaItem icon={<Package size={14} className="text-gray-400" />} label="Work Order" value={completion.work_order_number} />
           )}
-          {completion.completed_at && (
+          {completion.completed_at ? (
             <MetaItem icon={<Calendar size={14} className="text-gray-400" />} label="Completed" value={fmtDateTime(completion.completed_at)} />
+          ) : (
+            <MetaItem
+              icon={<Clock size={14} className="text-gray-400" />}
+              label="Running for"
+              value={completion.elapsed_so_far_seconds === null ? '—' : fmtDuration(completion.elapsed_so_far_seconds)}
+              note="elapsed so far — this run has not finished"
+            />
           )}
           {completion.station_id && (
-            <MetaItem icon={<Layers size={14} className="text-gray-400" />} label="Station" value={completion.station_id} />
+            /* The station's NAME. The id is the join key, not something to show
+               a person — this field used to print a raw UUID. */
+            <MetaItem
+              icon={<Layers size={14} className="text-gray-400" />}
+              label="Station"
+              value={completion.station_name || 'Unknown station'}
+              note={completion.station_name ? undefined : 'the station this ran on no longer exists'}
+            />
           )}
         </div>
       </div>
@@ -270,9 +308,11 @@ export default function CompletionDetail() {
           <div className="flex items-center gap-2">
             <BarChart2 size={16} className="text-gray-500" />
             <h2 className="font-semibold text-gray-900">Step Performance</h2>
+            <span className="text-xs text-gray-400">· hands-on time per step</span>
           </div>
 
-          {/* Bar chart */}
+          {/* Bar chart — only over the steps that were actually timed. */}
+          {chartData.length > 0 && (
           <div>
             <div className="flex items-center gap-4 mb-3 text-xs text-gray-500">
               <span className="flex items-center gap-1.5"><span className="w-3 h-3 rounded bg-green-500 inline-block" />Under takt</span>
@@ -295,7 +335,9 @@ export default function CompletionDetail() {
                   width={110}
                 />
                 <Tooltip content={<StepTooltip />} />
-                <ReferenceLine x={maxTakt} stroke="#f59e0b" strokeDasharray="4 4" strokeWidth={1.5} label={{ value: 'Takt', fill: '#f59e0b', fontSize: 10, position: 'top' }} />
+                {maxTakt !== null && (
+                  <ReferenceLine x={maxTakt} stroke="#f59e0b" strokeDasharray="4 4" strokeWidth={1.5} label={{ value: 'Takt', fill: '#f59e0b', fontSize: 10, position: 'top' }} />
+                )}
                 <Bar dataKey="duration_minutes" radius={[0, 3, 3, 0]} maxBarSize={20}>
                   {chartData.map((entry, index) => (
                     <Cell key={index} fill={stepBarColor(entry.status)} />
@@ -304,6 +346,7 @@ export default function CompletionDetail() {
               </BarChart>
             </ResponsiveContainer>
           </div>
+          )}
 
           {/* Step table */}
           <div className="overflow-x-auto">
@@ -322,8 +365,16 @@ export default function CompletionDetail() {
                     <tr key={step.step_id ?? i} className="hover:bg-gray-50 transition-colors">
                       <td className="px-3 py-2.5 text-xs text-gray-400 w-8">{step.step_order ?? i + 1}</td>
                       <td className="px-3 py-2.5 text-xs font-medium text-gray-900">{step.step_name}</td>
-                      <td className="px-3 py-2.5 text-xs text-gray-700 tabular-nums font-mono">{fmtDuration(step.duration_seconds)}</td>
-                      <td className="px-3 py-2.5 text-xs text-gray-500 tabular-nums font-mono">{fmtDuration(step.takt_seconds)}</td>
+                      <td className="px-3 py-2.5 text-xs text-gray-700 tabular-nums font-mono">
+                        {step.duration_seconds === null
+                          ? <span className="text-gray-400" title="this step was never timed">—</span>
+                          : fmtDuration(step.duration_seconds)}
+                      </td>
+                      <td className="px-3 py-2.5 text-xs text-gray-500 tabular-nums font-mono">
+                        {step.takt_seconds === null
+                          ? <span className="text-gray-400" title="no takt configured for this step">—</span>
+                          : fmtDuration(step.takt_seconds)}
+                      </td>
                       <td className={`px-3 py-2.5 text-xs font-semibold ${v.cls}`}>{v.text}</td>
                       <td className="px-3 py-2.5">{stepStatusIcon(step.status)}</td>
                     </tr>
@@ -354,7 +405,12 @@ export default function CompletionDetail() {
       {(completion.related_completions ?? []).length > 0 && (
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-6">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-gray-900">Other Runs of {completion.app_name}</h2>
+            <div>
+              <h2 className="font-semibold text-gray-900">Other Runs of {completion.app_name}</h2>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Hands-on time where a run recorded step timers, wall clock otherwise — the same number App History shows.
+              </p>
+            </div>
             <Link
               to={`/apps/${completion.app_id}/history`}
               className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1"
@@ -381,8 +437,13 @@ export default function CompletionDetail() {
                     <User size={11} />
                     {rel.operator_name || 'Unknown'}
                   </div>
-                  <span className="text-xs text-gray-500 flex-shrink-0">{fmtTimeAgo(rel.completed_at)}</span>
-                  <span className="text-xs text-gray-700 font-mono flex-shrink-0">{fmtDuration(rel.total_duration_seconds)}</span>
+                  <span className="text-xs text-gray-500 flex-shrink-0">{fmtTimeAgo(rel.completed_at ?? rel.started_at)}</span>
+                  <span
+                    className={`text-xs font-mono flex-shrink-0 ${rel.total_duration_seconds === null ? 'text-gray-400' : 'text-gray-700'}`}
+                    title={durationBasisNote(rel.duration_basis)}
+                  >
+                    {rel.total_duration_seconds === null ? '—' : fmtDuration(rel.total_duration_seconds)}
+                  </span>
                   <span className={`text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0 ${relBadge.cls}`}>{relBadge.label}</span>
                   {isCurrent && (
                     <span className="text-xs text-blue-600 font-semibold flex-shrink-0">← current</span>
@@ -399,19 +460,24 @@ export default function CompletionDetail() {
 
 // ── Small Shared Components ───────────────────────────────────────────────────
 
-function MetaItem({ icon, label, value, highlight }: {
+function MetaItem({ icon, label, value, note, title, highlight }: {
   icon: React.ReactNode;
   label: string;
   value: string;
+  /** The short honest reason under the value — why it reads "—", or what a
+   *  real value was measured against. */
+  note?: string;
+  title?: string;
   highlight?: boolean;
 }) {
   return (
-    <div>
+    <div title={title}>
       <div className="flex items-center gap-1.5 text-xs text-gray-400 mb-0.5">
         {icon}
         {label}
       </div>
-      <div className={`text-sm font-semibold ${highlight ? 'text-blue-600' : 'text-gray-900'}`}>{value}</div>
+      <div className={`text-sm font-semibold ${value === '—' ? 'text-gray-400' : highlight ? 'text-blue-600' : 'text-gray-900'}`}>{value}</div>
+      {note && <div className="text-[11px] text-gray-400 mt-0.5">{note}</div>}
     </div>
   );
 }

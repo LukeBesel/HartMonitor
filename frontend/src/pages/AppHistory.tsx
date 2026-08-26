@@ -12,7 +12,7 @@ import {
 // One duration formatter for the whole app: seconds / minutes / hours, and "—"
 // for null. A second local copy is how this page ended up printing "0m" for a
 // twelve-second run while the App Dashboard printed "12s".
-import { fmtDuration } from '../components/apps/appModel';
+import { fmtDuration, durationBasisNote } from '../components/apps/appModel';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -34,7 +34,13 @@ interface HistoryCompletion {
   operator_name: string;
   started_at: string | null;
   completed_at: string | null;
+  /** The canonical run duration — the same number every other screen shows. */
   total_duration_seconds: number | null;
+  /** Which measurement it is, so the cell can say so. */
+  duration_basis: 'hands_on' | 'elapsed' | null;
+  hands_on_seconds: number | null;
+  elapsed_seconds: number | null;
+  elapsed_so_far_seconds: number | null;
   status: 'completed' | 'abandoned' | 'in_progress';
   work_order_number: string | null;
   pass_fail: 'pass' | 'fail' | null;
@@ -45,6 +51,9 @@ interface AppHistoryData {
   app_name: string;
   total_runs: number;
   avg_duration: number | null;
+  avg_duration_basis: 'hands_on' | 'elapsed' | 'mixed' | null;
+  avg_hands_on_seconds: number | null;
+  avg_elapsed_seconds: number | null;
   best_time: number | null;
   pass_rate: number | null;
   qc_sample_size?: number;
@@ -54,6 +63,19 @@ interface AppHistoryData {
 }
 
 const PAGE_SIZE = 25;
+
+/** Why this run reads what it reads, and what it measures the other way. */
+function durationTitle(c: HistoryCompletion): string {
+  if (c.total_duration_seconds === null) {
+    return c.status === 'in_progress'
+      ? `This run has not finished — ${c.elapsed_so_far_seconds === null ? 'no elapsed time recorded' : `${fmtDuration(c.elapsed_so_far_seconds)} elapsed so far`}.`
+      : 'This run was never timed.';
+  }
+  const other = c.duration_basis === 'hands_on'
+    ? (c.elapsed_seconds == null ? null : `${fmtDuration(c.elapsed_seconds)} wall clock, start to finish`)
+    : (c.hands_on_seconds == null ? null : `${fmtDuration(c.hands_on_seconds)} hands-on`);
+  return `${durationBasisNote(c.duration_basis)}${other ? ` This run the other way: ${other}.` : ''}`;
+}
 
 function fmtDate(iso: string | null) {
   if (!iso) return '—';
@@ -194,6 +216,15 @@ export default function AppHistory() {
   // same thing /apps/:id/analytics and /apps/dashboard already say out loud.
   // Coalescing it to 0 painted a red "0%" onto an app nobody ever inspected.
   const passRate = data.pass_rate;
+  // The measurement the headline is NOT showing, so both are on screen and the
+  // gap between this page and the Command Center reads as two facts rather than
+  // a contradiction. See backend/src/cycleTime.js for the model.
+  const avgOtherMeasurement = data.avg_duration === null ? null
+    : data.avg_duration_basis === 'hands_on'
+      ? (data.avg_elapsed_seconds == null ? null : `${fmtDuration(data.avg_elapsed_seconds)} wall clock`)
+      : data.avg_duration_basis === 'elapsed'
+        ? (data.avg_hands_on_seconds == null ? null : `${fmtDuration(data.avg_hands_on_seconds)} hands-on`)
+        : null;
   const qcSample = data.qc_sample_size ?? 0;
   const passTone = passRate === null ? 'gray'
     : passRate >= 95 ? 'green' : passRate >= 80 ? 'amber' : 'red';
@@ -246,10 +277,16 @@ export default function AppHistory() {
         <SummaryCard icon={<Activity size={18} className="text-blue-600" />} bg="bg-blue-50" label="Total Runs" value={total} />
         <SummaryCard
           icon={<Clock size={18} className="text-purple-600" />} bg="bg-purple-50"
-          label="Avg Hands-On Time"
-          title="Per-step timers added up, averaged over every completed run. The Analytics page's Avg Cycle is wall clock from start to finish over the selected window, so it reads a little longer."
+          label={data.avg_duration_basis === 'elapsed' ? 'Avg Wall Clock'
+                 : data.avg_duration_basis === 'mixed' ? 'Avg Run Time · mixed'
+                 : 'Avg Hands-On Time'}
+          title={`${durationBasisNote(data.avg_duration_basis)}${
+            avgOtherMeasurement ? ` The same runs measured the other way: ${avgOtherMeasurement}.` : ''}`}
           value={data.avg_duration === null ? null : fmtDuration(data.avg_duration)}
-          note={data.avg_duration === null ? 'no run has been timed yet' : 'step timers, all completed runs'}
+          note={data.avg_duration === null
+            ? 'no run has been timed yet'
+            : avgOtherMeasurement ? `${avgOtherMeasurement} start to finish`
+            : 'all completed runs'}
         />
         <SummaryCard
           icon={<TrendingUp size={18} className="text-green-600" />} bg="bg-green-50" label="Best Time"
@@ -405,7 +442,9 @@ export default function AppHistory() {
                         </div>
                       </td>
                       <td className="px-4 py-3 text-xs font-mono font-medium">
-                        <span className={durationColor}>{fmtDuration(c.total_duration_seconds)}</span>
+                        <span className={durationColor} title={durationTitle(c)}>
+                          {c.total_duration_seconds === null ? '—' : fmtDuration(c.total_duration_seconds)}
+                        </span>
                       </td>
                       <td className="px-4 py-3">
                         {c.pass_fail === 'pass' ? (

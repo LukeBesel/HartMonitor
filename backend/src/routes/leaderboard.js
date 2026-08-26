@@ -1,5 +1,6 @@
 const express = require('express');
 const db = require('../db');
+const { runSecondsSQL } = require('../cycleTime');
 
 const router = express.Router();
 
@@ -19,7 +20,11 @@ const PERIOD_LABELS = {
   all: 'All Time',
 };
 
-const CYCLE_TIME_SQL = "(julianday(c.completed_at) - julianday(c.started_at)) * 1440";
+// Minutes, because this board's whole payload and both screens reading it are
+// in minutes — but the seconds behind it come from backend/src/cycleTime.js,
+// the one place that decides how long a run took. A plant record has to be the
+// same number here as it is on the run's own history page.
+const CYCLE_TIME_SQL = `(${runSecondsSQL('c')} / 60.0)`;
 
 // A completion only counts toward the leaderboard if it finished cleanly
 // (status='completed') and has no quality issue (no NCR raised against it).
