@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 // ─── "The numbers lie" regressions ────────────────────────────────────────────
@@ -129,11 +129,11 @@ describe('AppHistory refuses to invent metrics', () => {
     getAppHistory.mockResolvedValue(history({ completions: [run()], avg_duration: 12, best_time: 12 }));
     renderHistory();
 
-    await screen.findByText('Pass Rate');
+    await screen.findByText('First-pass yield');
     expect(screen.queryByText('0%')).toBeNull();
-    expect(screen.getByText('no pass/fail checks recorded')).toBeTruthy();
+    expect(screen.getByText('no pass/fail check recorded')).toBeTruthy();
 
-    const card = screen.getByText('Pass Rate').closest('div')!.parentElement!;
+    const card = screen.getByText('First-pass yield').closest('div')!.parentElement!;
     expect(card.textContent).toContain('—');
     // Grey, not the red the threshold ladder used to paint on a fabricated 0.
     expect(card.querySelector('.text-red-600')).toBeNull();
@@ -154,7 +154,7 @@ describe('AppHistory refuses to invent metrics', () => {
       avg_duration: 12, best_time: 12, completions: [run()],
     }));
     renderHistory();
-    await screen.findByText('Avg Hands-On Time');
+    await screen.findByText('Typical run time');
     expect(screen.queryByText('0m')).toBeNull();
     expect(screen.getAllByText('12s').length).toBeGreaterThan(0);
   });
@@ -164,7 +164,21 @@ describe('AppHistory refuses to invent metrics', () => {
       completions: [run({ total_duration_seconds: null, completed_at: null, status: 'in_progress' })],
     }));
     renderHistory();
-    await screen.findByText('Avg Hands-On Time');
+    await screen.findByText('Typical run time');
+    expect(screen.getAllByText('no run has been timed yet').length).toBe(2); // avg + best
+  });
+
+  // A run that opened and closed inside one second is measured as zero seconds
+  // by the apps endpoints. Zero is not a cycle time; it is the shape of "nobody
+  // timed it", and every reporting screen has to say so the same way.
+  it('reads a zero-second average as never measured, not as instant', async () => {
+    getAppHistory.mockResolvedValue(history({
+      avg_duration: 0, best_time: 0,
+      completions: [run({ total_duration_seconds: 0, completed_at: '2026-08-25 09:00:00' })],
+    }));
+    renderHistory();
+    await screen.findByText('Typical run time');
+    expect(screen.queryByText('0s')).toBeNull();
     expect(screen.getAllByText('no run has been timed yet').length).toBe(2); // avg + best
   });
 
@@ -173,8 +187,23 @@ describe('AppHistory refuses to invent metrics', () => {
       completions: [run({ id: 'c-live', completed_at: null, total_duration_seconds: null, status: 'in_progress' })],
     }));
     renderHistory();
-    const cell = await screen.findByText(/^started /);
-    expect(cell.textContent).toMatch(/started .*2026/);
+    // The run table's DATE cell — the live band above it also says "started",
+    // so scope the assertion to the row rather than the whole page. The cell
+    // carries the time of day as well as the date: on a history where most runs
+    // are from this week, the hour is what tells two of them apart.
+    const table = await screen.findByRole('table');
+    const cell = within(table).getByText(/^started /);
+    expect(cell.textContent).toMatch(/^started Aug 25, \d{1,2}:\d{2}/);
+  });
+
+  it('shows an in-progress run counting up rather than as a finished one', async () => {
+    getAppHistory.mockResolvedValue(history({
+      completions: [run({ id: 'c-live', completed_at: null, total_duration_seconds: null, status: 'in_progress' })],
+    }));
+    renderHistory();
+    const table = await screen.findByRole('table');
+    expect(within(table).getByText('Running now')).toBeTruthy();
+    expect(within(table).getByText(/and counting/)).toBeTruthy();
   });
 });
 

@@ -235,7 +235,7 @@ describe('AppsDashboard honesty', () => {
     expect(screen.getByTestId('metric-avg_cycle')).toHaveTextContent('2m 5s');
   });
 
-  it('leaves an unfinished run without a duration instead of calling it zero', async () => {
+  it('shows an unfinished run counting up rather than calling it zero', async () => {
     getAppAnalytics.mockResolvedValue(analytics({
       ...WELD_DATA,
       recent_runs: [{
@@ -247,8 +247,35 @@ describe('AppsDashboard honesty', () => {
     renderPage();
 
     const row = await screen.findByTestId('dashboard-run-row');
-    expect(row).toHaveTextContent('In progress');
-    expect(row.querySelector('[title="run has not finished"]')).not.toBeNull();
+    expect(row).toHaveTextContent('Running now');
+    // A run still on the bench has no duration; it has an elapsed time, and the
+    // row says so out loud rather than printing a fabricated zero.
+    expect(row).toHaveTextContent('and counting');
+    expect(row).not.toHaveTextContent('0s');
+  });
+
+  it('reads a finished run nobody timed as unknown, not as instant', async () => {
+    getAppAnalytics.mockResolvedValue(analytics({
+      ...WELD_DATA,
+      // Wall clock start-to-finish inside one second: the server measures 0, and
+      // zero seconds is not a cycle time anyone can act on.
+      // On the newer payload an untimed run arrives as null with a null basis;
+      // the older backend sent 0. The fixture uses the honest shape and the
+      // page must still render the same dash-with-reason either way.
+      totals: { runs: 1, completed: 1, abandoned: 0, avg_duration_s: null, first_pass_yield: null, avg_duration_basis: null },
+      recent_runs: [{
+        id: 'c-3', started_at: '2026-08-20 16:00:00', completed_at: '2026-08-20 16:00:00',
+        status: 'completed', operator_name: 'Sam',
+        duration_s: null, duration_basis: null,
+        work_order_number: null, product_type_name: null,
+      }],
+    }));
+    renderPage();
+
+    await waitFor(() => expect(screen.getByTestId('metric-avg_cycle')).toHaveTextContent('—'));
+    expect(screen.getByText('no finished run was timed')).toBeInTheDocument();
+    const row = screen.getByTestId('dashboard-run-row');
+    expect(row.querySelector('[title="this run was never timed"]')).not.toBeNull();
     expect(row).not.toHaveTextContent('0s');
   });
 

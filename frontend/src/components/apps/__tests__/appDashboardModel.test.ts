@@ -159,13 +159,18 @@ describe('buildHeadlineMetrics', () => {
   });
 
   it('says nothing was timed rather than reporting a zero cycle time', () => {
-    // Runs started and none of them produced a measurement. "Not timed" is the
-    // honest reason and it covers both ways of getting here — nothing finished,
-    // or finished runs that recorded no time at all.
-    const metrics = buildHeadlineMetrics(totals({ runs: 4, completed: 0, avg_duration_s: null }), 7);
-    const avg = metrics.find(m => m.key === 'avg_cycle');
-    expect(avg?.value).toBeNull();
-    expect(avg?.note).toBe('no run has been timed yet');
+    // Runs started and none of them produced a measurement — and the reason
+    // splits two honest ways: nothing has FINISHED, or things finished but
+    // nobody timed them. Those are different facts and each gets its own words.
+    const open = buildHeadlineMetrics(totals({ runs: 4, completed: 0, avg_duration_s: null }), 7);
+    const avgOpen = open.find(m => m.key === 'avg_cycle');
+    expect(avgOpen?.value).toBeNull();
+    expect(avgOpen?.note).toBe('no run has finished yet');
+
+    const untimed = buildHeadlineMetrics(totals({ runs: 4, completed: 4, avg_duration_s: null }), 7);
+    const avgUntimed = untimed.find(m => m.key === 'avg_cycle');
+    expect(avgUntimed?.value).toBeNull();
+    expect(avgUntimed?.note).toBe('no finished run was timed');
   });
 
   it('names the measurement behind a real average', () => {
