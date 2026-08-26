@@ -252,8 +252,10 @@ export default function Departments() {
             departmentName={selectedDept?.name ?? 'this department'}
           />
 
-          {/* Metrics row */}
-          <div className="grid grid-cols-3 gap-4">
+          {/* Metrics row. Three cards abreast on a 390px phone are about a
+              hundred pixels each, which broke "Work Orders In Progress" across
+              three lines under the number it belongs to. */}
+          <div className="grid grid-cols-1 xs:grid-cols-3 gap-4">
             <div className="card p-5">
               <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center mb-3">
                 <Activity size={18} className="text-blue-600" />

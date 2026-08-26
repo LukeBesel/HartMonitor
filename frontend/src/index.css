@@ -72,11 +72,29 @@
     outline: 2px solid rgba(59, 130, 246, 0.4);
     outline-offset: 2px;
   }
+
+  /* A floor under every tap target on touch and on any screen small enough to
+     be one (WCAG 2.2 AA 2.5.8 asks for 24x24 CSS pixels). The app is full of
+     `p-1` icon buttons — dismiss, refresh, the step menu in the builder — that
+     come out 20x20, which is a coin toss with a thumb on a shop floor. This
+     only raises a minimum, so anything already big enough is untouched, and it
+     cannot reach a link sitting inline in a sentence because min-height does
+     not apply to inline boxes. Desktop keeps its denser toolbars. */
+  @media (pointer: coarse), (max-width: 1024px) {
+    :where(button, summary, [role='button'], input[type='checkbox'], input[type='radio']) {
+      min-height: 24px;
+      min-width: 24px;
+    }
+    :where(a) { min-height: 24px; }
+  }
 }
 
 @layer components {
+  /* `whitespace-nowrap` on every button: squeezed into a narrow row the labels
+     used to break mid-phrase — "Run App" became "Run" over "App" — which reads
+     as two buttons. The rows they sit in wrap instead. */
   .btn-primary {
-    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg transition-all font-medium text-sm disabled:opacity-40 disabled:cursor-not-allowed shadow-sm;
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg transition-all font-medium text-sm whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed shadow-sm;
     background-color: var(--accent);
     color: var(--accent-fg);
     /* The halo keeps the brand color at full saturation while the fill under
@@ -151,16 +169,16 @@
 
 @layer components {
   .btn-secondary {
-    @apply inline-flex items-center gap-2 px-4 py-2 bg-white text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 active:bg-gray-100 transition-colors font-medium text-sm shadow-sm;
+    @apply inline-flex items-center gap-2 px-4 py-2 bg-white text-gray-700 border border-gray-200 rounded-lg hover:bg-gray-50 active:bg-gray-100 transition-colors font-medium text-sm whitespace-nowrap shadow-sm;
   }
   .btn-danger {
-    @apply inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium text-sm shadow-sm;
+    @apply inline-flex items-center gap-2 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium text-sm whitespace-nowrap shadow-sm;
   }
   .btn-success {
-    @apply inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium text-sm shadow-sm;
+    @apply inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg hover:bg-emerald-700 transition-colors font-medium text-sm whitespace-nowrap shadow-sm;
   }
   .btn-ghost {
-    @apply inline-flex items-center gap-2 px-3 py-2 text-gray-600 rounded-lg hover:bg-gray-100 transition-colors font-medium text-sm;
+    @apply inline-flex items-center gap-2 px-3 py-2 text-gray-600 rounded-lg hover:bg-gray-100 transition-colors font-medium text-sm whitespace-nowrap;
   }
   .card {
     @apply bg-white rounded-2xl border border-gray-100 shadow-sm;
@@ -195,6 +213,16 @@
   }
   .section-label {
     @apply text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3;
+  }
+  /* A row of form fields that only sits side by side once there is room for
+     it. Half of a 390px modal is about 150px, and a <select> that narrow
+     printed "Mediun" and "Pendin" — the value was on screen but the word was
+     cut, which is worse than a taller form. Pair with your own `gap-*`. */
+  .field-row {
+    @apply grid grid-cols-1 xs:grid-cols-2;
+  }
+  .field-row-3 {
+    @apply grid grid-cols-1 xs:grid-cols-3;
   }
   /* Consistent floating surface for dropdowns / menus / popovers */
   .popover {

@@ -136,10 +136,10 @@ export default function Analytics() {
         <div className="flex items-center gap-1.5 text-sm font-medium text-gray-500">
           <Filter size={15} /> Filters
         </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500">App</label>
+        <div className="flex w-full items-center gap-2 xs:w-auto">
+          <label className="text-xs text-gray-500 shrink-0">App</label>
           <select
-            className="input-field text-sm py-1.5 min-w-[12rem]"
+            className="input-field text-sm py-1.5 w-full xs:w-auto xs:min-w-[12rem]"
             value={appId}
             onChange={e => setAppId(e.target.value)}
           >
@@ -147,10 +147,10 @@ export default function Analytics() {
             {apps.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
           </select>
         </div>
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-gray-500">Part Type</label>
+        <div className="flex w-full items-center gap-2 xs:w-auto">
+          <label className="text-xs text-gray-500 shrink-0 whitespace-nowrap">Part Type</label>
           <select
-            className="input-field text-sm py-1.5 min-w-[12rem] disabled:opacity-50 disabled:cursor-not-allowed"
+            className="input-field text-sm py-1.5 w-full xs:w-auto xs:min-w-[12rem] disabled:opacity-50 disabled:cursor-not-allowed"
             value={productTypeId}
             onChange={e => setProductTypeId(e.target.value)}
             disabled={!appId || productTypes.length === 0}
@@ -161,10 +161,10 @@ export default function Analytics() {
           </select>
         </div>
         {departments.length > 0 && (
-          <div className="flex items-center gap-2">
-            <label className="text-xs text-gray-500">Department</label>
+          <div className="flex w-full items-center gap-2 xs:w-auto">
+            <label className="text-xs text-gray-500 shrink-0">Department</label>
             <select
-              className="input-field text-sm py-1.5 min-w-[12rem]"
+              className="input-field text-sm py-1.5 w-full xs:w-auto xs:min-w-[12rem]"
               value={departmentId}
               onChange={e => setDepartmentId(e.target.value)}
             >

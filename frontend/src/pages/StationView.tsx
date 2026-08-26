@@ -147,7 +147,7 @@ export default function StationView() {
           <span className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium ${ms.bg} ${ms.text}`}>
             <span className={`w-2.5 h-2.5 rounded-full ${ms.dot} ${st.current_status === 'running' ? 'animate-pulse' : ''}`} />
             {ms.label}
-            {st.current_status_since && <span className="font-normal opacity-70">for {elapsedSince(st.current_status_since)}</span>}
+            {st.current_status_since && <span className="font-normal opacity-70 whitespace-nowrap">for {elapsedSince(st.current_status_since)}</span>}
           </span>
           <LastRefreshed
             at={auto.lastRefreshed}
@@ -165,9 +165,12 @@ export default function StationView() {
               <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" /> Now Running
             </div>
             <div className="text-xl font-bold">{data.active_completion.app_name}</div>
-            <div className="text-blue-100 text-sm flex items-center gap-3 mt-1">
-              <span className="flex items-center gap-1"><User size={13} /> {data.active_completion.operator_name}</span>
-              <span className="flex items-center gap-1"><Clock size={13} /> {elapsedSince(data.active_completion.started_at)} elapsed</span>
+            {/* Each fact wraps as a whole. In a plain three-across row on a
+                phone they were squeezed until "Maria Lopez" and "2m elapsed"
+                broke across lines inside themselves. */}
+            <div className="text-blue-100 text-sm flex flex-wrap items-center gap-x-3 gap-y-1 mt-1">
+              <span className="flex items-center gap-1 whitespace-nowrap"><User size={13} /> {data.active_completion.operator_name}</span>
+              <span className="flex items-center gap-1 whitespace-nowrap"><Clock size={13} /> {elapsedSince(data.active_completion.started_at)} elapsed</span>
               {data.active_completion.work_order_number && (
                 <span>{data.active_completion.work_order_number} · {data.active_completion.part_name}</span>
               )}

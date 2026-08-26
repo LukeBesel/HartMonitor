@@ -485,7 +485,10 @@ function KPI({ icon, bg, label, value, sub, valueColor, subColor }: {
       <div className="min-w-0">
         <div className={`text-xl font-bold tabular-nums ${valueColor ?? 'text-gray-900'}`}>{value}</div>
         <div className="text-xs text-gray-500">{label}</div>
-        {sub && <div className={`text-[11px] mt-0.5 truncate ${subColor ?? 'text-gray-400'}`}>{sub}</div>}
+        {/* The sub-line carries the comparison the number only means something
+            against ("+31s vs takt 6m 5s"). Truncated on a phone it read
+            "+31s vs tak…" — the baseline gone. It wraps instead. */}
+        {sub && <div className={`text-[11px] mt-0.5 ${subColor ?? 'text-gray-400'}`}>{sub}</div>}
       </div>
     </div>
   );

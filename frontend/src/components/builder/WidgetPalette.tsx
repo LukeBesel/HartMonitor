@@ -126,7 +126,9 @@ export default function WidgetPalette({ onAdd, disabled }: {
   return (
     <div className="flex-shrink-0 bg-surface-1 border-b border-border-subtle">
       {/* Category tabs */}
-      <div role="tablist" aria-label="Widget categories" className="flex items-end gap-0.5 px-2 border-b border-grid">
+      {/* Four category names are wider than a phone, so the row carries its own
+          scroller rather than widening the builder. */}
+      <div role="tablist" aria-label="Widget categories" className="flex items-end gap-0.5 px-2 border-b border-grid overflow-x-auto">
         {PALETTE_GROUPS.map((g, i) => (
           <button
             key={g}
@@ -138,7 +140,7 @@ export default function WidgetPalette({ onAdd, disabled }: {
             tabIndex={tab === g ? 0 : -1}
             onClick={() => selectTab(g)}
             onKeyDown={e => handleTabKeyDown(e, i)}
-            className={`gold-tab px-3 py-1.5 ${tab === g ? 'is-active' : ''}`}
+            className={`gold-tab shrink-0 whitespace-nowrap px-3 py-1.5 ${tab === g ? 'is-active' : ''}`}
             style={{ fontSize: 12 }}
           >
             {g}
@@ -162,7 +164,7 @@ export default function WidgetPalette({ onAdd, disabled }: {
               onClick={() => onAdd(t)}
               disabled={disabled}
               title={`Add ${label}`}
-              className="flex flex-col items-center justify-center gap-0.5 rounded-ctrl px-2 py-1 min-w-[52px] text-muted hover:text-accent hover:bg-accent-tint transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+              className="flex shrink-0 flex-col items-center justify-center gap-0.5 rounded-ctrl px-2 py-1 min-w-[52px] text-muted hover:text-accent hover:bg-accent-tint transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
               <Icon size={15} />
               <span className="whitespace-nowrap" style={{ fontSize: 10, fontWeight: 550 }}>{label}</span>

@@ -19,6 +19,7 @@ import LastRefreshed from '../components/shared/LastRefreshed';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import { useSite } from '../context/SiteContext';
 import { useAuth } from '../context/AuthContext';
+import TabBar from '../components/shared/TabBar';
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -165,7 +166,7 @@ function ItemModal({ item, onClose, onSaved }: { item: any | null; onClose: () =
           <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg"><X size={16} /></button>
         </div>
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="field-row gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">SKU *</label>
               <input className="input-field" value={form.sku} onChange={e => set('sku', e.target.value)} placeholder="SKU-001" />
@@ -179,7 +180,7 @@ function ItemModal({ item, onClose, onSaved }: { item: any | null; onClose: () =
             <label className="block text-xs font-medium text-gray-700 mb-1">Description</label>
             <textarea className="input-field resize-none" rows={2} value={form.description} onChange={e => set('description', e.target.value)} placeholder="Optional description" />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="field-row gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Category</label>
               <input className="input-field" value={form.category} onChange={e => set('category', e.target.value)} placeholder="e.g. Raw Materials" />
@@ -191,7 +192,7 @@ function ItemModal({ item, onClose, onSaved }: { item: any | null; onClose: () =
               </select>
             </div>
           </div>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="field-row-3 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Unit Cost ($)</label>
               <input className="input-field" type="number" min="0" step="0.01" value={form.unit_cost} onChange={e => set('unit_cost', e.target.value)} placeholder="0.00" />
@@ -205,7 +206,7 @@ function ItemModal({ item, onClose, onSaved }: { item: any | null; onClose: () =
               <input className="input-field" type="number" min="0" value={form.reorder_max} onChange={e => set('reorder_max', e.target.value)} placeholder="0" />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="field-row gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Reorder Qty</label>
               <input className="input-field" type="number" min="0" value={form.reorder_qty} onChange={e => set('reorder_qty', e.target.value)} placeholder="0" />
@@ -1776,28 +1777,19 @@ export default function Inventory() {
         </div>
       </div>
 
-      {/* Tab bar */}
-      <div className="flex items-center gap-1 border-b border-gray-200">
-        {TABS.map(t => {
-          const Icon = t.icon;
-          const active = tab === t.key;
-          return (
-            <button
-              key={t.key}
-              onClick={() => { if (t.key !== 'items' && id) navigate('/inventory'); setTab(t.key); }}
-              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors -mb-px border-b-2 ${
-                active ? 'text-blue-600 border-blue-600' : 'text-gray-500 border-transparent hover:text-gray-700'
-              }`}
-            >
-              <Icon size={15} />
-              {t.label}
-              {t.key === 'overview' && trackerSummary && trackerSummary.low_stock > 0 && (
-                <span className="ml-1 text-xs bg-red-100 text-red-700 px-1.5 rounded-full font-semibold">{trackerSummary.low_stock}</span>
-              )}
-            </button>
-          );
-        })}
-      </div>
+      <TabBar
+        items={TABS.map(t => ({
+          key: t.key,
+          label: t.label,
+          icon: <t.icon size={15} />,
+          badge: t.key === 'overview' && trackerSummary && trackerSummary.low_stock > 0
+            ? <span className="ml-1 text-xs bg-red-100 text-red-700 px-1.5 rounded-full font-semibold">{trackerSummary.low_stock}</span>
+            : undefined,
+        }))}
+        active={tab}
+        onSelect={key => { if (key !== 'items' && id) navigate('/inventory'); setTab(key); }}
+        ariaLabel="Inventory screens"
+      />
 
       {/* ─── OVERVIEW ─── */}
       {tab === 'overview' && (

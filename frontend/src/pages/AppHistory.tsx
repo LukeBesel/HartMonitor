@@ -222,7 +222,7 @@ export default function AppHistory() {
             <p className="text-gray-500 text-xs mt-0.5">Completion History</p>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Link to={`/apps/${appId}`} className="btn-secondary">
             <Info size={14} /> App details
           </Link>
@@ -485,7 +485,10 @@ function SummaryCard({ icon, bg, label, value, valueColor, note, title }: {
           {known ? value : '—'}
         </div>
         <div className="text-xs text-gray-500">{label}</div>
-        {note && <div className="text-[11px] text-gray-400 truncate" title={note}>{note}</div>}
+        {/* The note explains where the number came from ("from 263 inspections"),
+            so truncating it to "from 263 in…" throws away the sample size the
+            number is only honest with. It wraps instead. */}
+        {note && <div className="text-[11px] text-gray-400">{note}</div>}
       </div>
     </div>
   );

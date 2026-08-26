@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { api } from '../api/client';
+import TabBar from '../components/shared/TabBar';
 import { useAuth } from '../context/AuthContext';
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
@@ -165,7 +166,7 @@ function RecordModal({
               ))}
             </select>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="field-row gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Certified Date</label>
               <input className="input-field" type="date" value={form.certified_date} onChange={e => set('certified_date', e.target.value)} />
@@ -254,7 +255,7 @@ function CertModal({
             <label className="block text-xs font-medium text-gray-700 mb-1">Certification Name *</label>
             <input className="input-field" value={form.name} onChange={e => set('name', e.target.value)} placeholder="e.g. OSHA 10, Forklift Operator, ISO 9001" />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="field-row gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Issuing Body</label>
               <input className="input-field" value={form.issuer} onChange={e => set('issuer', e.target.value)} placeholder="OSHA, company, etc." />
@@ -264,7 +265,7 @@ function CertModal({
               <input className="input-field" value={form.cert_number} onChange={e => set('cert_number', e.target.value)} placeholder="Optional" />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="field-row gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Issue Date</label>
               <input className="input-field" type="date" value={form.issued_date} onChange={e => set('issued_date', e.target.value)} />
@@ -617,73 +618,77 @@ function CertificationsTab({
         </div>
       ) : (
         <div className="card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100 bg-gray-50">
-                <th className="text-left font-medium text-gray-600 py-3 px-4">Operator</th>
-                <th className="text-left font-medium text-gray-600 py-3 px-4">Certification</th>
-                <th className="text-left font-medium text-gray-600 py-3 px-4">Issuer</th>
-                <th className="text-left font-medium text-gray-600 py-3 px-4">Issued</th>
-                <th className="text-left font-medium text-gray-600 py-3 px-4">Expires</th>
-                <th className="text-left font-medium text-gray-600 py-3 px-4">Status</th>
-                {canEdit && <th className="py-3 px-4" />}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(cert => {
-                const expired = isExpired(cert.expiry_date);
-                const expiring = !expired && isExpiringSoon(cert.expiry_date);
-                return (
-                  <tr key={cert.id} className="border-b border-gray-50 hover:bg-gray-50">
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white text-[10px] font-bold">
-                          {cert.operator_name?.charAt(0)}
-                        </div>
-                        <span className="font-medium text-gray-900">{cert.operator_name}</span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4">
-                      <div className="font-medium text-gray-900">{cert.name}</div>
-                      {cert.cert_number && <div className="text-xs text-gray-400">#{cert.cert_number}</div>}
-                    </td>
-                    <td className="py-3 px-4 text-gray-600">{cert.issuer || '—'}</td>
-                    <td className="py-3 px-4 text-gray-500 text-sm">{fmtDate(cert.issued_date)}</td>
-                    <td className="py-3 px-4">
-                      {cert.expiry_date ? (
-                        <span className={`text-sm font-medium ${expired ? 'text-red-600' : expiring ? 'text-amber-600' : 'text-gray-600'}`}>
-                          {fmtDate(cert.expiry_date)}
-                        </span>
-                      ) : <span className="text-gray-400 text-sm">No expiry</span>}
-                    </td>
-                    <td className="py-3 px-4">
-                      {!cert.expiry_date ? (
-                        <span className="badge badge-green">Active</span>
-                      ) : expired ? (
-                        <span className="badge badge-red">Expired</span>
-                      ) : expiring ? (
-                        <span className="badge badge-amber">Expiring Soon</span>
-                      ) : (
-                        <span className="badge badge-green">Valid</span>
-                      )}
-                    </td>
-                    {canEdit && (
+          {/* The table scrolls inside itself: several of these columns do not fit
+              a phone, and the rounded card around it clipped them off entirely. */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50">
+                  <th className="text-left font-medium text-gray-600 py-3 px-4">Operator</th>
+                  <th className="text-left font-medium text-gray-600 py-3 px-4">Certification</th>
+                  <th className="text-left font-medium text-gray-600 py-3 px-4">Issuer</th>
+                  <th className="text-left font-medium text-gray-600 py-3 px-4">Issued</th>
+                  <th className="text-left font-medium text-gray-600 py-3 px-4">Expires</th>
+                  <th className="text-left font-medium text-gray-600 py-3 px-4">Status</th>
+                  {canEdit && <th className="py-3 px-4" />}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(cert => {
+                  const expired = isExpired(cert.expiry_date);
+                  const expiring = !expired && isExpiringSoon(cert.expiry_date);
+                  return (
+                    <tr key={cert.id} className="border-b border-gray-50 hover:bg-gray-50">
                       <td className="py-3 px-4">
-                        <div className="flex items-center gap-1 justify-end">
-                          <button onClick={() => { setEditCert(cert); setShowModal(true); }} className="btn-ghost p-1.5 rounded-lg" title="Edit">
-                            <Pencil size={13} />
-                          </button>
-                          <button onClick={() => handleDelete(cert.id)} disabled={deleting === cert.id} className="btn-ghost p-1.5 rounded-lg text-red-500 hover:bg-red-50" title="Delete">
-                            {deleting === cert.id ? <RefreshCw size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                          </button>
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white text-[10px] font-bold">
+                            {cert.operator_name?.charAt(0)}
+                          </div>
+                          <span className="font-medium text-gray-900">{cert.operator_name}</span>
                         </div>
                       </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      <td className="py-3 px-4">
+                        <div className="font-medium text-gray-900">{cert.name}</div>
+                        {cert.cert_number && <div className="text-xs text-gray-400">#{cert.cert_number}</div>}
+                      </td>
+                      <td className="py-3 px-4 text-gray-600">{cert.issuer || '—'}</td>
+                      <td className="py-3 px-4 text-gray-500 text-sm">{fmtDate(cert.issued_date)}</td>
+                      <td className="py-3 px-4">
+                        {cert.expiry_date ? (
+                          <span className={`text-sm font-medium ${expired ? 'text-red-600' : expiring ? 'text-amber-600' : 'text-gray-600'}`}>
+                            {fmtDate(cert.expiry_date)}
+                          </span>
+                        ) : <span className="text-gray-400 text-sm">No expiry</span>}
+                      </td>
+                      <td className="py-3 px-4">
+                        {!cert.expiry_date ? (
+                          <span className="badge badge-green">Active</span>
+                        ) : expired ? (
+                          <span className="badge badge-red">Expired</span>
+                        ) : expiring ? (
+                          <span className="badge badge-amber">Expiring Soon</span>
+                        ) : (
+                          <span className="badge badge-green">Valid</span>
+                        )}
+                      </td>
+                      {canEdit && (
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-1 justify-end">
+                            <button onClick={() => { setEditCert(cert); setShowModal(true); }} className="btn-ghost p-1.5 rounded-lg" title="Edit">
+                              <Pencil size={13} />
+                            </button>
+                            <button onClick={() => handleDelete(cert.id)} disabled={deleting === cert.id} className="btn-ghost p-1.5 rounded-lg text-red-500 hover:bg-red-50" title="Delete">
+                              {deleting === cert.id ? <RefreshCw size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                            </button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -798,62 +803,66 @@ function PlansTab({
         </div>
       ) : (
         <div className="card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100 bg-gray-50">
-                <th className="text-left font-medium text-gray-600 py-3 px-4">Operator</th>
-                <th className="text-left font-medium text-gray-600 py-3 px-4">Work Instruction</th>
-                <th className="text-left font-medium text-gray-600 py-3 px-4">Assigned By</th>
-                <th className="text-left font-medium text-gray-600 py-3 px-4">Target Date</th>
-                <th className="text-left font-medium text-gray-600 py-3 px-4">Status</th>
-                {canEdit && <th className="py-3 px-4" />}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.map(plan => {
-                const cfg = planStatusCfg[plan.status] ?? planStatusCfg.pending;
-                return (
-                  <tr key={plan.id} className={`border-b border-gray-50 hover:bg-gray-50 ${plan.status === 'overdue' ? 'bg-red-50/30' : ''}`}>
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white text-[10px] font-bold">
-                          {plan.operator_name?.charAt(0)}
-                        </div>
-                        <span className="font-medium text-gray-900">{plan.operator_name}</span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 text-gray-700 font-medium">{plan.app_name}</td>
-                    <td className="py-3 px-4 text-gray-500">{plan.assigned_by_name || '—'}</td>
-                    <td className="py-3 px-4">
-                      <span className={`text-sm ${plan.status === 'overdue' ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
-                        {fmtDate(plan.target_date)}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4">
-                      <span className={`badge ${cfg.badge}`}>{cfg.label}</span>
-                    </td>
-                    {canEdit && (
+          {/* The table scrolls inside itself: several of these columns do not fit
+              a phone, and the rounded card around it clipped them off entirely. */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50">
+                  <th className="text-left font-medium text-gray-600 py-3 px-4">Operator</th>
+                  <th className="text-left font-medium text-gray-600 py-3 px-4">Work Instruction</th>
+                  <th className="text-left font-medium text-gray-600 py-3 px-4">Assigned By</th>
+                  <th className="text-left font-medium text-gray-600 py-3 px-4">Target Date</th>
+                  <th className="text-left font-medium text-gray-600 py-3 px-4">Status</th>
+                  {canEdit && <th className="py-3 px-4" />}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map(plan => {
+                  const cfg = planStatusCfg[plan.status] ?? planStatusCfg.pending;
+                  return (
+                    <tr key={plan.id} className={`border-b border-gray-50 hover:bg-gray-50 ${plan.status === 'overdue' ? 'bg-red-50/30' : ''}`}>
                       <td className="py-3 px-4">
-                        <div className="flex items-center gap-1 justify-end">
-                          {plan.status !== 'completed' && (
-                            <button onClick={() => markComplete(plan)} className="btn-ghost p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50" title="Mark Complete">
-                              <CheckCircle2 size={13} />
-                            </button>
-                          )}
-                          <button onClick={() => { setEditPlan(plan); setShowModal(true); }} className="btn-ghost p-1.5 rounded-lg" title="Edit">
-                            <Pencil size={13} />
-                          </button>
-                          <button onClick={() => handleDelete(plan.id)} disabled={deleting === plan.id} className="btn-ghost p-1.5 rounded-lg text-red-500 hover:bg-red-50" title="Delete">
-                            {deleting === plan.id ? <RefreshCw size={13} className="animate-spin" /> : <Trash2 size={13} />}
-                          </button>
+                        <div className="flex items-center gap-2">
+                          <div className="w-6 h-6 rounded-full bg-gradient-to-br from-indigo-400 to-purple-500 flex items-center justify-center text-white text-[10px] font-bold">
+                            {plan.operator_name?.charAt(0)}
+                          </div>
+                          <span className="font-medium text-gray-900">{plan.operator_name}</span>
                         </div>
                       </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      <td className="py-3 px-4 text-gray-700 font-medium">{plan.app_name}</td>
+                      <td className="py-3 px-4 text-gray-500">{plan.assigned_by_name || '—'}</td>
+                      <td className="py-3 px-4">
+                        <span className={`text-sm ${plan.status === 'overdue' ? 'text-red-600 font-medium' : 'text-gray-600'}`}>
+                          {fmtDate(plan.target_date)}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4">
+                        <span className={`badge ${cfg.badge}`}>{cfg.label}</span>
+                      </td>
+                      {canEdit && (
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-1 justify-end">
+                            {plan.status !== 'completed' && (
+                              <button onClick={() => markComplete(plan)} className="btn-ghost p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50" title="Mark Complete">
+                                <CheckCircle2 size={13} />
+                              </button>
+                            )}
+                            <button onClick={() => { setEditPlan(plan); setShowModal(true); }} className="btn-ghost p-1.5 rounded-lg" title="Edit">
+                              <Pencil size={13} />
+                            </button>
+                            <button onClick={() => handleDelete(plan.id)} disabled={deleting === plan.id} className="btn-ghost p-1.5 rounded-lg text-red-500 hover:bg-red-50" title="Delete">
+                              {deleting === plan.id ? <RefreshCw size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                            </button>
+                          </div>
+                        </td>
+                      )}
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -1141,7 +1150,9 @@ export default function Training() {
     <div className="p-4 sm:p-6 space-y-5 max-w-screen-2xl mx-auto">
       {/* Header */}
       <div className="flex flex-wrap items-center gap-3">
-        <div className="flex-1">
+        {/* min-w-full below sm forces the actions onto their own line rather
+            than squeezing the title into a two-line column beside them. */}
+        <div className="flex-1 min-w-full sm:min-w-0">
           <h1 className="text-xl sm:text-2xl font-bold text-gray-900">Training & Skills Matrix</h1>
           <p className="text-sm text-gray-400 mt-0.5">Track operator certifications, app training, and coverage by department</p>
         </div>
@@ -1154,26 +1165,12 @@ export default function Training() {
         <span className="text-sm text-gray-400">{new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 border-b border-gray-200">
-        {TABS.map(t => {
-          const Icon = t.icon;
-          return (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${
-                tab === t.id
-                  ? 'border-indigo-600 text-indigo-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <Icon size={15} />
-              {t.label}
-            </button>
-          );
-        })}
-      </div>
+      <TabBar
+        items={TABS.map(t => ({ key: t.id, label: t.label, icon: <t.icon size={15} /> }))}
+        active={tab}
+        onSelect={setTab}
+        ariaLabel="Training screens"
+      />
 
       {/* Tab content */}
       {tab === 'overview' && (

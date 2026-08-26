@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   GitBranch, Plus, Trash2, Edit2, ChevronUp, ChevronDown, X,
-  Check, AlertCircle, AppWindow, Users, Clock, ArrowRight, Star,
+  Check, AlertCircle, AppWindow, Users, Clock, ArrowRight, Star, ChevronLeft,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { usePlan } from '../context/PlanContext';
@@ -303,8 +303,12 @@ export default function Routings() {
         icon={GitBranch}
         color="#7c3aed"
       />
-      {/* Left panel — routing list */}
-      <div className="w-72 flex-shrink-0 border-r border-gray-200 bg-white flex flex-col">
+      {/* Left panel — routing list.
+          Two 288px-wide panes side by side leave a phone about a hundred pixels
+          for the steps, so below lg the list and the steps take turns owning the
+          screen: opening a routing swaps to its steps, and the Back button in
+          the steps header brings the list back. */}
+      <div className={`w-full lg:w-72 lg:flex-shrink-0 border-r border-gray-200 bg-white flex-col ${selected ? 'hidden lg:flex' : 'flex'}`}>
         <div className="p-4 border-b border-gray-100">
           <div className="flex items-center justify-between">
             <div>
@@ -392,14 +396,20 @@ export default function Routings() {
       </div>
 
       {/* Right panel — steps */}
-      <div className="flex-1 overflow-y-auto bg-gray-50">
+      <div className={`flex-1 overflow-y-auto bg-gray-50 ${selected ? 'block' : 'hidden lg:block'}`}>
         {!selected ? (
           <div className="flex flex-col items-center justify-center h-full text-center text-gray-400 px-8">
             <GitBranch size={40} className="mb-3 opacity-30" />
             <p className="text-sm">Select a routing to view and edit its steps</p>
           </div>
         ) : (
-          <div className="p-6 max-w-2xl">
+          <div className="p-4 sm:p-6 max-w-2xl">
+            <button
+              onClick={() => setSelected(null)}
+              className="lg:hidden inline-flex items-center gap-1.5 mb-4 -ml-1 px-2 py-2 text-sm font-medium text-gray-600 hover:text-gray-900"
+            >
+              <ChevronLeft size={16} /> All routings
+            </button>
             <div className="flex flex-wrap items-start justify-between gap-3 mb-6">
               <div className="min-w-0">
                 <h2 className="text-lg font-bold text-gray-900">{selected.name}</h2>

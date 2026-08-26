@@ -1781,9 +1781,11 @@ export default function AppPlayer() {
         onDismissToast={tid => setToasts(prev => prev.filter(t => t.id !== tid))}
       >
         <div className={`w-full space-y-4 ${currentStep?.layoutMode === 'canvas' ? 'max-w-3xl' : 'max-w-2xl'}`}>
-          {/* Step title */}
-          <div className="flex items-center justify-between gap-3">
-            <h2 style={{ fontSize: 'clamp(28px, 3vw, 34px)', fontWeight: 800, color: 'var(--p-ink)' }} className="flex-1">
+          {/* Step title. The takt chip drops below the name on a phone: side by
+              side it left the heading about 110px, which hyphenated "Re-torque
+              check" down three lines at 28px. */}
+          <div className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+            <h2 style={{ fontSize: 'clamp(26px, 3vw, 34px)', fontWeight: 800, color: 'var(--p-ink)' }} className="flex-1 min-w-0">
               {currentStep?.name}
             </h2>
             {stepTaktSeconds > 0 && (
