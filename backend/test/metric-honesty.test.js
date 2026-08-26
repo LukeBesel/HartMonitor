@@ -230,9 +230,16 @@ describe('the public demo sandbox is a credible factory', () => {
     assert.ok(m.oee >= 55 && m.oee <= 88,
       `OEE ${m.oee}% must land in the band a working plant runs at, not 1%`);
 
-    // …and it is genuinely a measurement: OEE is the product of the three.
+    // …and it is genuinely a measurement: OEE is the product of the three, not
+    // a number of its own. The API rounds each factor for display and rounds
+    // the product of the UNROUNDED factors, so recomputing from the displayed
+    // factors can land a point either side — performance 78.5% and quality
+    // 94.5% report as 79 and 95, whose product rounds to 75 while the real
+    // product rounds to 74. A point of rounding is not what this guards
+    // against; an OEE that ignores its own factors would be out by tens.
     const product = Math.round((m.availability / 100) * (m.performance / 100) * (m.quality / 100) * 100);
-    assert.equal(m.oee, product, 'OEE is computed from availability × performance × quality');
+    assert.ok(Math.abs(m.oee - product) <= 1,
+      `OEE ${m.oee}% must be availability × performance × quality (${product}%)`);
 
     // Output has to be consistent with the ideal cycle and the window that
     // performance divides — recomputed WITHOUT the clamp, so a seed that packed

@@ -185,7 +185,7 @@ function ShipmentModal({
             <div className="p-3 bg-red-50 text-red-700 rounded-xl text-sm">{error}</div>
           )}
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Carrier *</label>
               <input
@@ -206,7 +206,7 @@ function ShipmentModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Origin</label>
               <input
@@ -230,7 +230,7 @@ function ShipmentModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="block text-xs font-medium text-gray-600 mb-1">Shipped Date</label>
               <input

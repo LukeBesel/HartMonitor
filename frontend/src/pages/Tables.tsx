@@ -85,7 +85,7 @@ export default function Tables() {
           </p>
         </div>
         {canEdit && (
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button onClick={() => setShowImport(true)} className="btn-secondary">
               <Upload size={16} /> Import Excel/CSV
             </button>

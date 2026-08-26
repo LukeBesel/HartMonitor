@@ -9,6 +9,7 @@ import {
   X, CheckCircle, Building2, Phone,
   Mail, Clock, Edit2, TrendingUp, ShoppingCart, History,
 } from 'lucide-react';
+import TabBar from '../components/shared/TabBar';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -309,7 +310,7 @@ function VendorModal({
     <Modal title={initial ? 'Edit Vendor' : 'New Vendor'} onClose={onClose}>
       {error && <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-xl text-sm">{error}</div>}
       <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="field-row gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Vendor Name *</label>
             <input className="input-field" value={form.name} onChange={e => f('name', e.target.value)} placeholder="Acme Corp" />
@@ -319,7 +320,7 @@ function VendorModal({
             <input className="input-field" value={form.code} onChange={e => f('code', e.target.value.toUpperCase())} placeholder="ACM" />
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="field-row gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Contact Name</label>
             <input className="input-field" value={form.contact_name} onChange={e => f('contact_name', e.target.value)} />
@@ -329,7 +330,7 @@ function VendorModal({
             <input className="input-field" type="email" value={form.email} onChange={e => f('email', e.target.value)} />
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="field-row gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Phone</label>
             <input className="input-field" value={form.phone} onChange={e => f('phone', e.target.value)} />
@@ -345,7 +346,7 @@ function VendorModal({
           <label className="block text-xs font-medium text-gray-600 mb-1">Address</label>
           <textarea className="input-field resize-none" rows={2} value={form.address} onChange={e => f('address', e.target.value)} />
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="field-row gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Lead Time (days)</label>
             <input className="input-field" type="number" min={0} value={form.lead_time_days} onChange={e => f('lead_time_days', Number(e.target.value))} />
@@ -454,7 +455,7 @@ function CreatePOModal({
     <Modal title="New Purchase Order" onClose={onClose} wide>
       {error && <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-xl text-sm">{error}</div>}
       <div className="space-y-5">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="field-row gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Vendor *</label>
             <select className="input-field" value={form.vendor_id} onChange={e => setForm(p => ({ ...p, vendor_id: e.target.value }))}>
@@ -467,7 +468,7 @@ function CreatePOModal({
             <input className="input-field" type="date" value={form.expected_date} onChange={e => setForm(p => ({ ...p, expected_date: e.target.value }))} />
           </div>
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="field-row gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Shipping Cost</label>
             <input className="input-field" type="number" min={0} step={0.01} value={form.shipping_cost} onChange={e => setForm(p => ({ ...p, shipping_cost: Number(e.target.value) }))} />
@@ -807,7 +808,7 @@ function PODetailModal({
           <div className="border border-green-100 bg-green-50/40 rounded-xl p-4 space-y-3">
             <div className="font-semibold text-gray-800 text-sm">Receive Items</div>
             {receiveError && <div className="text-red-600 text-sm">{receiveError}</div>}
-            <div className="grid grid-cols-2 gap-3">
+            <div className="field-row gap-3">
               <div>
                 <label className="block text-xs font-medium text-gray-600 mb-1">Operator Name</label>
                 <input className="input-field" value={operator} onChange={e => setOperator(e.target.value)} placeholder="Your name" />
@@ -1363,23 +1364,14 @@ export default function Purchasing() {
 
         <SummaryBar />
 
-        <div className="flex gap-1 bg-white rounded-xl border border-gray-100 shadow-sm p-1 mb-6 w-fit">
-          {tabs.map(t => (
-            <button
-              key={t.key}
-              onClick={() => setTab(t.key)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                tab === t.key
-                  ? 'text-white shadow-sm'
-                  : 'text-gray-600 hover:bg-gray-50'
-              }`}
-              style={tab === t.key ? { backgroundColor: 'var(--accent)' } : {}}
-            >
-              <t.icon className="w-4 h-4" />
-              {t.label}
-            </button>
-          ))}
-        </div>
+        <TabBar
+          items={tabs.map(t => ({ key: t.key, label: t.label, icon: <t.icon className="w-4 h-4" /> }))}
+          active={tab}
+          onSelect={setTab}
+          variant="pill"
+          ariaLabel="Purchasing screens"
+          className="mb-6"
+        />
 
         {tab === 'orders' && <PurchaseOrdersTab vendors={vendors} />}
         {tab === 'vendors' && <VendorsTab onVendorsChange={setVendors} />}

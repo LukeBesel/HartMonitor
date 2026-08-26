@@ -163,7 +163,7 @@ export default function Dashboards() {
           <div className="text-gray-500 font-medium">No dashboards yet</div>
           <p className="text-gray-400 text-sm mt-1">Create your first custom analytics dashboard</p>
           {canEdit && (
-            <div className="flex items-center justify-center gap-2 mt-4">
+            <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
               <button onClick={() => setCreating(true)} className="btn-primary">
                 <Plus size={16} /> Create Dashboard
               </button>

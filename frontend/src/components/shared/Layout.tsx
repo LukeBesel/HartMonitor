@@ -189,7 +189,7 @@ export default function Layout() {
         <button
           key={to}
           onClick={() => setLockedModal(label)}
-          className="flex items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors"
+          className="flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium border-b-2 border-transparent text-gray-400 hover:text-gray-600 transition-colors"
         >
           <Icon size={14} className="flex-shrink-0" />
           {label}
@@ -203,7 +203,7 @@ export default function Layout() {
         to={to}
         end={exact}
         className={({ isActive }) =>
-          `flex items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors ${
+          `flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors ${
             isActive ? '' : 'border-transparent text-gray-500 hover:text-gray-800'
           }`
         }
@@ -464,10 +464,10 @@ export default function Layout() {
         {/* LEVEL 2 — the focused workspace's screens as underline tabs. Hidden
             on routes that don't belong to any workspace (e.g. /settings). */}
         {activeSection && tabItems.length > 0 && (
-          <div className="bg-white border-b border-gray-200 flex-shrink-0">
+          <div className="bg-white border-b border-gray-200 flex-shrink-0 overflow-x-auto">
             <nav
               aria-label={`${activeSection.label} screens`}
-              className="flex items-center gap-1 px-3 sm:px-5 -mb-px overflow-x-auto"
+              className="flex w-max min-w-full items-center gap-1 px-3 sm:px-5 -mb-px"
             >
               {tabItems.map(renderTab)}
             </nav>

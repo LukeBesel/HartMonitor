@@ -243,7 +243,7 @@ function CardConfigForm({ card, apps, onSave, onCancel }: {
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="field-row gap-3">
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Title</label>
           <input className="input-field text-sm" value={cfg.title || ''} onChange={e => set('title', e.target.value)} placeholder="Card title..." />
@@ -259,7 +259,7 @@ function CardConfigForm({ card, apps, onSave, onCancel }: {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-3">
+      <div className="field-row gap-3">
         <div>
           <label className="block text-xs font-medium text-gray-600 mb-1">Data Source</label>
           <select className="input-field text-sm" value={cfg.app_id || ''} onChange={e => set('app_id', e.target.value || null)}>
@@ -276,7 +276,7 @@ function CardConfigForm({ card, apps, onSave, onCancel }: {
       </div>
 
       {cfg.type === 'metric' && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="field-row gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Metric</label>
             <select className="input-field text-sm" value={cfg.metric_key || ''} onChange={e => set('metric_key', e.target.value)}>
@@ -315,7 +315,7 @@ function CardConfigForm({ card, apps, onSave, onCancel }: {
       )}
 
       {cfg.type === 'leaderboard' && (
-        <div className="grid grid-cols-2 gap-3">
+        <div className="field-row gap-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1">Metric</label>
             <select className="input-field text-sm" value={cfg.leaderboard_metric || ''} onChange={e => set('leaderboard_metric', e.target.value)}>
@@ -353,7 +353,18 @@ function CardConfigForm({ card, apps, onSave, onCancel }: {
 
 // ── Main component ─────────────────────────────────────────────────────────────
 
-const SIZE_COLS: Record<string, string> = { sm: 'col-span-1', md: 'col-span-2', lg: 'col-span-3', xl: 'col-span-full' };
+// Card widths are quarters of the grid only once there is a grid to divide. A
+// phone gets one card per row and a tablet two — a quarter-width chart on a
+// 390px screen is about eighty pixels across, which is not a chart. The span
+// classes are held behind the breakpoints that actually create those columns,
+// because a span wider than the grid would invent an extra column and push the
+// page off the screen.
+const SIZE_COLS: Record<string, string> = {
+  sm: 'lg:col-span-1',
+  md: 'sm:col-span-2 lg:col-span-2',
+  lg: 'sm:col-span-2 lg:col-span-3',
+  xl: 'sm:col-span-2 lg:col-span-full',
+};
 
 // Page filters are remembered per dashboard, so a plant manager who always
 // looks at Weld gets Weld back tomorrow without re-picking it.
@@ -525,9 +536,9 @@ export default function DashboardView({ dashboardId }: { dashboardId?: string } 
   if (loading) return (
     <div className="p-6 space-y-5">
       <div className="h-9 w-64 animate-pulse bg-gray-200 rounded-lg" />
-      <div className="grid grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {[1, 2, 3, 4].map(i => (
-          <div key={i} className="col-span-2 h-48 animate-pulse bg-white border border-gray-200 rounded-2xl" />
+          <div key={i} className="h-48 animate-pulse bg-white border border-gray-200 rounded-2xl" />
         ))}
       </div>
     </div>
@@ -665,11 +676,11 @@ export default function DashboardView({ dashboardId }: { dashboardId?: string } 
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           {cards.map(card => (
             <div
               key={card.id}
-              className={`bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden ${SIZE_COLS[card.size || 'md'] || 'col-span-2'}`}
+              className={`bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden ${SIZE_COLS[card.size || 'md'] || SIZE_COLS.md}`}
             >
               {/* Card header */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-gray-50">

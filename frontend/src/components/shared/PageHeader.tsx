@@ -24,7 +24,11 @@ export default function PageHeader({ title, subtitle, actions, className = '' }:
           <p className="text-sm text-gray-400 mt-0.5">{subtitle}</p>
         )}
       </div>
-      {actions && <div className="flex items-center gap-2 flex-shrink-0">{actions}</div>}
+      {/* The action cluster wraps rather than holding one rigid line. Three
+          buttons ("Export CSV", "Full analytics", "Run app") are 567px across —
+          on a 390px phone `flex-shrink-0` sent them straight off the right edge
+          and took the page's width with them. */}
+      {actions && <div className="flex flex-wrap items-center gap-2 min-w-0">{actions}</div>}
     </div>
   );
 }

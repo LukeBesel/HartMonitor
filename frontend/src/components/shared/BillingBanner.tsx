@@ -28,9 +28,12 @@ export function BillingBanner() {
               there. Both icons follow the banner's own text colour, which
               already clears AA on either ground. */}
           <Zap size={14} className="shrink-0" />
+          {/* The long sentence only appears where it actually fits. At 640px it
+              was chosen and then truncated to "explore ever…", which loses the
+              one fact the banner exists to state — that the workspace resets. */}
           <span className="flex-1 min-w-0 truncate">
-            <span className="sm:hidden"><strong>Demo</strong> — resets in 24h</span>
-            <span className="hidden sm:inline">
+            <span className="lg:hidden"><strong>Demo</strong> — resets in 24h</span>
+            <span className="hidden lg:inline">
               You're in a <strong>demo workspace</strong> — explore everything freely. It resets after 24 hours.
             </span>
           </span>
@@ -50,8 +53,8 @@ export function BillingBanner() {
             onClick={() => setClaiming(true)}
             className="shrink-0 px-2.5 sm:px-3 py-1 rounded-lg bg-amber-500 text-[#111827] font-semibold text-xs hover:bg-amber-400 transition-colors whitespace-nowrap"
           >
-            <span className="sm:hidden">Keep my work</span>
-            <span className="hidden sm:inline">Keep my work — create a free account</span>
+            <span className="lg:hidden">Keep my work</span>
+            <span className="hidden lg:inline">Keep my work — create a free account</span>
           </button>
           <button onClick={() => setDismissed(true)} className="shrink-0 p-1 text-amber-800 dark:text-amber-300 hover:text-amber-950 dark:hover:text-amber-100" aria-label="Dismiss">
             <X size={14} />
