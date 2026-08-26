@@ -4,7 +4,7 @@ import { api } from '../api/client';
 import {
   Factory, ChevronRight, Package, Clock, AlertTriangle, CheckCircle, User, Tablet,
   Briefcase, History as HistoryIcon, LogOut, RefreshCw, Send, ArrowLeft, ScanLine, WifiOff,
-  MessageSquare, Lock, Delete, Users as UsersIcon, KeyRound,
+  MessageSquare, Lock, Delete, Users as UsersIcon, KeyRound, LayoutDashboard,
 } from 'lucide-react';
 import { timeAgo } from '../utils/time';
 import BarcodeScannerModal from '../components/shared/BarcodeScannerModal';
@@ -350,12 +350,24 @@ function IdentifyScreen({
         <div className="text-white font-bold text-lg leading-tight">HartMonitor</div>
         <div className="text-blue-300/70 text-xs">Operator Portal</div>
       </div>
+      {/* The way out, where someone looks for it. The only exit used to be a
+          40%-opacity line of text at the bottom of the page, which is fine for
+          an operator on a locked tablet — they are meant to stay here — and no
+          use at all to the person setting the floor up, who bounces between
+          this and the management side all day. */}
+      <button
+        onClick={onExit}
+        className="ml-auto shrink-0 h-10 px-3 inline-flex items-center gap-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/15 text-white text-sm font-semibold transition-colors"
+      >
+        <LayoutDashboard size={16} />
+        <span className="hidden sm:inline">Dashboard</span>
+      </button>
     </div>
   );
 
   const footer = (
     <div className="px-6 pb-6 text-center">
-      <button onClick={onExit} className="text-xs text-blue-400/40 hover:text-blue-300/60 transition-colors">
+      <button onClick={onExit} className="text-xs text-blue-200/80 hover:text-white transition-colors">
         Management Dashboard →
       </button>
     </div>

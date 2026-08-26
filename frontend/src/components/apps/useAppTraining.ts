@@ -172,6 +172,20 @@ export function markTrainingDataSeen(userId: string | undefined): void {
   writePrefs(userId, { ...prefs, dataSeen: true });
 }
 
+/** Dismiss the coach without going through it.
+ *
+ *  "Skip tour" on the welcome wizard means "I don't want to be walked through
+ *  this", so a second guided panel appearing the moment the first one closes
+ *  reads as the app ignoring the answer. Finishing the tour still hands off to
+ *  the coach — that is the intended sequence; only an explicit skip stands it
+ *  down. Either way the sidebar setup checklist takes over, so nothing is lost:
+ *  the way back in is Settings, or restartTraining below. */
+export function dismissTraining(userId: string | undefined): void {
+  const prefs = readPrefs(userId);
+  if (prefs.dismissed) return;
+  writePrefs(userId, { ...prefs, dismissed: true });
+}
+
 /** Reset a user's training so the coach reappears from step one. */
 export function restartTraining(userId: string | undefined): void {
   writePrefs(userId, { dismissed: false, collapsed: false, dataSeen: false });

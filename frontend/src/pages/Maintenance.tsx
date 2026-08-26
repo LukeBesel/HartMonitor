@@ -1522,14 +1522,19 @@ export default function Maintenance() {
         </div>
       )}
 
-      {/* Tab bar */}
-      <div className="border-b border-gray-200">
-        <nav className="-mb-px flex gap-1">
+      {/* Tab bar. Scrolls INSIDE itself: four labelled tabs do not fit across a
+          390px phone, and without this the row simply made the page wider than
+          the screen — so reaching "PM Schedules" meant dragging the whole
+          layout sideways, heading and all, as if the page were zoomed in.
+          `whitespace-nowrap` stops "Work Orders" breaking across two lines and
+          `shrink-0` stops flex compressing the tabs to fit instead of scrolling. */}
+      <div className="border-b border-gray-200 overflow-x-auto -mx-1 px-1">
+        <nav className="-mb-px flex gap-1 w-max min-w-full">
           {tabs.map(tab => (
             <button
               key={tab.key}
               onClick={() => setActiveTab(tab.key)}
-              className={`inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 ${
+              className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 ${
                 activeTab === tab.key
                   ? 'border-blue-500 text-gray-900'
                   : 'border-transparent text-gray-500 hover:text-gray-700'

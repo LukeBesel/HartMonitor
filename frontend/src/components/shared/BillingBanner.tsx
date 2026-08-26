@@ -1,9 +1,10 @@
 import { useAuth } from '../../context/AuthContext';
 import { usePlan } from '../../context/PlanContext';
 import { api } from '../../api/client';
-import { AlertTriangle, Zap, X } from 'lucide-react';
+import { AlertTriangle, Zap, X, Home } from 'lucide-react';
 import { useState } from 'react';
 import { ClaimSandboxModal } from './ClaimSandboxModal';
+import { Link } from 'react-router-dom';
 
 export function BillingBanner() {
   const { user } = useAuth();
@@ -29,6 +30,18 @@ export function BillingBanner() {
               You're in a <strong>demo workspace</strong> — explore everything freely. It resets after 24 hours.
             </span>
           </span>
+          {/* Back to the marketing site. `/` renders the landing page even while
+              signed in, so this is a way OUT of the demo and back to the product
+              pages without ending the session or losing anything — there was no
+              route back short of editing the URL. */}
+          <Link
+            to="/"
+            className="shrink-0 px-2 sm:px-2.5 py-1 rounded-lg border border-amber-400/60 text-amber-900 dark:text-amber-200 font-semibold text-xs hover:bg-amber-400/20 transition-colors whitespace-nowrap inline-flex items-center gap-1"
+            title="Back to hartmonitorapp.com"
+          >
+            <Home size={12} />
+            <span className="hidden sm:inline">Website</span>
+          </Link>
           <button
             onClick={() => setClaiming(true)}
             className="shrink-0 px-2.5 sm:px-3 py-1 rounded-lg bg-amber-500 text-[#111827] font-semibold text-xs hover:bg-amber-400 transition-colors whitespace-nowrap"

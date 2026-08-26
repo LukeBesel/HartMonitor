@@ -213,9 +213,12 @@ describe('the day rolls over on the plant clock', () => {
     assert.equal(away.json.kpis.completed_today, 0);
   });
 
-  it('falls back to UTC for a company that has never set a timezone', async () => {
-    // The old behaviour, unchanged: this can never be worse than what it
-    // replaces for someone who has not told us where they are.
+  it('falls back to UTC when a company has no timezone stored', async () => {
+    // Signup seeds every new company a timezone, so this case has to be built
+    // deliberately: clear the row, then check the day boundary still works
+    // rather than throwing or matching nothing. This is the old behaviour, so
+    // it can never be worse than what it replaces for a self-hosted install
+    // that has not been told where it is.
     const signup = await api('POST', '/api/auth/signup', {
       body: { company_name: 'Nowhere Co', email: 'admin@nowhere.test', password: 'SecretPass1', display_name: 'Admin' },
     });
@@ -226,15 +229,24 @@ describe('the day rolls over on the plant clock', () => {
     const c = await api('POST', '/api/completions', { token, body: { app_id: app.json.id, operator_name: 'Sam' } });
     await api('PUT', `/api/completions/${c.json.id}`, { token, body: { status: 'completed', data: {} } });
 
-    // Noon UTC today — today by the UTC calendar at every hour this could run.
+    // Halfway between UTC midnight and now: in the past, and on today's UTC
+    // date, at every hour this suite could run. Noon would have been neither
+    // just after midnight.
     const now = new Date();
-    const noonUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 12, 0, 0));
+    const midnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    const midToday = new Date(midnight + (now.getTime() - midnight) / 2);
+
     const raw = new Database(DB_PATH);
+    raw.prepare("DELETE FROM org_settings WHERE key = 'timezone' AND company_id = (SELECT company_id FROM users WHERE email = ?)")
+      .run('admin@nowhere.test');
     raw.prepare('UPDATE completions SET completed_at = ?, started_at = ? WHERE id = ?')
-      .run(toSqlite(noonUtc), toSqlite(noonUtc), c.json.id);
+      .run(toSqlite(midToday), toSqlite(midToday), c.json.id);
+    const stored = raw.prepare("SELECT COUNT(*) AS c FROM org_settings WHERE key = 'timezone' AND company_id = (SELECT company_id FROM users WHERE email = ?)")
+      .get('admin@nowhere.test').c;
     raw.close();
+    assert.equal(stored, 0, 'the fixture must actually leave the company without a timezone');
 
     const overview = await api('GET', '/api/analytics/overview', { token });
-    assert.equal(overview.json.todayCompletions, 1, 'noon UTC is today in UTC');
+    assert.equal(overview.json.todayCompletions, 1, 'earlier today, by the UTC calendar, is today');
   });
 });
