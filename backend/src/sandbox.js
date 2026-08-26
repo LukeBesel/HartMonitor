@@ -29,7 +29,11 @@ function hashPassword(password) {
 function sampleAppSteps() {
   return [
     {
-      id: uuidv4(), name: 'Safety Check', order: 0, takt_time: 60,
+      // Deliberately five seconds. Nobody ticks a PPE box and reads the notice
+      // in five seconds, so the first step of the first app anyone runs shows
+      // the takt countdown running out and the over-takt state — which is the
+      // point of shipping it on the demo apps rather than describing it.
+      id: uuidv4(), name: 'Safety Check', order: 0, takt_time: 5,
       widgets: [
         { id: uuidv4(), type: 'instruction', order: 0, label: 'Before You Start', config: { content: 'Welcome to the HartMonitor demo! This is a guided work instruction an operator would follow. Put on PPE and confirm the work area is clear.', backgroundColor: '#fef3c7' } },
         { id: uuidv4(), type: 'checkbox', order: 1, label: 'PPE Worn', config: { required: true, variableName: 'ppe_worn' } },
@@ -96,7 +100,12 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   // Nothing here hard-codes an OEE figure. These are the inputs; the page still
   // does the multiplying, so the number on screen stays a measurement.
   //
-  //   ideal cycle   420 s — the sample app's own step takts, 60 + 240 + 120
+  //   ideal cycle   the sample app's own step takts, summed — currently
+  //                 5 + 240 + 120 = 365 s. DERIVED, not typed: the first step's
+  //                 takt is deliberately five seconds so a human running the app
+  //                 meets the over-takt state, and a hard-coded 420 here would
+  //                 have quietly gone on measuring output against a cycle the
+  //                 app no longer has.
   //   shift         the whole hours of today that have ALREADY happened, capped
   //                 at 8. Every timestamp in this app is UTC, so "today" is the
   //                 UTC day; seeding work into hours the clock has not reached
@@ -104,8 +113,8 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   //                 against a morning that is three hours old can never look
   //                 healthy. The station's planned_hours_per_day is set to the
   //                 same window so plan and reality describe one shift.
-  //   runs          floor(shift_seconds / 420 × 0.79)
-  //                   → Performance = runs × 420 / shift_seconds ≈ 79 %
+  //   runs          floor(shift_seconds / ideal_cycle × 0.79)
+  //                   → Performance = runs × ideal_cycle / shift_seconds ≈ 79 %
   //   the other 21% each run's step timers land near takt; the bench then idles
   //                 ~80 s before the next run starts. Seeding the loss as gaps
   //                 between runs rather than as slow work makes it the classic
@@ -118,9 +127,9 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   //
   // Change one of these and change the others with it: more runs in the same
   // shift pushes Performance toward the 100 % clamp, fewer sinks it.
-  const IDEAL_CYCLE_S = 420;
-  const TARGET_PERF   = 0.79;
   const stepTakts     = steps.map(st => Number(st.takt_time) || 0);
+  const IDEAL_CYCLE_S = stepTakts.reduce((a, b) => a + b, 0);
+  const TARGET_PERF   = 0.79;
 
   const minutesToday = db.prepare(
     `SELECT CAST((julianday('now') - julianday(date('now'))) * 1440 AS INTEGER) AS m`
@@ -361,7 +370,7 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
     const out = [];
     for (let k = 0; k < count; k++) {
       const stepTimes = stepTakts.map((takt, idx) => {
-        if (idx === 0) return 55 + (k % 4) * 6;    // Safety Check      (takt 60)
+        if (idx === 0) return 3 + (k % 4);         // Safety Check      (takt 5)
         if (idx === 1) return 218 + (k % 5) * 13;  // Assembly          (takt 240)
         return 108 + (k % 3) * 11;                 // Final Inspection  (takt 120)
       });
@@ -556,7 +565,7 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   const qcAppId = uuidv4();
   const qcTorqueW = uuidv4(), qcResultW = uuidv4();
   const qcSteps = [
-    { id: uuidv4(), name: 'Re-torque check', order: 0, layout: 'stacked', widgets: [
+    { id: uuidv4(), name: 'Re-torque check', order: 0, layout: 'stacked', takt_time: 5, widgets: [
       { id: uuidv4(), type: 'instruction', config: { text: 'Confirm the two frame bolts hold 15 Nm before the unit ships.' } },
       { id: qcTorqueW, type: 'number-input', config: { label: 'Verified torque (Nm)', variableName: 'final_torque', required: true } },
     ] },
@@ -618,7 +627,15 @@ function createSandbox(generateToken) {
     db.prepare(`INSERT INTO plan (tier, app_limit, dashboard_limit, company_id) VALUES ('pro', 25, 10, ?)`).run(orgId);
     const siteId = uuidv4();
     db.prepare(`INSERT INTO sites (id, company_id, name, code, is_primary) VALUES (?, ?, 'Main Site', 'MAIN', 1)`).run(siteId, orgId);
-    const settings = [['company_name', 'Acme Manufacturing (Demo)'], ['timezone', 'America/New_York'], ['date_format', 'MM/DD/YYYY'], ['currency', 'USD']];
+    // UTC, and it has to stay UTC. Every timestamp seedSandboxData writes is
+    // placed relative to the UTC day — the shift window, today's runs, the
+    // previous days' history — and "today" on the screens is now the PLANT's
+    // day, read from this setting. Naming a zone the seed does not use makes
+    // the two disagree: at 00:45 UTC, "today" in New York is 21 hours old and
+    // holds a full day of runs, while the seeded shift is 45 minutes long, so
+    // OEE Performance clamps to 100 % and the demo claims a world-class plant.
+    // Seed in a zone or read in one, but not two different ones.
+    const settings = [['company_name', 'Acme Manufacturing (Demo)'], ['timezone', 'UTC'], ['date_format', 'MM/DD/YYYY'], ['currency', 'USD']];
     const ins = db.prepare(`INSERT OR IGNORE INTO org_settings (company_id, key, value) VALUES (?, ?, ?)`);
     for (const [k, v] of settings) ins.run(orgId, k, v);
     seedSandboxData(orgId, tag, siteId, userId);

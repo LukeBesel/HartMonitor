@@ -942,7 +942,10 @@ function seedAppData() {
   const appId = uuidv4();
   const steps = [
     {
-      id: uuidv4(), name: 'Safety Check', order: 0, takt_time: 60,
+      // Five seconds on purpose — see sandbox.js. The first step of a
+      // pre-made app runs out its takt while you are still reading it, so the
+      // over-takt state is something you meet rather than read about.
+      id: uuidv4(), name: 'Safety Check', order: 0, takt_time: 5,
       widgets: [
         { id: uuidv4(), type: 'instruction', order: 0, label: 'Safety Instructions', config: { content: 'Ensure all safety equipment is in place before starting. Wear PPE including gloves and safety glasses.', backgroundColor: '#fef3c7' } },
         { id: uuidv4(), type: 'checkbox', order: 1, label: 'PPE Worn', config: { required: true, variableName: 'ppe_worn' } },
@@ -1424,7 +1427,10 @@ function loadSampleDataForCompany(companyId) {
   const appId = uuidv4();
   const steps = [
     {
-      id: uuidv4(), name: 'Safety Check', order: 0, takt_time: 60,
+      // Five seconds on purpose — see sandbox.js. The first step of a
+      // pre-made app runs out its takt while you are still reading it, so the
+      // over-takt state is something you meet rather than read about.
+      id: uuidv4(), name: 'Safety Check', order: 0, takt_time: 5,
       widgets: [
         { id: uuidv4(), type: 'instruction', order: 0, label: 'Safety Instructions', config: { content: 'Ensure all safety equipment is in place before starting. Wear PPE including gloves and safety glasses.', backgroundColor: '#fef3c7' } },
         { id: uuidv4(), type: 'checkbox', order: 1, label: 'PPE Worn', config: { required: true, variableName: 'ppe_worn' } },

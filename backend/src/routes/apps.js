@@ -213,7 +213,9 @@ const MODEL_TEMPLATES = [
     description: 'A guided 3-step work instruction: safety prep, torque-controlled assembly with photo evidence, and a pass/fail final inspection.',
     steps: [
       {
-        id: 'ba-step-1', name: 'Safety & Prep', order: 0, takt_time_seconds: 90,
+        // Five seconds on purpose — see sandbox.js. A new customer's very first
+        // app should show them the takt countdown expiring, not just mention it.
+        id: 'ba-step-1', name: 'Safety & Prep', order: 0, takt_time_seconds: 5,
         widgets: [
           { id: 'ba-w-11', type: 'instruction', order: 0, label: 'Before You Start', config: { content: 'Put on safety glasses and gloves. Confirm the fixture is clamped and the torque driver is calibrated (cal sticker in date).', backgroundColor: '#fef3c7' } },
           { id: 'ba-w-12', type: 'checkbox', order: 1, label: 'PPE On (glasses + gloves)', config: { required: true, variableName: 'ppe_on' } },
@@ -255,7 +257,7 @@ const MODEL_TEMPLATES = [
     description: 'A simple pass/fail inspection checklist with photo evidence — a quick starting point for incoming or final QC.',
     steps: [
       {
-        id: 'qi-step-1', name: 'Inspection Checklist', order: 0,
+        id: 'qi-step-1', name: 'Inspection Checklist', order: 0, takt_time_seconds: 5,
         widgets: [
           { id: 'qi-w-11', type: 'instruction', order: 0, label: 'How To Inspect', config: { content: 'Work top to bottom. Mark each check pass or fail; photograph anything you fail.', backgroundColor: '#eff6ff' } },
           { id: 'qi-w-12', type: 'pass-fail', order: 1, label: 'Labels correct and legible', config: { required: true, variableName: 'labels_ok' } },

@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
+import { dismissTraining } from '../apps/useAppTraining';
 import { useBranding, useCompanySetting } from '../../context/BrandingContext';
 
 // Set by the "Replay product tour" button in Settings before navigating to the
@@ -150,6 +151,18 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
     setClosed(true);
   };
 
+  /** "Skip tour" and the X mean "I don't want to be walked through this", so
+   *  they stand the builder-training coach down too. Without this, closing the
+   *  welcome popped a second guided panel open in its place, which reads as the
+   *  app ignoring the answer. Reaching the END of the tour and choosing "Not
+   *  now" is different — that hands off to the coach as intended. The sidebar
+   *  setup checklist still appears either way, and Settings can restart the
+   *  training. */
+  const skip = async () => {
+    dismissTraining(user?.id);
+    await finish();
+  };
+
   /** Primary hand-off: close the welcome and drop the user straight into
    *  creating their first app, where the training coach takes over. */
   const startBuilding = () => {
@@ -191,7 +204,7 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
         <div className="flex items-center justify-between px-6 pt-5">
           <div className="text-xs font-medium text-gray-400">Step {index + 1} of {STEPS.length}</div>
           <button
-            onClick={finish}
+            onClick={skip}
             title="Skip tour"
             aria-label="Skip tour"
             className="-mr-1.5 w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:text-gray-800 hover:bg-black/5 transition-colors"
@@ -267,7 +280,7 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
           >
             <ArrowLeft size={14} /> Back
           </button>
-          <button onClick={finish} className="px-2 h-8 flex items-center rounded-lg text-xs text-gray-500 hover:text-gray-800 hover:bg-black/5 transition-colors">Skip tour</button>
+          <button onClick={skip} className="px-2 h-8 flex items-center rounded-lg text-xs text-gray-500 hover:text-gray-800 hover:bg-black/5 transition-colors">Skip tour</button>
           {isLast ? (
             <button onClick={finish} className="btn-secondary text-sm">Not now</button>
           ) : (
