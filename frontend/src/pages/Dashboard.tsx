@@ -81,7 +81,12 @@ interface PlantViewData {
   }>;
   recent_completions: Array<{
     id: string; app_name: string; operator_name: string;
-    department: string; completed_at: string; duration_minutes: number;
+    department: string;
+    /** Real finish time — null while the run is still on the bench. */
+    completed_at: string | null;
+    /** The row's "when": completion if finished, else the start. */
+    activity_at: string;
+    duration_minutes: number;
     /** The one to render: a six-second run is "6s", not "0.1m". */
     duration_seconds: number | null; status: string;
   }>;
@@ -1122,7 +1127,7 @@ export default function Dashboard() {
                                 <td className="py-2 pr-3 text-gray-600">{c.operator_name}</td>
                                 <td className="py-2 pr-3 text-gray-500">{c.department}</td>
                                 <td className="py-2 pr-3 text-gray-700 tabular-nums">{c.duration_seconds != null ? fmtDuration(c.duration_seconds) : '—'}</td>
-                                <td className="py-2 text-gray-400">{fmtAgo(c.completed_at)}</td>
+                                <td className="py-2 text-gray-400">{fmtAgo(c.activity_at)}</td>
                               </tr>
                             ))}
                             {plantData.recent_completions.length === 0 && (

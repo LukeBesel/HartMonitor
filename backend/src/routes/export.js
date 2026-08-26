@@ -1,5 +1,6 @@
 const express = require('express');
 const db = require('../db');
+const { runSecondsSQL, avgRunSecondsSQL } = require('../cycleTime');
 const XLSX = require('xlsx');
 
 const router = express.Router();
@@ -53,7 +54,7 @@ router.get('/completions', (req, res) => {
   const rows = db.prepare(`
     SELECT c.id, c.app_name, s.name as station_name, c.operator_name,
            c.started_at, c.completed_at, c.status,
-           ROUND((julianday(c.completed_at)-julianday(c.started_at))*1440, 1) as cycle_time_minutes,
+           ROUND(${runSecondsSQL('c')} / 60.0, 1) as cycle_time_minutes,
            wo.work_order_number, c.takt_exceeded_steps
     FROM completions c
     LEFT JOIN stations s ON s.id = c.station_id
@@ -176,7 +177,7 @@ router.get('/operator-performance', (req, res) => {
     SELECT
       operator_name,
       COUNT(*) as completions,
-      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_cycle_minutes
+      ROUND(${avgRunSecondsSQL('completions')} / 60.0, 1) as avg_cycle_minutes
     FROM completions
     WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL
     GROUP BY operator_name
@@ -193,7 +194,7 @@ router.get('/app-performance', (req, res) => {
     SELECT
       app_name,
       COUNT(*) as completions,
-      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_cycle_minutes,
+      ROUND(${avgRunSecondsSQL('completions')} / 60.0, 1) as avg_cycle_minutes,
       COUNT(CASE WHEN status='abandoned' THEN 1 END) as abandoned_count
     FROM completions
     WHERE company_id = ?
@@ -212,7 +213,7 @@ router.get('/apps/:appId/completions', (req, res) => {
 
   const rows = db.prepare(`
     SELECT c.id, c.operator_name, s.name as station_name, c.started_at, c.completed_at, c.status,
-           ROUND((julianday(c.completed_at)-julianday(c.started_at))*1440, 1) as cycle_time_minutes,
+           ROUND(${runSecondsSQL('c')} / 60.0, 1) as cycle_time_minutes,
            wo.work_order_number, c.takt_exceeded_steps, c.data, c.step_times
     FROM completions c
     LEFT JOIN stations s ON s.id = c.station_id
@@ -233,7 +234,7 @@ router.get('/apps/:appId/bundle', (req, res) => {
 
   const completions = db.prepare(`
     SELECT c.id, c.operator_name, c.station_id, s.name as station_name, c.started_at, c.completed_at, c.status,
-           ROUND((julianday(c.completed_at)-julianday(c.started_at))*1440, 1) as cycle_time_minutes,
+           ROUND(${runSecondsSQL('c')} / 60.0, 1) as cycle_time_minutes,
            wo.work_order_number, c.takt_exceeded_steps, c.data, c.step_times
     FROM completions c
     LEFT JOIN stations s ON s.id = c.station_id
@@ -283,7 +284,7 @@ router.get('/all', (req, res) => {
     `).all(cid),
     completions: db.prepare(`
       SELECT c.id, c.app_name, c.operator_name, c.started_at, c.completed_at, c.status,
-             ROUND((julianday(c.completed_at)-julianday(c.started_at))*1440,1) as cycle_time_minutes,
+             ROUND(${runSecondsSQL('c')} / 60.0, 1) as cycle_time_minutes,
              wo.work_order_number
       FROM completions c LEFT JOIN work_orders wo ON wo.id = c.work_order_id
       WHERE c.company_id = ? AND c.completed_at >= datetime('now', '-90 days')

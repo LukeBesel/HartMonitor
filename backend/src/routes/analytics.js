@@ -4,6 +4,11 @@ const { plantDayShift, plantToday } = require('../plantDay');
 const { calcScheduleStatus } = require('./workorders');
 const { calcOEE } = require('./oee');
 const { teamOf: andonTeamOf, teamLabel: andonTeamLabel } = require('../andonTeams');
+const {
+  roundSeconds, runDurations, stepTaktSeconds,
+  avgRunSecondsSQL, avgRunBasisSQL, runSecondsSQL, runBasisSQL,
+  handsOnSecondsSQL, elapsedSecondsSQL, elapsedSoFarSecondsSQL,
+} = require('../cycleTime');
 
 const router = express.Router();
 
@@ -148,7 +153,8 @@ router.get('/overview', (req, res) => {
   const activeStations    = db.prepare("SELECT COUNT(*) as c FROM stations WHERE company_id = ? AND status='active'").get(cid).c;
 
   const cycleTimeResult = db.prepare(`
-    SELECT AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60) as avg_minutes
+    SELECT ${avgRunSecondsSQL('completions')} as avg_seconds,
+           ${avgRunBasisSQL('completions')}   as basis
     FROM completions WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL${f.clause}
   `).get(cid, ...f.params);
   // Report the average in SECONDS. Rounding to whole minutes here threw away
@@ -159,10 +165,8 @@ router.get('/overview', (req, res) => {
   // `avgCycleTime` (whole minutes) stays on the payload for anything already
   // reading it, but nothing should render it — it is 0 for every sub-30-second
   // operation, which is exactly the lie above.
-  const avgCycleSeconds = cycleTimeResult?.avg_minutes != null
-    ? Math.round(cycleTimeResult.avg_minutes * 60)
-    : null;
-  const avgCycleTime = avgCycleSeconds === null ? null : Math.round(cycleTimeResult.avg_minutes);
+  const avgCycleSeconds = roundSeconds(cycleTimeResult?.avg_seconds);
+  const avgCycleTime = avgCycleSeconds === null ? null : Math.round(cycleTimeResult.avg_seconds / 60);
 
   // Pass rate over every completed run that recorded a QC result (a run with
   // both a Pass and a Fail counts once, as a fail). No QC results = null, so
@@ -209,16 +213,24 @@ router.get('/cycle-times', (req, res) => {
   const rows = db.prepare(`
     SELECT
       date(completed_at, ?) as date,
-      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_minutes,
-      ROUND(MIN((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as min_minutes,
-      ROUND(MAX((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as max_minutes
+      ROUND(${avgRunSecondsSQL('completions')} / 60.0, 1) as avg_minutes,
+      ROUND(MIN(${runSecondsSQL('completions')}) / 60.0, 1) as min_minutes,
+      ROUND(MAX(${runSecondsSQL('completions')}) / 60.0, 1) as max_minutes,
+      ${avgRunSecondsSQL('completions')} as avg_seconds,
+      MIN(${runSecondsSQL('completions')}) as min_seconds,
+      MAX(${runSecondsSQL('completions')}) as max_seconds
     FROM completions
     WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL
       AND date(completed_at, ?) >= date('now', ?, '-' || ? || ' days')${f.clause}
     GROUP BY 1
     ORDER BY date ASC
     LIMIT 10000
-  `).all(day, req.companyId, day, day, days, ...f.params);
+  `).all(day, req.companyId, day, day, days, ...f.params).map(r => ({
+    ...r,
+    avg_seconds: roundSeconds(r.avg_seconds),
+    min_seconds: roundSeconds(r.min_seconds),
+    max_seconds: roundSeconds(r.max_seconds),
+  }));
   res.json(rows);
 });
 
@@ -230,14 +242,15 @@ router.get('/operator-performance', (req, res) => {
     SELECT
       operator_name,
       COUNT(*) as completions,
-      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_cycle_minutes,
-      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 86400)) as avg_cycle_seconds
+      ROUND(${avgRunSecondsSQL('completions')} / 60.0, 1) as avg_cycle_minutes,
+      ${avgRunSecondsSQL('completions')} as avg_cycle_seconds,
+      ${avgRunBasisSQL('completions')}   as avg_cycle_basis
     FROM completions
     WHERE company_id = ? AND status='completed' AND completed_at IS NOT NULL${f.clause}
     GROUP BY operator_name
     ORDER BY completions DESC
     LIMIT 20
-  `).all(req.companyId, ...f.params);
+  `).all(req.companyId, ...f.params).map(r => ({ ...r, avg_cycle_seconds: roundSeconds(r.avg_cycle_seconds) }));
   res.json(rows);
 });
 
@@ -250,14 +263,15 @@ router.get('/app-performance', (req, res) => {
       app_id,
       app_name,
       COUNT(*) as completions,
-      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60), 1) as avg_cycle_minutes,
-      ROUND(AVG((julianday(completed_at) - julianday(started_at)) * 86400)) as avg_cycle_seconds,
+      ROUND(${avgRunSecondsSQL('completions')} / 60.0, 1) as avg_cycle_minutes,
+      ${avgRunSecondsSQL('completions')} as avg_cycle_seconds,
+      ${avgRunBasisSQL('completions')}   as avg_cycle_basis,
       COUNT(CASE WHEN status='abandoned' THEN 1 END) as abandoned_count
     FROM completions
     WHERE company_id = ?${f.clause}
     GROUP BY app_id, app_name
     ORDER BY completions DESC
-  `).all(req.companyId, ...f.params);
+  `).all(req.companyId, ...f.params).map(r => ({ ...r, avg_cycle_seconds: roundSeconds(r.avg_cycle_seconds) }));
   res.json(rows);
 });
 
@@ -411,7 +425,8 @@ router.get('/plant-view', (req, res) => {
   `).get(cid, ...siteParams, ...cf.params).c;
 
   const ctRow = db.prepare(`
-    SELECT AVG((julianday(completions.completed_at) - julianday(completions.started_at)) * 24 * 60) as avg_minutes
+    SELECT ${avgRunSecondsSQL('completions')} AS avg_seconds,
+           ${avgRunBasisSQL('completions')}   AS basis
     FROM completions ${siteJoin}
     WHERE completions.company_id = ? AND completions.status='completed' AND completions.completed_at IS NOT NULL${siteClause}${cf.clause}
   `).get(cid, ...siteParams, ...cf.params);
@@ -419,8 +434,8 @@ router.get('/plant-view', (req, res) => {
   // renders every sub-30-second operation as "0m", and a press, a pick-place or
   // a visual check is routinely under a minute. `avg_cycle_time` stays on the
   // payload in minutes for anything already reading it; nothing should render it.
-  const avgCycleSeconds = ctRow?.avg_minutes != null ? Math.round(ctRow.avg_minutes * 60) : null;
-  const avgCycleTime = avgCycleSeconds === null ? null : Math.round(ctRow.avg_minutes);
+  const avgCycleSeconds = roundSeconds(ctRow?.avg_seconds);
+  const avgCycleTime = avgCycleSeconds === null ? null : Math.round(ctRow.avg_seconds / 60);
 
   // Pass rate over the last 7 days, counting only completions with explicit QC results
   const pfRows = db.prepare(`
@@ -485,14 +500,14 @@ router.get('/plant-view', (req, res) => {
   const avgCycleByDept = {};
   for (const r of db.prepare(`
     SELECT COALESCE(wo.department_id, st.department_id) AS dept_id,
-           AVG((julianday(c.completed_at) - julianday(c.started_at)) * 24 * 60) AS avg_minutes
+           ${avgRunSecondsSQL('c')} AS avg_seconds
     FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN stations st    ON st.id = c.station_id
     WHERE c.company_id = ? AND c.status = 'completed' AND c.completed_at IS NOT NULL${cfc.clause}
     GROUP BY COALESCE(wo.department_id, st.department_id)
   `).all(cid, ...cfc.params)) {
-    if (r.dept_id != null) avgCycleByDept[r.dept_id] = r.avg_minutes;
+    if (r.dept_id != null) avgCycleByDept[r.dept_id] = r.avg_seconds;
   }
 
   const departmentPerformance = depts.map(dept => {
@@ -504,8 +519,10 @@ router.get('/plant-view', (req, res) => {
     // from one that has never run — the screen said "116 done today" and "no
     // runs yet" side by side.
     const rawAvgDept = avgCycleByDept[dept.id];
-    const avgCycleSecondsDept = rawAvgDept != null ? Math.round(rawAvgDept * 60) : null;
-    const avgCycleDept = avgCycleSecondsDept === null ? 0 : Math.round(rawAvgDept);
+    const avgCycleSecondsDept = roundSeconds(rawAvgDept);
+    // Null, not 0, when the department has finished nothing: "no runs yet" and
+    // "averages under half a minute" are different facts and must not collapse.
+    const avgCycleDept = rawAvgDept == null ? null : Math.round(rawAvgDept / 60);
 
     const onTrack = deptWOs.filter(wo => wo.schedule_status === 'on_track' || wo.schedule_status === 'completed').length;
     const onTrackPct = deptWOs.length > 0 ? Math.round((onTrack / deptWOs.length) * 100) : null;
@@ -516,14 +533,18 @@ router.get('/plant-view', (req, res) => {
       : onTrackPct >= 50 ? 'at_risk' : 'behind';
 
     const taktTimes = deptWOs.map(wo => wo.takt_time_minutes).filter(t => t > 0);
-    const taktTime = taktTimes.length ? Math.round((taktTimes.reduce((s, t) => s + t, 0) / taktTimes.length) * 10) / 10 : 0;
+    // No work order in this department carries a takt ⇒ there is no takt to
+    // report. A 0 here renders as a target of zero minutes per unit.
+    const taktTime = taktTimes.length
+      ? Math.round((taktTimes.reduce((s, t) => s + t, 0) / taktTimes.length) * 10) / 10
+      : null;
 
     return {
       id:               dept.id,
       department:       dept.name,
       color:            dept.color,
       completion_count: completionCountToday,
-      /** Whole minutes; 0 for anything under 30 seconds. Do not render it. */
+      /** Whole minutes, and null when nothing finished. Do not render it. */
       avg_cycle_time:   avgCycleDept,
       /** The one to render. null when nothing in this department has finished. */
       avg_cycle_seconds: avgCycleSecondsDept,
@@ -565,7 +586,15 @@ router.get('/plant-view', (req, res) => {
   const recentCompletions = db.prepare(`
     SELECT
       c.id, c.app_name, c.operator_name, c.status, c.started_at, c.completed_at,
-      d.name AS department_name
+      d.name AS department_name,
+      -- The canonical run duration and both measurements behind it, computed by
+      -- the shared model rather than re-derived here. Selecting them in SQL
+      -- keeps the step_times blob out of the response.
+      ${runSecondsSQL('c')}          AS duration_seconds,
+      ${runBasisSQL('c')}            AS duration_basis,
+      ${handsOnSecondsSQL('c')}      AS hands_on_seconds,
+      ${elapsedSecondsSQL('c')}      AS elapsed_seconds,
+      ${elapsedSoFarSecondsSQL('c')} AS elapsed_so_far_seconds
     FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
     LEFT JOIN stations st    ON st.id = c.station_id
@@ -574,19 +603,39 @@ router.get('/plant-view', (req, res) => {
     ORDER BY datetime(COALESCE(c.completed_at, c.started_at)) DESC
     LIMIT 15
   `).all(cid, ...siteParams, ...cfc.params).map(c => {
-    const end = c.completed_at ? new Date(c.completed_at) : new Date();
-    const durationMinutes = Math.round(((end - new Date(c.started_at)) / 60000) * 10) / 10;
+    // Durations come from backend/src/cycleTime.js, the one place that decides
+    // how long a run took. This used to derive its seconds from a
+    // tenth-of-a-minute it had ALREADY rounded — eight runs measuring
+    // 3.20-3.56 s all printed "6s", 70-90 % overstated and quantised to
+    // six-second steps, next to a department average computed at full
+    // precision. And it clocked an unfinished run against `new Date()`, so a
+    // job still on the bench appeared in a table headed RECENT COMPLETIONS
+    // with 27m 48s in its Duration column. A run in progress has no duration;
+    // it has an elapsed-so-far, which lives in its own field and is the
+    // screen's job to label as such.
+    const finished = c.status === 'completed' && !!c.completed_at;
     return {
       id:               c.id,
       app_name:         c.app_name,
       operator_name:    c.operator_name,
       department:       c.department_name || 'Unassigned',
-      completed_at:     c.completed_at || c.started_at,
-      /** Whole-ish minutes, kept for anything already reading it. */
-      duration_minutes: durationMinutes,
-      /** The one to render: a six-second run is "6s", not "0.1m". */
-      duration_seconds: durationMinutes != null ? Math.round(durationMinutes * 60) : null,
+      /** The real finish time, or null. It used to fall back to started_at,
+       *  which put a completion time on a job still on the bench. */
+      completed_at:     c.completed_at,
+      started_at:       c.started_at,
+      /** What the row's timestamp column should show: when this run last did
+       *  something. Finished ⇒ its completion; still open ⇒ its start. */
+      activity_at:      c.completed_at || c.started_at,
+      /** Null until the run finishes — never an elapsed-so-far in disguise. */
+      duration_seconds: finished ? roundSeconds(c.duration_seconds) : null,
+      duration_basis:   finished ? (c.duration_basis ?? null) : null,
+      hands_on_seconds: finished ? roundSeconds(c.hands_on_seconds) : null,
+      elapsed_seconds:  finished ? roundSeconds(c.elapsed_seconds) : null,
+      /** Set only while the run is open. Not a cycle time. */
+      elapsed_so_far_seconds: roundSeconds(c.elapsed_so_far_seconds),
       status:           c.status,
+      /** True for the rows a "completions" table may count as completions. */
+      is_complete:      finished,
     };
   });
 
@@ -604,6 +653,8 @@ router.get('/plant-view', (req, res) => {
       pass_rate:             passRate,
       avg_cycle_time:        avgCycleTime,
       avg_cycle_seconds:     avgCycleSeconds,
+      /** 'hands_on' | 'elapsed' | 'mixed' | null — the label the tile must carry. */
+      avg_cycle_basis:       ctRow?.basis ?? null,
       schedule_adherence:    scheduleAdherence,
       work_orders_on_track:  woSummary.on_track,
       work_orders_total:     allWOs.length,
@@ -710,13 +761,15 @@ router.get('/capacity', (req, res) => {
   const avgCycleByWO = {};
   for (const r of db.prepare(`
     SELECT work_order_id,
-           AVG((julianday(completed_at) - julianday(started_at)) * 24 * 60) AS avg_minutes
+           ${avgRunSecondsSQL('completions')} AS avg_seconds
     FROM completions
     WHERE company_id = ? AND status = 'completed' AND completed_at IS NOT NULL
       AND work_order_id IS NOT NULL
     GROUP BY work_order_id
   `).all(req.companyId)) {
-    avgCycleByWO[r.work_order_id] = r.avg_minutes;
+    // Same definition of "how long a run took" the rest of the product uses, so
+    // a planning number cannot silently disagree with the runs behind it.
+    avgCycleByWO[r.work_order_id] = r.avg_seconds == null ? null : r.avg_seconds / 60;
   }
 
   const enriched = workOrders.map(wo => {
@@ -895,48 +948,108 @@ router.get('/completion/:id', (req, res) => {
   const taktExceeded    = JSON.parse(completion.takt_exceeded_steps || '[]');
   const data            = JSON.parse(completion.data || '{}');
 
-  // Build per-step breakdown
+  // Every duration on this page comes from backend/src/cycleTime.js, the one
+  // place that decides how long a run took. This endpoint used to hold the step
+  // times and never send a total, so Completion Detail printed "Total Duration
+  // —" over a run whose steps it was already listing, one click after App
+  // History had printed the very same seconds as a real number.
+  const durations = runDurations(completion);
+
+  // Build per-step breakdown, in the shape the page renders: seconds in every
+  // field name, and null — not zero — wherever a step went unmeasured or the
+  // app never configured a takt for it.
   const stepBreakdown = appSteps.map((step, idx) => {
-    const timeSeconds = stepTimes[idx] !== undefined ? stepTimes[idx] : null;
-    const taktSeconds = step.takt_time || null;
+    const raw = stepTimes[idx] ?? stepTimes[String(idx)];
+    const durationSeconds = roundSeconds(Number.isFinite(Number(raw)) ? Number(raw) : null);
+    const taktSeconds = stepTaktSeconds(step);
+    const variancePct = (taktSeconds && durationSeconds != null)
+      ? Math.round(((durationSeconds - taktSeconds) / taktSeconds) * 100)
+      : null;
     return {
-      step_index:    idx,
-      step_name:     step.name,
-      takt_time:     taktSeconds,
-      actual_time:   timeSeconds,
-      takt_exceeded: taktExceeded.includes(idx) || taktExceeded.includes(String(idx)),
-      pct_of_takt:   (taktSeconds && timeSeconds) ? Math.round((timeSeconds / taktSeconds) * 100) : null,
+      step_id:          step.id ?? String(idx),
+      step_index:       idx,
+      step_order:       idx + 1,
+      step_name:        step.name,
+      /** Seconds, or null when this step was never timed. */
+      duration_seconds: durationSeconds,
+      /** Seconds, or null when no takt was ever configured for this step. */
+      takt_seconds:     taktSeconds,
+      variance_pct:     variancePct,
+      // No takt ⇒ no verdict. Painting an untargeted step green or red states a
+      // judgement nobody ever set a target for.
+      status:           variancePct === null ? 'unknown'
+                        : variancePct <= 0 ? 'under'
+                        : variancePct <= 10 ? 'on_target' : 'over',
+      takt_exceeded:    taktExceeded.includes(idx) || taktExceeded.includes(String(idx)),
+      pct_of_takt:      (taktSeconds && durationSeconds != null)
+                          ? Math.round((durationSeconds / taktSeconds) * 100) : null,
+      // Legacy field names, kept for anything already reading them.
+      takt_time:        taktSeconds,
+      actual_time:      durationSeconds,
     };
   });
 
-  // Work order info if linked
+  // Work order info if linked. Tenant-scoped: a completion's work_order_id is
+  // written company-checked, but the read must not rely on that.
   let workOrder = null;
   if (completion.work_order_id) {
     workOrder = db.prepare(`
       SELECT wo.*, d.name AS department_name, d.color AS department_color
       FROM work_orders wo
       LEFT JOIN departments d ON d.id = wo.department_id
-      WHERE wo.id = ?
-    `).get(completion.work_order_id);
+      WHERE wo.id = ? AND wo.company_id = ?
+    `).get(completion.work_order_id, req.companyId);
   }
 
-  // Cycle time in minutes
-  let cycleTimeMinutes = null;
-  if (completion.started_at && completion.completed_at) {
-    cycleTimeMinutes = Math.round(
-      (new Date(completion.completed_at) - new Date(completion.started_at)) / 60000
-    );
-  }
+  // The page had a station UUID where the station's name belongs — the id is
+  // the join key, not something to show a person.
+  const station = completion.station_id
+    ? db.prepare('SELECT id, name, location FROM stations WHERE id = ? AND company_id = ?')
+        .get(completion.station_id, req.companyId)
+    : null;
+
+  // Other runs of the same app, so the page can put this one in context. Same
+  // canonical duration as every other screen, so a run cannot read one way here
+  // and another way in App History.
+  const relatedCompletions = db.prepare(`
+    SELECT c.id, c.operator_name, c.started_at, c.completed_at, c.status,
+           ${runSecondsSQL('c')} AS total_duration_seconds,
+           ${runBasisSQL('c')}   AS duration_basis
+    FROM completions c
+    WHERE c.app_id = ? AND c.company_id = ?
+    ORDER BY datetime(COALESCE(c.completed_at, c.started_at)) DESC
+    LIMIT 6
+  `).all(completion.app_id, req.companyId).map(r => ({
+    ...r,
+    total_duration_seconds: roundSeconds(r.total_duration_seconds),
+    duration_basis: r.duration_basis ?? null,
+  }));
 
   res.json({
     ...completion,
     data,
+    /** What the operator actually entered — the page's "Captured Data" grid. */
+    captured_data:    data,
     step_times:       stepTimes,
     takt_exceeded_steps: taktExceeded,
     step_breakdown:   stepBreakdown,
-    cycle_time_minutes: cycleTimeMinutes,
+    /** The canonical run duration. See backend/src/cycleTime.js for the model. */
+    total_duration_seconds: durations.duration_seconds,
+    /** 'hands_on' | 'elapsed' | null — which measurement the total above is. */
+    duration_basis:   durations.duration_basis,
+    hands_on_seconds: durations.hands_on_seconds,
+    elapsed_seconds:  durations.elapsed_seconds,
+    elapsed_so_far_seconds: durations.elapsed_so_far_seconds,
+    /** Whole minutes, kept for anything already reading it. Do not render it. */
+    cycle_time_minutes: durations.elapsed_seconds == null
+      ? null : Math.round(durations.elapsed_seconds / 60),
     app_name:         app?.name || completion.app_name,
+    station_id:       completion.station_id,
+    station_name:     station?.name ?? null,
+    station_location: station?.location ?? null,
     work_order:       workOrder,
+    work_order_number: workOrder?.work_order_number ?? null,
+    related_completions: relatedCompletions,
   });
 });
 
@@ -1369,12 +1482,12 @@ router.get('/department/:id', (req, res) => {
   const activeNow      = db.prepare(`SELECT COUNT(*) as c ${DEPT_COMPLETION_JOIN} AND c.status='in_progress'`).get(cid, dept.id).c;
 
   const ctRow = db.prepare(`
-    SELECT AVG((julianday(c.completed_at) - julianday(c.started_at)) * 24 * 60) as avg_minutes
+    SELECT ${avgRunSecondsSQL('c')} as avg_seconds, ${avgRunBasisSQL('c')} as basis
     ${DEPT_COMPLETION_JOIN} AND c.status='completed' AND c.completed_at IS NOT NULL
   `).get(cid, dept.id);
   // Seconds, for the same reason as /overview — see the note there.
-  const avgCycleSeconds = ctRow?.avg_minutes != null ? Math.round(ctRow.avg_minutes * 60) : null;
-  const avgCycleTime = avgCycleSeconds === null ? null : Math.round(ctRow.avg_minutes);
+  const avgCycleSeconds = roundSeconds(ctRow?.avg_seconds);
+  const avgCycleTime = avgCycleSeconds === null ? null : Math.round(ctRow.avg_seconds / 60);
 
   const pfRows = db.prepare(`SELECT c.data ${DEPT_COMPLETION_JOIN} AND c.status='completed' AND c.completed_at >= datetime('now', '-7 days')`).all(cid, dept.id);
   let pass = 0, fail = 0;

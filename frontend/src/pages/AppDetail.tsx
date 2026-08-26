@@ -22,6 +22,7 @@ import { useToast } from '../context/ToastContext';
 import {
   appShape, orderedSteps, widgetsOf, widgetTypeLabel, isCaptureWidget,
   fmtDateTime, fmtDuration, fmtRelative, pluralize,
+  durationBasisLabel, durationBasisNote,
 } from '../components/apps/appModel';
 
 export default function AppDetail() {
@@ -133,6 +134,7 @@ export default function AppDetail() {
   }
 
   const { app, bindings, stats, operators, recent_runs: recentRuns } = data;
+  const avgBasisLabel = durationBasisLabel(stats.avg_duration_basis);
   const shape = appShape(app);
   const published = app.status === 'published';
   const steps = orderedSteps(app);
@@ -205,7 +207,17 @@ export default function AppDetail() {
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Stat icon={Activity} label="Runs, all time" value={String(stats.runs_total)} />
         <Stat icon={Clock} label="Runs last 7 days" value={String(stats.runs_7d)} />
-        <Stat icon={Loader2} label="Avg run time" value={fmtDuration(stats.avg_duration_s)} />
+        {/* Named, not just numbered: this run time and the Command Center's are
+            two different measurements of the same runs, and a customer can only
+            tell them apart if each one says what it is. */}
+        <Stat
+          icon={Loader2}
+          label={`Avg run time${avgBasisLabel ? ` · ${avgBasisLabel}` : ''}`}
+          value={stats.avg_duration_s === null ? '—' : fmtDuration(stats.avg_duration_s)}
+          hint={stats.avg_duration_s === null
+            ? 'No run of this app has been timed yet'
+            : durationBasisNote(stats.avg_duration_basis)}
+        />
         <Stat
           icon={CheckCircle2}
           label="First-pass yield"
@@ -364,7 +376,9 @@ export default function AppDetail() {
                       <th className="font-semibold px-1 pb-2">Started</th>
                       <th className="font-semibold px-1 pb-2">Operator</th>
                       <th className="font-semibold px-1 pb-2">Context</th>
-                      <th className="font-semibold px-1 pb-2 text-right">Duration</th>
+                      <th className="font-semibold px-1 pb-2 text-right" title="Hands-on step time where a run recorded step timers, wall clock otherwise. The same number App History and Completion Detail show.">
+                        Duration
+                      </th>
                       <th className="font-semibold px-1 pb-2">Status</th>
                       <th className="px-1 pb-2" />
                     </tr>
@@ -384,8 +398,13 @@ export default function AppDetail() {
                         >
                           {[run.work_order_number, run.product_type_name, run.station_name].filter(Boolean).join(' · ') || '—'}
                         </td>
-                        <td className="px-1 py-2 text-[13px] text-gray-700 text-right tabular-nums whitespace-nowrap">
-                          {fmtDuration(run.duration_s)}
+                        <td
+                          className={`px-1 py-2 text-[13px] text-right tabular-nums whitespace-nowrap ${run.duration_s === null ? 'text-gray-400' : 'text-gray-700'}`}
+                          title={run.duration_s === null
+                            ? (run.status === 'in_progress' ? 'this run has not finished' : 'this run was never timed')
+                            : durationBasisNote(run.duration_basis)}
+                        >
+                          {run.duration_s === null ? '—' : fmtDuration(run.duration_s)}
                         </td>
                         <td className="px-1 py-2"><RunStatus status={run.status} /></td>
                         <td className="px-1 py-2 text-right">
@@ -514,8 +533,11 @@ export default function AppDetail() {
                         {' · last '}{fmtRelative(op.last_run_at)}
                       </span>
                     </span>
-                    <span className="text-[12px] text-gray-500 tabular-nums flex-shrink-0">
-                      {fmtDuration(op.avg_duration_s)}
+                    <span
+                      className={`text-[12px] tabular-nums flex-shrink-0 ${op.avg_duration_s === null ? 'text-gray-400' : 'text-gray-500'}`}
+                      title={op.avg_duration_s === null ? 'none of their runs has been timed' : undefined}
+                    >
+                      {op.avg_duration_s === null ? '—' : fmtDuration(op.avg_duration_s)}
                     </span>
                   </li>
                 ))}
@@ -533,7 +555,10 @@ export default function AppDetail() {
             <dl className="grid grid-cols-2 gap-3">
               <MiniStat label="Runs started" value={String(stats.runs_30d)} />
               <MiniStat label="Completed" value={String(stats.completed_30d)} />
-              <MiniStat label="Avg run time" value={fmtDuration(stats.avg_duration_30d_s)} />
+              <MiniStat
+                label={`Avg run time${avgBasisLabel ? ` · ${avgBasisLabel}` : ''}`}
+                value={stats.avg_duration_30d_s === null ? '—' : fmtDuration(stats.avg_duration_30d_s)}
+              />
               <MiniStat label="Abandoned, all time" value={String(stats.abandoned)} />
             </dl>
             <p className="text-[11px] text-gray-400 mt-3">
@@ -558,7 +583,7 @@ function Stat({ icon: Icon, label, value, hint, tone }: {
       <div className="flex items-center gap-2 text-[11px] text-gray-400">
         <Icon size={12} /> {label}
       </div>
-      <div className={`text-xl font-bold mt-1 tabular-nums ${tone === 'good' ? 'text-green-600' : 'text-gray-900'}`}>
+      <div className={`text-xl font-bold mt-1 tabular-nums ${value === '—' ? 'text-gray-400' : tone === 'good' ? 'text-green-600' : 'text-gray-900'}`}>
         {value}
       </div>
     </div>
@@ -569,7 +594,7 @@ function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg bg-gray-50 px-3 py-2">
       <dt className="text-[11px] text-gray-400">{label}</dt>
-      <dd className="text-[15px] font-semibold text-gray-900 tabular-nums mt-0.5">{value}</dd>
+      <dd className={`text-[15px] font-semibold tabular-nums mt-0.5 ${value === '—' ? 'text-gray-400' : 'text-gray-900'}`}>{value}</dd>
     </div>
   );
 }

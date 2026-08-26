@@ -74,7 +74,7 @@ const STATS = {
 function analytics(over: Partial<AppAnalyticsResponse> & { app_id: string }): AppAnalyticsResponse {
   return {
     app_name: 'App', days: 30,
-    totals: { runs: 0, completed: 0, abandoned: 0, avg_duration_s: null, first_pass_yield: null },
+    totals: { runs: 0, completed: 0, abandoned: 0, avg_duration_s: null, avg_duration_basis: null, first_pass_yield: null },
     series: [], by_operator: [], fields: [],
     filter_options: { operators: [], work_orders: [], product_types: [] },
     recent_runs: [],
@@ -85,7 +85,7 @@ function analytics(over: Partial<AppAnalyticsResponse> & { app_id: string }): Ap
 const WELD_DATA = analytics({
   app_id: 'a-weld',
   app_name: 'Weld Inspection',
-  totals: { runs: 10, completed: 8, abandoned: 2, avg_duration_s: 125, first_pass_yield: 87.5 },
+  totals: { runs: 10, completed: 8, abandoned: 2, avg_duration_s: 125, avg_duration_basis: 'hands_on', first_pass_yield: 87.5 },
   by_operator: [{ operator_name: 'Sam', runs: 6, avg_duration_s: 120 }],
   fields: [{
     widget_id: 'w-torque', label: 'Torque reading', type: 'number-input', step_name: 'Fasten',
@@ -98,7 +98,7 @@ const WELD_DATA = analytics({
   },
   recent_runs: [{
     id: 'c-1', started_at: '2026-08-20 16:00:00', completed_at: '2026-08-20 16:02:05',
-    status: 'completed', operator_name: 'Sam', duration_s: 125,
+    status: 'completed', operator_name: 'Sam', duration_s: 125, duration_basis: 'hands_on',
     work_order_number: 'WO-1', product_type_name: 'Bracket',
   }],
 });
@@ -224,7 +224,7 @@ describe('AppsDashboard honesty', () => {
   it('reads an unmeasured yield as a dash, not a zero', async () => {
     getAppAnalytics.mockResolvedValue(analytics({
       ...WELD_DATA,
-      totals: { runs: 10, completed: 8, abandoned: 2, avg_duration_s: 125, first_pass_yield: null },
+      totals: { runs: 10, completed: 8, abandoned: 2, avg_duration_s: 125, avg_duration_basis: 'hands_on', first_pass_yield: null },
     }));
     renderPage();
 
@@ -240,7 +240,8 @@ describe('AppsDashboard honesty', () => {
       ...WELD_DATA,
       recent_runs: [{
         id: 'c-2', started_at: '2026-08-20 16:00:00', completed_at: null, status: 'in_progress',
-        operator_name: 'Sam', duration_s: null, work_order_number: null, product_type_name: null,
+        operator_name: 'Sam', duration_s: null, duration_basis: null,
+        work_order_number: null, product_type_name: null,
       }],
     }));
     renderPage();

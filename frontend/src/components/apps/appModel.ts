@@ -141,18 +141,64 @@ export function fmtDateTime(iso: string | null | undefined): string {
   return d.toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-/** 45s / 3m 20s / 1h 5m — null-safe. */
+/**
+ * 0.4s / 45s / 3m 20s / 1h 5m — null-safe, and the ONLY duration formatter in
+ * this frontend.
+ *
+ * It takes SECONDS. A second formatter taking minutes once shadowed this one
+ * and rendered 451 seconds as "7.5h" on the most-viewed screen in the product,
+ * so `duration-formatter.test.tsx` fails the build if another one appears.
+ *
+ * A value under ten seconds keeps a decimal when it has one, because a real
+ * operation is routinely sub-second — a press, a scan, a go/no-go gauge — and
+ * whole-second rounding turns a measured 0.4 s into "0s", which reads as a run
+ * that took no time at all. Unknown is "—" and never 0: see
+ * backend/src/cycleTime.js for why the two must never be confused.
+ */
 export function fmtDuration(seconds: number | null | undefined): string {
-  if (seconds === null || seconds === undefined || seconds < 0) return '—';
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  if (seconds < 3600) {
-    const m = Math.floor(seconds / 60);
-    const s = Math.round(seconds % 60);
+  if (seconds === null || seconds === undefined || !Number.isFinite(Number(seconds))) return '—';
+  const value = Number(seconds);
+  if (value < 0) return '—';
+  if (value < 10) {
+    // Below the resolution we can honestly print, say so rather than round a
+    // real measurement down to nothing.
+    if (value > 0 && value < 0.05) return '<0.1s';
+    // A whole number stays whole; a fraction keeps its tenth.
+    return `${Math.round(value * 10) / 10}s`;
+  }
+  if (value < 60) return `${Math.round(value)}s`;
+  if (value < 3600) {
+    const m = Math.floor(value / 60);
+    const s = Math.round(value % 60);
     return s > 0 ? `${m}m ${s}s` : `${m}m`;
   }
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
+  const h = Math.floor(value / 3600);
+  const m = Math.floor((value % 3600) / 60);
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+/**
+ * Which measurement a duration is, as the server labels it. Two genuinely
+ * different numbers exist for one run and both are legitimate; a screen showing
+ * one of them has to say which, or a customer reads the gap as the system
+ * contradicting itself. See backend/src/cycleTime.js for the model.
+ */
+export type DurationBasis = 'hands_on' | 'elapsed' | 'mixed' | null | undefined;
+
+/** Short label for a duration column or tile, e.g. "hands-on". */
+export function durationBasisLabel(basis: DurationBasis): string {
+  if (basis === 'hands_on') return 'hands-on';
+  if (basis === 'elapsed') return 'wall clock';
+  if (basis === 'mixed') return 'mixed';
+  return '';
+}
+
+/** The sentence that explains the label, for a title/tooltip. */
+export function durationBasisNote(basis: DurationBasis): string {
+  if (basis === 'hands_on') return 'Per-step timers added up — the time an operator was actually working the steps, excluding pauses and handoffs.';
+  if (basis === 'elapsed') return 'Wall clock from start to finish, including any time the job sat waiting.';
+  if (basis === 'mixed') return 'Some of these runs recorded step timers (hands-on time) and some did not (wall clock from start to finish).';
+  return 'No run behind this number was ever timed.';
 }
 
 export function pluralize(n: number, one: string, many = `${one}s`): string {
