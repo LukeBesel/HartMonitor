@@ -564,13 +564,19 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   // enough that its analytics tiles, operators and captured values are populated.
   const qcAppId = uuidv4();
   const qcTorqueW = uuidv4(), qcResultW = uuidv4();
+  // Same key vocabulary as sampleAppSteps above: instruction copy under
+  // `content`, the label on the WIDGET, a placeholder in every input. This app
+  // was first authored with `text` and a config-level label — keys the player
+  // does not read — so its first step rendered as two blank rectangles and the
+  // operator had to guess what the empty box wanted.
   const qcSteps = [
     { id: uuidv4(), name: 'Re-torque check', order: 0, layout: 'stacked', takt_time: 5, widgets: [
-      { id: uuidv4(), type: 'instruction', config: { text: 'Confirm the two frame bolts hold 15 Nm before the unit ships.' } },
-      { id: qcTorqueW, type: 'number-input', config: { label: 'Verified torque (Nm)', variableName: 'final_torque', required: true } },
+      { id: uuidv4(), type: 'instruction', order: 0, label: 'What to check', config: { content: 'Confirm the two frame bolts hold 15 Nm before the unit ships. Use the calibrated torque wrench at the bench — set it to 15 and pull until it clicks.', backgroundColor: '#eff6ff' } },
+      { id: qcTorqueW, type: 'number-input', order: 1, label: 'Verified torque (Nm)', config: { variableName: 'final_torque', required: true, placeholder: 'Reading off the wrench, e.g. 15' } },
     ] },
     { id: uuidv4(), name: 'Final visual', order: 1, layout: 'stacked', widgets: [
-      { id: qcResultW, type: 'pass-fail', config: { label: 'Ships as-is?', variableName: 'qc_result', required: true } },
+      { id: uuidv4(), type: 'instruction', order: 0, label: 'Look it over', config: { content: 'Scratches, missing hardware, loose harness. Pass sends it to pack-out; Fail holds it and raises a quality record.' } },
+      { id: qcResultW, type: 'pass-fail', order: 1, label: 'Ships as-is?', config: { variableName: 'qc_result', required: true } },
     ] },
   ];
   db.prepare(`INSERT INTO apps (id, name, description, status, steps, company_id) VALUES (?, ?, ?, 'published', ?, ?)`)

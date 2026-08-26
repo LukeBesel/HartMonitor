@@ -283,9 +283,16 @@ function CounterWidget({ widget, value, onChange }: {
 
 export default function PlayerWidget(props: PlayerWidgetProps) {
   const {
-    widget, value, invalidMessage, variables, appInfo, preview, readOnly = false,
+    value, invalidMessage, variables, appInfo, preview, readOnly = false,
     onChange, onButtonPress, onTimerDone, onTimerTick, onScanCode, onRequestCameraScan, renderKit,
   } = props;
+  // The builder writes `label` on the widget itself, but apps authored by hand
+  // (the seeded QC app was one) put it inside config — and then every input on
+  // the screen rendered as a bare unlabeled box. Accept both spellings here,
+  // once, so no widget can reach the operator nameless.
+  const widget = !props.widget.label && props.widget.config?.label
+    ? { ...props.widget, label: props.widget.config.label as string }
+    : props.widget;
   const { config } = widget;
   const invalid = invalidMessage !== undefined;
 
@@ -322,7 +329,7 @@ export default function PlayerWidget(props: PlayerWidgetProps) {
       return (
         <div className="rounded-xl p-5" style={{ backgroundColor: bg, border: '1px solid var(--p-border)' }}>
           <div style={{ fontSize: 18, lineHeight: 1.55, color: instructionInk(bg), whiteSpace: 'pre-wrap' }}>
-            {interpolate(config.content || '', variables, appInfo)}
+            {interpolate(config.content || config.text || '', variables, appInfo)}
           </div>
         </div>
       );
