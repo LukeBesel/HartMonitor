@@ -709,7 +709,7 @@ function CreateNCRModal({ onClose, onCreated }: { onClose: () => void; onCreated
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="text-xs font-semibold text-gray-600 block mb-1">Severity *</label>
               <select className="input-field" value={form.severity} onChange={e => set('severity', e.target.value)} required>
@@ -741,7 +741,7 @@ function CreateNCRModal({ onClose, onCreated }: { onClose: () => void; onCreated
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="text-xs font-semibold text-gray-600 block mb-1">Assigned To</label>
               <input

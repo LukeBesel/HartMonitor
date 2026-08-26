@@ -284,12 +284,15 @@ export function StageStepHeading({ step, name, canEdit, onRename, onFocus, trail
   const takt = stepTaktSeconds(step);
   return (
     <>
-      <div className="flex items-center justify-between gap-3">
+      {/* The takt chip and the builder's counter drop below the name on a phone,
+          the same way the player's do — abreast they left the step name about a
+          hundred pixels and "Safety Check" rendered as "Safety". */}
+      <div className="flex flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
         {/* Same type ramp, weight and ink as PlayerShell's <h2>, typed in place. */}
         <input
           className="flex-1 min-w-0 bg-transparent border-none outline-none rounded-lg px-1 -mx-1"
           style={{
-            fontSize: 'clamp(28px, 3vw, 34px)',
+            fontSize: 'clamp(26px, 3vw, 34px)',
             fontWeight: 800,
             color: 'var(--p-ink)',
             lineHeight: 1.15,
@@ -301,12 +304,14 @@ export function StageStepHeading({ step, name, canEdit, onRename, onFocus, trail
           onClick={e => e.stopPropagation()}
           aria-label="Step name"
         />
-        {takt > 0 && (
-          <div className="p-chip flex-shrink-0 tnum" style={{ minHeight: 40, fontSize: 14 }}>
-            Takt {formatDur(takt)}
-          </div>
-        )}
-        {trailing}
+        <div className="flex items-center gap-2 sm:gap-3">
+          {takt > 0 && (
+            <div className="p-chip flex-shrink-0 tnum" style={{ minHeight: 40, fontSize: 14 }}>
+              Takt {formatDur(takt)}
+            </div>
+          )}
+          {trailing}
+        </div>
       </div>
       {step.description && (
         <p style={{ fontSize: 16, color: 'var(--p-ink-2)' }}>{step.description}</p>

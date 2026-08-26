@@ -151,8 +151,11 @@ export default function AuditLog() {
       </div>
 
       {/* Filter bar */}
-      <div className="card p-4 flex flex-wrap items-end gap-3">
-        <div className="flex flex-col gap-1">
+      {/* Each filter takes the full row on a phone: at a fixed 12rem they sat
+          two-thirds across the card with "All Production Events" cut off
+          inside the select. */}
+      <div className="card p-4 flex flex-wrap items-end gap-3 [&_.input-field]:w-full xs:[&_.input-field]:w-auto">
+        <div className="flex flex-col gap-1 w-full xs:w-auto">
           <label className="text-xs font-medium text-gray-500">Event type</label>
           <select
             className="input-field w-48"
@@ -166,7 +169,7 @@ export default function AuditLog() {
           </select>
         </div>
 
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 w-full xs:w-auto">
           <label className="text-xs font-medium text-gray-500">Department</label>
           <select
             className="input-field w-48"
@@ -180,7 +183,7 @@ export default function AuditLog() {
           </select>
         </div>
 
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 w-full xs:w-auto">
           <label className="text-xs font-medium text-gray-500">Workstation</label>
           <select
             className="input-field w-48"
@@ -194,7 +197,7 @@ export default function AuditLog() {
           </select>
         </div>
 
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 w-full xs:w-auto">
           <label className="text-xs font-medium text-gray-500">Operator</label>
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -208,7 +211,7 @@ export default function AuditLog() {
           </div>
         </div>
 
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 w-full xs:w-auto">
           <label className="text-xs font-medium text-gray-500">From</label>
           <input
             type="date"
@@ -218,7 +221,7 @@ export default function AuditLog() {
           />
         </div>
 
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-1 w-full xs:w-auto">
           <label className="text-xs font-medium text-gray-500">To</label>
           <input
             type="date"

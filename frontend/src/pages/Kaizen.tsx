@@ -238,7 +238,7 @@ function SubmitIdeaModal({ departments, onClose, onSubmitted }: SubmitIdeaModalP
           </div>
 
           {/* Type & Department row */}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="text-xs font-medium text-gray-500 block mb-1">Type</label>
               <select

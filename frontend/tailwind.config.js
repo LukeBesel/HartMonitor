@@ -3,6 +3,19 @@ export default {
   darkMode: 'class',
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
+    // Tailwind's defaults start at 640px, which leaves every phone in the same
+    // bucket — a 390px iPhone and a 430px Pro Max get the identical two-up
+    // layout even though only one of them has room for it. `xs` is declared
+    // ahead of `sm` so its media query is emitted first and the larger
+    // breakpoints still win where they overlap.
+    screens: {
+      xs: '420px',
+      sm: '640px',
+      md: '768px',
+      lg: '1024px',
+      xl: '1280px',
+      '2xl': '1536px',
+    },
     extend: {
       colors: {
         mes: {

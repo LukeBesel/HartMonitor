@@ -447,7 +447,7 @@ function WOModal({
         )}
 
         <div className="p-5 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="field-row gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">WO Number</label>
               <input
@@ -477,7 +477,7 @@ function WOModal({
             />
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="field-row gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">App</label>
               <div className="relative">
@@ -539,7 +539,7 @@ function WOModal({
             </p>
           </div>
 
-          <div className="grid grid-cols-3 gap-4">
+          <div className="field-row-3 gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Quantity</label>
               <input
@@ -582,7 +582,7 @@ function WOModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="field-row gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Scheduled Start</label>
               <input

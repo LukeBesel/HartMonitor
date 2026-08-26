@@ -339,7 +339,10 @@ export default function Landing() {
             </div>
           </Reveal>
           <Reveal delay={80}>
-            <h1 className="text-5xl md:text-7xl font-semibold tracking-tight leading-[1.05]">
+            {/* 48px is wider than a 390px phone can hold "manufacturers" on one
+                line, and the hero clips rather than scrolls, so the last word of
+                the headline was simply cut off. */}
+            <h1 className="text-[2rem] xs:text-5xl md:text-7xl font-semibold tracking-tight leading-[1.05]">
               Production-grade MES
               <br />
               for <span className="bg-gradient-to-r from-indigo-400 to-pink-400 bg-clip-text text-transparent">growing manufacturers</span>.

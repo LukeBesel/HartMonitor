@@ -255,7 +255,7 @@ function ProjectModal({ project, departments, onClose, onSaved }: ProjectModalPr
                 onChange={e => set('owner_name', e.target.value)}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="field-row gap-3">
               <div>
                 <label className="text-xs font-medium text-gray-500 block mb-1" htmlFor="ci-start">Start</label>
                 <input id="ci-start" type="date" className="input-field text-sm" value={v.start_date} onChange={e => set('start_date', e.target.value)} />
@@ -373,7 +373,7 @@ function TaskModal({ projectId, task, siblings, defaultStart, onClose, onSaved }
             <input id="ci-task-name" className="input-field text-sm" placeholder="e.g. Run the time study" value={name} onChange={e => setName(e.target.value)} />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="text-xs font-medium text-gray-500 block mb-1" htmlFor="ci-task-status">Status</label>
               <select id="ci-task-status" className="input-field text-sm" value={status} onChange={e => setStatus(e.target.value as CITaskStatus)}>

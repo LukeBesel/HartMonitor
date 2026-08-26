@@ -9,6 +9,7 @@ import { api } from '../api/client';
 import { useAuth } from '../context/AuthContext';
 import NotFound from './NotFound';
 import { SkeletonTable, SkeletonStats } from '../components/shared/Skeleton';
+import TabBar from '../components/shared/TabBar';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -280,50 +281,54 @@ function CompanyTable({
         <ErrorState message={error} onRetry={onRetry} />
       ) : (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 text-gray-500">
-                <th className="text-left px-4 py-3 font-medium">Company</th>
-                <th className="text-left px-4 py-3 font-medium">Plan</th>
-                <th className="text-center px-4 py-3 font-medium">Users</th>
-                <th className="text-center px-4 py-3 font-medium">Completions (30d)</th>
-                <th className="text-left px-4 py-3 font-medium">Joined</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {companies.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="text-center py-10 text-gray-500">No companies found</td>
+          {/* The table scrolls inside itself: several of these columns do not fit
+              a phone, and the rounded card around it clipped them off entirely. */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-gray-500">
+                  <th className="text-left px-4 py-3 font-medium">Company</th>
+                  <th className="text-left px-4 py-3 font-medium">Plan</th>
+                  <th className="text-center px-4 py-3 font-medium">Users</th>
+                  <th className="text-center px-4 py-3 font-medium">Completions (30d)</th>
+                  <th className="text-left px-4 py-3 font-medium">Joined</th>
+                  <th className="px-4 py-3" />
                 </tr>
-              ) : (
-                companies.map(c => (
-                  <tr key={c.id} className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-gray-900">{c.name}</div>
-                      {c.owner_email && (
-                        <div className="text-xs text-gray-500 mt-0.5">{c.owner_email}</div>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <PlanBadge plan={c.plan} status={c.subscription_status} />
-                    </td>
-                    <td className="px-4 py-3 text-center text-gray-700">{c.user_count}</td>
-                    <td className="px-4 py-3 text-center text-gray-700">{c.monthly_completions}</td>
-                    <td className="px-4 py-3 text-gray-500">{formatDate(c.created_at)}</td>
-                    <td className="px-4 py-3 text-right">
-                      <button
-                        onClick={() => onChangePlan(c)}
-                        className="text-xs text-blue-700 hover:text-blue-800 flex items-center gap-1 ml-auto"
-                      >
-                        Change plan <ChevronRight size={12} />
-                      </button>
-                    </td>
+              </thead>
+              <tbody>
+                {companies.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="text-center py-10 text-gray-500">No companies found</td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  companies.map(c => (
+                    <tr key={c.id} className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-gray-900">{c.name}</div>
+                        {c.owner_email && (
+                          <div className="text-xs text-gray-500 mt-0.5">{c.owner_email}</div>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <PlanBadge plan={c.plan} status={c.subscription_status} />
+                      </td>
+                      <td className="px-4 py-3 text-center text-gray-700">{c.user_count}</td>
+                      <td className="px-4 py-3 text-center text-gray-700">{c.monthly_completions}</td>
+                      <td className="px-4 py-3 text-gray-500">{formatDate(c.created_at)}</td>
+                      <td className="px-4 py-3 text-right">
+                        <button
+                          onClick={() => onChangePlan(c)}
+                          className="text-xs text-blue-700 hover:text-blue-800 flex items-center gap-1 ml-auto"
+                        >
+                          Change plan <ChevronRight size={12} />
+                        </button>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
@@ -379,43 +384,47 @@ function UserTable({
         <ErrorState message={error} onRetry={onRetry} />
       ) : (
         <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-200 text-gray-500">
-                <th className="text-left px-4 py-3 font-medium">Name</th>
-                <th className="text-left px-4 py-3 font-medium">Email</th>
-                <th className="text-left px-4 py-3 font-medium">Role</th>
-                <th className="text-left px-4 py-3 font-medium">Company</th>
-                <th className="text-left px-4 py-3 font-medium">Joined</th>
-                <th className="text-left px-4 py-3 font-medium">Last Login</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="text-center py-10 text-gray-500">No users found</td>
+          {/* The table scrolls inside itself: several of these columns do not fit
+              a phone, and the rounded card around it clipped them off entirely. */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-200 text-gray-500">
+                  <th className="text-left px-4 py-3 font-medium">Name</th>
+                  <th className="text-left px-4 py-3 font-medium">Email</th>
+                  <th className="text-left px-4 py-3 font-medium">Role</th>
+                  <th className="text-left px-4 py-3 font-medium">Company</th>
+                  <th className="text-left px-4 py-3 font-medium">Joined</th>
+                  <th className="text-left px-4 py-3 font-medium">Last Login</th>
                 </tr>
-              ) : (
-                users.map(u => (
-                  <tr key={u.id} className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-gray-900">{u.display_name}</div>
-                      {!u.is_active && (
-                        <span className="text-xs text-red-700">Inactive</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3 text-gray-500">{u.email}</td>
-                    <td className="px-4 py-3"><RoleBadge role={u.role} /></td>
-                    <td className="px-4 py-3 text-gray-500">{u.company_name ?? '—'}</td>
-                    <td className="px-4 py-3 text-gray-500">{formatDate(u.created_at)}</td>
-                    <td className="px-4 py-3 text-gray-500">
-                      {u.last_login ? formatRelative(u.last_login) : '—'}
-                    </td>
+              </thead>
+              <tbody>
+                {users.length === 0 ? (
+                  <tr>
+                    <td colSpan={6} className="text-center py-10 text-gray-500">No users found</td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  users.map(u => (
+                    <tr key={u.id} className="border-b border-gray-200 hover:bg-gray-50 transition-colors">
+                      <td className="px-4 py-3">
+                        <div className="font-medium text-gray-900">{u.display_name}</div>
+                        {!u.is_active && (
+                          <span className="text-xs text-red-700">Inactive</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-gray-500">{u.email}</td>
+                      <td className="px-4 py-3"><RoleBadge role={u.role} /></td>
+                      <td className="px-4 py-3 text-gray-500">{u.company_name ?? '—'}</td>
+                      <td className="px-4 py-3 text-gray-500">{formatDate(u.created_at)}</td>
+                      <td className="px-4 py-3 text-gray-500">
+                        {u.last_login ? formatRelative(u.last_login) : '—'}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
@@ -772,27 +781,14 @@ export default function Admin() {
         </div>
       </div>
 
-      {/* Tabs */}
-      <div className="flex gap-1 mb-6 bg-white border border-gray-200 rounded-xl p-1 w-fit">
-        {TABS.map(t => {
-          const Icon = t.icon;
-          const active = tab === t.id;
-          return (
-            <button
-              key={t.id}
-              onClick={() => setTab(t.id)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-                active
-                  ? 'bg-gray-100 text-gray-900'
-                  : 'text-gray-500 hover:text-gray-900 hover:bg-gray-50'
-              }`}
-            >
-              <Icon size={14} />
-              {t.label}
-            </button>
-          );
-        })}
-      </div>
+      <TabBar
+        items={TABS.map(t => ({ key: t.id, label: t.label, icon: <t.icon size={14} /> }))}
+        active={tab}
+        onSelect={setTab}
+        variant="pill"
+        ariaLabel="Admin screens"
+        className="mb-6"
+      />
 
       {/* Tab content */}
       {tab === 'overview' && (

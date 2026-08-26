@@ -324,9 +324,14 @@ export default function AppBuilder() {
 
   const variableCount = (app.variables ?? []).length;
 
+  // `h-screen` measured the whole viewport, but the builder renders inside the
+  // app shell's <main>, under the mobile header, the billing banner and the
+  // workspace tabs. On a tablet that made the builder taller than the room it
+  // had, so its bottom region hung below the fold and the page scrolled as a
+  // whole. `h-full` measures the room it was actually given.
   return (
     <>
-    <div className="flex flex-col h-screen bg-page text-ink" style={{ fontSize: 15 }}>
+    <div className="flex flex-col h-full min-h-0 bg-page text-ink" style={{ fontSize: 15 }}>
       {!canEdit && (
         <div className="border-b text-center px-4 py-1.5 flex-shrink-0" style={{ background: 'var(--gold-wash)', borderColor: 'rgba(240,180,41,0.35)', color: 'var(--warn-ink)', fontSize: 12 }}>
           You have view-only access — changes can&rsquo;t be saved.
@@ -341,9 +346,13 @@ export default function AppBuilder() {
           <ChevronLeft size={18} />
         </Link>
         <div className="flex-1 flex items-center gap-2.5 min-w-[180px]">
+          {/* The name field used to be pinned to 40vw, which on a phone is 156px
+              — "Final QC Inspection" showed as "Final QC Ins" with no way to see
+              the rest. It now takes the width its row has, up to the same 340px
+              cap it had on a desktop. */}
           <input
-            className="bg-transparent border-none outline-none hover:bg-surface-2 focus:bg-surface-2 px-2 py-0.5 rounded-ctrl min-w-0 flex-shrink"
-            style={{ fontSize: 22, fontWeight: 800, letterSpacing: '-0.01em', width: 'min(340px, 40vw)', minWidth: 110 }}
+            className="bg-transparent border-none outline-none hover:bg-surface-2 focus:bg-surface-2 px-2 py-0.5 rounded-ctrl min-w-0 flex-1"
+            style={{ fontSize: 'clamp(17px, 5vw, 22px)', fontWeight: 800, letterSpacing: '-0.01em', maxWidth: 340 }}
             value={app.name}
             readOnly={!canEdit}
             onChange={e => updateApp(prev => ({ ...prev, name: e.target.value }))}
@@ -401,8 +410,13 @@ export default function AppBuilder() {
 
       {/* ── Four-region body ── */}
       {/* Stacks vertically below lg: step strip on top, canvas in the middle,
-          inspector at the bottom — three fixed columns cannot fit a phone. */}
-      <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
+          inspector at the bottom — three fixed columns cannot fit a phone.
+          Stacked, the three regions want more height than a phone has, and
+          sharing it left the canvas about thirty pixels tall — the palette and
+          the step itself were squeezed out of existence between the step strip
+          and the inspector. Below lg the column scrolls instead, so each region
+          keeps a workable height and the operator scrolls between them. */}
+      <div className="flex flex-col lg:flex-row flex-1 min-h-0 overflow-y-auto lg:overflow-hidden">
         {/* Left — step list */}
         <StepList
           app={app}
@@ -413,7 +427,7 @@ export default function AppBuilder() {
         />
 
         {/* Center — widget toolbar + canvas */}
-        <div className="flex flex-col flex-1 overflow-hidden min-w-0 min-h-0">
+        <div className="flex flex-col flex-1 overflow-hidden min-w-0 min-h-[26rem] lg:min-h-0">
           <WidgetPalette onAdd={addWidget} disabled={!canEdit} />
 
           {/* ── Stage ──

@@ -256,7 +256,9 @@ export default function Departments() {
             <h2 className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-2">
               Work orders in {selectedDept?.name ?? 'this department'}
             </h2>
-            <div className="grid grid-cols-3 gap-3 sm:gap-4">
+            {/* One column on the narrowest phones: three cards abreast at
+                390px are ~100px each, which broke every label under its number. */}
+            <div className="grid grid-cols-1 xs:grid-cols-3 gap-3 sm:gap-4">
               <div className="card p-4 sm:p-5">
                 <div className="w-9 h-9 bg-blue-50 rounded-lg flex items-center justify-center mb-3">
                   <Activity size={18} className="text-blue-600" />

@@ -265,7 +265,7 @@ function NewCAPAModal({ departments, onClose, onCreated }: NewCAPAModalProps) {
               value={form.description} onChange={e => set('description', e.target.value)} />
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="text-xs font-semibold text-gray-500 block mb-1">Source *</label>
               <select className={darkSelect} value={form.source} onChange={e => set('source', e.target.value as CAPA['source'])}>
@@ -287,7 +287,7 @@ function NewCAPAModal({ departments, onClose, onCreated }: NewCAPAModalProps) {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="text-xs font-semibold text-gray-500 block mb-1">Priority *</label>
               <select className={darkSelect} value={form.priority} onChange={e => set('priority', e.target.value as CAPA['priority'])}>
@@ -306,7 +306,7 @@ function NewCAPAModal({ departments, onClose, onCreated }: NewCAPAModalProps) {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="text-xs font-semibold text-gray-500 block mb-1">Owner Name</label>
               <input className={darkInput} placeholder="Person responsible" value={form.owner_name}
@@ -656,7 +656,7 @@ function CAPADetailPanel({ capaId, onClose, onUpdated }: CAPADetailPanelProps) {
                   <input className={darkInput} placeholder="What needs to be done?" value={newAction.description}
                     onChange={e => setNewAction(a => ({ ...a, description: e.target.value }))} required />
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="field-row gap-2">
                   <div>
                     <label className="text-xs text-gray-500 mb-1 block">Owner</label>
                     <input className={darkInput} placeholder="Person's name" value={newAction.owner_name}

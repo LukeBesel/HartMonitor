@@ -248,7 +248,7 @@ export default function ContextPanel(props: {
   // ── Collapsed: slim icon rail — the canvas reclaims the width ──
   if (collapsed) {
     return (
-      <div className="flex flex-col items-center h-full w-11 flex-shrink-0 bg-surface-1 border-l border-border-subtle py-2 gap-1">
+      <div className="flex flex-row lg:flex-col items-center w-full lg:w-11 lg:h-full flex-shrink-0 bg-surface-1 border-t lg:border-t-0 lg:border-l border-border-subtle px-2 lg:px-0 py-2 gap-1 overflow-x-auto">
         <button
           onClick={() => setCollapsedPersist(false)}
           aria-label="Expand panel"
@@ -257,7 +257,7 @@ export default function ContextPanel(props: {
         >
           <ChevronsLeft size={15} />
         </button>
-        <div className="w-5 border-t border-grid my-1" />
+        <div className="h-5 border-l lg:h-auto lg:w-5 lg:border-l-0 lg:border-t border-grid mx-1 lg:mx-0 lg:my-1" />
         {TABS.map(t => {
           const Icon = t.icon;
           return (
@@ -266,7 +266,7 @@ export default function ContextPanel(props: {
               aria-label={t.label}
               title={t.label}
               onClick={() => { setCollapsedPersist(false); onTab(t.id); }}
-              className={`p-2 rounded-ctrl transition-colors ${tab === t.id ? 'bg-gold-wash text-ink' : 'text-muted hover:text-ink hover:bg-surface-2'}`}
+              className={`shrink-0 p-2 rounded-ctrl transition-colors ${tab === t.id ? 'bg-gold-wash text-ink' : 'text-muted hover:text-ink hover:bg-surface-2'}`}
             >
               <Icon size={15} />
             </button>
@@ -276,14 +276,17 @@ export default function ContextPanel(props: {
     );
   }
 
+  // Below lg the four builder regions are stacked in one column, so a fixed
+  // 320px inspector left seventy dead pixels beside it on a 390px phone. Full
+  // width there, fixed column from lg up.
   return (
-    <div className="flex flex-col h-full w-[320px] flex-shrink-0 bg-surface-1 border-l border-border-subtle">
+    <div className="flex flex-col w-full lg:w-[320px] flex-shrink-0 bg-surface-1 border-t lg:border-t-0 lg:border-l border-border-subtle h-[38vh] max-h-[400px] lg:h-full lg:max-h-none">
       <div className="flex items-stretch border-b border-grid flex-shrink-0">
         {TABS.map(t => (
           <button
             key={t.id}
             onClick={() => onTab(t.id)}
-            className={`gold-tab flex-1 py-2.5 ${tab === t.id ? 'is-active' : ''}`}
+            className={`gold-tab flex-1 whitespace-nowrap py-2.5 ${tab === t.id ? 'is-active' : ''}`}
             style={{ fontSize: 12.5 }}
           >
             {t.label}
@@ -437,6 +440,8 @@ function WidgetTab({ app, widget, activeStepIdx, canEdit, onTab, onUpdateWidget,
           <div className="wb-label flex items-center gap-1" style={{ fontSize: 10.5 }}>
             <LayoutGrid size={11} /> Layout
           </div>
+          {/* Four one-character numeric fields, not a form: two abreast is
+              readable at any width, so this one keeps its fixed pair. */}
           <div className="grid grid-cols-2 gap-2">
             <NumField label="X" value={Math.round(layout.x)} onChange={v => setLayout({ x: v })} />
             <NumField label="Y" value={Math.round(layout.y)} onChange={v => setLayout({ y: v })} />

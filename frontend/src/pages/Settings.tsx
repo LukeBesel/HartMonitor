@@ -58,6 +58,7 @@ import {
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme, THEME_PRESETS, Theme, buildCustomTheme, applySecondary } from '../context/ThemeContext';
+import TabBar from '../components/shared/TabBar';
 import { usePlan } from '../context/PlanContext';
 import { useModules, ModuleKey } from '../context/ModulesContext';
 import { useAuth } from '../context/AuthContext';
@@ -527,7 +528,7 @@ function CompanyTab() {
               onChange={set('address')}
             />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="field-row gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Phone</label>
               <input
@@ -554,7 +555,7 @@ function CompanyTab() {
       {/* Preferences */}
       <div>
         <SectionHeader title="Preferences" subtitle="Localization and formatting" />
-        <div className="grid grid-cols-2 gap-4">
+        <div className="field-row gap-4">
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Timezone</label>
             <select className="input-field w-full" value={form.timezone} onChange={set('timezone')}>
@@ -712,7 +713,7 @@ function CheckoutModal({ item, onClose, onComplete }: {
             <input className="input-field w-full font-mono" value={card.number}
               onChange={e => setCard(c => ({ ...c, number: e.target.value }))} required />
           </div>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="field-row gap-4">
             <div>
               <label className="block text-xs font-medium text-gray-700 mb-1">Expiry</label>
               <input className="input-field w-full font-mono" value={card.expiry}
@@ -1150,28 +1151,32 @@ function PlanTab() {
           </div>
         ) : (
           <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50">
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Date</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Description</th>
-                  <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500">Amount</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {plan.billing_history.map(b => (
-                  <tr key={b.id} className="hover:bg-gray-50/50">
-                    <td className="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap">
-                      {new Date(b.created_at + 'Z').toLocaleDateString()}
-                    </td>
-                    <td className="px-4 py-2.5 text-gray-700">{b.description}</td>
-                    <td className={`px-4 py-2.5 text-right font-medium whitespace-nowrap ${b.amount < 0 ? 'text-emerald-600' : 'text-gray-800'}`}>
-                      {b.amount < 0 ? `−$${Math.abs(b.amount)}` : `$${b.amount}`}{b.recurring ? '/mo' : ''}
-                    </td>
+            {/* The table scrolls inside itself: several of these columns do not fit
+                a phone, and the rounded card around it clipped them off entirely. */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50">
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Date</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Description</th>
+                    <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-500">Amount</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {plan.billing_history.map(b => (
+                    <tr key={b.id} className="hover:bg-gray-50/50">
+                      <td className="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap">
+                        {new Date(b.created_at + 'Z').toLocaleDateString()}
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-700">{b.description}</td>
+                      <td className={`px-4 py-2.5 text-right font-medium whitespace-nowrap ${b.amount < 0 ? 'text-emerald-600' : 'text-gray-800'}`}>
+                        {b.amount < 0 ? `−$${Math.abs(b.amount)}` : `$${b.amount}`}{b.recurring ? '/mo' : ''}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
@@ -1972,77 +1977,81 @@ function UsersTab() {
         <div className="text-center py-12 text-gray-400 text-sm">Loading users…</div>
       ) : (
         <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-gray-100 bg-gray-50">
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Name</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Email</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Role</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Status</th>
-                <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Last Login</th>
-                {showActions && <th className="px-4 py-3" />}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {users.map(u => (
-                <tr key={u.id} className={`${!u.is_active ? 'opacity-50' : ''} hover:bg-gray-50/50`}>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-2.5">
-                      <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
-                        style={{ background: 'linear-gradient(135deg, var(--accent), var(--secondary))' }}>
-                        {u.display_name?.[0]?.toUpperCase()}
-                      </div>
-                      <div>
-                        <div className="font-medium text-gray-800">{u.display_name}</div>
-                        {u.id === currentUser?.id && <div className="text-[10px] text-blue-500">You</div>}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3 text-gray-600">{u.email}</td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${ROLE_COLORS[u.role] ?? 'bg-gray-100 text-gray-600'}`}>
-                      {u.role}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs font-medium ${u.is_active ? 'text-emerald-600' : 'text-gray-400'}`}>
-                      {u.is_active ? 'Active' : 'Inactive'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-gray-500 text-xs">
-                    {u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}
-                  </td>
-                  {showActions && (
+          {/* The table scrolls inside itself: several of these columns do not fit
+              a phone, and the rounded card around it clipped them off entirely. */}
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50">
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Name</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Email</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Role</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Status</th>
+                  <th className="px-4 py-3 text-left text-xs font-semibold text-gray-500">Last Login</th>
+                  {showActions && <th className="px-4 py-3" />}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {users.map(u => (
+                  <tr key={u.id} className={`${!u.is_active ? 'opacity-50' : ''} hover:bg-gray-50/50`}>
                     <td className="px-4 py-3">
-                      <div className="flex items-center gap-1 justify-end">
-                        {canManagePins && u.role === 'operator' && (
-                          <button onClick={() => setPinUser(u)}
-                            title={u.has_pin ? 'PIN set — manage floor credentials' : 'Set floor PIN / badge'}
-                            className={`p-1.5 rounded-lg transition-colors ${u.has_pin ? 'text-emerald-600 hover:bg-emerald-50' : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'}`}>
-                            <Key size={13} />
-                          </button>
-                        )}
-                        {canManage && (
-                          <button onClick={() => setModalUser(u)}
-                            className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
-                            <Edit2 size={13} />
-                          </button>
-                        )}
-                        {canManage && u.id !== currentUser?.id && (
-                          <button
-                            onClick={() => handleDelete(u.id, u.display_name)}
-                            disabled={deletingId === u.id}
-                            className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors">
-                            <Trash2 size={13} />
-                          </button>
-                        )}
+                      <div className="flex items-center gap-2.5">
+                        <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-xs font-bold flex-shrink-0"
+                          style={{ background: 'linear-gradient(135deg, var(--accent), var(--secondary))' }}>
+                          {u.display_name?.[0]?.toUpperCase()}
+                        </div>
+                        <div>
+                          <div className="font-medium text-gray-800">{u.display_name}</div>
+                          {u.id === currentUser?.id && <div className="text-[10px] text-blue-500">You</div>}
+                        </div>
                       </div>
                     </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    <td className="px-4 py-3 text-gray-600">{u.email}</td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${ROLE_COLORS[u.role] ?? 'bg-gray-100 text-gray-600'}`}>
+                        {u.role}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-medium ${u.is_active ? 'text-emerald-600' : 'text-gray-400'}`}>
+                        {u.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-gray-500 text-xs">
+                      {u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}
+                    </td>
+                    {showActions && (
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-1 justify-end">
+                          {canManagePins && u.role === 'operator' && (
+                            <button onClick={() => setPinUser(u)}
+                              title={u.has_pin ? 'PIN set — manage floor credentials' : 'Set floor PIN / badge'}
+                              className={`p-1.5 rounded-lg transition-colors ${u.has_pin ? 'text-emerald-600 hover:bg-emerald-50' : 'text-gray-400 hover:text-blue-600 hover:bg-blue-50'}`}>
+                              <Key size={13} />
+                            </button>
+                          )}
+                          {canManage && (
+                            <button onClick={() => setModalUser(u)}
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors">
+                              <Edit2 size={13} />
+                            </button>
+                          )}
+                          {canManage && u.id !== currentUser?.id && (
+                            <button
+                              onClick={() => handleDelete(u.id, u.display_name)}
+                              disabled={deletingId === u.id}
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
@@ -2050,41 +2059,45 @@ function UsersTab() {
       <div>
         <h3 className="text-sm font-semibold text-gray-800 mb-3">Role Permissions</h3>
         <div className="rounded-xl border border-gray-200 overflow-hidden bg-white text-xs">
-          <table className="w-full">
-            <thead>
-              <tr className="border-b border-gray-100 bg-gray-50">
-                <th className="px-4 py-2.5 text-left font-semibold text-gray-500">Permission</th>
-                {ROLE_OPTIONS.map(r => (
-                  <th key={r} className="px-3 py-2.5 text-center font-semibold text-gray-500 capitalize">{r}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-gray-50">
-              {[
-                { label: 'View dashboards & apps', levels: [1,1,1,1,1] },
-                { label: 'Run production apps', levels: [1,1,1,1,0] },
-                { label: 'Manager view & analytics', levels: [1,1,1,0,0] },
-                { label: 'OEE & step metrics', levels: [1,1,1,0,0] },
-                { label: 'Inventory & quality', levels: [1,1,1,0,0] },
-                { label: 'Purchasing & vendors', levels: [1,1,1,0,0] },
-                { label: 'Create / edit apps', levels: [1,1,0,0,0] },
-                { label: 'Company settings', levels: [1,1,0,0,0] },
-                { label: 'Manage users', levels: [1,0,0,0,0] },
-                { label: 'Delete & admin actions', levels: [1,0,0,0,0] },
-              ].map(row => (
-                <tr key={row.label} className="hover:bg-gray-50/50">
-                  <td className="px-4 py-2.5 text-gray-700">{row.label}</td>
-                  {row.levels.map((allowed, i) => (
-                    <td key={i} className="px-3 py-2.5 text-center">
-                      {allowed
-                        ? <span className="text-emerald-500 font-bold">✓</span>
-                        : <span className="text-gray-200">--</span>}
-                    </td>
+          {/* The table scrolls inside itself: several of these columns do not fit
+              a phone, and the rounded card around it clipped them off entirely. */}
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50">
+                  <th className="px-4 py-2.5 text-left font-semibold text-gray-500">Permission</th>
+                  {ROLE_OPTIONS.map(r => (
+                    <th key={r} className="px-3 py-2.5 text-center font-semibold text-gray-500 capitalize">{r}</th>
                   ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {[
+                  { label: 'View dashboards & apps', levels: [1,1,1,1,1] },
+                  { label: 'Run production apps', levels: [1,1,1,1,0] },
+                  { label: 'Manager view & analytics', levels: [1,1,1,0,0] },
+                  { label: 'OEE & step metrics', levels: [1,1,1,0,0] },
+                  { label: 'Inventory & quality', levels: [1,1,1,0,0] },
+                  { label: 'Purchasing & vendors', levels: [1,1,1,0,0] },
+                  { label: 'Create / edit apps', levels: [1,1,0,0,0] },
+                  { label: 'Company settings', levels: [1,1,0,0,0] },
+                  { label: 'Manage users', levels: [1,0,0,0,0] },
+                  { label: 'Delete & admin actions', levels: [1,0,0,0,0] },
+                ].map(row => (
+                  <tr key={row.label} className="hover:bg-gray-50/50">
+                    <td className="px-4 py-2.5 text-gray-700">{row.label}</td>
+                    {row.levels.map((allowed, i) => (
+                      <td key={i} className="px-3 py-2.5 text-center">
+                        {allowed
+                          ? <span className="text-emerald-500 font-bold">✓</span>
+                          : <span className="text-gray-200">--</span>}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
 
@@ -2965,51 +2978,55 @@ function NotificationsTab() {
           </div>
         ) : (
           <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50">
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Event</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Channel</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Recipient</th>
-                  <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Status</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">When</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {log.map(entry => (
-                  <tr key={entry.id} className="hover:bg-gray-50/50">
-                    <td className="px-4 py-2.5 text-gray-700">{prefs.available_events[entry.event] ?? entry.event}</td>
-                    <td className="px-4 py-2.5 text-gray-500">
-                      <span className="inline-flex items-center gap-1.5">
-                        {entry.channel === 'email' ? <Mail size={12} /> : <MessageSquare size={12} />}
-                        {entry.channel.toUpperCase()}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-gray-600">{entry.recipient}</td>
-                    <td className="px-4 py-2.5 text-center">
-                      {entry.status === 'sent' && (
-                        <span title="Sent" className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600">
-                          <CheckCircle2 size={14} /> Sent
-                        </span>
-                      )}
-                      {entry.status === 'simulated' && (
-                        <span title="Demo mode -- logged instead of sent" className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
-                          <AlertCircle size={14} /> Simulated
-                        </span>
-                      )}
-                      {entry.status === 'failed' && (
-                        <span title="Failed to send" className="inline-flex items-center gap-1 text-xs font-medium text-red-500">
-                          <XCircle size={14} /> Failed
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap">
-                      {new Date(entry.created_at + 'Z').toLocaleString()}
-                    </td>
+            {/* The table scrolls inside itself: several of these columns do not fit
+                a phone, and the rounded card around it clipped them off entirely. */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50">
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Event</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Channel</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Recipient</th>
+                    <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Status</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">When</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {log.map(entry => (
+                    <tr key={entry.id} className="hover:bg-gray-50/50">
+                      <td className="px-4 py-2.5 text-gray-700">{prefs.available_events[entry.event] ?? entry.event}</td>
+                      <td className="px-4 py-2.5 text-gray-500">
+                        <span className="inline-flex items-center gap-1.5">
+                          {entry.channel === 'email' ? <Mail size={12} /> : <MessageSquare size={12} />}
+                          {entry.channel.toUpperCase()}
+                        </span>
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-600">{entry.recipient}</td>
+                      <td className="px-4 py-2.5 text-center">
+                        {entry.status === 'sent' && (
+                          <span title="Sent" className="inline-flex items-center gap-1 text-xs font-medium text-emerald-600">
+                            <CheckCircle2 size={14} /> Sent
+                          </span>
+                        )}
+                        {entry.status === 'simulated' && (
+                          <span title="Demo mode -- logged instead of sent" className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
+                            <AlertCircle size={14} /> Simulated
+                          </span>
+                        )}
+                        {entry.status === 'failed' && (
+                          <span title="Failed to send" className="inline-flex items-center gap-1 text-xs font-medium text-red-500">
+                            <XCircle size={14} /> Failed
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap">
+                        {new Date(entry.created_at + 'Z').toLocaleString()}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
@@ -3091,48 +3108,52 @@ function PermissionsTab() {
       </div>
 
       <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-gray-100 bg-gray-50">
-              <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Navigation Item</th>
-              {PERM_ROLES.map(role => (
-                <th key={role} className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500 capitalize">{role}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-50">
-            {ALL_SECTION_ITEMS.map(item => (
-              <tr key={item.to} className="hover:bg-gray-50/50">
-                <td className="px-4 py-2.5 text-gray-700 flex items-center gap-2">
-                  <item.icon size={14} className="text-gray-400" />
-                  {item.label}
-                </td>
-                {PERM_ROLES.map(role => {
-                  const defaultVisible = !item.minRole || (ROLE_LEVELS[role] ?? 0) >= (ROLE_LEVELS[item.minRole] ?? 99);
-                  const override = permissions[role]?.[item.to];
-                  const effective = override !== undefined ? !!override : defaultVisible;
-                  const isOverridden = override !== undefined;
-                  const key = `${role}:${item.to}`;
-                  return (
-                    <td key={role} className="px-3 py-2.5 text-center">
-                      <div className="flex items-center justify-center gap-1.5">
-                        <span className={isOverridden ? '' : 'opacity-50'}>
-                          <Toggle
-                            checked={effective}
-                            onChange={() => busyKey ? undefined : handleToggle(role, item)}
-                          />
-                        </span>
-                        {busyKey === key && (
-                          <span className="w-3 h-3 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin inline-block" />
-                        )}
-                      </div>
-                    </td>
-                  );
-                })}
+        {/* The table scrolls inside itself: several of these columns do not fit
+            a phone, and the rounded card around it clipped them off entirely. */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50">
+                <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Navigation Item</th>
+                {PERM_ROLES.map(role => (
+                  <th key={role} className="px-3 py-2.5 text-center text-xs font-semibold text-gray-500 capitalize">{role}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {ALL_SECTION_ITEMS.map(item => (
+                <tr key={item.to} className="hover:bg-gray-50/50">
+                  <td className="px-4 py-2.5 text-gray-700 flex items-center gap-2">
+                    <item.icon size={14} className="text-gray-400" />
+                    {item.label}
+                  </td>
+                  {PERM_ROLES.map(role => {
+                    const defaultVisible = !item.minRole || (ROLE_LEVELS[role] ?? 0) >= (ROLE_LEVELS[item.minRole] ?? 99);
+                    const override = permissions[role]?.[item.to];
+                    const effective = override !== undefined ? !!override : defaultVisible;
+                    const isOverridden = override !== undefined;
+                    const key = `${role}:${item.to}`;
+                    return (
+                      <td key={role} className="px-3 py-2.5 text-center">
+                        <div className="flex items-center justify-center gap-1.5">
+                          <span className={isOverridden ? '' : 'opacity-50'}>
+                            <Toggle
+                              checked={effective}
+                              onChange={() => busyKey ? undefined : handleToggle(role, item)}
+                            />
+                          </span>
+                          {busyKey === key && (
+                            <span className="w-3 h-3 border-2 border-gray-300 border-t-gray-500 rounded-full animate-spin inline-block" />
+                          )}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       <div className="flex items-center justify-between gap-4 pt-2 border-t border-gray-100">
@@ -3359,34 +3380,38 @@ function WebhookDeliveriesModal({ webhook, onClose }: { webhook: Webhook; onClos
             </div>
           ) : (
             <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-100 bg-gray-50">
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Event</th>
-                    <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Status</th>
-                    <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Result</th>
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Error</th>
-                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">When</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-50">
-                  {deliveries.map(d => (
-                    <tr key={d.id} className="hover:bg-gray-50/50">
-                      <td className="px-4 py-2.5 text-gray-700">{d.event}</td>
-                      <td className="px-4 py-2.5 text-center text-gray-600">{d.status_code ?? '--'}</td>
-                      <td className="px-4 py-2.5 text-center">
-                        {d.success
-                          ? <CheckCircle2 size={14} className="text-emerald-500 inline" />
-                          : <XCircle size={14} className="text-red-500 inline" />}
-                      </td>
-                      <td className="px-4 py-2.5 text-gray-500 text-xs">{d.error || '--'}</td>
-                      <td className="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap">
-                        {new Date(d.created_at + 'Z').toLocaleString()}
-                      </td>
+              {/* The table scrolls inside itself: several of these columns do not fit
+                  a phone, and the rounded card around it clipped them off entirely. */}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-gray-100 bg-gray-50">
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Event</th>
+                      <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Status</th>
+                      <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-500">Result</th>
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Error</th>
+                      <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">When</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {deliveries.map(d => (
+                      <tr key={d.id} className="hover:bg-gray-50/50">
+                        <td className="px-4 py-2.5 text-gray-700">{d.event}</td>
+                        <td className="px-4 py-2.5 text-center text-gray-600">{d.status_code ?? '--'}</td>
+                        <td className="px-4 py-2.5 text-center">
+                          {d.success
+                            ? <CheckCircle2 size={14} className="text-emerald-500 inline" />
+                            : <XCircle size={14} className="text-red-500 inline" />}
+                        </td>
+                        <td className="px-4 py-2.5 text-gray-500 text-xs">{d.error || '--'}</td>
+                        <td className="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap">
+                          {new Date(d.created_at + 'Z').toLocaleString()}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </div>
@@ -3626,35 +3651,39 @@ function DeveloperTab() {
           </div>
         ) : (
           <div className="rounded-xl border border-gray-200 overflow-hidden bg-white">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-gray-100 bg-gray-50">
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Name</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Key</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Last Used</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Created</th>
-                  <th className="px-4 py-2.5" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {apiKeys.map(key => (
-                  <tr key={key.id} className="hover:bg-gray-50/50">
-                    <td className="px-4 py-2.5 text-gray-800 font-medium">{key.name}</td>
-                    <td className="px-4 py-2.5 text-gray-500 font-mono text-xs">{key.key_prefix}••••••••</td>
-                    <td className="px-4 py-2.5 text-gray-500 text-xs">{key.last_used_at ? new Date(key.last_used_at + 'Z').toLocaleString() : 'Never'}</td>
-                    <td className="px-4 py-2.5 text-gray-500 text-xs">{new Date(key.created_at + 'Z').toLocaleDateString()}</td>
-                    <td className="px-4 py-2.5">
-                      <div className="flex justify-end">
-                        <button onClick={() => handleDeleteKey(key)}
-                          className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors">
-                          <Trash2 size={13} />
-                        </button>
-                      </div>
-                    </td>
+            {/* The table scrolls inside itself: several of these columns do not fit
+                a phone, and the rounded card around it clipped them off entirely. */}
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50">
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Name</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Key</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Last Used</th>
+                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-500">Created</th>
+                    <th className="px-4 py-2.5" />
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {apiKeys.map(key => (
+                    <tr key={key.id} className="hover:bg-gray-50/50">
+                      <td className="px-4 py-2.5 text-gray-800 font-medium">{key.name}</td>
+                      <td className="px-4 py-2.5 text-gray-500 font-mono text-xs">{key.key_prefix}••••••••</td>
+                      <td className="px-4 py-2.5 text-gray-500 text-xs">{key.last_used_at ? new Date(key.last_used_at + 'Z').toLocaleString() : 'Never'}</td>
+                      <td className="px-4 py-2.5 text-gray-500 text-xs">{new Date(key.created_at + 'Z').toLocaleDateString()}</td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex justify-end">
+                          <button onClick={() => handleDeleteKey(key)}
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors">
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
@@ -4250,27 +4279,14 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      {/* Tab nav */}
-      <div className="flex gap-1 mb-6 bg-white border border-gray-200 rounded-xl p-1 w-fit shadow-sm flex-wrap">
-        {TABS.map((tab) => {
-          const active = activeTab === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                active
-                  ? 'text-white shadow-sm'
-                  : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-              }`}
-              style={active ? { backgroundColor: 'var(--accent)' } : {}}
-            >
-              {tab.icon}
-              {tab.label}
-            </button>
-          );
-        })}
-      </div>
+      <TabBar
+        items={TABS.map(tab => ({ key: tab.id, label: tab.label, icon: tab.icon }))}
+        active={activeTab}
+        onSelect={setActiveTab}
+        variant="pill"
+        ariaLabel="Settings screens"
+        className="mb-6"
+      />
 
       {/* Tab content */}
       <div>

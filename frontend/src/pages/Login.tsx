@@ -219,7 +219,7 @@ export default function Login() {
                     placeholder="you@company.com"
                   />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="field-row gap-3">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1.5">Password</label>
                     <div className="relative">

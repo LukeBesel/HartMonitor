@@ -434,7 +434,10 @@ export default function ManagerView() {
                 onClear={dept.clear}
               />
             ) : (
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+              /* One run per row on a phone: at two-up each card is 165px, which
+                 broke the app name over two lines and wrapped the work-order
+                 number mid-token. */
+              <div className="grid grid-cols-1 xs:grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                 {filteredRuns.map(run => (
                   <ActiveRunCard key={run.id} run={run} />
                 ))}

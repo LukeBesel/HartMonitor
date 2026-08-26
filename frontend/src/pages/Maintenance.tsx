@@ -5,6 +5,7 @@ import {
   BarChart3, ChevronDown, X, AlertCircle, Settings,
 } from 'lucide-react';
 import { api } from '../api/client';
+import TabBar from '../components/shared/TabBar';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -278,7 +279,7 @@ function CreateWOModal({ assets, onClose, onCreated }: CreateWOModalProps) {
               ))}
             </select>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="text-xs font-medium text-gray-500 block mb-1">Type</label>
               <select
@@ -326,7 +327,7 @@ function CreateWOModal({ assets, onClose, onCreated }: CreateWOModalProps) {
               className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm resize-none"
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="text-xs font-medium text-gray-500 block mb-1">Assigned To</label>
               <input
@@ -443,7 +444,7 @@ function CreateAssetModal({ departments, onClose, onCreated }: CreateAssetModalP
               {error}
             </div>
           )}
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="text-xs font-medium text-gray-500 block mb-1">Asset Number *</label>
               <input
@@ -479,7 +480,7 @@ function CreateAssetModal({ departments, onClose, onCreated }: CreateAssetModalP
               className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="text-xs font-medium text-gray-500 block mb-1">Make</label>
               <input
@@ -511,7 +512,7 @@ function CreateAssetModal({ departments, onClose, onCreated }: CreateAssetModalP
               className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="text-xs font-medium text-gray-500 block mb-1">Department</label>
               <select
@@ -664,7 +665,7 @@ function CreatePMModal({ assets, onClose, onCreated }: CreatePMModalProps) {
               className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="text-xs font-medium text-gray-500 block mb-1">Frequency Type</label>
               <select
@@ -690,7 +691,7 @@ function CreatePMModal({ assets, onClose, onCreated }: CreatePMModalProps) {
               />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="field-row gap-3">
             <div>
               <label className="text-xs font-medium text-gray-500 block mb-1">Assigned To</label>
               <input
@@ -1489,9 +1490,10 @@ export default function Maintenance() {
 
   return (
     <div className="min-h-full bg-gray-50 p-6 space-y-5">
-      {/* Page header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
+      {/* Page header. Wraps rather than pushing Refresh past the right edge of
+          a phone, where the button was cut in half by the viewport. */}
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0">
           <div className="flex items-center gap-2 mb-1">
             <Wrench size={22} className="text-blue-700" />
             <h1 className="text-2xl font-bold text-gray-900">Maintenance</h1>
@@ -1505,7 +1507,7 @@ export default function Maintenance() {
             else if (activeTab === 'assets') loadAssets();
             else if (activeTab === 'pm_schedules') loadPMs();
           }}
-          className="inline-flex items-center gap-2 px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors"
+          className="inline-flex shrink-0 items-center gap-2 whitespace-nowrap px-4 py-2 bg-white text-gray-700 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-100 transition-colors"
         >
           <RefreshCw size={14} /> Refresh
         </button>
@@ -1522,30 +1524,7 @@ export default function Maintenance() {
         </div>
       )}
 
-      {/* Tab bar. Scrolls INSIDE itself: four labelled tabs do not fit across a
-          390px phone, and without this the row simply made the page wider than
-          the screen — so reaching "PM Schedules" meant dragging the whole
-          layout sideways, heading and all, as if the page were zoomed in.
-          `whitespace-nowrap` stops "Work Orders" breaking across two lines and
-          `shrink-0` stops flex compressing the tabs to fit instead of scrolling. */}
-      <div className="border-b border-gray-200 overflow-x-auto -mx-1 px-1">
-        <nav className="-mb-px flex gap-1 w-max min-w-full">
-          {tabs.map(tab => (
-            <button
-              key={tab.key}
-              onClick={() => setActiveTab(tab.key)}
-              className={`shrink-0 whitespace-nowrap inline-flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium transition-colors border-b-2 ${
-                activeTab === tab.key
-                  ? 'border-blue-500 text-gray-900'
-                  : 'border-transparent text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              {tab.icon}
-              {tab.label}
-            </button>
-          ))}
-        </nav>
-      </div>
+      <TabBar items={tabs} active={activeTab} onSelect={setActiveTab} ariaLabel="Maintenance screens" />
 
       {/* Tab content */}
       {activeTab === 'overview' && (

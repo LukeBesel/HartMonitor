@@ -10,6 +10,7 @@ import {
   Trophy, Crown, Medal, Award, RefreshCw, Tv, Clock,
   Users, ShieldCheck, AlertCircle, Sparkles, ChevronRight, ChevronLeft, Building2, Gauge,
 } from 'lucide-react';
+import TabBar from '../components/shared/TabBar';
 
 const PERIODS: { id: LeaderboardPeriod; label: string }[] = [
   { id: 'today', label: 'Today' },
@@ -71,44 +72,48 @@ function BoardCard({ board }: { board: LeaderboardBoard }) {
         )}
       </div>
 
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="text-[11px] text-gray-400 uppercase tracking-wide">
-            <th className="text-left font-medium pb-1.5 w-8">#</th>
-            <th className="text-left font-medium pb-1.5">Operator</th>
-            <th className="text-right font-medium pb-1.5">Best</th>
-            <th className="text-right font-medium pb-1.5">Avg</th>
-            <th className="text-right font-medium pb-1.5">Runs</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-gray-50">
-          {(board.leaders ?? []).map(l => {
-            const rankStyle = RANK_ICON[l.rank];
-            return (
-              <tr key={l.operator_name}>
-                <td className="py-1.5">
-                  {rankStyle ? (
-                    <span className={rankStyle.color}>{rankStyle.icon}</span>
-                  ) : (
-                    <span className="text-xs text-gray-400 pl-0.5">{l.rank}</span>
-                  )}
-                </td>
-                <td className="py-1.5 font-medium text-gray-800 truncate max-w-[10rem]">
-                  {l.operator_name}
-                  {l.is_record && (
-                    <span title="Plant record" className="ml-1.5 inline-flex items-center text-amber-500">
-                      <Sparkles size={11} />
-                    </span>
-                  )}
-                </td>
-                <td className="py-1.5 text-right font-semibold tabular-nums text-gray-900">{formatDuration(l.best_minutes)}</td>
-                <td className="py-1.5 text-right tabular-nums text-gray-500">{formatDuration(l.avg_minutes)}</td>
-                <td className="py-1.5 text-right tabular-nums text-gray-400">{l.completions}</td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      {/* The table scrolls inside itself: several of these columns do not fit
+          a phone, and the rounded card around it clipped them off entirely. */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-[11px] text-gray-400 uppercase tracking-wide">
+              <th className="text-left font-medium pb-1.5 w-8">#</th>
+              <th className="text-left font-medium pb-1.5">Operator</th>
+              <th className="text-right font-medium pb-1.5">Best</th>
+              <th className="text-right font-medium pb-1.5">Avg</th>
+              <th className="text-right font-medium pb-1.5">Runs</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-50">
+            {(board.leaders ?? []).map(l => {
+              const rankStyle = RANK_ICON[l.rank];
+              return (
+                <tr key={l.operator_name}>
+                  <td className="py-1.5">
+                    {rankStyle ? (
+                      <span className={rankStyle.color}>{rankStyle.icon}</span>
+                    ) : (
+                      <span className="text-xs text-gray-400 pl-0.5">{l.rank}</span>
+                    )}
+                  </td>
+                  <td className="py-1.5 font-medium text-gray-800 truncate max-w-[10rem]">
+                    {l.operator_name}
+                    {l.is_record && (
+                      <span title="Plant record" className="ml-1.5 inline-flex items-center text-amber-500">
+                        <Sparkles size={11} />
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-1.5 text-right font-semibold tabular-nums text-gray-900">{formatDuration(l.best_minutes)}</td>
+                  <td className="py-1.5 text-right tabular-nums text-gray-500">{formatDuration(l.avg_minutes)}</td>
+                  <td className="py-1.5 text-right tabular-nums text-gray-400">{l.completions}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
 
       {board.excluded_quality_count > 0 && (
         <div className="flex items-center gap-1.5 text-[11px] text-gray-400 pt-1 border-t border-gray-50">
@@ -329,23 +334,13 @@ export default function Leaderboard() {
       </div>
 
       {/* Period selector */}
-      <div className="flex gap-1 bg-white border border-gray-200 rounded-xl p-1 w-fit shadow-sm">
-        {PERIODS.map(p => {
-          const active = period === p.id;
-          return (
-            <button
-              key={p.id}
-              onClick={() => setPeriod(p.id)}
-              className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-all ${
-                active ? 'text-white shadow-sm' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
-              }`}
-              style={active ? { backgroundColor: 'var(--accent)' } : {}}
-            >
-              {p.label}
-            </button>
-          );
-        })}
-      </div>
+      <TabBar
+        items={PERIODS.map(p => ({ key: p.id, label: p.label }))}
+        active={period}
+        onSelect={setPeriod}
+        variant="pill"
+        ariaLabel="Leaderboard time range"
+      />
 
       {error && (selectedDept ? boards.length > 0 : departments.length > 0) && (
         <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">
