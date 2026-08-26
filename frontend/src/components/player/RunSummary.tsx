@@ -52,6 +52,9 @@ export interface RunSummaryProps {
   onChangeContext?: () => void;
   onNextUnit: () => void;
   onDone: () => void;
+  /** Opens the live department report, already scoped to this run's department
+   *  and app — so the run that just finished is on screen when it loads. */
+  onReview?: () => void;
 }
 
 /** Completion screen (spec §5.6): confetti micro-burst, duration vs takt,
@@ -61,7 +64,7 @@ export default function RunSummary(props: RunSummaryProps) {
   const {
     appName, operatorName, productTypeName, steps, stepTimes, getStepTakt,
     taktExceededSteps, capturedCount, kitSummary, savedLocally,
-    contextLabel, nextUnitDisabledReason, onChangeContext, onNextUnit, onDone,
+    contextLabel, nextUnitDisabledReason, onChangeContext, onNextUnit, onDone, onReview,
   } = props;
 
   const totalSeconds = Object.values(stepTimes).reduce((a, b) => a + b, 0);
@@ -192,6 +195,20 @@ export default function RunSummary(props: RunSummaryProps) {
         </div>
         {nextUnitDisabledReason && (
           <p className="text-center mt-2" style={{ fontSize: 13, color: 'var(--p-warn)' }}>{nextUnitDisabledReason}</p>
+        )}
+        {/* The bridge from doing the work to seeing what the work did: the
+            live department report, already scoped to this app, with the run
+            that just finished in it. This is the product's whole pitch —
+            cycle times captured by running the app, reported live — so the
+            moment right after a run is exactly when to show it. */}
+        {onReview && (
+          <button
+            className="p-btn p-btn-ghost w-full mt-3"
+            style={{ fontSize: 15, color: 'var(--p-accent)' }}
+            onClick={onReview}
+          >
+            Review this run in the live report →
+          </button>
         )}
       </div>
     </div>

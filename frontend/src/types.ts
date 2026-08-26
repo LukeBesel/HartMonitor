@@ -12,6 +12,9 @@ export type WidgetType =
 export type ShapeKind = 'rect' | 'ellipse' | 'line' | 'arrow';
 
 export interface WidgetConfig {
+  /** Some hand-authored apps put the widget's label here instead of on the
+   *  widget itself; the player accepts both so no input renders nameless. */
+  label?: string;
   text?: string; content?: string; fontSize?: number; fontWeight?: string;
   color?: string; backgroundColor?: string; textAlign?: 'left' | 'center' | 'right';
   verticalAlign?: 'top' | 'center' | 'bottom'; fontStyle?: 'normal' | 'italic';

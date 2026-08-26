@@ -162,7 +162,10 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
           >
             {initial}
           </span>
-          <span className="max-w-[120px] truncate hidden sm:inline">{operatorName || 'Operator'}</span>
+          {/* The name shows at every width. Phone screens used to get the bare
+              initial alone, which reads as a mystery badge — "E" — rather than
+              as who is clocked in. */}
+          <span className="max-w-[72px] sm:max-w-[120px] truncate">{operatorName || 'Operator'}</span>
           {operatorVerified && <ShieldCheck size={14} style={{ color: 'var(--p-good)' }} />}
         </span>
 
@@ -184,6 +187,9 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
           {helpRequested
             ? <span className="p-live-dot" style={{ background: '#fff' }} aria-hidden="true" />
             : <LifeBuoy size={19} />}
+          {/* Labeled at every width. A bare red icon on a phone reads as
+              danger — or as nothing at all — not as the way to call for help. */}
+          <span className="sm:hidden">{helpRequested ? 'On the way' : 'Help'}</span>
           <span className="hidden sm:inline">{helpRequested ? 'Help requested' : 'Request help'}</span>
         </button>
 

@@ -1645,6 +1645,18 @@ export default function AppPlayer() {
         onChangeContext={changeContext}
         onNextUnit={() => void nextUnit()}
         onDone={() => navigate('/apps')}
+        onReview={() => {
+          // Scope the report to where this run happened: the work order's
+          // department first (that is where the work was booked), else the
+          // station's. The dashboard reads these from the URL and pre-selects.
+          const dept = selectedWO?.department_id
+            || stations.find(st => st.id === selectedStationId)?.department_id
+            || null;
+          const q = new URLSearchParams();
+          if (dept) q.set('department_id', dept);
+          q.set('app_id', id!);
+          navigate(`/dashboard?${q.toString()}`);
+        }}
       />
     );
   }
