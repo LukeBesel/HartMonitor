@@ -1,6 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { plantDayShift } = require('../plantDay');
 const { notify } = require('../notifications');
 const { deliverWebhooks } = require('../webhooks');
 
@@ -75,14 +76,17 @@ router.get('/items/summary', (req, res) => {
     )
   `).get(cid).c;
   const categories = db.prepare('SELECT DISTINCT category FROM items WHERE is_active = 1 AND company_id = ? ORDER BY category').all(cid).map(r => r.category);
+  // Today's movements belong to the plant's day: a part received at 7pm in
+  // Detroit is this shift's receipt, not tomorrow morning's.
+  const day = plantDayShift(cid);
   const today_receives = db.prepare(`
     SELECT COUNT(*) as c FROM stock_movements sm JOIN items i ON i.id = sm.item_id
-    WHERE i.company_id = ? AND sm.movement_type = 'receive' AND date(sm.created_at) = date('now')
-  `).get(cid).c;
+    WHERE i.company_id = ? AND sm.movement_type = 'receive' AND date(sm.created_at, ?) = date('now', ?)
+  `).get(cid, day, day).c;
   const today_consumes = db.prepare(`
     SELECT ABS(COALESCE(SUM(sm.quantity),0)) as c FROM stock_movements sm JOIN items i ON i.id = sm.item_id
-    WHERE i.company_id = ? AND sm.movement_type = 'consume' AND date(sm.created_at) = date('now')
-  `).get(cid).c;
+    WHERE i.company_id = ? AND sm.movement_type = 'consume' AND date(sm.created_at, ?) = date('now', ?)
+  `).get(cid, day, day).c;
   res.json({ total_items, total_value, low_stock, categories, today_receives, today_consumes });
 });
 
@@ -126,14 +130,17 @@ router.get('/summary', (req, res) => {
 
   const categories = [...new Set(rows.map(r => r.category).filter(Boolean))].sort();
 
+  // Today's movements belong to the plant's day: a part received at 7pm in
+  // Detroit is this shift's receipt, not tomorrow morning's.
+  const day = plantDayShift(cid);
   const today_receives = db.prepare(`
     SELECT COUNT(*) as c FROM stock_movements sm JOIN items i ON i.id = sm.item_id
-    WHERE i.company_id = ? AND sm.movement_type = 'receive' AND date(sm.created_at) = date('now')
-  `).get(cid).c;
+    WHERE i.company_id = ? AND sm.movement_type = 'receive' AND date(sm.created_at, ?) = date('now', ?)
+  `).get(cid, day, day).c;
   const today_consumes = db.prepare(`
     SELECT ABS(COALESCE(SUM(sm.quantity),0)) as c FROM stock_movements sm JOIN items i ON i.id = sm.item_id
-    WHERE i.company_id = ? AND sm.movement_type = 'consume' AND date(sm.created_at) = date('now')
-  `).get(cid).c;
+    WHERE i.company_id = ? AND sm.movement_type = 'consume' AND date(sm.created_at, ?) = date('now', ?)
+  `).get(cid, day, day).c;
 
   res.json({
     total_items,

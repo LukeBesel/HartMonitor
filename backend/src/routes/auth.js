@@ -7,10 +7,33 @@ const { hashPassword, verifyPassword, generateToken, requireAuth } = require('..
 const { PROVIDERS, isConfigured } = require('../sso');
 const { sendWelcomeEmail, sendPasswordResetEmail } = require('../email');
 const { logActivity } = require('../activity');
+const { isValidTimeZone } = require('../plantDay');
 
 const router = express.Router();
 
 const MIN_PASSWORD_LEN = 8;
+
+// ─── Where the new company's day starts ───────────────────────────────────────
+// Every new organization used to be stamped 'America/New_York'. That is not a
+// default, it is a guess about which hemisphere the customer is in, and it is
+// wrong for everyone outside the US east coast: a shop in Berlin gets a day that
+// rolls over at 06:00 local, so the morning crew's first two hours land on
+// yesterday's board, and nothing on any screen says why until somebody happens
+// to open Settings.
+//
+// So the browser is asked instead. Intl.DateTimeFormat().resolvedOptions()
+// .timeZone is the operator's own zone, known to every browser, and the signup
+// form sends it. When it is absent (an API-driven signup, a scripted account, a
+// browser that reports something the server does not recognise) we store UTC —
+// the one answer that is not a guess about geography, and the fallback
+// plantDay.js already documents.
+const FALLBACK_TIME_ZONE = 'UTC';
+
+/** A zone we are willing to store, or UTC when the caller gave us nothing usable. */
+function signupTimeZone(requested) {
+  const tz = typeof requested === 'string' ? requested.trim() : '';
+  return isValidTimeZone(tz) ? tz : FALLBACK_TIME_ZONE;
+}
 
 // SSO OAuth state persisted to DB so multi-process deployments work.
 // Cleanup expired states every 5 minutes.
@@ -57,7 +80,7 @@ router.post('/login', (req, res) => {
 // ─── POST /signup — create a new organization + first user (public) ──────────
 
 router.post('/signup', (req, res) => {
-  const { company_name, email, password, display_name } = req.body;
+  const { company_name, email, password, display_name, timezone } = req.body;
   if (!company_name || !email || !password || !display_name) {
     return res.status(400).json({ error: 'company_name, email, password, and display_name required' });
   }
@@ -89,7 +112,7 @@ router.post('/signup', (req, res) => {
 
     const defaults = [
       ['company_name', company_name.trim()],
-      ['timezone',     'America/New_York'],
+      ['timezone',     signupTimeZone(timezone)],
       ['date_format',  'MM/DD/YYYY'],
       ['currency',     'USD'],
     ];
@@ -471,7 +494,9 @@ router.get('/sso/:provider/callback', async (req, res) => {
         db.prepare(`INSERT INTO plan (tier, app_limit, dashboard_limit, company_id) VALUES ('free', 5, 2, ?)`).run(orgId);
         db.prepare(`INSERT INTO sites (id, company_id, name, code, is_primary) VALUES (?, ?, 'Main Site', 'MAIN', 1)`).run(uuidv4(), orgId);
         const insSetting = db.prepare(`INSERT OR IGNORE INTO org_settings (company_id, key, value) VALUES (?, ?, ?)`);
-        for (const [k, v] of [['company_name', orgName], ['timezone', 'America/New_York'], ['date_format', 'MM/DD/YYYY'], ['currency', 'USD']]) {
+        // An SSO redirect carries no browser zone, so this lands on the UTC
+        // fallback rather than on a guess.
+        for (const [k, v] of [['company_name', orgName], ['timezone', signupTimeZone(null)], ['date_format', 'MM/DD/YYYY'], ['currency', 'USD']]) {
           insSetting.run(orgId, k, v);
         }
       });

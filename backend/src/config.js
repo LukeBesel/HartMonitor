@@ -53,6 +53,36 @@ const config = {
   rateLimit: {
     authenticatedMax: Number(process.env.API_RATE_LIMIT_MAX) || 5000,
     anonymousMax: Number(process.env.API_RATE_LIMIT_ANON_MAX) || 1000,
+
+    // ── Credential endpoints ──────────────────────────────────────────────
+    // Two ceilings, because two different things are being defended, and one
+    // number cannot do both.
+    //
+    // accountMax is the one that stops a password being guessed. It is counted
+    // per ACCOUNT, so it does not care how many addresses the guessing comes
+    // from: 10 failures per quarter hour is 960 guesses a day against one
+    // login, which will not find anything that is not already in the first page
+    // of a wordlist — and a real person who has mistyped their password ten
+    // times in fifteen minutes has forgotten it and needs the reset link, not
+    // an eleventh try.
+    //
+    // ipMax is the site-level abuse ceiling, and it is the number that was
+    // wrong. The old limiter allowed 20 attempts per IP, which for a customer
+    // is 20 attempts for the whole factory: twenty people signing in at 6am
+    // through one NAT gateway, a couple of them fat-fingering a password on a
+    // tablet, locked the plant out of its own MES for fifteen minutes. 100
+    // failures leaves a large site several times the headroom it needs on a bad
+    // morning while still cutting off a script walking a list of accounts.
+    //
+    // Both count FAILURES only — a successful sign-in is not an attempt at
+    // anything — so a shift starting together is invisible to both.
+    credentialAccountMax: Number(process.env.AUTH_RATE_LIMIT_ACCOUNT_MAX) || 10,
+    credentialIpMax: Number(process.env.AUTH_RATE_LIMIT_IP_MAX) || 100,
+
+    // Creating organizations and demo sandboxes is write-heavy and nothing about
+    // it happens in bursts from a real customer, so it keeps the strict per-IP
+    // ceiling the credential routes used to share.
+    accountCreationMax: Number(process.env.AUTH_RATE_LIMIT_SIGNUP_MAX) || 20,
   },
 
   // Public base URL of the deployed app (used for OAuth + Stripe redirects).

@@ -351,6 +351,19 @@ async function downloadBlob(path: string, fallbackFilename: string): Promise<voi
   URL.revokeObjectURL(url);
 }
 
+/**
+ * The IANA zone this browser is set to, e.g. 'Europe/Berlin'. Empty when the
+ * runtime will not say — the caller must cope with that rather than substitute
+ * a zone of its own.
+ */
+export function browserTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  } catch {
+    return '';
+  }
+}
+
 export const api = {
   // ── Apps
   getApps: () => request<any[]>('/apps'),
@@ -737,7 +750,11 @@ export const api = {
       method: 'POST',
       credentials: 'include', // allows the server to set httpOnly cookie
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ company_name, display_name, email, password }),
+      // The browser already knows where the person signing up is standing, and
+      // that decides when every "completed today" counter on every screen rolls
+      // over. Sending it beats the server guessing US Eastern for a shop in
+      // Berlin; if it is missing or unrecognised the server stores UTC.
+      body: JSON.stringify({ company_name, display_name, email, password, timezone: browserTimeZone() }),
     }).then(async res => {
       const data = await res.json();
       if (!res.ok) throw Object.assign(new Error(data.error || 'Signup failed'), { status: res.status });

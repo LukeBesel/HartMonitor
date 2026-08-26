@@ -1,6 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { plantToday } = require('../plantDay');
 const { logActivity } = require('../activity');
 
 const router = express.Router();
@@ -136,7 +137,9 @@ router.post('/orders', (req, res) => {
 
   const id = uuidv4();
   const po_number = nextPONumber(req.companyId);
-  const order_date = new Date().toISOString().slice(0, 10);
+  // Dated on the plant's calendar: a PO raised at 8pm in Detroit belongs to
+  // that working day, not to tomorrow.
+  const order_date = plantToday(req.companyId);
   db.prepare(`INSERT INTO purchase_orders (id, po_number, vendor_id, status, order_date, expected_date, shipping_cost, notes, company_id) VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?)`)
     .run(id, po_number, vendor_id, order_date, expected_date || null, shipping_cost, notes, req.companyId);
 

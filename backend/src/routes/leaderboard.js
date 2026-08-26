@@ -1,16 +1,42 @@
 const express = require('express');
 const db = require('../db');
+const { plantDayShift } = require('../plantDay');
 
 const router = express.Router();
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
+// "Today" here has to mean the same day the Command Center, the department page
+// and the TV board mean, or one tenant reads four different numbers off four
+// screens for the same shift. Two things were wrong.
+//
+// The boundary was `datetime('now', 'start of day')`, which is midnight UTC —
+// 8pm in Detroit, 5pm in California. The board reset in the middle of second
+// shift and then carried the back half of the previous evening into the morning.
+// It now shifts onto the plant's clock, the same modifier analytics.js and
+// oee.js bind (see ../plantDay.js).
+//
+// And the window was measured on `started_at`, while every other screen counts a
+// run on the day it FINISHED. A run begun at 23:50 and finished at 00:10 landed
+// on opposite days depending on which screen you were standing in front of. The
+// leaderboard is a board of finished runs — the quality clause below already
+// insists on `completed_at IS NOT NULL`, and every figure it reports (best
+// cycle, average cycle, last completed) is about a run that ended. So the window
+// is measured on `completed_at` too.
+//
+// The parameter is bound, not interpolated, so each clause carries its own
+// placeholder count — periodParams() keeps the two in step.
 const PERIODS = {
-  today: "AND c.started_at >= datetime('now', 'start of day')",
-  week:  "AND c.started_at >= datetime('now', '-7 days')",
-  month: "AND c.started_at >= datetime('now', '-30 days')",
+  today: "AND date(c.completed_at, ?) = date('now', ?)",
+  week:  "AND c.completed_at >= datetime('now', '-7 days')",
+  month: "AND c.completed_at >= datetime('now', '-30 days')",
   all:   '',
 };
+
+/** The bindings `PERIODS[period]` expects, in order. */
+function periodParams(period, day) {
+  return period === 'today' ? [day, day] : [];
+}
 
 const PERIOD_LABELS = {
   today: 'Today',
@@ -47,6 +73,8 @@ router.get('/departments', (req, res) => {
   // inherited Object.prototype member and inject "[object Object]" into the SQL.
   const period = Object.hasOwn(PERIODS, req.query.period) ? req.query.period : 'week';
   const periodFilter = PERIODS[period];
+  const day = plantDayShift(cid);
+  const periodArgs = periodParams(period, day);
   const periodDays = { today: 1, week: 7, month: 30, all: null }[period];
 
   const rows = db.prepare(`
@@ -56,7 +84,7 @@ router.get('/departments', (req, res) => {
            ROUND(AVG(${CYCLE_TIME_SQL}), 2) AS avg_minutes,
            ROUND(MIN(${CYCLE_TIME_SQL}), 2) AS best_minutes,
            MAX(c.completed_at) AS last_completed_at,
-           COUNT(DISTINCT date(c.completed_at)) AS active_days
+           COUNT(DISTINCT date(c.completed_at, ?)) AS active_days
     FROM completions c
     JOIN apps a ON a.id = c.app_id
     ${DEPT_JOIN}
@@ -64,7 +92,7 @@ router.get('/departments', (req, res) => {
       AND ${QUALITY_CLAUSE} ${periodFilter}
     GROUP BY ${DEPT_EXPR}
     HAVING completions > 0
-  `).all(cid);
+  `).all(day, cid, ...periodArgs);
 
   const deptInfo = db.prepare('SELECT id, name, color FROM departments WHERE company_id = ?').all(cid);
   const deptMap = Object.fromEntries(deptInfo.map(d => [d.id, d]));
@@ -106,6 +134,8 @@ router.get('/', (req, res) => {
   const cid = req.companyId;
   const period = Object.hasOwn(PERIODS, req.query.period) ? req.query.period : 'week';
   const periodFilter = PERIODS[period];
+  const day = plantDayShift(cid);
+  const periodArgs = periodParams(period, day);
 
   // Optional drill-down scoping. A department scope joins through the work
   // order / station to attribute the completion, matching the board above.
@@ -131,7 +161,7 @@ router.get('/', (req, res) => {
     GROUP BY c.app_id, c.product_type_id
     HAVING qualifying_count > 0
     ORDER BY a.name ASC, pt.name ASC
-  `).all(cid, ...scopeParams);
+  `).all(cid, ...periodArgs, ...scopeParams);
 
   const boards = groups.map(g => {
     const leaders = db.prepare(`
@@ -148,7 +178,7 @@ router.get('/', (req, res) => {
       GROUP BY operator_name
       ORDER BY best_minutes ASC, completions DESC
       LIMIT 10
-    `).all(cid, g.app_id, g.product_type_id, g.product_type_id, ...scopeParams);
+    `).all(cid, g.app_id, g.product_type_id, g.product_type_id, ...periodArgs, ...scopeParams);
 
     const excluded = db.prepare(`
       SELECT COUNT(*) as c FROM completions c
@@ -158,7 +188,7 @@ router.get('/', (req, res) => {
         AND c.status = 'completed' AND c.completed_at IS NOT NULL
         AND EXISTS (SELECT 1 FROM ncrs n WHERE n.completion_id = c.id)
         ${periodFilter} ${scopeFilter}
-    `).get(cid, g.app_id, g.product_type_id, g.product_type_id, ...scopeParams).c;
+    `).get(cid, g.app_id, g.product_type_id, g.product_type_id, ...periodArgs, ...scopeParams).c;
 
     const allTimeBest = db.prepare(`
       SELECT ROUND(MIN(${CYCLE_TIME_SQL}), 2) as best
@@ -204,7 +234,7 @@ router.get('/', (req, res) => {
     WHERE c.company_id = ? AND a.status = 'published'
       AND ${QUALITY_CLAUSE} ${periodFilter} ${appScopeFilter}
     ORDER BY a.name ASC
-  `).all(cid, ...appScopeParams);
+  `).all(cid, ...periodArgs, ...appScopeParams);
 
   res.json({
     period,

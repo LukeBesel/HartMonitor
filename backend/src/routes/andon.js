@@ -12,6 +12,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { plantDayShift } = require('../plantDay');
 const { logActivity } = require('../activity');
 const { broadcast } = require('../ws');
 const { notify } = require('../notifications');
@@ -128,16 +129,19 @@ router.get('/teams', (_req, res) => {
 // department id from another tenant matches nothing instead of widening it.
 
 router.get('/summary', (req, res) => {
-  const today = new Date().toISOString().slice(0, 10);
   const deptId = req.query.department_id || null;
   const dept = deptId ? ' AND department_id = ?' : '';
   const deptParams = deptId ? [deptId] : [];
   const cid = req.companyId;
+  // "Today" on this board is the plant's day, the same one the Command Center
+  // and the department screens count on. It used to be the UTC date, so a call
+  // answered at 8pm in Detroit was already tomorrow's news.
+  const day = plantDayShift(cid);
 
   const open = db.prepare(`SELECT COUNT(*) as n FROM andon_calls WHERE company_id = ? AND status = 'open'${dept}`).get(cid, ...deptParams).n;
   const critical = db.prepare(`SELECT COUNT(*) as n FROM andon_calls WHERE company_id = ? AND status = 'open' AND priority = 'critical'${dept}`).get(cid, ...deptParams).n;
   const acknowledged = db.prepare(`SELECT COUNT(*) as n FROM andon_calls WHERE company_id = ? AND status = 'acknowledged'${dept}`).get(cid, ...deptParams).n;
-  const resolved_today = db.prepare(`SELECT COUNT(*) as n FROM andon_calls WHERE company_id = ? AND status = 'resolved' AND date(resolved_at) = ?${dept}`).get(cid, today, ...deptParams).n;
+  const resolved_today = db.prepare(`SELECT COUNT(*) as n FROM andon_calls WHERE company_id = ? AND status = 'resolved' AND date(resolved_at, ?) = date('now', ?)${dept}`).get(cid, day, day, ...deptParams).n;
   const byType = db.prepare(`SELECT type, COUNT(*) as n FROM andon_calls WHERE company_id = ? AND status != 'resolved'${dept} GROUP BY type`).all(cid, ...deptParams);
   const by_type = Object.fromEntries(byType.map(r => [r.type, r.n]));
 
@@ -151,8 +155,8 @@ router.get('/summary', (req, res) => {
   const respRow = db.prepare(`
     SELECT AVG((julianday(acknowledged_at) - julianday(created_at)) * 86400) AS avg_s, COUNT(*) AS n
     FROM andon_calls
-    WHERE company_id = ? AND acknowledged_at IS NOT NULL AND date(created_at) = ?${dept}
-  `).get(cid, today, ...deptParams);
+    WHERE company_id = ? AND acknowledged_at IS NOT NULL AND date(created_at, ?) = date('now', ?)${dept}
+  `).get(cid, day, day, ...deptParams);
 
   res.json({
     open, critical, acknowledged, resolved_today, by_type, by_team,
