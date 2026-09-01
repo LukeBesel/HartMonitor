@@ -1621,6 +1621,15 @@ function hashPwDemo(password) {
   return `${salt}:${hash}`;
 }
 
+// ─── Numbered .sql migrations ─────────────────────────────────────────────────
+// Runs here, not at server boot, because everything below this line — the demo
+// seed, the backfills — and every consumer that requires db.js without starting
+// a server (tests, scripts) reads the schema straight after this file finishes.
+// A migration-created table that only appeared once index.js ran would crash a
+// seed that touched it. index.js calls this again after boot; by then it is a
+// no-op second pass. See MIGRATIONS.md.
+require('./db/runMigrations').runMigrations(db);
+
 // ─── Run all seeds (DEVELOPMENT ONLY) ─────────────────────────────────────────
 // Demo company + sample login accounts (admin@hartmonitor.demo, etc.) and fake
 // production data. Gated behind SEED_DEMO_DATA so a production database starts

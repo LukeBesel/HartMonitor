@@ -92,3 +92,96 @@ This keeps the schema file as the authoritative human-readable record of the ful
 
 The migration SQL files are wrapped in `BEGIN; ... COMMIT;` transactions so a failed
 migration rolls back cleanly without leaving partial state.
+
+---
+
+## SQLite numbered migrations (backend/src/db/migrations)
+
+This is the live system. Postgres/Prisma above is the future; today every deploy
+runs `backend/src/db/runMigrations.js`, which applies each `NNN_name.sql` file in
+`backend/src/db/migrations/` exactly once and records it in `_schema_migrations`.
+It is called from `backend/src/db.js` (at require time, before any seed or
+backfill) and again from `backend/src/index.js` (a no-op second pass).
+
+A file applies **wholly or not at all**: every statement plus its
+`_schema_migrations` row runs inside one `db.transaction()`. SQLite DDL is
+transactional in better-sqlite3, so a failed file leaves no table, no column and
+no bookkeeping row behind — and the runner throws, so the server refuses to boot
+rather than serve a schema it half-understands.
+
+### Reserved migration numbers
+
+One number per workstream. Claim yours here before you write the file; two agents
+picking `006` in parallel worktrees is a merge conflict that only shows up at boot.
+
+| Number | File prefix | Workstream key | Adds |
+|---|---|---|---|
+| 001 | `001_baseline.sql` | (shipped) | baseline marker |
+| 002 | `002_plan_billing_columns.sql` | (shipped) | plan billing columns |
+| 003 | `003_activity_log.sql` | (shipped) | activity_log |
+| 004 | `004_sessions_cleanup_index.sql` | (shipped) | session cleanup indexes |
+| 005 | `005_company_modules.sql` | (shipped) | per-company module toggles |
+| 006 | `006_*.sql` | erp-door | ERP import/export door |
+| 007 | `007_*.sql` | calls-escalate-and-pm-raises-jobs | andon calls + reason_codes |
+| 008 | `008_*.sql` | calls-escalate-and-pm-raises-jobs | preventive maintenance (PM) |
+| 009 | `009_*.sql` | work-orders-carry-operations | operations on work orders |
+| 010 | `010_*.sql` | app-revisions-and-approval | app revisions + approval |
+| 011 | `011_*.sql` | run-start-gated-and-one-tap | qualification gate on run start |
+| 012 | `012_*.sql` | scrap-rework-and-coded-downtime | scrap/rework + coded downtime |
+
+### Reserved test ports
+
+A test that spawns a server holds a fixed port. Two suites on one port silently
+cancel each other, so every stream gets its own block and uses only its own.
+
+| Port | Workstream key |
+|---|---|
+| 3401 | migration-discipline |
+| 3402 | one-definition-of-today |
+| 3403 | one-guide |
+| 3404 | honest-numbers-one-formatter |
+| 3405 | settings-that-fit |
+| 3406 | erp-door |
+| 3407 | andon |
+| 3408 | pm |
+| 3409 | operations |
+| 3410 | revisions |
+| 3411 | qualification |
+| 3412 | scrap |
+| 3413 | downtime |
+| 3414 | dispatch |
+| 3415 | demo-seed |
+
+Already in use elsewhere, do not reuse: existing tests hold **3171–3199**,
+**3231–3258**, **3306** and **3308**; production runs on **3321**.
+
+### Rules for a new .sql file
+
+1. **Additive only.** No `DROP`, no `ALTER COLUMN`, no `DELETE`. A migration runs
+   against a customer's live database on the next deploy; there is no down step.
+2. **`IF NOT EXISTS` / `ADD COLUMN` only.** `CREATE TABLE IF NOT EXISTS`,
+   `CREATE INDEX IF NOT EXISTS`, `ALTER TABLE … ADD COLUMN`. Re-adding something
+   `db.js` already made raises "duplicate column name" / "already exists", which
+   the runner tolerates per-statement; anything else aborts and rolls back the
+   whole file.
+3. **Vocabulary comes from `backend/src/vocab.js`.** Write a `CHECK` with
+   `checkList('OPERATION_STATUS')` and validate the same column with
+   `isValid('OPERATION_STATUS', v)`, so the constraint and the API cannot
+   disagree. Those lists are frozen on first ship — SQLite cannot alter a CHECK
+   in place, so changing one later means rebuilding the table on live data.
+   Decide the whole vocabulary before the migration lands.
+4. **Read the live schema first, not `db.js`.** The `CREATE TABLE` blocks in
+   `db.js` are stale — columns were added by later `ALTER` guards, so the CREATE
+   text no longer describes any real database. Check what is actually there:
+
+   ```bash
+   cp backend/mes.db /tmp/schema-peek.db          # never open the live file
+   node -e "const D=require('better-sqlite3');const d=new D('/tmp/schema-peek.db',{readonly:true});
+     console.log(d.prepare('PRAGMA table_info(work_orders)').all())"
+   ```
+5. **No `BEGIN`/`COMMIT` and no `PRAGMA` inside a file** — the runner owns the
+   transaction, and a PRAGMA inside one is ignored. No `BEGIN…END` trigger
+   bodies either: the runner splits on `;` (string- and comment-aware, but not a
+   full SQL parser).
+6. **Never renumber or edit a shipped file.** `_schema_migrations` keys on the
+   filename; an edited file is never re-run, and a renamed one runs twice.
