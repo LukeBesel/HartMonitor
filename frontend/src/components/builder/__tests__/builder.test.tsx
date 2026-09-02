@@ -36,6 +36,19 @@ vi.mock('../../../api/client', () => ({
   },
 }));
 
+// The builder edits the DRAFT, so it loads through getAppDraft (GET
+// /api/apps/:id?draft=1) rather than the plain app read every other screen
+// uses — plain GET now serves the live revision's frozen snapshot.
+vi.mock('../../../api/revisions', () => ({
+  getAppDraft: vi.fn(() => Promise.resolve(v1App())),
+  getRevisionDiff: vi.fn(() => Promise.resolve({ current_revision: 0, next_revision: 1, diff: null, has_unpublished_changes: false })),
+  publishRevision: vi.fn(() => Promise.resolve({ revision: 1, current_revision: 1, diff: null })),
+  setRequiresApproval: vi.fn(() => Promise.resolve({ requires_approval: 0 })),
+  getAppRevision: vi.fn(),
+  getAppRevisions: vi.fn(),
+  describeDiff: () => null,
+}));
+
 vi.mock('../../../context/AuthContext', () => ({
   useAuth: () => ({ canEdit: true }),
 }));

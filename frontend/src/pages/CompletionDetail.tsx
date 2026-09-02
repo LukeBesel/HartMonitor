@@ -20,13 +20,15 @@ import type { CompletionValue, Step, Widget } from '../types';
 import {
   ArrowLeft, CheckCircle2, XCircle, Clock, User, Calendar, AlertTriangle,
   Package, ChevronRight, BarChart2, MapPin, ExternalLink, ListChecks, Users,
-  History, Gauge, Play, MessageSquare,
+  History, Gauge, Play, MessageSquare, FileText, ChevronDown,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, Cell,
 } from 'recharts';
 import { stepTaktSeconds } from '../components/player/runtime';
+import { getAppRevision } from '../api/revisions';
+import type { AppRevisionSnapshot, RunRevisionStamp } from '../api/revisions';
 import useAutoRefresh from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
 import EmptyState from '../components/shared/EmptyState';
@@ -176,6 +178,14 @@ export default function CompletionDetail() {
 
   const [run, setRun] = useState<RunPayload | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
+  // Which published revision of the app this run was measured against. The
+  // server stamps it at run start; null means the run predates change control
+  // on this app, which the page SAYS rather than papering over with a Rev 1.
+  const [revision, setRevision] = useState<RunRevisionStamp | null>(null);
+  const [revisionKnown, setRevisionKnown] = useState(false);
+  const [showSnapshot, setShowSnapshot] = useState(false);
+  const [snapshot, setSnapshot] = useState<AppRevisionSnapshot | null>(null);
+  const [snapshotError, setSnapshotError] = useState<string | null>(null);
   const [appSteps, setAppSteps] = useState<Step[] | null>(null);
   const [values, setValues] = useState<CompletionValue[] | null>(null);
   const [stationName, setStationName] = useState<string | null>(null);
@@ -212,6 +222,12 @@ export default function CompletionDetail() {
       ]);
 
       setSessions(sessionRes.status === 'fulfilled' ? (sessionRes.value?.sessions ?? []) : []);
+      // `revisionKnown` separates "this run recorded no revision" (a fact worth
+      // printing) from "the request that would have told us failed" (not one).
+      if (sessionRes.status === 'fulfilled') {
+        setRevision((sessionRes.value?.app_revision ?? null) as RunRevisionStamp | null);
+        setRevisionKnown(true);
+      }
       setAppSteps(appRes.status === 'fulfilled' ? (appRes.value?.steps ?? []) : null);
       setValues(valueRes.status === 'fulfilled' ? valueRes.value : null);
       setStationName(
@@ -245,6 +261,21 @@ export default function CompletionDetail() {
     const tick = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(tick);
   }, [isLive]);
+
+  // The frozen instructions this run followed, fetched only when somebody asks
+  // to see them. It is the SNAPSHOT, never the app as it stands today — that is
+  // the whole point of the link.
+  useEffect(() => {
+    if (!showSnapshot || !run || !revision || snapshot) return;
+    let cancelled = false;
+    setSnapshotError(null);
+    getAppRevision(run.app_id, revision.revision)
+      .then(rev => { if (!cancelled) setSnapshot(rev); })
+      .catch((e: unknown) => {
+        if (!cancelled) setSnapshotError(e instanceof Error ? e.message : 'Could not load this revision');
+      });
+    return () => { cancelled = true; };
+  }, [showSnapshot, run, revision, snapshot]);
 
   // ── Derived ────────────────────────────────────────────────────────────────
 
@@ -457,6 +488,94 @@ export default function CompletionDetail() {
             <Meta icon={<Package size={13} />} label="Work order" value={run.work_order.work_order_number} />
           )}
         </div>
+
+        {/* ── What this operator actually followed ──────────────────────────
+            A run is measured against the revision that was live when it
+            started. Editing the app afterwards cannot change it, and a run
+            that started before this app was ever published under change
+            control says so — it is never given a Rev 1 it never saw. */}
+        {revisionKnown && (
+          <div className="border-t border-gray-100 pt-4" data-testid="run-revision">
+            {!revision ? (
+              <p className="text-xs text-gray-500 flex items-start gap-1.5">
+                <FileText size={13} className="text-gray-400 flex-shrink-0 mt-px" />
+                <span>
+                  <span className="font-semibold text-gray-700">Revision not recorded</span>
+                  {' — this run started before this app was published under change control, '}
+                  so the instructions it followed were never frozen.
+                </span>
+              </p>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowSnapshot(v => !v)}
+                  aria-expanded={showSnapshot}
+                  className="inline-flex items-center gap-1.5 text-xs text-gray-700 hover:text-gray-900 font-medium"
+                >
+                  <FileText size={13} className="text-gray-400" />
+                  <span>
+                    Ran against Rev {revision.revision}
+                    {revision.effective_at && ` · published ${fmtDateTime(revision.effective_at)}`}
+                    {revision.published_by_name && ` by ${revision.published_by_name}`}
+                  </span>
+                  <ChevronDown size={13} className={`text-gray-400 transition-transform ${showSnapshot ? 'rotate-180' : ''}`} />
+                </button>
+
+                {showSnapshot && (
+                  <div className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3">
+                    {snapshotError ? (
+                      <p className="text-xs text-red-700">{snapshotError}</p>
+                    ) : !snapshot ? (
+                      <p className="text-xs text-gray-500">Loading Rev {revision.revision}…</p>
+                    ) : (
+                      <>
+                        <p className="text-[11px] uppercase tracking-wide text-gray-400">
+                          Rev {snapshot.revision} — the steps as published
+                        </p>
+                        {snapshot.change_note && (
+                          <p className="text-xs text-gray-600 mt-1">
+                            <span className="font-semibold">Change note:</span> {snapshot.change_note}
+                          </p>
+                        )}
+                        {/* The policy that applied WHEN THIS REVISION WAS CUT.
+                            An app that never required approval must not read as
+                            one that skipped it, and a deleted approver must not
+                            read as no approver at all. */}
+                        <p className="text-[11px] text-gray-500 mt-1">
+                          {snapshot.approved_by_name
+                            ? `Approved by ${snapshot.approved_by_name}`
+                            : snapshot.approval_required
+                              ? snapshot.approved_by_user_id
+                                ? 'Approved by a user whose account has since been removed'
+                                : 'No approver recorded'
+                              : 'Approval was not required for this app'}
+                        </p>
+                        <ol className="mt-2 space-y-1.5">
+                          {(snapshot.steps ?? []).map((step, i) => (
+                            <li key={step.id ?? i} className="text-xs text-gray-700">
+                              <span className="tabular-nums text-gray-400 mr-1.5">{i + 1}.</span>
+                              <span className="font-medium">{step.name || 'Untitled step'}</span>
+                              {(step.widgets ?? []).length > 0 && (
+                                <span className="text-gray-500">
+                                  {' — '}
+                                  {(step.widgets ?? []).map((w: Widget) => w.label || w.type).join(', ')}
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ol>
+                        {(snapshot.steps ?? []).length === 0 && (
+                          <p className="text-xs text-gray-500 mt-2">This revision recorded no steps.</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
 
         {run.status === 'abandoned' && (
           <p className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2 flex items-start gap-2">

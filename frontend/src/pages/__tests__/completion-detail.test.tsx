@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 // ─── /completions/:id ─────────────────────────────────────────────────────────
@@ -32,6 +32,12 @@ vi.mock('../../api/client', () => ({
     get getAppHistory() { return getAppHistory; },
   },
 }));
+
+const getAppRevision = vi.fn();
+vi.mock('../../api/revisions', async () => {
+  const actual = await vi.importActual<typeof import('../../api/revisions')>('../../api/revisions');
+  return { ...actual, get getAppRevision() { return getAppRevision; } };
+});
 
 import CompletionDetail from '../CompletionDetail';
 
@@ -94,6 +100,15 @@ beforeEach(() => {
   getCompletionValues.mockResolvedValue([]);
   getStations.mockResolvedValue([{ id: STATION_ID, name: 'Station 1' }]);
   getAppHistory.mockResolvedValue({ avg_duration: 400, completions: [] });
+  getAppRevision.mockResolvedValue({
+    id: 'rev-1', app_id: 'app-1', revision: 1, change_note: 'added torque check',
+    steps: [{ id: 's0', name: 'Safety Check', order: 0, widgets: [] }],
+    variables: [], step_groups: [], schema_version: 2,
+    approval_required: 0,
+    published_by_user_id: 'u1', approved_by_user_id: null,
+    published_by_name: 'Dana', approved_by_name: null,
+    effective_at: '2026-08-12 09:00:00', created_at: '2026-08-12 09:00:00', run_count: 3,
+  });
 });
 
 // ── Durations ────────────────────────────────────────────────────────────────
@@ -209,5 +224,94 @@ describe('CompletionDetail keeps a live run legible as live', () => {
     expect(within(table).getByText('Assembly').closest('tr')!.textContent).toContain('on it now');
     expect(within(table).getByText('Final Inspection').closest('tr')!.textContent).toContain('not reached');
     expect(screen.getByText(/The operator is on/)).toBeTruthy();
+  });
+});
+
+
+// ── Change control ───────────────────────────────────────────────────────────
+// A run is measured against the revision of the app that was live when it
+// started. The regression this guards: a run with no revision recorded — every
+// run that predates change control — must SAY so. Printing "Rev 1" there would
+// be a fabricated fact about what an operator saw, which is the exact defect
+// app revisions exist to end.
+
+describe('CompletionDetail says which revision the operator followed', () => {
+  it('reads "Revision not recorded" on a run that carries none, and never invents Rev 1', async () => {
+    getCompletionWithSessions.mockResolvedValue({ sessions: [], app_revision_id: null, app_revision: null });
+    renderPage();
+    await screen.findByTestId('run-total');
+    const block = screen.getByTestId('run-revision');
+    expect(block.textContent).toContain('Revision not recorded');
+    expect(block.textContent).not.toMatch(/Rev\s*1\b/);
+    expect(screen.queryByText(/Ran against Rev/)).toBeNull();
+    expect(getAppRevision).not.toHaveBeenCalled();
+  });
+
+  it('names the revision, when it was published and by whom', async () => {
+    getCompletionWithSessions.mockResolvedValue({
+      sessions: [],
+      app_revision_id: 'rev-1',
+      app_revision: { revision: 1, published_by_name: 'Dana', effective_at: '2026-08-12 09:00:00' },
+    });
+    renderPage();
+    const trigger = await screen.findByRole('button', { name: /Ran against Rev 1/ });
+    expect(trigger.textContent).toContain('Dana');
+    expect(screen.queryByText('Revision not recorded')).toBeNull();
+  });
+
+  it('shows the steps as they were published, not as the app stands today', async () => {
+    getCompletionWithSessions.mockResolvedValue({
+      sessions: [],
+      app_revision_id: 'rev-1',
+      app_revision: { revision: 1, published_by_name: 'Dana', effective_at: '2026-08-12 09:00:00' },
+    });
+    // The live app has since been edited — its step is called something else.
+    getApp.mockResolvedValue({
+      ...appBlob(),
+      steps: [{ id: 's0', name: 'Safety Check (revised)', order: 0, takt_time_seconds: 60, widgets: [] }],
+    });
+    renderPage();
+    const trigger = await screen.findByRole('button', { name: /Ran against Rev 1/ });
+    fireEvent.click(trigger);
+    expect(await screen.findByText(/the steps as published/)).toBeTruthy();
+    expect(getAppRevision).toHaveBeenCalledWith('app-1', 1);
+    const snapshot = screen.getByTestId('run-revision');
+    expect(snapshot.textContent).toContain('Safety Check');
+    expect(snapshot.textContent).toContain('added torque check');
+    expect(snapshot.textContent).not.toContain('Safety Check (revised)');
+  });
+
+  it('does not report a missing approver on a revision that never needed one', async () => {
+    // "No approver recorded" on an app that never required approval reads as a
+    // skipped signature. The revision froze the policy, so say which it was.
+    getCompletionWithSessions.mockResolvedValue({
+      sessions: [],
+      app_revision_id: 'rev-1',
+      app_revision: { revision: 1, published_by_name: 'Dana', effective_at: '2026-08-12 09:00:00' },
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /Ran against Rev 1/ }));
+    expect(await screen.findByText('Approval was not required for this app')).toBeTruthy();
+    expect(screen.queryByText('No approver recorded')).toBeNull();
+  });
+
+  it('names the approver on a revision that required one', async () => {
+    getCompletionWithSessions.mockResolvedValue({
+      sessions: [],
+      app_revision_id: 'rev-1',
+      app_revision: { revision: 1, published_by_name: 'Dana', effective_at: '2026-08-12 09:00:00' },
+    });
+    getAppRevision.mockResolvedValue({
+      id: 'rev-1', app_id: 'app-1', revision: 1, change_note: 'added torque check',
+      steps: [{ id: 's0', name: 'Safety Check', order: 0, widgets: [] }],
+      variables: [], step_groups: [], schema_version: 2,
+      approval_required: 1,
+      published_by_user_id: 'u1', approved_by_user_id: 'u2',
+      published_by_name: 'Dana', approved_by_name: 'Quality Lead',
+      effective_at: '2026-08-12 09:00:00', created_at: '2026-08-12 09:00:00', run_count: 3,
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /Ran against Rev 1/ }));
+    expect(await screen.findByText('Approved by Quality Lead')).toBeTruthy();
   });
 });

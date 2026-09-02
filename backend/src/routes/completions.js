@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { logActivity } = require('../activity');
 const { startRunReaper } = require('../runReaper');
+const appRevisions = require('../appRevisions');
 const {
   roundSeconds, runSecondsSQL, runBasisSQL, avgRunSecondsSQL, avgRunBasisSQL,
   handsOnSecondsSQL, elapsedSecondsSQL, elapsedSoFarSecondsSQL, stepTaktSeconds,
@@ -228,9 +229,15 @@ router.post('/', (req, res) => {
     kitId = kit ? kit.id : null;
   }
   const id = uuidv4();
-  db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, work_order_id, product_type_id, operator_user_id, kit_id, company_id, last_activity_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`)
-    .run(id, app_id, app.name, safeStationId, operator_name, safeWorkOrderId, safeProductTypeId, safeOperatorUserId, kitId, req.companyId);
+  // Which published revision this run is measured against. Read from the server
+  // at the instant the run starts and NEVER taken from the request — a client
+  // that names its own revision could claim a run followed instructions it
+  // never saw. Null when the app has never been published under change control;
+  // that run honestly reads "Revision not recorded" rather than a guessed Rev 1.
+  const appRevisionId = appRevisions.currentRevisionId(req.companyId, app_id);
+  db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, work_order_id, product_type_id, operator_user_id, kit_id, company_id, app_revision_id, last_activity_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`)
+    .run(id, app_id, app.name, safeStationId, operator_name, safeWorkOrderId, safeProductTypeId, safeOperatorUserId, kitId, req.companyId, appRevisionId);
   const completion = db.prepare('SELECT * FROM completions WHERE id = ?').get(id);
 
   // Production advance: an operator started a job. Logged so the Transaction Log
@@ -438,11 +445,20 @@ router.get('/:id', (req, res) => {
     .get(req.params.id, req.companyId);
   if (!completion) return res.status(404).json({ error: 'Not found' });
   const sessions = listSessionsStmt().all(req.params.id, req.companyId);
+  // The revision this run was measured against, named so a page can print
+  // "Ran against Rev 3 · published 12 Aug by Dana". Null when the run predates
+  // change control on this app — the page must say that, not invent a Rev 1.
+  const revisionRow = appRevisions.getRevisionById(req.companyId, completion.app_revision_id);
+  const shaped = revisionRow ? appRevisions.shapeRevision(revisionRow) : null;
   res.json({
     ...completion,
     data: JSON.parse(completion.data),
     step_times: JSON.parse(completion.step_times),
     sessions,
+    app_revision_id: completion.app_revision_id ?? null,
+    app_revision: shaped
+      ? { revision: shaped.revision, published_by_name: shaped.published_by_name, effective_at: shaped.effective_at }
+      : null,
   });
 });
 
