@@ -171,9 +171,10 @@ before(async () => {
   const app = await api('POST', '/api/apps', { token: world.token, body: { name: 'Final QC Inspection' } });
   assert.equal(app.status, 201, `app: ${JSON.stringify(app.json)}`);
   world.appId = app.json.id;
-  const published = await api('PUT', `/api/apps/${world.appId}`, {
-    token: world.token, body: { status: 'published' },
+  const published = await api('POST', `/api/apps/${world.appId}/publish`, {
+    token: world.token, body: { change_note: 'published for the enforcement suite' },
   });
+  assert.equal(published.status, 200, `publish: ${JSON.stringify(published.json)}`);
   assert.equal(published.json.status, 'published', 'the app must be published to be a skill column');
 
   const draft = await api('POST', '/api/apps', { token: world.token, body: { name: 'Bench Trial (draft)' } });
@@ -360,7 +361,7 @@ describe('block refuses the start and says why', () => {
     const other = await signupCompany('Unmeasured Co', 'admin@unmeasured.test');
     const t = other.token;
     const a = await api('POST', '/api/apps', { token: t, body: { name: 'Nothing Yet' } });
-    await api('PUT', `/api/apps/${a.json.id}`, { token: t, body: { status: 'published' } });
+    await api('POST', `/api/apps/${a.json.id}/publish`, { token: t, body: { change_note: 'published for the enforcement suite' } });
     const blocked = await api('GET', '/api/training/blocked-starts', { token: t });
     assert.equal(blocked.json.empty_reason, 'no starts have been blocked yet');
     assert.deepEqual(blocked.json.apps.map(x => x.blocked), [null]);
@@ -383,7 +384,7 @@ describe('an expiry lapses at the start of the plant\'s day', () => {
         assert.equal(cfg.status, 200, `timezone: ${JSON.stringify(cfg.json)}`);
       }
       const a = await api('POST', '/api/apps', { token: t, body: { name: 'Torque Check' } });
-      await api('PUT', `/api/apps/${a.json.id}`, { token: t, body: { status: 'published' } });
+      await api('POST', `/api/apps/${a.json.id}/publish`, { token: t, body: { change_note: 'published for the enforcement suite' } });
       const u = await api('POST', '/api/users', {
         token: t, body: { email: `op-${email}`, display_name: 'Pat Plant', password: 'SecretPass1', role: 'operator' },
       });
@@ -504,7 +505,7 @@ describe('a supervisor override permits exactly one start and leaves a record', 
 
   it('refuses an approval raised for a different app or a different person', async () => {
     const second = await api('POST', '/api/apps', { token: world.token, body: { name: 'Second Line QC' } });
-    await api('PUT', `/api/apps/${second.json.id}`, { token: world.token, body: { status: 'published' } });
+    await api('POST', `/api/apps/${second.json.id}/publish`, { token: world.token, body: { change_note: 'published for the enforcement suite' } });
 
     // The supervisor was asked about Cara on the SECOND app.
     const auth = await verifyFor(CARA(), { appId: second.json.id });
@@ -796,7 +797,7 @@ describe('joining a run is gated exactly like starting one', () => {
 describe('what the blocked-starts report is allowed to claim', () => {
   it('says "—" for an app it has never refused anybody on, beside one it has', async () => {
     const quiet = await api('POST', '/api/apps', { token: world.token, body: { name: 'Never Refused Anyone' } });
-    await api('PUT', `/api/apps/${quiet.json.id}`, { token: world.token, body: { status: 'published' } });
+    await api('POST', `/api/apps/${quiet.json.id}/publish`, { token: world.token, body: { change_note: 'published for the enforcement suite' } });
 
     const blocked = await api('GET', '/api/training/blocked-starts?days=7', { token: world.token });
     const busy = blocked.json.apps.find(a => a.app_id === world.appId);
