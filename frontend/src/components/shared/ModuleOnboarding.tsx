@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useState } from 'react';
 import { X, ArrowLeft, ArrowRight, Check, Compass } from 'lucide-react';
 import { getWalkthrough, WalkthroughStep } from '../../config/walkthroughs';
 import { LIGHT_GROUND, readableInk, shiftUntilReadable } from '../../utils/contrast';
@@ -157,11 +157,18 @@ function PagedWalkthrough({
   title,
   color,
   moduleIcon: ModuleIcon,
-  steps,
+  steps: registered,
   overview,
   overviewTitle,
   onDismiss,
 }: PagedProps) {
+  // A step that names an element the page is not showing right now is dropped
+  // before the tour starts, not narrated to somebody who cannot find it. The
+  // list is fixed at open time so the step count and the dots cannot change
+  // underneath the reader mid-tour.
+  const [steps] = useState(() =>
+    registered.filter(s => !s.target || !!document.querySelector(s.target)));
+
   const hasOverview = !!overview && overview.length > 0;
   // The overview tiles (Dashboard) become a final "explore the system" page.
   const total = steps.length + (hasOverview ? 1 : 0);
@@ -188,9 +195,19 @@ function PagedWalkthrough({
     return () => window.removeEventListener('keydown', onKey);
   }, [onDismiss]);
 
+  // Nothing this tour describes is on the page. Say nothing rather than open an
+  // empty dialog.
+  if (total === 0) return null;
+
+  const spotlit = step?.target;
+
   return (
-    <Backdrop>
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto flex flex-col">
+    <>
+      {spotlit && <Spotlight key={spotlit} selector={spotlit} color={color} />}
+      <Backdrop dimmed={!spotlit} docked={!!spotlit}>
+      <div className={`bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-y-auto flex flex-col ${
+        spotlit ? 'max-h-[52vh]' : 'max-h-[90vh]'
+      }`}>
         {/* Gradient header */}
         <div
           className="relative px-7 pt-6 pb-5 flex items-center gap-3"
@@ -314,7 +331,76 @@ function PagedWalkthrough({
           </div>
         </div>
       </div>
-    </Backdrop>
+      </Backdrop>
+    </>
+  );
+}
+
+/* ────────────────────────────── The spotlight ─────────────────────────────── */
+
+/**
+ * The ring around the thing the current step is talking about.
+ *
+ * A tour that describes seven parts of a screen from a box in the middle of it
+ * makes the reader hunt for each one. This scrolls the element into view and
+ * rings it, and paints the rest of the page down with one enormous spread
+ * shadow — so the dimming IS the hole, and the element being described is the
+ * only lit thing on the screen. The ring sits below the tour card's z-layer, so
+ * the card stays readable on top of the dim.
+ *
+ * Position is read from `getBoundingClientRect` (viewport coordinates, which is
+ * exactly what `position: fixed` takes) and re-read on resize and on scroll —
+ * in the CAPTURE phase, because the app shell scrolls `<main>`, not the window,
+ * and a bubbling scroll listener never hears it. A short interval covers the
+ * frames of a smooth scroll, and stops with the step.
+ */
+function Spotlight({ selector, color }: { selector: string; color: string }) {
+  const [rect, setRect] = useState<DOMRect | null>(null);
+
+  useLayoutEffect(() => {
+    const el = document.querySelector(selector);
+    if (!el) { setRect(null); return; }
+
+    // jsdom has no scrollIntoView, and a page that never scrolled is fine.
+    if (typeof el.scrollIntoView === 'function') {
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+
+    const measure = () => setRect(el.getBoundingClientRect());
+    measure();
+    window.addEventListener('resize', measure);
+    window.addEventListener('scroll', measure, true);
+    const settle = setInterval(measure, 250);
+    return () => {
+      window.removeEventListener('resize', measure);
+      window.removeEventListener('scroll', measure, true);
+      clearInterval(settle);
+    };
+  }, [selector]);
+
+  if (!rect) return null;
+
+  // The halo between the element and the accent ring is the page's own ground,
+  // so the ring reads as drawn ON the surface in either theme rather than
+  // floating over a colour that only exists in one of them.
+  const dark = typeof document !== 'undefined'
+    && document.documentElement.classList.contains('dark');
+  const halo = dark ? 'rgba(15, 23, 42, 0.95)' : 'rgba(255, 255, 255, 0.95)';
+
+  return (
+    <div
+      data-testid="tour-spotlight"
+      data-tour-target={selector}
+      aria-hidden
+      className="pointer-events-none fixed z-40 rounded-xl transition-all duration-200"
+      style={{
+        top: rect.top - 6,
+        left: rect.left - 6,
+        width: rect.width + 12,
+        height: rect.height + 12,
+        boxShadow: `0 0 0 3px ${halo}, 0 0 0 6px ${color}, 0 0 0 9999px rgba(2, 6, 23, 0.66)`,
+      }}
+    />
   );
 }
 
@@ -371,12 +457,22 @@ function OverviewPage({
  *  would be a promise to screen-reader users that the markup does not keep.
  *  Escape closes the tour (see PagedWalkthrough), which is the part that
  *  actually helps someone who opened it by accident. */
-function Backdrop({ children }: { children: React.ReactNode }) {
+function Backdrop({ children, dimmed = true, docked = false }: {
+  children: React.ReactNode;
+  /** False while a spotlight is painting the dim itself — two dims in a row
+   *  would black out the very element the step is pointing at. */
+  dimmed?: boolean;
+  /** Sits the card at the bottom of the screen so the ringed element above it
+   *  stays visible while its step is being read. */
+  docked?: boolean;
+}) {
   return (
     <div
       role="dialog"
       aria-label="Guided tour"
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-6"
+      className={`fixed inset-0 z-50 flex justify-center px-4 py-6 ${
+        docked ? 'items-end' : 'items-center'
+      } ${dimmed ? 'bg-black/60 backdrop-blur-sm' : ''}`}
     >
       {children}
     </div>

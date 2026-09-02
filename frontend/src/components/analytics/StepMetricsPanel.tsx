@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api } from '../api/client';
+import { api } from '../../api/client';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   LineChart, Line, ReferenceLine, Legend
@@ -187,8 +187,9 @@ function StepCard({ step, expanded, onToggle }: { step: StepStat; expanded: bool
 
 // Per-step metrics body for a single app/operation. Owns its own data fetch so
 // it can be embedded anywhere by passing an appId + lookback window; it is
-// hosted by the Operation Analytics drill-down (there is no separate page —
-// a second, unlinked copy of this screen used to exist at /step-metrics).
+// hosted by the Operation Analytics drill-down. It lived under pages/ with an
+// unreachable page around it — /step-metrics has redirected to /analytics for
+// some time — so it now lives with the components, which is what it is.
 export function StepMetricsPanel({ appId, days }: { appId: string; days: number }) {
   const [data, setData] = useState<StepMetricsData | null>(null);
   const [loading, setLoading] = useState(false);

@@ -50,13 +50,21 @@ function memberQuery(extraWhere) {
  * Returns { recipients: [...], scope: 'department' | 'company' | 'fallback' | 'none' }.
  * `recipients` is de-duplicated by user id — someone who matches on two
  * memberships is one person and gets one ping.
+ *
+ * `excludeUserIds` leaves people out of the result. Escalation is the reason it
+ * exists: chasing a call that nobody answered means reaching someone NEW, so
+ * andonEscalation.js passes the people who were already alerted and they are
+ * skipped at every step of the cascade — including the company-wide fallback,
+ * which would otherwise hand the same silent person the same alert twice and
+ * call it an escalation.
  */
-function resolveRecipients(companyId, { team, departmentId, targetType }) {
+function resolveRecipients(companyId, { team, departmentId, targetType, excludeUserIds }) {
   const seen = new Set();
+  const excluded = new Set((excludeUserIds || []).filter(Boolean));
   const pick = rows => {
     const out = [];
     for (const r of rows) {
-      if (!r.user_id || seen.has(r.user_id)) continue;
+      if (!r.user_id || seen.has(r.user_id) || excluded.has(r.user_id)) continue;
       seen.add(r.user_id);
       out.push(r);
     }

@@ -58,12 +58,10 @@ const TITLE_ROUTES: TitleRoute[] = [
   { path: '/play/:id', screen: 'Operator Player' },
   { path: '/operator', screen: 'Operator Portal' },
   { path: '/departments/:id/tv', screen: 'Department TV' },
-  { path: '/leaderboard/tv', screen: 'Leaderboard TV' },
 
   // ── Production ─────────────────────────────────────────────────────────────
   { path: '/dashboard', screen: 'Command Center' },
   { path: '/departments/:id', screen: 'Department' },
-  { path: '/departments', screen: 'Departments' },
   { path: '/andon', screen: 'Andon Board' },
   { path: '/shift-notes', screen: 'Shift Notes' },
 
@@ -93,7 +91,6 @@ const TITLE_ROUTES: TitleRoute[] = [
   // ── Planning ───────────────────────────────────────────────────────────────
   { path: '/schedule', screen: 'Schedule' },
   { path: '/routings', screen: 'Routings' },
-  { path: '/manager', screen: 'Manager View' },
   { path: '/capacity', screen: 'Capacity Plan' },
   { path: '/stations/:id', screen: 'Station' },
   { path: '/stations', screen: 'Stations' },
@@ -130,7 +127,6 @@ const TITLE_ROUTES: TitleRoute[] = [
   { path: '/oee', screen: 'OEE Tracker' },
   { path: '/analytics', screen: 'Operation Analytics' },
   { path: '/facilities', screen: 'Facilities' },
-  { path: '/transaction-log', screen: 'Transaction Log' },
   { path: '/audit-log', screen: 'Audit Log' },
   { path: '/admin', screen: 'Admin Dashboard' },
 
@@ -138,9 +134,15 @@ const TITLE_ROUTES: TitleRoute[] = [
 
   // ── Retired routes that redirect ───────────────────────────────────────────
   // They are listed with their destination's title purely so the tab doesn't
-  // blink "Page Not Found" during the redirect.
+  // blink "Page Not Found" during the redirect. Four of them are the screens
+  // that used to answer "what is the floor doing right now" alongside the
+  // Command Center, plus the log that carried a second name.
   { path: '/sqdc', screen: 'Command Center' },
   { path: '/plant', screen: 'Command Center' },
+  { path: '/manager', screen: 'Command Center' },
+  { path: '/departments', screen: 'Command Center' },
+  { path: '/leaderboard/tv', screen: 'Leaderboard' },
+  { path: '/transaction-log', screen: 'Audit Log' },
   { path: '/step-metrics', screen: 'Operation Analytics' },
 ];
 

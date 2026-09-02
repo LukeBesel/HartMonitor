@@ -7,7 +7,7 @@ import {
 } from 'recharts';
 import { TrendingUp, CheckCircle, Clock, Users, Activity, BarChart2, Filter, X, Timer, ChevronDown, AlertTriangle, RefreshCw } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
-import { StepMetricsPanel } from './StepMetrics';
+import { StepMetricsPanel } from '../components/analytics/StepMetricsPanel';
 import { fmtDuration } from '../components/apps/appModel';
 
 const COLORS = ['#22c55e', '#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6'];

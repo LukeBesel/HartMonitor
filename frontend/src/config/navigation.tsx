@@ -1,10 +1,10 @@
 import { useMemo } from 'react';
 import {
   LayoutDashboard, AppWindow, Database, BarChart3,
-  Calendar, ClipboardList, Trophy,
+  Calendar, Trophy,
   Users, Cpu, LayoutGrid,
-  Package, ShoppingCart, ShieldCheck, Building2,
-  Factory, CalendarRange, Layers, History, Tablet, Network, GitBranch,
+  Package, ShoppingCart, ShieldCheck,
+  Factory, CalendarRange, Layers, Tablet, Network, GitBranch,
   Boxes, PackageCheck, PackageOpen, Truck, ListChecks,
   GraduationCap,
   Bell, AlertTriangle, Wrench, ClipboardCheck, Lightbulb, BookOpen,
@@ -75,8 +75,12 @@ export const SECTIONS: NavSection[] = [
     icon: Factory,
     description: 'Run the floor day to day',
     items: [
+      // ONE live-floor entry. The Command Center is the whole plant, live, and
+      // narrows to a department on request; a department's own page is reached
+      // from the cards on it. Two more menu items leading to two more screens
+      // that answered "what is the floor doing" differently at the same minute
+      // is the bug this section no longer has.
       { to: '/dashboard',   icon: LayoutDashboard, label: 'Command Center', exact: true, module: 'production' },
-      { to: '/departments', icon: Building2,  label: 'Departments',     module: 'production' },
       { to: '/andon',       icon: Bell,       label: 'Andon Board',     module: 'andon' },
       { to: '/shift-notes', icon: BookOpen,   label: 'Shift Notes',     module: 'shifts' },
       { to: '/reports/production', icon: BarChart3, label: 'Reports',   module: 'production' },
@@ -141,7 +145,6 @@ export const SECTIONS: NavSection[] = [
     items: [
       { to: '/schedule',    icon: Calendar,      label: 'Schedule',      module: 'production' },
       { to: '/routings',    icon: GitBranch,     label: 'Routings',      proOnly: true, minRole: 'supervisor', module: 'production' },
-      { to: '/manager',     icon: ClipboardList, label: 'Manager View',  minRole: 'manager', module: 'production' },
       { to: '/capacity',    icon: Users,         label: 'Capacity Plan', minRole: 'manager', module: 'analytics' },
     ],
   },
@@ -194,7 +197,6 @@ export const SECTIONS: NavSection[] = [
       { to: '/oee',              icon: Cpu,         label: 'OEE Tracker',      minRole: 'supervisor', proOnly: true, module: 'production' },
       { to: '/analytics',        icon: BarChart3,   label: 'Operation Analytics', module: 'analytics' },
       { to: '/facilities',       icon: Network,     label: 'Facilities',       minRole: 'manager', enterpriseOnly: true, module: 'production' },
-      { to: '/transaction-log',  icon: History,     label: 'Transaction Log',  minRole: 'supervisor', module: 'analytics' },
       { to: '/audit-log',        icon: AlertTriangle, label: 'Audit Log',      minRole: 'supervisor' },
       { to: '/admin',            icon: ShieldCheck, label: 'Admin Dashboard',   platformStaffOnly: true },
     ],
@@ -233,6 +235,17 @@ function pathMatchesItem(pathname: string, itemPath: string): boolean {
   return pathname === itemPath || pathname.startsWith(`${itemPath}/`);
 }
 
+/**
+ * Detail screens that have no menu item of their own, and the workspace they
+ * belong to. A department's page is opened from a card on the Command Center
+ * rather than from the sidebar, and the sidebar still has to light up
+ * Production while somebody is reading it — otherwise clicking through from
+ * the Command Center appears to leave the app.
+ */
+const PATH_SECTIONS: { prefix: string; section: SectionId }[] = [
+  { prefix: '/departments', section: 'production' },
+];
+
 /** The section that owns `pathname`, or null for routes outside the nav
  *  (e.g. /settings). Pure — pass any section list (tests use SECTIONS,
  *  Layout passes the module-filtered list). */
@@ -250,7 +263,14 @@ export function findSectionForPath(
       }
     }
   }
-  return best;
+  if (best) return best;
+
+  for (const alias of PATH_SECTIONS) {
+    if (!pathMatchesItem(pathname, alias.prefix)) continue;
+    const section = sections.find(s => s.id === alias.section);
+    if (section) return section;
+  }
+  return null;
 }
 
 // Every nav item a CUSTOMER can be given, which is what the per-role permission

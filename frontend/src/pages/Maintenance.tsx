@@ -6,6 +6,11 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 import TabBar from '../components/shared/TabBar';
+import {
+  getPMSchedules, updatePMSchedule, completePMSchedule, getMaintenanceWorkOrders,
+  dueLabel, cadenceLabel,
+} from '../api/maintenance';
+import type { PMSchedule, MaintenanceWorkOrder } from '../api/maintenance';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -27,38 +32,11 @@ interface Asset {
   notes: string;
 }
 
-interface MaintenanceWO {
-  id: string;
-  wo_number: string;
-  asset_id?: string;
-  asset_name?: string;
-  // Matches maintenance_work_orders.type CHECK exactly ('pm' is not storable).
-  type: 'preventive' | 'corrective' | 'emergency' | 'inspection';
-  title: string;
-  description: string;
-  // These two match the stored vocabularies exactly (DB CHECK constraints):
-  // priority medium (not "normal"), status completed (not "complete").
-  priority: 'low' | 'medium' | 'high' | 'critical';
-  status: 'open' | 'in_progress' | 'on_hold' | 'completed' | 'cancelled';
-  assigned_to: string;
-  due_date?: string;
-  completed_at?: string;
-  actual_hours: number;
-  created_at: string;
-}
-
-interface PMSchedule {
-  id: string;
-  asset_id: string;
-  asset_name?: string;
-  title: string;
-  frequency_type: string;
-  frequency_value: number;
-  last_completed_at?: string;
-  next_due_at?: string;
-  assigned_to: string;
-  estimated_hours: number;
-}
+// The work order and the PM schedule are typed in src/api/maintenance.ts, where
+// the fields that link them live (pm_schedule_id / pm_title on the job,
+// next_due_reason / is_overdue / auto_create_wo on the schedule). One shape,
+// used by the page and by anything else that reads these endpoints.
+type MaintenanceWO = MaintenanceWorkOrder;
 
 interface MaintenanceSummary {
   open_wos: number;
@@ -77,12 +55,15 @@ type TabKey = 'overview' | 'work_orders' | 'assets' | 'pm_schedules';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function formatDate(iso?: string): string {
+function formatDate(iso?: string | null): string {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function isOverdue(dateStr?: string): boolean {
+// For a work order's due date, which is a plain date the browser can compare.
+// A PM's overdue-ness is NOT decided here — it comes from the server, in the
+// plant's day, so the row and the Overdue PMs tile agree.
+function isOverdue(dateStr?: string | null): boolean {
   if (!dateStr) return false;
   return new Date(dateStr) < new Date();
 }
@@ -811,7 +792,7 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
           ) : (
             <div className="space-y-2">
               {overduePMs.map(pm => {
-                const overdue = isOverdue(pm.next_due_at);
+                const overdue = pm.is_overdue;
                 return (
                   <div key={pm.id} className="flex items-start justify-between gap-3 p-3 bg-gray-50 rounded-lg border border-gray-300">
                     <div className="min-w-0">
@@ -826,7 +807,7 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
                     </div>
                     <div className="shrink-0 text-right">
                       <div className={`text-xs font-medium ${overdue ? 'text-red-700' : 'text-amber-700'}`}>
-                        {pm.next_due_at ? formatDate(pm.next_due_at) : '—'}
+                        {dueLabel(pm)}
                       </div>
                       {overdue && (
                         <div className="text-xs text-red-500 mt-0.5">Overdue</div>
@@ -870,6 +851,7 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
                     {wo.asset_name && (
                       <div className="text-xs text-gray-500 mt-0.5">{wo.asset_name}</div>
                     )}
+                    <PMOrigin wo={wo} />
                   </div>
                   <div className="shrink-0">
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${statusColor(wo.status)}`}>
@@ -898,9 +880,32 @@ interface WorkOrdersTabProps {
   loading: boolean;
   onRefresh: () => void;
   onNewWO: () => void;
+  /** Open the PM schedule a job was raised from. */
+  onOpenPM?: (pmScheduleId: string) => void;
 }
 
-function WorkOrdersTab({ wos, loading, onRefresh, onNewWO }: WorkOrdersTabProps) {
+// A job that appeared on its own has to say where it came from, or the first
+// question about it is "who raised this?" and the answer is nowhere on screen.
+function PMOrigin({ wo, onOpenPM }: { wo: MaintenanceWO; onOpenPM?: (id: string) => void }) {
+  if (!wo.pm_schedule_id) return null;
+  const label = `Raised automatically from PM: ${wo.pm_title || 'a schedule'}`;
+  if (!onOpenPM) {
+    return <div data-testid={`pm-origin-${wo.id}`} className="text-xs text-blue-700 mt-1">{label}</div>;
+  }
+  return (
+    <button
+      type="button"
+      data-testid={`pm-origin-${wo.id}`}
+      onClick={() => onOpenPM(wo.pm_schedule_id as string)}
+      className="text-left text-xs text-blue-700 hover:underline mt-1 inline-flex items-center gap-1"
+    >
+      <Clock size={10} className="shrink-0" />
+      {label}
+    </button>
+  );
+}
+
+function WorkOrdersTab({ wos, loading, onRefresh, onNewWO, onOpenPM }: WorkOrdersTabProps) {
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [priorityFilter, setPriorityFilter] = useState('');
@@ -1006,6 +1011,7 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO }: WorkOrdersTabProps)
                       <Cpu size={10} /> {wo.asset_name}
                     </div>
                   )}
+                  <PMOrigin wo={wo} onOpenPM={onOpenPM} />
                 </div>
                 <button
                   onClick={() => setConfirmDelete(confirmDelete === wo.id ? null : wo.id)}
@@ -1257,20 +1263,41 @@ interface PMSchedulesTabProps {
   loading: boolean;
   onRefresh: () => void;
   onNewPM: () => void;
+  /** A schedule to draw attention to — set when arriving from the job it raised. */
+  highlightId?: string | null;
 }
 
-function PMSchedulesTab({ pms, loading, onRefresh, onNewPM }: PMSchedulesTabProps) {
+function PMSchedulesTab({ pms, loading, onRefresh, onNewPM, highlightId }: PMSchedulesTabProps) {
   const [completingId, setCompletingId] = useState<string | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [error, setError] = useState('');
 
   async function handleComplete(id: string) {
     setCompletingId(id);
+    setError('');
     try {
-      await api.completePMSchedule(id);
+      await completePMSchedule(id);
       onRefresh();
-    } catch {
-      // ignore
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not complete that PM.');
     } finally {
       setCompletingId(null);
+    }
+  }
+
+  // The two switches that decide whether a schedule raises its own job, and how
+  // far ahead. Saved immediately — a toggle that needs a separate Save button is
+  // a toggle people leave in the wrong position.
+  async function saveSchedule(pm: PMSchedule, patch: { auto_create_wo?: boolean; lead_days?: number }) {
+    setSavingId(pm.id);
+    setError('');
+    try {
+      await updatePMSchedule(pm.id, patch);
+      onRefresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not save that change.');
+    } finally {
+      setSavingId(null);
     }
   }
 
@@ -1285,6 +1312,10 @@ function PMSchedulesTab({ pms, loading, onRefresh, onNewPM }: PMSchedulesTabProp
           <Plus size={15} /> Add PM Schedule
         </button>
       </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl px-4 py-3">{error}</div>
+      )}
 
       {loading ? (
         <div className="space-y-2">
@@ -1306,23 +1337,33 @@ function PMSchedulesTab({ pms, loading, onRefresh, onNewPM }: PMSchedulesTabProp
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Title</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Frequency</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Next Due</th>
+                  <th className="text-left px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" title="Raise a work order automatically when this PM comes due, and how many days early">Auto</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Last Done</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Assigned To</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Est. Hrs</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
+                  {/* Pinned to the right edge of the scroll box. Nine columns do
+                      not fit 1280 beside the sidebar, and the one column nobody
+                      can afford to lose off the end is the one with the button
+                      on it — a table you have to scroll sideways to find the
+                      action in is a table people give up on. */}
+                  <th className="sticky right-0 z-10 bg-gray-50 text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide border-l border-gray-200">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
                 {pms.map(pm => {
-                  const overdue = isOverdue(pm.next_due_at);
+                  // Overdue is the SERVER's answer, in the plant's day, and the
+                  // same one the Overdue PMs tile counts — never a comparison
+                  // against the browser's clock, which disagrees every evening.
+                  const overdue = pm.is_overdue;
                   return (
-                    <tr key={pm.id} className="hover:bg-gray-50 transition-colors">
+                    <tr
+                      key={pm.id}
+                      data-testid={`pm-row-${pm.id}`}
+                      className={`group transition-colors ${highlightId === pm.id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
+                    >
                       <td className="px-4 py-3 text-gray-700">{pm.asset_name || '—'}</td>
                       <td className="px-4 py-3 text-gray-900 font-medium max-w-[200px] truncate">{pm.title}</td>
-                      <td className="px-4 py-3 text-gray-500">
-                        Every {pm.frequency_value} {capitalize(pm.frequency_type)}
-                        {pm.frequency_value !== 1 ? 's' : ''}
-                      </td>
+                      <td className="px-4 py-3 text-gray-500">{cadenceLabel(pm)}</td>
                       <td className="px-4 py-3">
                         {pm.next_due_at ? (
                           <div className="flex items-center gap-2">
@@ -1335,12 +1376,58 @@ function PMSchedulesTab({ pms, loading, onRefresh, onNewPM }: PMSchedulesTabProp
                               </span>
                             )}
                           </div>
-                        ) : '—'}
+                        ) : (
+                          // Never a bare dash: an hours- or cycles-based
+                          // schedule has no date because it needs a meter
+                          // reading, and saying so is the difference between a
+                          // known limit and an apparent bug.
+                          <span data-testid={`pm-no-date-${pm.id}`} className="text-gray-500 italic">
+                            {dueLabel(pm)}
+                          </span>
+                        )}
+                        {pm.open_wo_number && (
+                          <div className="text-xs text-blue-700 mt-0.5">Job raised: {pm.open_wo_number}</div>
+                        )}
+                      </td>
+                      {/* Deliberately narrow: two controls and no prose. The
+                          first cut of this column was wide enough to push "Mark
+                          Complete" — the one thing anyone comes to this table to
+                          press — off the right edge at 1280 with the sidebar
+                          open. The header and the tooltips carry the meaning. */}
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={pm.auto_create_wo}
+                            disabled={savingId === pm.id}
+                            title={`Raise a work order automatically when "${pm.title}" comes due`}
+                            aria-label={`Raise a work order automatically for ${pm.title}`}
+                            onChange={e => saveSchedule(pm, { auto_create_wo: e.target.checked })}
+                            className="rounded border-gray-300"
+                          />
+                          <input
+                            type="number"
+                            min={0}
+                            max={365}
+                            defaultValue={pm.lead_days}
+                            disabled={savingId === pm.id || !pm.auto_create_wo}
+                            title={`Days before the due date to raise the job for "${pm.title}"`}
+                            aria-label={`Days of lead time for ${pm.title}`}
+                            onBlur={e => {
+                              const value = Number(e.target.value);
+                              if (value !== pm.lead_days) saveSchedule(pm, { lead_days: value });
+                            }}
+                            className="w-14 bg-white border border-gray-300 rounded-lg px-1.5 py-1 text-gray-900 disabled:opacity-50"
+                          />
+                          <span className="text-xs text-gray-500">d</span>
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-gray-500">{formatDate(pm.last_completed_at)}</td>
                       <td className="px-4 py-3 text-gray-500">{pm.assigned_to || '—'}</td>
                       <td className="px-4 py-3 text-gray-500">{pm.estimated_hours}h</td>
-                      <td className="px-4 py-3">
+                      <td className={`sticky right-0 z-10 px-4 py-3 border-l border-gray-200 ${
+                        highlightId === pm.id ? 'bg-blue-50' : 'bg-white group-hover:bg-gray-50'
+                      }`}>
                         <button
                           onClick={() => handleComplete(pm.id)}
                           disabled={completingId === pm.id}
@@ -1370,6 +1457,9 @@ function PMSchedulesTab({ pms, loading, onRefresh, onNewPM }: PMSchedulesTabProp
 
 export default function Maintenance() {
   const [activeTab, setActiveTab] = useState<TabKey>('overview');
+  // Set when someone follows a job back to the PM that raised it, so the row
+  // they were sent to is the one they land on.
+  const [highlightPM, setHighlightPM] = useState<string | null>(null);
 
   // Data
   const [summary, setSummary] = useState<MaintenanceSummary | null>(null);
@@ -1410,12 +1500,12 @@ export default function Maintenance() {
     try {
       const [sum, pmsData, wosData] = await Promise.all([
         api.getMaintenanceSummary(),
-        api.getPMSchedules({ overdue: true }),
-        api.getMaintenanceWOs({ status: 'open' }),
+        getPMSchedules({ overdue: true }),
+        getMaintenanceWorkOrders({ status: 'open' }),
       ]);
       setSummary(sum as MaintenanceSummary);
-      setOverduePMs(pmsData as PMSchedule[]);
-      setOpenWOs(wosData as MaintenanceWO[]);
+      setOverduePMs(pmsData);
+      setOpenWOs(wosData);
     } catch (err: any) {
       setError(err.message || 'Failed to load overview data.');
     } finally {
@@ -1429,8 +1519,8 @@ export default function Maintenance() {
     setWOsLoading(true);
     setError('');
     try {
-      const data = await api.getMaintenanceWOs();
-      setWOs(data as MaintenanceWO[]);
+      const data = await getMaintenanceWorkOrders();
+      setWOs(data);
     } catch (err: any) {
       setError(err.message || 'Failed to load work orders.');
     } finally {
@@ -1455,8 +1545,8 @@ export default function Maintenance() {
     setPMsLoading(true);
     setError('');
     try {
-      const data = await api.getPMSchedules();
-      setPMs(data as PMSchedule[]);
+      const data = await getPMSchedules();
+      setPMs(data);
     } catch (err: any) {
       setError(err.message || 'Failed to load PM schedules.');
     } finally {
@@ -1544,6 +1634,7 @@ export default function Maintenance() {
           loading={wosLoading}
           onRefresh={loadWOs}
           onNewWO={() => setShowCreateWO(true)}
+          onOpenPM={(pmId) => { setHighlightPM(pmId); setActiveTab('pm_schedules'); }}
         />
       )}
 
@@ -1563,6 +1654,7 @@ export default function Maintenance() {
           loading={pmsLoading}
           onRefresh={loadPMs}
           onNewPM={() => setShowCreatePM(true)}
+          highlightId={highlightPM}
         />
       )}
 

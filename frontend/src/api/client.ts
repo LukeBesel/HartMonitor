@@ -577,7 +577,6 @@ export const api = {
   getOperatorPerformance: (f?: AnalyticsFilters) => request<any[]>(`/analytics/operator-performance${filterQS(f)}`),
   getAppPerformance: (f?: AnalyticsFilters) => request<any[]>(`/analytics/app-performance${filterQS(f)}`),
   getQualityData: (days?: number, f?: AnalyticsFilters) => request<any[]>(`/analytics/quality${filterQS(f, { days: days ?? 30 })}`),
-  getManagerView: () => request<any>('/analytics/manager-view'),
   getPlantView: (params?: DashboardFilters) =>
     request<any>(`/analytics/plant-view${dashboardFilterQS(params)}`),
   getDepartmentView: (id: string) => request<any>(`/analytics/department/${id}`),
@@ -694,25 +693,14 @@ export const api = {
   getQualitySummary: () => request<any>('/quality/summary'),
 
   // ── SQDC (Safety · Quality · Delivery · Cost board)
-  getSQDC: (params?: { date?: string; department_id?: string }) => {
-    const qs = new URLSearchParams();
-    if (params?.date)          qs.set('date', params.date);
-    if (params?.department_id) qs.set('department_id', params.department_id);
-    const s = qs.toString();
-    return request<any>(`/sqdc${s ? `?${s}` : ''}`);
-  },
+  // The board's own two readers are gone with the screen that read them. The
+  // department wall board below still lives on this router, which is why the
+  // backend route stays.
   getDepartmentTV: (id: string, params?: { date?: string }) => {
     const qs = new URLSearchParams();
     if (params?.date) qs.set('date', params.date);
     const s = qs.toString();
     return request<any>(`/sqdc/department/${id}${s ? `?${s}` : ''}`);
-  },
-  getSQDCDetail: (category: string, params?: { date?: string; department_id?: string }) => {
-    const qs = new URLSearchParams();
-    if (params?.date)          qs.set('date', params.date);
-    if (params?.department_id) qs.set('department_id', params.department_id);
-    const s = qs.toString();
-    return request<any>(`/sqdc/${category}/detail${s ? `?${s}` : ''}`);
   },
   createSQDCEntry: (payload: {
     category: string; subtype?: string; department_id?: string;

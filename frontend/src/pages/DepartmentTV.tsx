@@ -8,6 +8,9 @@ import {
 import {
   BarChart, Bar, ResponsiveContainer, XAxis, Tooltip, Cell,
 } from 'recharts';
+import { getFloorSnapshot } from '../api/floor';
+import type { FloorSnapshot } from '../api/floor';
+import { onTrackSentence } from '../utils/floorWording';
 import { useTvScale } from '../utils/useTvScale';
 import { fmtDuration, fmtMinutes } from '../components/apps/appModel';
 import { shiftUntilReadable } from '../utils/contrast';
@@ -28,6 +31,10 @@ const BANNER_SLOTS = 3;
 interface TVData {
   department: { id: string; name: string; color?: string; manager_name?: string };
   date: string;
+  /** `upcoming` is the only one of these three the board still renders.
+   *  Running now and finished today come from GET /api/floor/snapshot, so
+   *  this board, the department's own page and the Command Center print the
+   *  same figures in the same words at the same minute. */
   status: { running: number; completed_today: number; upcoming: number };
   hourly: { hour: string; count: number }[];
   issues: { type: string; label: string; detail: string }[];
@@ -39,9 +46,9 @@ interface TVData {
   // takt_minutes/over_by_minutes have no seconds equivalent — sqdc.js
   // pre-rounds each to a tenth of a minute before it ever reaches this
   // payload (`Math.round(takt * 10) / 10`), so fmtMinutes(6.1) below prints
-  // "6m 6s" for the same takt ManagerView shows as "6m 5s" (computed from
-  // the un-rounded work order value). This is the honest rendering of the
-  // number the endpoint actually sends — the fix belongs on the backend
+  // "6m 6s" for a takt computed from the un-rounded work order value as
+  // "6m 5s". This is the honest rendering of the number the endpoint
+  // actually sends — the fix belongs on the backend
   // (return takt_seconds/over_by_seconds instead of a pre-rounded minutes
   // figure, the same shape the leaderboard's duration_seconds already took),
   // which is outside this workstream's files (backend/src/routes/sqdc.js);
@@ -76,11 +83,11 @@ function useClock() {
 
 function Tile({
   icon: Icon, value, label, accent,
-}: { icon: React.ElementType; value: number; label: string; accent: string }) {
+}: { icon: React.ElementType; value: number | null; label: string; accent: string }) {
   return (
     <div className="bg-white/5 border border-white/10 rounded-3xl px-3 sm:px-6 py-4 sm:py-5 flex flex-col items-center justify-center text-center min-w-0">
       <Icon size="1.6em" style={{ color: accent }} className="mb-2" />
-      <div className="text-5xl sm:text-6xl font-bold tabular-nums tracking-tight leading-none">{value}</div>
+      <div className="text-5xl sm:text-6xl font-bold tabular-nums tracking-tight leading-none">{value ?? '—'}</div>
       <div className="text-xs uppercase tracking-[0.15em] text-white/60 mt-2 leading-tight">{label}</div>
     </div>
   );
@@ -89,6 +96,7 @@ function Tile({
 export default function DepartmentTV() {
   const { id } = useParams<{ id: string }>();
   const [data, setData] = useState<TVData | null>(null);
+  const [snapshot, setSnapshot] = useState<FloorSnapshot | null>(null);
   const [error, setError] = useState(false);
   const now = useClock();
   // The board scales its whole type ramp with the panel; the chart is the one
@@ -98,8 +106,12 @@ export default function DepartmentTV() {
   const load = useCallback(async () => {
     if (!id) return;
     try {
-      const res = await api.getDepartmentTV(id);
+      const [res, snap] = await Promise.all([
+        api.getDepartmentTV(id),
+        getFloorSnapshot({ department_id: id }).catch(() => null),
+      ]);
       setData(res);
+      if (snap) setSnapshot(snap);
       setError(false);
     } catch {
       setError(true);
@@ -125,6 +137,7 @@ export default function DepartmentTV() {
   // Every bar at zero is a truthful chart of a quiet shift, but on a wall it is
   // indistinguishable from a chart that failed to load. Name which one it is.
   const noThroughputYet = hourly.length > 0 && hourly.every(h => h.count === 0);
+  const onTrack = onTrackSentence(snapshot);
   const behind = data?.behind_takt ?? [];
   const anyBehind = !!data?.any_behind && behind.length > 0;
   const bannerShown = behind.slice(0, BANNER_SLOTS);
@@ -222,9 +235,20 @@ export default function DepartmentTV() {
           <div className="lg:col-span-2 flex flex-col gap-4 sm:gap-6 min-h-0">
             {/* Status tiles */}
             <div className="grid grid-cols-3 gap-3 sm:gap-6 flex-shrink-0">
-              <Tile icon={Activity} value={data.status.running} label="Running Now" accent="#38bdf8" />
-              <Tile icon={CheckCircle2} value={data.status.completed_today} label="Completed Today" accent="#34d399" />
+              <Tile icon={Activity} value={snapshot ? snapshot.running_now : null} label="Running Now" accent="#38bdf8" />
+              <Tile icon={CheckCircle2} value={snapshot ? snapshot.finished_today : null} label="Finished Today" accent="#34d399" />
               <Tile icon={Calendar} value={data.status.upcoming} label="Upcoming" accent="#fbbf24" />
+            </div>
+
+            {/* Schedule health, worded exactly as the department's own page and
+                the Command Center word it (utils/floorWording): a supervisor
+                comparing the wall with the office screen is comparing the
+                plant, not two turns of phrase. */}
+            <div
+              className="flex-shrink-0 bg-white/5 border border-white/10 rounded-3xl px-4 sm:px-6 py-3 text-center text-lg sm:text-xl text-white/85"
+              data-testid="tv-on-track"
+            >
+              {onTrack ?? `— ${snapshot?.on_track_reason ?? 'no open work order to be on track with'}`}
             </div>
 
             {/* Hourly throughput chart */}

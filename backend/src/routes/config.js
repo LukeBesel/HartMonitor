@@ -105,13 +105,33 @@ router.put('/', requireRole('manager'), (req, res) => {
     return res.status(400).json({ error: `Unknown timezone "${req.body.timezone}". Use an IANA name such as Europe/Berlin or UTC.` });
   }
 
+  // Which workspaces the sidebar shows is plant configuration, so it is stored
+  // here with everything else rather than in one browser's localStorage. It is
+  // the one setting whose value is a list, and String(['a','b']) is 'a,b' — not
+  // JSON, and not readable back. Normalise an array into JSON, and refuse a
+  // string that is not one rather than storing a value the sidebar will ignore.
+  const body = { ...req.body };
+  if (body.nav_hidden_sections !== undefined) {
+    const v = body.nav_hidden_sections;
+    if (Array.isArray(v)) {
+      body.nav_hidden_sections = JSON.stringify(v.filter(x => typeof x === 'string'));
+    } else {
+      let parsed;
+      try { parsed = JSON.parse(String(v)); } catch { parsed = undefined; }
+      if (!Array.isArray(parsed)) {
+        return res.status(400).json({ error: 'nav_hidden_sections must be a JSON array of section ids' });
+      }
+      body.nav_hidden_sections = JSON.stringify(parsed.filter(x => typeof x === 'string'));
+    }
+  }
+
   const ins = db.prepare(`INSERT INTO org_settings (company_id, key, value, updated_at) VALUES (?, ?, ?, datetime('now')) ON CONFLICT(company_id, key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')`);
   const upsertAll = db.transaction((data) => {
     for (const [key, value] of Object.entries(data)) {
       if (typeof value !== 'undefined') ins.run(req.companyId, key, String(value));
     }
   });
-  upsertAll(req.body);
+  upsertAll(body);
   logActivity(req.companyId, 'settings', req.companyId, `Organization settings updated (${Object.keys(req.body).join(', ')})`, req.user.display_name);
   const rows = db.prepare('SELECT key, value FROM org_settings WHERE company_id = ?').all(req.companyId);
   const settings = {};
@@ -254,30 +274,48 @@ router.get('/plan/billing-config', (req, res) => {
   res.json({ configured: isConfigured(), mode: billingMode() });
 });
 
-// ─── GET /integrations — live/demo status + the exact URLs to register ────────
-// Powers the Settings → Developer "Integrations" panel so an admin can wire up
-// Stripe and SSO without digging through docs. Never returns any secret value.
+// ─── GET /integrations — live/demo status, and (staff only) how to wire it up ─
+//
+// A customer may reasonably ask whether payments and SSO are live on the
+// deployment they are using: that is a fact about their own account. WHICH
+// environment variables to set, the webhook endpoint to register and the OAuth
+// redirect URI are not — they are instructions to whoever runs the servers, and
+// the press shop that bought an MES can do nothing with STRIPE_SECRET_KEY
+// except read a secret's name out of its browser's network tab. The setup half
+// is therefore returned only to HartMonitor's own staff, on the same
+// is_platform_staff flag that gates the operator console. No secret VALUE is
+// ever returned to anybody.
 router.get('/integrations', requireRole('manager'), (req, res) => {
   const { PROVIDERS, isConfigured: ssoConfigured } = require('../sso');
-  const base = appUrl(req);
-  res.json({
-    app_url: base,
-    app_url_explicit: !!process.env.APP_URL,
+  const staff = !!req.user?.is_platform_staff;
+
+  const body = {
     payments: {
       configured: isConfigured(),
       mode: billingMode(),
-      webhook_url: `${base}/api/webhooks/stripe`,
-      events: ['checkout.session.completed', 'customer.subscription.updated', 'customer.subscription.deleted', 'invoice.paid'],
-      env_vars: ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'],
     },
     sso: Object.keys(PROVIDERS).map(id => ({
       id,
       name: PROVIDERS[id].name,
       configured: ssoConfigured(id),
-      redirect_uri: `${base}/api/auth/sso/${id}/callback`,
-      env_vars: [PROVIDERS[id].clientIdEnv, PROVIDERS[id].clientSecretEnv],
     })),
-  });
+  };
+
+  if (!staff) return res.json(body);
+
+  // ── Host configuration — platform staff only ──
+  const base = appUrl(req);
+  body.app_url = base;
+  body.app_url_explicit = !!process.env.APP_URL;
+  body.payments.webhook_url = `${base}/api/webhooks/stripe`;
+  body.payments.events = ['checkout.session.completed', 'customer.subscription.updated', 'customer.subscription.deleted', 'invoice.paid'];
+  body.payments.env_vars = ['STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET'];
+  body.sso = body.sso.map(p => ({
+    ...p,
+    redirect_uri: `${base}/api/auth/sso/${p.id}/callback`,
+    env_vars: [PROVIDERS[p.id].clientIdEnv, PROVIDERS[p.id].clientSecretEnv],
+  }));
+  res.json(body);
 });
 
 // ─── POST /plan/checkout — start a real Stripe Checkout session (manager+) ────
@@ -361,8 +399,15 @@ router.post('/plan/checkout', requireRole('manager'), async (req, res) => {
 
     res.json({ url: session.url });
   } catch (e) {
+    // The payment provider's own error text is for whoever operates this
+    // deployment, not for the manager who pressed Upgrade: it names price ids,
+    // account ids and key prefixes, and none of that helps them buy a plan. It
+    // goes to the server log; the browser gets a sentence it can act on.
     console.error('[stripe] checkout error:', e.message);
-    res.status(502).json({ error: 'checkout_failed', message: e.message });
+    res.status(502).json({
+      error: 'checkout_failed',
+      message: 'We could not start the upgrade. Try again or contact support.',
+    });
   }
 });
 
