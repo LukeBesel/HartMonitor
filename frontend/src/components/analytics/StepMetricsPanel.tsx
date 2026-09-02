@@ -187,7 +187,7 @@ function StepCard({ step, expanded, onToggle }: { step: StepStat; expanded: bool
 
 // Per-step metrics body for a single app/operation. Owns its own data fetch so
 // it can be embedded anywhere by passing an appId + lookback window; it is
-// hosted by the Operation Analytics drill-down. It lived under pages/ with an
+// hosted by the App comparison drill-down. It lived under pages/ with an
 // unreachable page around it — /step-metrics has redirected to /analytics for
 // some time — so it now lives with the components, which is what it is.
 export function StepMetricsPanel({ appId, days }: { appId: string; days: number }) {

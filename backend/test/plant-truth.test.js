@@ -171,7 +171,8 @@ describe('one definition of today', () => {
     A.station = await create(A.token, '/api/stations', { name: 'Bench 1', department_id: A.dept.id });
     A.app = await create(A.token, '/api/apps', { name: 'Press Check' });
     // The leaderboard only ranks runs of a PUBLISHED app.
-    const published = await api('POST', `/api/apps/${A.app.id}/publish`, { token: A.token });
+    // Publishing cuts a numbered revision and requires a change note.
+    const published = await api('POST', `/api/apps/${A.app.id}/publish`, { token: A.token, body: { change_note: 'first issue' } });
     assert.equal(published.status, 200, `publish: ${JSON.stringify(published.json)}`);
 
     /** A finished, inspected run on the department's station. Returns its id. */
@@ -225,7 +226,7 @@ describe('one definition of today', () => {
     C.dept = await create(C.token, '/api/departments', { name: 'Finishing' });
     C.station = await create(C.token, '/api/stations', { name: 'Booth 1', department_id: C.dept.id });
     C.app = await create(C.token, '/api/apps', { name: 'Coat' });
-    await api('POST', `/api/apps/${C.app.id}/publish`, { token: C.token });
+    await api('POST', `/api/apps/${C.app.id}/publish`, { token: C.token, body: { change_note: 'first issue' } });
 
     async function runC(body) {
       const started = await create(C.token, '/api/completions', { app_id: C.app.id, ...body });

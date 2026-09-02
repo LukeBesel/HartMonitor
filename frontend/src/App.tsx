@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import Layout from './components/shared/Layout';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -23,7 +23,6 @@ import DocumentTitle from './components/shared/DocumentTitle';
 // Code-split the rest of the pages so the initial load only ships the shell,
 // login, and landing dashboard. Heavy chart pages load on demand.
 const AppsLibrary      = lazy(() => import('./pages/AppsLibrary'));
-const AppsDashboard    = lazy(() => import('./pages/AppsDashboard'));
 const AppDetail        = lazy(() => import('./pages/AppDetail'));
 const AppBuilder       = lazy(() => import('./pages/AppBuilder'));
 const AppPlayer        = lazy(() => import('./pages/AppPlayer'));
@@ -36,12 +35,9 @@ const DepartmentView   = lazy(() => import('./pages/DepartmentView'));
 const DepartmentTV     = lazy(() => import('./pages/DepartmentTV'));
 const StationView      = lazy(() => import('./pages/StationView'));
 const CompletionDetail = lazy(() => import('./pages/CompletionDetail'));
-const AppHistory       = lazy(() => import('./pages/AppHistory'));
-const AppAnalytics     = lazy(() => import('./pages/AppAnalytics'));
 const CapacityPlanning = lazy(() => import('./pages/CapacityPlanning'));
 const OperatorPortal   = lazy(() => import('./pages/OperatorPortal'));
 const SettingsPage     = lazy(() => import('./pages/Settings'));
-const OEETracker       = lazy(() => import('./pages/OEETracker'));
 const Dashboards       = lazy(() => import('./pages/Dashboards'));
 const DashboardView    = lazy(() => import('./pages/DashboardView'));
 const CategoryReports  = lazy(() => import('./pages/CategoryReports'));
@@ -89,6 +85,19 @@ function ReportPortalRoute({ children }: { children: React.ReactNode }) {
   if (!user) return <Navigate to="/login" replace />;
   if (!canAccessReportPortal) return <Navigate to="/operator" replace />;
   return <>{children}</>;
+}
+
+/** Sends a retired per-app URL to the tab that replaced it, KEEPING the query
+ *  string it arrived with. /apps/:id/analytics?days=7&operator=Sam was a real
+ *  link the old Apps Dashboard handed out, and the one per-app screen reads
+ *  those same four parameters — so the slice survives the redirect instead of
+ *  being reset to a default nobody asked for. */
+function AppTabRedirect({ tab }: { tab: string }) {
+  const { id } = useParams<{ id: string }>();
+  const { search } = useLocation();
+  const params = new URLSearchParams(search);
+  params.set('tab', tab);
+  return <Navigate to={`/apps/${id}?${params.toString()}`} replace />;
 }
 
 // Composable MES: hides routes belonging to a module the company has switched
@@ -153,13 +162,17 @@ function AppRoutes() {
             — see FirstRunLanding for the (one question, once per tab) rule. */}
         <Route path="/dashboard" element={<FirstRunLanding><Dashboard /></FirstRunLanding>} />
         <Route path="/apps" element={<ModuleGate module="apps"><AppsLibrary /></ModuleGate>} />
-        {/* Static segment, so it must out-rank /apps/:id — declared first
-            for readers; the router ranks it above the param either way. */}
-        <Route path="/apps/dashboard" element={<ModuleGate module="apps"><AppsDashboard /></ModuleGate>} />
+        {/* One screen per app. Run history, app analytics and the Apps
+            Dashboard were three more screens reporting the same app's cycle
+            time under three labels behind three filter bars; they are tabs on
+            /apps/:id now, and their URLs redirect onto the right tab. The
+            static segment is declared first for readers; the router ranks it
+            above the param either way. */}
+        <Route path="/apps/dashboard" element={<Navigate to="/apps" replace />} />
         <Route path="/apps/:id" element={<ModuleGate module="apps"><AppDetail /></ModuleGate>} />
         <Route path="/apps/:id/build" element={<ModuleGate module="apps"><AppBuilder /></ModuleGate>} />
-        <Route path="/apps/:id/history" element={<ModuleGate module="apps"><AppHistory /></ModuleGate>} />
-        <Route path="/apps/:id/analytics" element={<ModuleGate module="apps"><AppAnalytics /></ModuleGate>} />
+        <Route path="/apps/:id/history" element={<AppTabRedirect tab="runs" />} />
+        <Route path="/apps/:id/analytics" element={<AppTabRedirect tab="overview" />} />
         <Route path="/tables" element={<ModuleGate module="apps"><Tables /></ModuleGate>} />
         <Route path="/tables/:id" element={<ModuleGate module="apps"><TableDetail /></ModuleGate>} />
         <Route path="/analytics" element={<Analytics />} />
@@ -179,12 +192,15 @@ function AppRoutes() {
         <Route path="/departments" element={<Navigate to="/dashboard" replace />} />
         <Route path="/manager" element={<Navigate to="/dashboard" replace />} />
         <Route path="/departments/:id" element={<DepartmentView />} />
-        {/* Step metrics live inside Operation Analytics — the old
+        {/* Step metrics live inside App comparison — the old
             standalone page had no link into it from anywhere. */}
         <Route path="/step-metrics" element={<Navigate to="/analytics" replace />} />
         <Route path="/capacity" element={<CapacityPlanning />} />
         <Route path="/completions/:id" element={<CompletionDetail />} />
-        <Route path="/oee" element={<OEETracker />} />
+        {/* OEE is a tab on the app-comparison screen. A single-site shop
+            never needed a top-level menu item for it, and the per-station
+            card on a station's own page is still the drill-down. */}
+        <Route path="/oee" element={<Navigate to="/analytics?tab=oee" replace />} />
         <Route path="/dashboards" element={<ModuleGate module="apps"><Dashboards /></ModuleGate>} />
         <Route path="/dashboards/:id" element={<ModuleGate module="apps"><DashboardView /></ModuleGate>} />
         <Route path="/dashboards/:id/:mode" element={<ModuleGate module="apps"><DashboardView /></ModuleGate>} />

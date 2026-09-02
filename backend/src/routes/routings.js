@@ -2,8 +2,31 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { requireRole } = require('../middleware/auth');
+const ops = require('../workOrderOperations');
 
 const router = express.Router();
+
+// ─── One step-shaped answer ──────────────────────────────────────────────────
+// Every step response goes through this, so the six places that used to spell
+// the JOIN out by hand cannot drift. Two things ride along:
+//
+//   • standard_seconds — an ALIAS of estimated_cycle_seconds, not a second
+//     column. A released operation carries standard_seconds, so a routing step
+//     and the operation it becomes now answer to the same word. The original
+//     name stays in the payload; nothing that reads it breaks.
+//   • station_id / station_name — a step may name the machine it runs on, so a
+//     released operation arrives already pointed at one.
+const STEP_SELECT = `
+  SELECT rs.*,
+         rs.estimated_cycle_seconds AS standard_seconds,
+         a.name AS app_name,
+         d.name AS department_name,
+         st.name AS station_name
+  FROM routing_steps rs
+  LEFT JOIN apps        a  ON a.id = rs.app_id
+  LEFT JOIN departments d  ON d.id = rs.department_id
+  LEFT JOIN stations    st ON st.id = rs.station_id
+`;
 
 // Returns the id if the row exists in this company, else null. Step app/dept
 // references outside the tenant would leak the other tenant's names through
@@ -12,6 +35,17 @@ function ownedOrNull(table, id, companyId) {
   if (!id) return null;
   const row = db.prepare(`SELECT id FROM ${table} WHERE id = ? AND company_id = ?`).get(id, companyId);
   return row ? id : null;
+}
+
+// A step's standard time, whichever of the two names the caller used.
+// `standard_seconds` is what an operation calls it and what the step responses
+// answer with, so a client that reads a step and posts it back must not lose
+// the number to a name change.
+function cycleSeconds(body, fallback) {
+  const v = body.estimated_cycle_seconds ?? body.standard_seconds;
+  if (v === undefined || v === null || v === '') return fallback;
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
 // ─── GET / — list all routings with step count ────────────────────────────────
@@ -43,7 +77,12 @@ router.get('/', (req, res) => {
     GROUP BY pr.id
     ORDER BY pr.name ASC
   `).all(...params);
-  res.json(rows);
+  // What actually runs on each routing today. Without this the Routings screen
+  // describes a sequence and never says whether anything is following it — the
+  // page implies an execution model and shows no evidence of one. A routing
+  // nothing runs on gets 0 here and the screen prints "—", not a fake number.
+  const openCounts = ops.openCountsByRouting(req.companyId);
+  res.json(rows.map(r => ({ ...r, open_work_orders: openCounts[r.id] || 0 })));
 });
 
 // ─── GET /:id — get routing with all steps ────────────────────────────────────
@@ -54,18 +93,33 @@ router.get('/:id', (req, res) => {
   ).get(req.params.id, req.companyId);
   if (!routing) return res.status(404).json({ error: 'Routing not found' });
 
-  const steps = db.prepare(`
-    SELECT rs.*,
-           a.name  AS app_name,
-           d.name  AS department_name
-    FROM routing_steps rs
-    LEFT JOIN apps        a ON a.id = rs.app_id
-    LEFT JOIN departments d ON d.id = rs.department_id
-    WHERE rs.routing_id = ?
-    ORDER BY rs.step_number ASC
-  `).all(req.params.id);
+  const steps = db.prepare(`${STEP_SELECT} WHERE rs.routing_id = ? AND rs.company_id = ? ORDER BY rs.step_number ASC`)
+    .all(req.params.id, req.companyId);
 
   res.json({ ...routing, steps });
+});
+
+// ─── GET /:id/usage — which live jobs run on this routing ────────────────────
+// The answer that makes the screen true. Every OPEN work order released against
+// this routing, each with the operation it is standing on right now, so a
+// planner editing a routing can see what they are about to affect.
+//
+// A completed or cancelled job is not "using" a routing any more, so it is not
+// counted — the number on the list and the rows here come from the same rule.
+
+router.get('/:id/usage', (req, res) => {
+  const routing = db.prepare(
+    'SELECT id, name FROM product_routings WHERE id = ? AND company_id = ?'
+  ).get(req.params.id, req.companyId);
+  if (!routing) return res.status(404).json({ error: 'Routing not found' });
+
+  const workOrders = ops.openWorkOrdersOnRouting(req.companyId, routing.id);
+  res.json({
+    routing_id: routing.id,
+    routing_name: routing.name,
+    open_work_orders: workOrders.length,
+    work_orders: workOrders,
+  });
 });
 
 // ─── POST / — create routing (with optional initial steps) ───────────────────
@@ -83,8 +137,8 @@ router.post('/', requireRole('supervisor'), (req, res) => {
   if (Array.isArray(steps) && steps.length > 0) {
     const insStep = db.prepare(`
       INSERT INTO routing_steps
-        (id, routing_id, company_id, step_number, name, description, app_id, department_id, estimated_cycle_seconds)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        (id, routing_id, company_id, step_number, name, description, app_id, department_id, station_id, estimated_cycle_seconds)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const [i, step] of steps.entries()) {
       insStep.run(
@@ -94,20 +148,15 @@ router.post('/', requireRole('supervisor'), (req, res) => {
         step.description || '',
         ownedOrNull('apps', step.app_id, req.companyId),
         ownedOrNull('departments', step.department_id, req.companyId),
-        step.estimated_cycle_seconds ?? 0,
+        ownedOrNull('stations', step.station_id, req.companyId),
+        cycleSeconds(step, 0),
       );
     }
   }
 
   const routing = db.prepare('SELECT * FROM product_routings WHERE id = ?').get(id);
-  const createdSteps = db.prepare(`
-    SELECT rs.*, a.name AS app_name, d.name AS department_name
-    FROM routing_steps rs
-    LEFT JOIN apps        a ON a.id = rs.app_id
-    LEFT JOIN departments d ON d.id = rs.department_id
-    WHERE rs.routing_id = ?
-    ORDER BY rs.step_number ASC
-  `).all(id);
+  const createdSteps = db.prepare(`${STEP_SELECT} WHERE rs.routing_id = ? AND rs.company_id = ? ORDER BY rs.step_number ASC`)
+    .all(id, req.companyId);
 
   res.status(201).json({ ...routing, steps: createdSteps });
 });
@@ -151,14 +200,8 @@ router.get('/:id/steps', (req, res) => {
   ).get(req.params.id, req.companyId);
   if (!routing) return res.status(404).json({ error: 'Routing not found' });
 
-  const steps = db.prepare(`
-    SELECT rs.*, a.name AS app_name, d.name AS department_name
-    FROM routing_steps rs
-    LEFT JOIN apps        a ON a.id = rs.app_id
-    LEFT JOIN departments d ON d.id = rs.department_id
-    WHERE rs.routing_id = ?
-    ORDER BY rs.step_number ASC
-  `).all(req.params.id);
+  const steps = db.prepare(`${STEP_SELECT} WHERE rs.routing_id = ? AND rs.company_id = ? ORDER BY rs.step_number ASC`)
+    .all(req.params.id, req.companyId);
 
   res.json(steps);
 });
@@ -171,8 +214,9 @@ router.post('/:id/steps', requireRole('supervisor'), (req, res) => {
   ).get(req.params.id, req.companyId);
   if (!routing) return res.status(404).json({ error: 'Routing not found' });
 
-  const { name, description = '', app_id, department_id, estimated_cycle_seconds = 0 } = req.body;
+  const { name, description = '', app_id, department_id, station_id } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
+  const estimated_cycle_seconds = cycleSeconds(req.body, 0);
 
   // Auto-assign next step_number if not provided
   let step_number = req.body.step_number;
@@ -186,23 +230,18 @@ router.post('/:id/steps', requireRole('supervisor'), (req, res) => {
   const stepId = uuidv4();
   db.prepare(`
     INSERT INTO routing_steps
-      (id, routing_id, company_id, step_number, name, description, app_id, department_id, estimated_cycle_seconds)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, routing_id, company_id, step_number, name, description, app_id, department_id, station_id, estimated_cycle_seconds)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(stepId, req.params.id, req.companyId, step_number, name, description,
          ownedOrNull('apps', app_id, req.companyId),
          ownedOrNull('departments', department_id, req.companyId),
+         ownedOrNull('stations', station_id, req.companyId),
          estimated_cycle_seconds);
 
   // Touch the parent routing's updated_at
   db.prepare("UPDATE product_routings SET updated_at = datetime('now') WHERE id = ?").run(req.params.id);
 
-  const step = db.prepare(`
-    SELECT rs.*, a.name AS app_name, d.name AS department_name
-    FROM routing_steps rs
-    LEFT JOIN apps        a ON a.id = rs.app_id
-    LEFT JOIN departments d ON d.id = rs.department_id
-    WHERE rs.id = ?
-  `).get(stepId);
+  const step = db.prepare(`${STEP_SELECT} WHERE rs.id = ? AND rs.company_id = ?`).get(stepId, req.companyId);
 
   res.status(201).json(step);
 });
@@ -231,14 +270,8 @@ router.put('/:id/steps/reorder', requireRole('supervisor'), (req, res) => {
 
   db.prepare("UPDATE product_routings SET updated_at = datetime('now') WHERE id = ?").run(req.params.id);
 
-  const steps = db.prepare(`
-    SELECT rs.*, a.name AS app_name, d.name AS department_name
-    FROM routing_steps rs
-    LEFT JOIN apps        a ON a.id = rs.app_id
-    LEFT JOIN departments d ON d.id = rs.department_id
-    WHERE rs.routing_id = ?
-    ORDER BY rs.step_number ASC
-  `).all(req.params.id);
+  const steps = db.prepare(`${STEP_SELECT} WHERE rs.routing_id = ? AND rs.company_id = ? ORDER BY rs.step_number ASC`)
+    .all(req.params.id, req.companyId);
 
   res.json(steps);
 });
@@ -261,23 +294,18 @@ router.put('/:id/steps/:stepId', requireRole('supervisor'), (req, res) => {
   const step_number             = req.body.step_number             ?? step.step_number;
   const app_id                  = req.body.app_id                  !== undefined ? ownedOrNull('apps', req.body.app_id, req.companyId)               : step.app_id;
   const department_id           = req.body.department_id           !== undefined ? ownedOrNull('departments', req.body.department_id, req.companyId) : step.department_id;
-  const estimated_cycle_seconds = req.body.estimated_cycle_seconds ?? step.estimated_cycle_seconds;
+  const station_id              = req.body.station_id              !== undefined ? ownedOrNull('stations', req.body.station_id, req.companyId)       : step.station_id;
+  const estimated_cycle_seconds = cycleSeconds(req.body, step.estimated_cycle_seconds);
 
   db.prepare(`
     UPDATE routing_steps
-    SET step_number = ?, name = ?, description = ?, app_id = ?, department_id = ?, estimated_cycle_seconds = ?
+    SET step_number = ?, name = ?, description = ?, app_id = ?, department_id = ?, station_id = ?, estimated_cycle_seconds = ?
     WHERE id = ?
-  `).run(step_number, name, description, app_id, department_id, estimated_cycle_seconds, req.params.stepId);
+  `).run(step_number, name, description, app_id, department_id, station_id, estimated_cycle_seconds, req.params.stepId);
 
   db.prepare("UPDATE product_routings SET updated_at = datetime('now') WHERE id = ?").run(req.params.id);
 
-  const updated = db.prepare(`
-    SELECT rs.*, a.name AS app_name, d.name AS department_name
-    FROM routing_steps rs
-    LEFT JOIN apps        a ON a.id = rs.app_id
-    LEFT JOIN departments d ON d.id = rs.department_id
-    WHERE rs.id = ?
-  `).get(req.params.stepId);
+  const updated = db.prepare(`${STEP_SELECT} WHERE rs.id = ? AND rs.company_id = ?`).get(req.params.stepId, req.companyId);
 
   res.json(updated);
 });

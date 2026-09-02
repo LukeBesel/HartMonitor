@@ -160,7 +160,7 @@ export const WALKTHROUGHS: Record<string, WalkthroughStep[]> = {
   analytics: [
     {
       title: 'Turn data into insight',
-      body: 'Operation Analytics converts your completion data into clear insights about throughput, efficiency, and trends so you can find where to improve.',
+      body: 'App comparison converts your completion data into clear insights about throughput, efficiency, and trends across every app, so you can find where to improve.',
       icon: BarChart2,
     },
     {

@@ -639,3 +639,107 @@ export function operatorReturnLink(
   const qs = q.toString();
   return `/operator${qs ? `?${qs}` : ''}`;
 }
+
+// ─── Nothing the portal already knows is asked twice ─────────────────────────
+
+/** Everything a deep link into the player can carry about a run. */
+export interface StartContext {
+  /** Verified operator id (?uid=) — who is running it. */
+  operatorUserId?: string | null;
+  /** Station id (?station=) — where. */
+  stationId?: string | null;
+  /** Work order id (?wo=) — what. */
+  workOrderId?: string | null;
+  /** A typed / scanned part number, when there is no work order. */
+  partNumber?: string | null;
+  /** The chosen product type, when the app offers a choice. */
+  productTypeId?: string | null;
+}
+
+/** What this particular app still has to be asked about. */
+export interface StartChoices {
+  /** How many product types this app offers. Zero means no choice to make. */
+  productTypeCount: number;
+  /** A work order already fixed the product type, so it is not a choice. */
+  productTypeLocked: boolean;
+  /** Preview always shows setup — it is the screen a builder is checking. */
+  preview: boolean;
+}
+
+/**
+ * Does the player still have to show its setup screen?
+ *
+ * The Operator Portal already knows who is working, which station they are at
+ * and which job they tapped, and it puts all three in the link. Asking for them
+ * again — Operator, Badge, Station, Work Order, Product Type, then Start
+ * Process below the fold — is the player refusing to believe the screen the
+ * operator just came from. When every answer is already in, the run starts and
+ * the player opens on step one.
+ *
+ * It returns TRUE (ask) whenever anything is genuinely missing, so a partial
+ * link degrades to today's behaviour rather than starting a run with a hole in
+ * its context.
+ */
+export function setupNeeded(ctx: StartContext, choices: StartChoices): boolean {
+  if (choices.preview) return true;
+  if (!ctx.operatorUserId) return true;
+  if (!ctx.stationId) return true;
+  // What is being built: a work order, or a part number in its place.
+  if (!ctx.workOrderId && !String(ctx.partNumber ?? '').trim()) return true;
+  // A product type the app offers, nobody has chosen, and no work order fixed.
+  if (choices.productTypeCount > 0 && !choices.productTypeLocked && !ctx.productTypeId) return true;
+  return false;
+}
+
+/** A run already open on the same unit, and how long it has been going. */
+export interface ConcurrentRun<J> {
+  job: J;
+  /** Who has it — the last stint's operator, or whoever started it. */
+  operatorName: string;
+  /** Seconds since it started, or null when the stamp is unreadable. */
+  ageSeconds: number | null;
+}
+
+interface JobLike {
+  id: string;
+  operator_name: string;
+  started_at: string;
+  work_order_id: string | null;
+  data?: Record<string, unknown> | null;
+  last_session?: { operator_name: string; started_at: string } | null;
+}
+
+/**
+ * The in-progress run on the SAME unit, if there is one.
+ *
+ * Two people starting the same work order is not an error — a job legitimately
+ * passes between hands — but it must be a decision, not a surprise discovered
+ * after both have entered data. Matching is by unit (the work order, or the
+ * part number when there is no work order), never merely by app: two operators
+ * running the same instruction on different units are not in each other's way.
+ */
+export function concurrentRun<J extends JobLike>(
+  jobs: J[],
+  workOrderId: string,
+  partNumber: string,
+  now: number = Date.now(),
+): ConcurrentRun<J> | null {
+  const pn = partNumber.trim().toLowerCase();
+  if (!workOrderId && !pn) return null;
+  const match = jobs.find(j => {
+    if (workOrderId) return j.work_order_id === workOrderId;
+    const jobPN = typeof j.data?._part_number === 'string' ? j.data._part_number : '';
+    return !j.work_order_id && jobPN.trim().toLowerCase() === pn;
+  });
+  if (!match) return null;
+  const startedAt = match.last_session?.started_at || match.started_at;
+  const parsed = startedAt
+    ? Date.parse(/[Zz]$|[+-]\d{2}:?\d{2}$/.test(startedAt) ? startedAt : `${startedAt.replace(' ', 'T')}Z`)
+    : NaN;
+  return {
+    job: match,
+    operatorName: (match.last_session?.operator_name || match.operator_name || '').trim(),
+    // An unreadable stamp is stated as unknown, never rendered as "0s ago".
+    ageSeconds: Number.isFinite(parsed) ? Math.max(0, Math.round((now - parsed) / 1000)) : null,
+  };
+}

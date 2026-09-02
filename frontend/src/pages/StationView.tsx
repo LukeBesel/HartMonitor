@@ -259,7 +259,7 @@ export default function StationView() {
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
           <div className="flex items-center justify-between mb-4">
             <h2 className="font-semibold text-gray-900">Machine Events</h2>
-            <Link to="/oee" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
+            <Link to="/analytics?tab=oee" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
               <Gauge size={12} /> OEE Tracker
             </Link>
           </div>

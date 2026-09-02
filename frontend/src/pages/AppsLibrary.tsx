@@ -119,14 +119,12 @@ export default function AppsLibrary() {
     }
   };
 
-  const handlePublish = async (app: App) => {
-    try {
-      await api.publishApp(app.id);
-      addToast(`"${app.name}" is live — operators see it now`, 'success');
-      load();
-    } catch (err: unknown) {
-      addToast(err instanceof Error ? err.message : 'Failed to publish app', 'error');
-    }
+  // Publishing is under change control: it needs a change note, and an
+  // approver when the app requires one. That conversation belongs to the
+  // builder's publish flow — a card in a grid has nowhere to hold it, and
+  // firing the bare call from here now fails with CHANGE_NOTE_REQUIRED.
+  const handlePublish = (app: App) => {
+    navigate(`/apps/${app.id}/build`);
   };
 
   const handleLoadSampleData = async () => {
@@ -455,7 +453,7 @@ function AppCard({ app, runStats, canEdit, onDelete, onPublish, onSaveTemplate, 
             {menuOpen && (
               <div className="absolute right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-20 py-1 w-56 text-left">
                 {canEdit && !published && (
-                  <MenuItem icon={Globe} label="Publish to the floor" tone="good" onClick={() => { setMenuOpen(false); onPublish(app); }} />
+                  <MenuItem icon={Globe} label="Publish in builder" tone="good" onClick={() => { setMenuOpen(false); onPublish(app); }} />
                 )}
                 {canEdit && (
                   <MenuItem icon={Copy} label="Duplicate" onClick={() => { setMenuOpen(false); onDuplicate(app); }} />
@@ -517,12 +515,14 @@ function AppCard({ app, runStats, canEdit, onDelete, onPublish, onSaveTemplate, 
             <Info size={12} /> Details
           </Link>
         )}
+        {/* One entrance to this app's data, and the rollup people actually
+            wanted is one click away rather than six. */}
         <Link
-          to={`/apps/${app.id}/analytics`}
+          to={`/apps/${app.id}?tab=who`}
           className="btn-secondary flex-1 min-w-[96px] justify-center text-xs"
-          title="Runs, captured values and exports for this app"
+          title="Who ran this app, how long it took them, and every run"
         >
-          <BarChart2 size={12} /> Analytics
+          <BarChart2 size={12} /> Who ran it
         </Link>
         {published ? (
           <Link to={`/play/${app.id}`} className="btn-primary flex-1 min-w-[96px] justify-center text-xs">
@@ -530,7 +530,7 @@ function AppCard({ app, runStats, canEdit, onDelete, onPublish, onSaveTemplate, 
           </Link>
         ) : canEdit ? (
           <button onClick={() => onPublish(app)} className="btn-primary flex-1 min-w-[96px] justify-center text-xs">
-            <Globe size={12} /> Publish
+            <Globe size={12} /> Publish in builder
           </button>
         ) : (
           <Link to={`/apps/${app.id}`} className="btn-secondary flex-1 min-w-[96px] justify-center text-xs">

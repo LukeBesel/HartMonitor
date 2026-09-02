@@ -173,7 +173,8 @@ describe('every screen of one tenant reports the same day', () => {
     assert.ok([200, 201].includes(app.status), `app: ${JSON.stringify(app.json)}`);
     appId = app.json.id;
     // The leaderboard only counts runs of a PUBLISHED app.
-    const published = await api('POST', `/api/apps/${app.json.id}/publish`, { token });
+    // Publishing cuts a numbered revision and requires a change note.
+    const published = await api('POST', `/api/apps/${app.json.id}/publish`, { token, body: { change_note: 'first issue' } });
     assert.equal(published.status, 200, `publish: ${JSON.stringify(published.json)}`);
 
     /** A finished, inspected run on the department's station. Returns its id. */

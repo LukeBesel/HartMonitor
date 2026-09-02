@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import {
   GraduationCap, Award, ClipboardList, BarChart3, Plus, X, Pencil, Trash2,
   CheckCircle2, Clock, AlertTriangle, XCircle, RefreshCw, Search, ChevronDown,
@@ -6,6 +6,12 @@ import {
 } from 'lucide-react';
 import { useParams } from 'react-router-dom';
 import { api } from '../api/client';
+import {
+  ENFORCEMENT_COPY, getBlockedStarts, getEnforcement, getOverrides, putEnforcement,
+} from '../api/training';
+import type {
+  BlockedStarts, QualificationOverride, TrainingEnforcement,
+} from '../api/training';
 import TabBar from '../components/shared/TabBar';
 import { useAuth } from '../context/AuthContext';
 
@@ -1047,9 +1053,187 @@ function OverviewTab({ summary, loading }: { summary: any; loading: boolean }) {
   );
 }
 
+// ─── Enforcement Tab ──────────────────────────────────────────────────────────
+// The one screen where a company decides whether the skills matrix is a record
+// or a rule. Every option states its consequence in the words a plant manager
+// would use, because the difference between Warn and Block is the difference
+// between a report and a stopped line.
+
+function EnforcementTab({
+  setting, blocked, loading, canSet, saving, error, onSelect,
+}: {
+  setting: TrainingEnforcement | null;
+  blocked: BlockedStarts | null;
+  loading: boolean;
+  canSet: boolean;
+  saving: boolean;
+  error: string | null;
+  onSelect: (value: TrainingEnforcement) => void;
+}) {
+  if (loading) {
+    return <div className="card p-6 space-y-3">{[1, 2, 3].map(i => <Skeleton key={i} className="h-16" />)}</div>;
+  }
+
+  const options: TrainingEnforcement[] = ['off', 'warn', 'block'];
+
+  return (
+    <div className="space-y-5">
+      <div className="card p-5">
+        <div className="flex items-start gap-3 mb-4">
+          <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center flex-shrink-0">
+            <Shield size={18} className="text-indigo-600" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="font-semibold text-gray-900">When someone unqualified starts a job</h2>
+            <p className="text-sm text-gray-500 mt-0.5">
+              Applies to every published app. New companies start on Off — nothing changes
+              until you choose otherwise.
+            </p>
+          </div>
+        </div>
+
+        <div role="radiogroup" aria-label="Training enforcement" className="space-y-2">
+          {options.map(opt => {
+            const active = setting === opt;
+            return (
+              <button
+                key={opt}
+                role="radio"
+                aria-checked={active}
+                disabled={!canSet || saving}
+                onClick={() => onSelect(opt)}
+                className={`w-full text-left rounded-xl border p-4 transition-colors ${
+                  active
+                    ? 'border-indigo-400 bg-indigo-50/60'
+                    : 'border-gray-200 hover:border-gray-300 bg-white'
+                } ${!canSet || saving ? 'opacity-60 cursor-not-allowed' : ''}`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 ${
+                    active ? 'border-indigo-600' : 'border-gray-300'
+                  }`}>
+                    {active && <span className="w-2 h-2 rounded-full bg-indigo-600" />}
+                  </span>
+                  <span className="font-semibold text-gray-900">{ENFORCEMENT_COPY[opt].label}</span>
+                  {active && <span className="text-xs font-medium text-indigo-600">Current</span>}
+                </div>
+                <p className="text-sm text-gray-600 mt-1.5 ml-6">{ENFORCEMENT_COPY[opt].consequence}</p>
+              </button>
+            );
+          })}
+        </div>
+
+        {!canSet && (
+          <p className="text-sm text-gray-400 mt-3">
+            Only a manager or above can change this.
+          </p>
+        )}
+        {error && <p className="text-sm text-red-600 mt-3">{error}</p>}
+      </div>
+
+      {/* What the setting is costing, per app. An app that has refused nobody
+          reads '—', never 0: "no starts were blocked" and "nothing has been
+          measured" are different facts. */}
+      <div className="card overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-900">Blocked starts this week</h2>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {blocked?.empty_reason
+              ? `Nothing to show — ${blocked.empty_reason}.`
+              : `Runs refused in the last ${blocked?.days ?? 7} days because the operator was not signed off.`}
+          </p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50">
+                <th className="text-left font-medium text-gray-600 py-2.5 px-5">App</th>
+                <th className="text-right font-medium text-gray-600 py-2.5 px-5 min-w-[140px]">Blocked starts</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(blocked?.apps ?? []).length === 0 ? (
+                <tr><td colSpan={2} className="py-8 text-center text-gray-400">No published apps yet.</td></tr>
+              ) : (blocked?.apps ?? []).map(row => (
+                <tr key={row.app_id} className="border-b border-gray-50 last:border-0">
+                  <td className="py-2.5 px-5 text-gray-900">{row.app_name}</td>
+                  <td className="py-2.5 px-5 text-right tabular-nums">
+                    {row.blocked === null
+                      ? <span className="text-gray-300" title="Nothing measured yet">—</span>
+                      : <span className={row.blocked > 0 ? 'text-amber-700 font-semibold' : 'text-gray-500'}>
+                          {row.blocked} blocked {row.blocked === 1 ? 'start' : 'starts'} this week
+                        </span>}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Overrides Tab ────────────────────────────────────────────────────────────
+// Every time the gate was opened by hand: who ran what without a sign-off, who
+// let them, and which run it was. This is the page an auditor is shown.
+
+function OverridesTab({ overrides, loading }: { overrides: QualificationOverride[]; loading: boolean }) {
+  if (loading) {
+    return <div className="card p-6 space-y-3">{[1, 2, 3].map(i => <Skeleton key={i} className="h-10" />)}</div>;
+  }
+
+  if (overrides.length === 0) {
+    return (
+      <div className="card p-12 text-center">
+        <Shield size={40} className="mx-auto text-gray-200 mb-3" />
+        <p className="text-gray-500 font-medium">No overrides recorded</p>
+        <p className="text-sm text-gray-400">
+          A supervisor approving an uncertified start appears here, permanently, naming both people.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card overflow-hidden">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-gray-100 bg-gray-50">
+              <th className="text-left font-medium text-gray-600 py-3 px-4">When</th>
+              <th className="text-left font-medium text-gray-600 py-3 px-4">Operator</th>
+              <th className="text-left font-medium text-gray-600 py-3 px-4">App</th>
+              <th className="text-left font-medium text-gray-600 py-3 px-4">Approved by</th>
+              <th className="text-left font-medium text-gray-600 py-3 px-4">Run</th>
+            </tr>
+          </thead>
+          <tbody>
+            {overrides.map(o => (
+              <tr key={o.id} className="border-b border-gray-50 last:border-0">
+                <td className="py-3 px-4 text-gray-500 whitespace-nowrap">{fmtDate(o.created_at)}</td>
+                <td className="py-3 px-4 text-gray-900">
+                  {o.operator_display_name || o.operator_name || <span className="text-gray-300">—</span>}
+                </td>
+                <td className="py-3 px-4 text-gray-700">{o.app_name || <span className="text-gray-300">—</span>}</td>
+                <td className="py-3 px-4 text-gray-900">{o.approved_by_name || <span className="text-gray-300">—</span>}</td>
+                <td className="py-3 px-4">
+                  {o.completion_id
+                    ? <a className="text-indigo-600 hover:underline" href={`/completions/${o.completion_id}`}>Open run</a>
+                    : <span className="text-gray-300" title="The approval was never used to start a run">—</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 // ─── Main Training Page ───────────────────────────────────────────────────────
 
-type Tab = 'overview' | 'matrix' | 'certifications' | 'plans';
+type Tab = 'overview' | 'matrix' | 'certifications' | 'plans' | 'enforcement' | 'overrides';
 
 // The old /training/certs and /training/plans nav entries were collapsed into
 // the single /training item — its internal tabs are the sub-navigation. Legacy
@@ -1061,6 +1245,8 @@ function tabFromParam(param: string | undefined): Tab {
     case 'certs':
     case 'certifications': return 'certifications';
     case 'plans': return 'plans';
+    case 'enforcement': return 'enforcement';
+    case 'overrides': return 'overrides';
     default: return 'overview';
   }
 }
@@ -1068,9 +1254,25 @@ function tabFromParam(param: string | undefined): Tab {
 export default function Training() {
   const { user } = useAuth();
   const canEdit = ['developer', 'manager', 'supervisor'].includes(user?.role ?? '');
+  // Deciding that a missing certificate can STOP the line is a plant policy,
+  // not a shift decision — the server requires manager or above and the screen
+  // says so rather than offering a control that will be refused.
+  const canSetEnforcement = ['developer', 'manager'].includes(user?.role ?? '');
   const { tab: tabParam } = useParams<{ tab: string }>();
 
   const [tab, setTab] = useState<Tab>(() => tabFromParam(tabParam));
+  // Six tabs are wider than the content column at 1024px, and TabBar scrolls
+  // inside itself rather than widening the page — which means the tab you are
+  // on can sit outside the visible strip, so the screen looks like it has no
+  // selected tab at all. Bring the current one into view. `block: 'nearest'`
+  // keeps this horizontal: it must never scroll the page down to a tab strip.
+  const tabStripRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const active = tabStripRef.current?.querySelector('[aria-current="page"]') as HTMLElement | null;
+    if (active && typeof active.scrollIntoView === 'function') {
+      active.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    }
+  }, [tab]);
   const [summary, setSummary] = useState<any>(null);
   const [matrix, setMatrix] = useState<any>(null);
   const [matrixError, setMatrixError] = useState<string | null>(null);
@@ -1078,7 +1280,14 @@ export default function Training() {
   const [plans, setPlans] = useState<any[]>([]);
   const [operators, setOperators] = useState<any[]>([]);
   const [apps, setApps] = useState<any[]>([]);
-  const [loading, setLoading] = useState({ overview: true, matrix: true, certs: true, plans: true });
+  const [enforcement, setEnforcement] = useState<TrainingEnforcement | null>(null);
+  const [blocked, setBlocked] = useState<BlockedStarts | null>(null);
+  const [overrides, setOverrides] = useState<QualificationOverride[]>([]);
+  const [savingEnforcement, setSavingEnforcement] = useState(false);
+  const [enforcementError, setEnforcementError] = useState<string | null>(null);
+  const [loading, setLoading] = useState({
+    overview: true, matrix: true, certs: true, plans: true, gate: true, overrides: true,
+  });
 
   function setLoad(key: keyof typeof loading, val: boolean) {
     setLoading(l => ({ ...l, [key]: val }));
@@ -1112,6 +1321,36 @@ export default function Training() {
     catch {} finally { setLoad('plans', false); }
   }
 
+  async function loadGate() {
+    setLoad('gate', true);
+    try {
+      const [setting, counts] = await Promise.all([getEnforcement(), getBlockedStarts(7)]);
+      setEnforcement(setting.enforcement);
+      setBlocked(counts);
+    } catch (err: any) {
+      setEnforcementError(err?.message || 'Failed to load the enforcement setting');
+    } finally { setLoad('gate', false); }
+  }
+
+  async function loadOverrides() {
+    setLoad('overrides', true);
+    try { setOverrides(await getOverrides()); }
+    catch {} finally { setLoad('overrides', false); }
+  }
+
+  async function chooseEnforcement(value: TrainingEnforcement) {
+    if (value === enforcement) return;
+    setSavingEnforcement(true);
+    setEnforcementError(null);
+    try {
+      const saved = await putEnforcement(value);
+      setEnforcement(saved.enforcement);
+      await loadGate();
+    } catch (err: any) {
+      setEnforcementError(err?.message || 'Could not save that setting');
+    } finally { setSavingEnforcement(false); }
+  }
+
   async function loadOperatorsAndApps() {
     try {
       const [opsData, appsData] = await Promise.all([
@@ -1128,6 +1367,8 @@ export default function Training() {
     loadMatrix();
     loadCerts();
     loadPlans();
+    loadGate();
+    loadOverrides();
     loadOperatorsAndApps();
   }, []);
 
@@ -1136,6 +1377,8 @@ export default function Training() {
     { id: 'matrix',         label: 'Skills Matrix',    icon: GraduationCap },
     { id: 'certifications', label: 'Certifications',   icon: Award },
     { id: 'plans',          label: 'Training Plans',   icon: ClipboardList },
+    { id: 'enforcement',    label: 'Enforcement',      icon: Shield },
+    { id: 'overrides',      label: 'Overrides',        icon: User },
   ];
 
   function exportCSV() {
@@ -1181,12 +1424,14 @@ export default function Training() {
         <span className="text-sm text-gray-400">{new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
       </div>
 
-      <TabBar
-        items={TABS.map(t => ({ key: t.id, label: t.label, icon: <t.icon size={15} /> }))}
-        active={tab}
-        onSelect={setTab}
-        ariaLabel="Training screens"
-      />
+      <div ref={tabStripRef}>
+        <TabBar
+          items={TABS.map(t => ({ key: t.id, label: t.label, icon: <t.icon size={15} /> }))}
+          active={tab}
+          onSelect={setTab}
+          ariaLabel="Training screens"
+        />
+      </div>
 
       {/* Tab content */}
       {tab === 'overview' && (
@@ -1208,6 +1453,20 @@ export default function Training() {
           canEdit={canEdit}
           onRefresh={loadCerts}
         />
+      )}
+      {tab === 'enforcement' && (
+        <EnforcementTab
+          setting={enforcement}
+          blocked={blocked}
+          loading={loading.gate}
+          canSet={canSetEnforcement}
+          saving={savingEnforcement}
+          error={enforcementError}
+          onSelect={chooseEnforcement}
+        />
+      )}
+      {tab === 'overrides' && (
+        <OverridesTab overrides={overrides} loading={loading.overrides} />
       )}
       {tab === 'plans' && (
         <PlansTab

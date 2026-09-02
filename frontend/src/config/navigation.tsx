@@ -96,8 +96,10 @@ export const SECTIONS: NavSection[] = [
     icon: AppWindow,
     description: 'Build guided procedures, run them on the floor',
     items: [
+      // One entrance to per-app data: the app's own card in the library. The
+      // "Dashboard" item under Apps was a second front door to the same runs
+      // under a second set of labels, and it is a tab on /apps/:id now.
       { to: '/apps',           icon: AppWindow,       label: 'App Library',     module: 'apps' },
-      { to: '/apps/dashboard', icon: LayoutDashboard, label: 'Dashboard',       module: 'apps' },
       { to: '/operator',       icon: Tablet,          label: 'Operator Portal', standalone: true, module: 'production' },
     ],
   },
@@ -194,8 +196,9 @@ export const SECTIONS: NavSection[] = [
       // next to Dashboards, with the rest of the build-it-yourself data tools.
       { to: '/tables',           icon: Database,    label: 'Tables',           minRole: 'supervisor', proOnly: true, module: 'apps' },
       { to: '/leaderboard',      icon: Trophy,      label: 'Leaderboard',      module: 'analytics' },
-      { to: '/oee',              icon: Cpu,         label: 'OEE Tracker',      minRole: 'supervisor', proOnly: true, module: 'production' },
-      { to: '/analytics',        icon: BarChart3,   label: 'Operation Analytics', module: 'analytics' },
+      // OEE is a tab on App comparison — a single-site shop never needed a
+      // menu item of its own for it.
+      { to: '/analytics',        icon: BarChart3,   label: 'App comparison',   module: 'analytics' },
       { to: '/facilities',       icon: Network,     label: 'Facilities',       minRole: 'manager', enterpriseOnly: true, module: 'production' },
       { to: '/audit-log',        icon: AlertTriangle, label: 'Audit Log',      minRole: 'supervisor' },
       { to: '/admin',            icon: ShieldCheck, label: 'Admin Dashboard',   platformStaffOnly: true },

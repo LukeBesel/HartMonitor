@@ -282,3 +282,91 @@ describe('step helpers', () => {
     expect(collectStepTriggers(s).map(t => t.id)).toEqual(['t1', 't2']);
   });
 });
+
+// ─── Nothing the portal already knows is asked twice ─────────────────────────
+
+import { setupNeeded, concurrentRun } from '../runtime';
+
+const FULL = {
+  operatorUserId: 'u1',
+  stationId: 'st1',
+  workOrderId: 'wo1',
+  partNumber: '',
+  productTypeId: '',
+};
+const NO_CHOICE = { productTypeCount: 0, productTypeLocked: false, preview: false };
+
+describe('setupNeeded — the setup screen only appears when something is missing', () => {
+  it('is not needed when the link carries who, where and what', () => {
+    expect(setupNeeded(FULL, NO_CHOICE)).toBe(false);
+  });
+
+  it('accepts a part number in place of a work order', () => {
+    expect(setupNeeded({ ...FULL, workOrderId: '', partNumber: 'PN-4471' }, NO_CHOICE)).toBe(false);
+    // Whitespace is not a part number.
+    expect(setupNeeded({ ...FULL, workOrderId: '', partNumber: '   ' }, NO_CHOICE)).toBe(true);
+  });
+
+  it('asks whenever any one of the three is missing', () => {
+    expect(setupNeeded({ ...FULL, operatorUserId: null }, NO_CHOICE)).toBe(true);
+    expect(setupNeeded({ ...FULL, stationId: '' }, NO_CHOICE)).toBe(true);
+    expect(setupNeeded({ ...FULL, workOrderId: '', partNumber: '' }, NO_CHOICE)).toBe(true);
+  });
+
+  it('asks for a product type the app offers and nothing has chosen', () => {
+    expect(setupNeeded(FULL, { ...NO_CHOICE, productTypeCount: 3 })).toBe(true);
+    // Chosen explicitly, or fixed by the work order: no question left.
+    expect(setupNeeded({ ...FULL, productTypeId: 'pt2' }, { ...NO_CHOICE, productTypeCount: 3 })).toBe(false);
+    expect(setupNeeded(FULL, { ...NO_CHOICE, productTypeCount: 3, productTypeLocked: true })).toBe(false);
+  });
+
+  it('always shows setup in preview — it is the screen a builder is checking', () => {
+    expect(setupNeeded(FULL, { ...NO_CHOICE, preview: true })).toBe(true);
+  });
+});
+
+describe('concurrentRun — a run already open on the same unit', () => {
+  const job = (over: Record<string, unknown> = {}) => ({
+    id: 'j1',
+    operator_name: 'Alex',
+    started_at: '2026-09-02 10:00:00',
+    work_order_id: 'wo1',
+    data: {},
+    last_session: null,
+    ...over,
+  });
+
+  const NOW = Date.parse('2026-09-02T10:06:00Z');
+
+  it('matches by work order and reports who has it and for how long', () => {
+    const found = concurrentRun([job()], 'wo1', '', NOW);
+    expect(found?.operatorName).toBe('Alex');
+    expect(found?.ageSeconds).toBe(360);
+  });
+
+  it('matches an unrouted run by part number instead', () => {
+    const j = job({ work_order_id: null, data: { _part_number: 'PN-4471' } });
+    expect(concurrentRun([j], '', 'pn-4471', NOW)?.job.id).toBe('j1');
+    expect(concurrentRun([j], '', 'PN-9999', NOW)).toBeNull();
+  });
+
+  it('does not treat a different unit as a conflict', () => {
+    expect(concurrentRun([job({ work_order_id: 'wo2' })], 'wo1', '', NOW)).toBeNull();
+  });
+
+  it('says nothing when no unit has been chosen yet', () => {
+    expect(concurrentRun([job()], '', '', NOW)).toBeNull();
+  });
+
+  it('prefers the last stint over the original start for who and when', () => {
+    const j = job({ last_session: { operator_name: 'Bo', started_at: '2026-09-02 10:05:00' } });
+    const found = concurrentRun([j], 'wo1', '', NOW);
+    expect(found?.operatorName).toBe('Bo');
+    expect(found?.ageSeconds).toBe(60);
+  });
+
+  it('states an unreadable timestamp as unknown rather than "0s ago"', () => {
+    const found = concurrentRun([job({ started_at: 'not a date' })], 'wo1', '', NOW);
+    expect(found?.ageSeconds).toBeNull();
+  });
+});

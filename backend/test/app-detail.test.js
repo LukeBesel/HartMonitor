@@ -158,7 +158,12 @@ before(async () => {
   assert.equal(app.status, 201);
   appId = app.json.id;
   assert.equal((await api('PUT', `/api/apps/${appId}`, {
-    token: tokenA, body: { steps: fixtureSteps(), status: 'published' },
+    token: tokenA, body: { steps: fixtureSteps() },
+  })).status, 200);
+  // Publishing is a change-control event now: it cuts Rev 1 with a change note,
+  // and PUT { status: 'published' } is refused.
+  assert.equal((await api('POST', `/api/apps/${appId}/publish`, {
+    token: tokenA, body: { change_note: 'first issue' },
   })).status, 200);
 
   // Point the station at the app so it shows under "where this app runs".
