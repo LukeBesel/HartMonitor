@@ -2,6 +2,12 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { plantDayShift } = require('../plantDay');
+// "Completions today" and "quality today" are two of the five numbers this
+// product must only have one answer to. They come from src/plantTruth.js, the
+// same module the Command Center and the department page read, so a station
+// tile can no longer disagree with the page it is sitting on. Availability and
+// Performance are this file's own arithmetic and are untouched.
+const plantTruth = require('../plantTruth');
 const { notify } = require('../notifications');
 const { deliverWebhooks } = require('../webhooks');
 const { requireRole } = require('../middleware/auth');
@@ -14,11 +20,16 @@ const router = express.Router();
 // station has no basis to measure. Nothing here is ever guessed: Performance
 // needs a configured ideal cycle time, Quality needs at least one run today,
 // and OEE itself is only reported when all three factors are real.
-function calcOEE(station) {
+function calcOEE(station, context = null) {
   const fullDayMinutes = (station.planned_hours_per_day || 8) * 60;
   // "Today" means the plant's today. Against UTC, a second-shift crew watched
   // every counter on this screen reset in the middle of their shift.
-  const day = plantDayShift(station.company_id);
+  //
+  // A caller looping over stations passes ONE context in, so a fleet of thirty
+  // machines resolves the company's day once instead of thirty times — and so
+  // every tile on the screen is measured against the same instant.
+  const ctx = context || plantTruth.plantContext(station.company_id);
+  const day = ctx.day;
 
   // Planned time ELAPSED SO FAR today, not the whole shift. Dividing today's
   // output by a full eight hours at ten in the morning reports a station
@@ -73,12 +84,10 @@ function calcOEE(station) {
   // was down all day" rather than "the day has not started".
   const availability = plannedMinutes > 0 ? uptimeMinutes / plannedMinutes : null;
 
-  // Completions today for this station
-  const completionRow = db.prepare(`
-    SELECT COUNT(*) as c FROM completions
-    WHERE station_id = ? AND status = 'completed' AND date(completed_at, ?) = date('now', ?)
-  `).get(station.id, day, day);
-  const completionsToday = completionRow.c;
+  // Completions today for this station — the plant's day, counted once, by the
+  // module that defines what "today" is.
+  const scope = plantTruth.stationScope(station);
+  const completionsToday = plantTruth.finishedToday(ctx, scope);
 
   // Performance: actual output vs the ideal cycle time. Without a configured
   // ideal cycle there is no yardstick, so Performance is reported as unknown
@@ -88,24 +97,15 @@ function calcOEE(station) {
     ? Math.min(1, (completionsToday * station.ideal_cycle_seconds) / (uptimeMinutes * 60))
     : null;
 
-  // Quality: pass rate over today's runs. No runs today = nothing to measure.
-  const todayRows = db.prepare(`
-    SELECT data FROM completions
-    WHERE station_id = ? AND status='completed' AND date(completed_at, ?)=date('now', ?)
-  `).all(station.id, day, day);
-
-  // Quality is a rate over INSPECTED runs only. A run with no Pass/Fail step
-  // was never inspected — the old `if (!Fail) pass++` counted it as good (and
-  // kept it in the denominator), so a station that inspects nothing reported
-  // 100% quality. Count explicit passes and fails; if nothing was inspected
-  // today, quality is unmeasured, not perfect.
-  let pass = 0, inspected = 0;
-  for (const row of todayRows) {
-    const vals = Object.values(JSON.parse(row.data || '{}'));
-    if (vals.some(v => v === 'Fail')) { inspected++; }
-    else if (vals.some(v => v === 'Pass')) { inspected++; pass++; }
-  }
-  const quality = inspected > 0 ? pass / inspected : null;
+  // Quality: pass rate over today's runs, from the shared definition.
+  //
+  // A rate over INSPECTED runs only. A run with no Pass/Fail step was never
+  // inspected — the old `if (!Fail) pass++` counted it as good (and kept it in
+  // the denominator), so a station that inspects nothing reported 100% quality.
+  // If nothing was inspected today, quality is unmeasured, not perfect.
+  const verdicts = plantTruth.passRate(ctx, scope, 'today');
+  const inspected = verdicts.sample;
+  const quality = inspected > 0 ? verdicts.pass / inspected : null;
 
   const measurable = availability !== null && performance !== null && quality !== null;
   const pct = v => (v === null ? null : Math.round(v * 100));
@@ -142,6 +142,8 @@ function calcOEE(station) {
     /** The whole configured shift, for a screen that wants to say "of 8h". */
     planned_day_minutes: Math.round(fullDayMinutes),
     completions_today: completionsToday,
+    /** How many of today's runs were inspected. 0 ⇒ quality is null, not 100%. */
+    quality_sample: inspected,
   };
 }
 
@@ -149,6 +151,8 @@ function calcOEE(station) {
 
 router.get('/', (req, res) => {
   const stations = db.prepare('SELECT * FROM stations WHERE company_id = ? ORDER BY name ASC').all(req.companyId);
+  // One day, resolved once, for every tile on the screen.
+  const ctx = plantTruth.plantContext(req.companyId);
   const result = stations.map(s => ({
     id: s.id,
     name: s.name,
@@ -159,7 +163,7 @@ router.get('/', (req, res) => {
     current_status_since: s.current_status_since || null,
     planned_hours_per_day: s.planned_hours_per_day || 8,
     ideal_cycle_seconds: s.ideal_cycle_seconds || 0,
-    oee: calcOEE(s),
+    oee: calcOEE(s, ctx),
   }));
   res.json(result);
 });

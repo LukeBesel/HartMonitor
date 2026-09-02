@@ -11,14 +11,3 @@ export function timeAgo(dateStr: string): string {
   return `${months} month${months === 1 ? '' : 's'} ago`;
 }
 
-/**
- * A takt or cycle figure in minutes, as a person should read it.
- *
- * These come off the database as a plain division and carry the full float
- * tail: an operator's job card was showing `6.083333333333333m takt`. One
- * decimal is the whole useful signal — enough to tell a 6.1 minute takt from a
- * 6.5 minute one, and nothing beyond that is real precision.
- */
-export function fmtMinutes(min: number): string {
-  return Number.isInteger(min) ? String(min) : min.toFixed(1);
-}

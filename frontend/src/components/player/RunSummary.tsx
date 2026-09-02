@@ -1,7 +1,9 @@
-import { useMemo } from 'react';
-import { CheckCircle, AlertTriangle, Package, Tag, CloudOff, RotateCw } from 'lucide-react';
+import { useCallback, useMemo } from 'react';
+import { CheckCircle, AlertTriangle, CloudOff, Package, Tag, RotateCw } from 'lucide-react';
 import type { Step } from '../../types';
-import { formatDur } from './runtime';
+import { useOutboxDepth } from '../../utils/offlineQueue';
+import type { OutboxItem } from '../../utils/offlineQueue';
+import { formatDur, operatorDisplayName } from './runtime';
 
 const CONFETTI_COLORS = ['#f43f5e', '#f59e0b', '#10b981', '#0ea5e9', '#8b5cf6', '#ec4899'];
 
@@ -43,7 +45,11 @@ export interface RunSummaryProps {
   taktExceededSteps: number[];
   capturedCount: number;
   kitSummary: string | null;    // e.g. "9/9 verified" — null when no kit
-  savedLocally: boolean;        // completed while offline
+  /** The run finished while offline: its final save is sitting in the outbox. */
+  savedLocally: boolean;
+  /** THIS run, so "Synced" can be about this run's own queued save and not
+   *  about the outbox happening to be empty of other people's work. */
+  completionId?: string | null;
   /** Run context carried into the next unit (WO number / part number), or null. */
   contextLabel?: string | null;
   /** Non-empty = "Next unit" is disabled with this short reason (no context yet). */
@@ -52,8 +58,7 @@ export interface RunSummaryProps {
   onChangeContext?: () => void;
   onNextUnit: () => void;
   onDone: () => void;
-  /** Opens the live department report, already scoped to this run's department
-   *  and app — so the run that just finished is on screen when it loads. */
+  /** Opens THIS run's own page — its steps, its times, its captured values. */
   onReview?: () => void;
 }
 
@@ -63,9 +68,24 @@ export interface RunSummaryProps {
 export default function RunSummary(props: RunSummaryProps) {
   const {
     appName, operatorName, productTypeName, steps, stepTimes, getStepTakt,
-    taktExceededSteps, capturedCount, kitSummary, savedLocally,
+    taktExceededSteps, capturedCount, kitSummary, savedLocally, completionId,
     contextLabel, nextUnitDisabledReason, onChangeContext, onNextUnit, onDone, onReview,
   } = props;
+
+  // Live outbox depth for THIS run's own final save (the player queues it under
+  // the coalesce key `completion:<id>`), so "Saved locally" stops being a claim
+  // about the past and "Synced" is a claim about this run rather than about an
+  // outbox that happens to be empty of everything else. The moment this run's
+  // item goes up, the warning goes away — no reload, no reopening the run.
+  const mine = useCallback(
+    (item: OutboxItem) => (completionId
+      ? item.coalesceKey === `completion:${completionId}`
+      : item.kind === 'completion_update'),
+    [completionId],
+  );
+  const queued = useOutboxDepth(mine);
+  const stillQueued = savedLocally && queued > 0;
+  const justSynced = savedLocally && queued === 0;
 
   const totalSeconds = Object.values(stepTimes).reduce((a, b) => a + b, 0);
   const totalTakt = steps.reduce((a, _s, i) => a + getStepTakt(i), 0);
@@ -83,7 +103,7 @@ export default function RunSummary(props: RunSummaryProps) {
           </div>
           <h1 style={{ fontSize: 28, fontWeight: 800, color: 'var(--p-ink)' }}>Complete!</h1>
           <p style={{ fontSize: 14, color: 'var(--p-muted)', marginTop: 4 }}>
-            {appName} · {operatorName || 'Operator'}
+            {appName} · {operatorDisplayName(operatorName)}
           </p>
           {productTypeName && (
             <p className="flex items-center justify-center gap-1 mt-1" style={{ fontSize: 13, color: 'var(--p-accent)' }}>
@@ -92,10 +112,16 @@ export default function RunSummary(props: RunSummaryProps) {
           )}
         </div>
 
-        {savedLocally && (
+        {stillQueued && (
           <div className="p-well flex items-center gap-2.5 px-4 py-3 mb-4" style={{ color: 'var(--p-warn)' }}>
             <CloudOff size={17} className="flex-shrink-0" />
             <span style={{ fontSize: 14, fontWeight: 550 }}>Saved locally — will sync when back online</span>
+          </div>
+        )}
+        {justSynced && (
+          <div className="p-well flex items-center gap-2.5 px-4 py-3 mb-4" style={{ color: 'var(--p-good)' }}>
+            <CheckCircle size={17} className="flex-shrink-0" />
+            <span style={{ fontSize: 14, fontWeight: 550 }}>Synced — this run is on the server</span>
           </div>
         )}
 
@@ -196,18 +222,19 @@ export default function RunSummary(props: RunSummaryProps) {
         {nextUnitDisabledReason && (
           <p className="text-center mt-2" style={{ fontSize: 13, color: 'var(--p-warn)' }}>{nextUnitDisabledReason}</p>
         )}
-        {/* The bridge from doing the work to seeing what the work did: the
-            live department report, already scoped to this app, with the run
-            that just finished in it. This is the product's whole pitch —
-            cycle times captured by running the app, reported live — so the
-            moment right after a run is exactly when to show it. */}
+        {/* The bridge from doing the work to seeing what the work did: this
+            run's own page, with the step times that were just measured. This is
+            the product's whole pitch — cycle times captured by running the app,
+            reported live — so the moment right after a run is exactly when to
+            show it, and it has to open THIS run, not a filtered list it is
+            somewhere inside. */}
         {onReview && (
           <button
             className="p-btn p-btn-ghost w-full mt-3"
             style={{ fontSize: 15, color: 'var(--p-accent)' }}
             onClick={onReview}
           >
-            Review this run in the live report →
+            Review this run →
           </button>
         )}
       </div>

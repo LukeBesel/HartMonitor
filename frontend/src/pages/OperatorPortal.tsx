@@ -1,19 +1,29 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import {
   Factory, ChevronRight, Package, Clock, AlertTriangle, CheckCircle, User, Tablet,
   Briefcase, History as HistoryIcon, LogOut, RefreshCw, Send, ArrowLeft, ScanLine, WifiOff,
   MessageSquare, Lock, Delete, Users as UsersIcon, KeyRound, LayoutDashboard,
 } from 'lucide-react';
-import { timeAgo, fmtMinutes } from '../utils/time';
+import { timeAgo } from '../utils/time';
+import { fmtMinutes } from '../components/apps/appModel';
 import { tintedChipOn } from '../utils/contrast';
 import BarcodeScannerModal from '../components/shared/BarcodeScannerModal';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { getQueuedNCRs, queueNCR, syncQueuedNCRs } from '../utils/offlineQueue';
 import { useMessages } from '../context/MessagesContext';
 import { useAuth } from '../context/AuthContext';
+import { buildPlayLink } from '../components/player/runtime';
 import type { MessageSeverity } from '../types';
+
+/** A floor identity, as far as it is actually known. `id` is a real user this
+ *  work can be booked to; null means the person typed a name and nothing more,
+ *  and the run will carry no user id rather than a made-up one. */
+export interface OperatorIdentity {
+  id: string | null;
+  display_name: string;
+}
 
 interface RosterEntry {
   id: string;
@@ -86,12 +96,40 @@ function isToday(iso?: string | null) {
 
 type Tab = 'jobs' | 'history' | 'report' | 'profile';
 
+/** Where a verified clock-in is remembered for the length of this tab's shift.
+ *  sessionStorage, deliberately: it dies with the tab, and it is what stops a
+ *  hand-typed ?uid= from clocking somebody else in — the id in the URL is only
+ *  honoured when it matches the identity THIS tab actually verified. */
+const IDENTITY_KEY = 'hm_operator_identity';
+
+function rememberIdentity(who: OperatorIdentity) {
+  try {
+    if (who.id) sessionStorage.setItem(IDENTITY_KEY, JSON.stringify(who));
+    else sessionStorage.removeItem(IDENTITY_KEY);
+  } catch { /* private mode — the operator just clocks in again */ }
+}
+
+function verifiedIdentity(): OperatorIdentity | null {
+  try {
+    const raw = sessionStorage.getItem(IDENTITY_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as OperatorIdentity;
+    return parsed && parsed.id && parsed.display_name ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function OperatorPortal() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const [step, setStep] = useState<'name' | 'main'>('name');
   const [activeTab, setActiveTab] = useState<Tab>('jobs');
   const [operatorName, setOperatorName] = useState('');
+  /** The verified user behind the name, when there is one. Carried into every
+   *  run this portal starts so completions.operator_user_id is a real person. */
+  const [operatorUserId, setOperatorUserId] = useState<string | null>(null);
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(false);
   const [identifyError, setIdentifyError] = useState('');
@@ -121,9 +159,14 @@ export default function OperatorPortal() {
       .finally(() => setRosterLoaded(true));
   }, []);
 
-  // Finalize a verified identity and enter the portal.
-  const identify = async (name: string) => {
+  // Finalize a verified identity and enter the portal. The whole identity is
+  // kept — the id as well as the name — because the id is what attributes the
+  // work; a name alone is just text that happens to look like a person.
+  const identify = async (who: OperatorIdentity) => {
+    const name = who.display_name;
     setOperatorName(name);
+    setOperatorUserId(who.id);
+    rememberIdentity(who);
     localStorage.setItem('hm_operator_name', name);
     setLoading(true);
     setIdentifyError('');
@@ -167,21 +210,54 @@ export default function OperatorPortal() {
 
   const handleNameSubmit = async () => {
     if (!operatorName.trim()) return;
-    await identify(operatorName.trim());
+    // Typed by hand: a name, no verified user behind it.
+    await identify({ id: null, display_name: operatorName.trim() });
   };
 
   const handleStartJob = () => {
     if (!selectedWO?.app_id) return;
-    navigate(`/play/${selectedWO.app_id}?wo=${selectedWO.id}&name=${encodeURIComponent(operatorName.trim())}`);
+    navigate(buildPlayLink({
+      appId: selectedWO.app_id,
+      workOrderId: selectedWO.id,
+      operatorName,
+      operatorUserId,
+      stationId: localStorage.getItem('hm_station'),
+      // The way back: this run belongs to the floor, so Done, Exit and
+      // Back all return here rather than dropping a tablet into /apps.
+      fromOperator: true,
+    }));
   };
 
   const switchOperator = () => {
+    setOperatorUserId(null);
+    rememberIdentity({ id: null, display_name: '' });
     setStep('name');
     setSelectedWO(null);
     setCompletions(null);
     setActiveTab('jobs');
     setManualMode(false);
   };
+
+  // Coming back from a finished unit (/operator?uid=…&station=…): pick the
+  // operator back up instead of asking who they are after every single unit.
+  // Two locks, because a URL is typed as easily as it is followed: the id must
+  // be on the roster this portal already loaded, AND it must be the identity
+  // this tab verified with a PIN or badge. Anything else falls through to the
+  // normal clock-in screen.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current || step !== 'name' || !rosterLoaded) return;
+    const uid = searchParams.get('uid');
+    if (!uid) return;
+    restoredRef.current = true;
+    const station = searchParams.get('station');
+    if (station) localStorage.setItem('hm_station', station);
+    const onRoster = roster.find(r => r.id === uid);
+    const verified = verifiedIdentity();
+    if (!onRoster || !verified || verified.id !== uid) return;
+    void identify({ id: onRoster.id, display_name: onRoster.display_name });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rosterLoaded, roster, step, searchParams]);
 
   // Lazy-load completion history the first time that tab is opened.
   useEffect(() => {
@@ -291,13 +367,13 @@ function IdentifyScreen({
   roster: RosterEntry[];
   rosterLoaded: boolean;
   loading: boolean;
-  currentUser: { display_name?: string; role?: string } | null;
+  currentUser: { id?: string; display_name?: string; role?: string } | null;
   manualMode: boolean;
   setManualMode: (v: boolean) => void;
   operatorName: string;
   setOperatorName: (v: string) => void;
   onManualSubmit: () => void;
-  onIdentify: (name: string) => void;
+  onIdentify: (who: OperatorIdentity) => void;
   onExit: () => void;
   identifyError?: string;
 }) {
@@ -316,7 +392,9 @@ function IdentifyScreen({
     if (op.has_pin) {
       setSelectedOp(op); setPin(''); setPinError(false);
     } else {
-      onIdentify(op.display_name); // no PIN configured — identify directly
+      // No PIN configured for this account — the tile IS the identification the
+      // company has set up, so the run is still booked to that real user.
+      onIdentify({ id: op.id, display_name: op.display_name });
     }
   };
 
@@ -324,8 +402,9 @@ function IdentifyScreen({
     if (!selectedOp || pin.length < 4 || verifying) return;
     setVerifying(true); setPinError(false);
     try {
+      // { id, display_name } — the id is the point of verifying at all.
       const res = await api.verifyOperatorPin({ user_id: selectedOp.id, pin });
-      await onIdentify(res.display_name);
+      await onIdentify({ id: res.id, display_name: res.display_name });
     } catch {
       setPinError(true); setPin('');
     } finally {
@@ -339,7 +418,7 @@ function IdentifyScreen({
     setVerifying(true);
     try {
       const res = await api.verifyOperatorPin({ badge_code: code });
-      await onIdentify(res.display_name);
+      await onIdentify({ id: res.id, display_name: res.display_name });
     } catch {
       setScanError(`Badge "${code}" not recognized`);
     } finally {
@@ -515,7 +594,7 @@ function IdentifyScreen({
 
           {isSelfOperator && (
             <button
-              onClick={() => onIdentify(currentUser!.display_name!)}
+              onClick={() => onIdentify({ id: currentUser!.id ?? null, display_name: currentUser!.display_name! })}
               disabled={loading}
               className="w-full mb-4 h-14 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white rounded-2xl font-bold text-base transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-900/40"
             >
@@ -741,7 +820,7 @@ function JobsTab({
                       {wo.takt_time_minutes > 0 && (
                         <div className="flex items-center gap-1 text-blue-200/80">
                           <Clock size={12} />
-                          {fmtMinutes(wo.takt_time_minutes)}m takt
+                          {fmtMinutes(wo.takt_time_minutes)} takt
                         </div>
                       )}
                       {wo.department_name && (

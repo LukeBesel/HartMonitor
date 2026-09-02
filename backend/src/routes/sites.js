@@ -6,19 +6,37 @@ const { logActivity } = require('../activity');
 
 const router = express.Router();
 
+// ─── Site counts ────────────────────────────────────────────────────────────
+// A department/station/work-order/location with no site_id predates sites (or
+// was never assigned one) and belongs to the whole company. It reads on
+// exactly ONE card — the primary site's — never on every site at once: the
+// GET /departments filter and the analytics site scope both apply the
+// "unassigned counts everywhere" rule to a SELECTION (pick one site, see what
+// belongs there-or-nowhere), which is correct for filtering. A card's own
+// COUNT is a different question — every site's card summing the same
+// unassigned rows would have two unassigned departments read as "2" on a
+// primary site AND "2" on a second site, i.e. 4 departments' worth of cards
+// for 2 real departments. Landing them on the primary site alone is what an
+// unassigned record actually is: not yet moved off the default.
+const COUNTS_BASIS = 'Assigned to this site, plus anything not yet assigned to any site (primary site only)';
+
+function siteCounts(companyId, siteId, isPrimary) {
+  // A hardcoded literal, never user input — safe to splice into the SQL text.
+  const unassigned = isPrimary ? ' OR site_id IS NULL' : '';
+  return db.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM stations    WHERE company_id = ? AND (site_id = ?${unassigned})) as station_count,
+      (SELECT COUNT(*) FROM departments WHERE company_id = ? AND (site_id = ?${unassigned})) as department_count,
+      (SELECT COUNT(*) FROM work_orders WHERE company_id = ? AND (site_id = ?${unassigned}) AND status != 'cancelled') as work_order_count,
+      (SELECT COUNT(*) FROM locations   WHERE company_id = ? AND (site_id = ?${unassigned})) as location_count
+  `).get(companyId, siteId, companyId, siteId, companyId, siteId, companyId, siteId);
+}
+
 // ─── GET / - list sites for the org ────────────────────────────────────────────
 
 router.get('/', (req, res) => {
-  const sites = db.prepare(`
-    SELECT s.*,
-      (SELECT COUNT(*) FROM stations    WHERE site_id = s.id) as station_count,
-      (SELECT COUNT(*) FROM departments WHERE site_id = s.id) as department_count,
-      (SELECT COUNT(*) FROM work_orders WHERE site_id = s.id AND status != 'cancelled') as work_order_count,
-      (SELECT COUNT(*) FROM locations   WHERE site_id = s.id) as location_count
-    FROM sites s WHERE s.company_id = ?
-    ORDER BY s.is_primary DESC, s.name
-  `).all(req.companyId);
-  res.json(sites);
+  const sites = db.prepare(`SELECT * FROM sites WHERE company_id = ? ORDER BY is_primary DESC, name`).all(req.companyId);
+  res.json(sites.map(s => ({ ...s, ...siteCounts(req.companyId, s.id, !!s.is_primary), counts_basis: COUNTS_BASIS })));
 });
 
 // ─── POST / - create a site (manager+) ─────────────────────────────────────────
@@ -41,7 +59,10 @@ router.post('/', requireRole('manager'), (req, res) => {
   logActivity(req.companyId, 'site', id, `Site "${name}" created`, req.user.display_name);
 
   const site = db.prepare('SELECT * FROM sites WHERE id = ?').get(id);
-  res.status(201).json({ ...site, station_count: 0, department_count: 0, work_order_count: 0, location_count: 0 });
+  // Never primary on creation (is_primary is hardcoded 0 above), so it starts
+  // at zero on every count — the unassigned records already belong to the
+  // primary site's card, and a second site does not also claim them.
+  res.status(201).json({ ...site, ...siteCounts(req.companyId, id, false), counts_basis: COUNTS_BASIS });
 });
 
 // ─── PUT /:id - update a site (manager+) ───────────────────────────────────────

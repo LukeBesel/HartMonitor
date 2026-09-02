@@ -4,7 +4,7 @@
 // no DOM — unit-testable in isolation.
 
 import type {
-  Step, Widget, KitLine, CompletionValueInput, CompletionValueType,
+  Step, Widget, WidgetType, KitLine, CompletionValueInput, CompletionValueType,
 } from '../../types';
 import { luminance } from '../../utils/contrast';
 
@@ -13,12 +13,29 @@ export function legacyKey(w: Widget): string {
   return w.config.variableName || w.id;
 }
 
-/** Exact v1 set + the v2 input widgets (spec §5.5 superset). Signature stays
- *  ungated to preserve v1 outcomes (it was never gated before the remodel). */
-export const REQUIRED_WIDGET_TYPES = [
+/**
+ * Every widget type that captures a value: they carry a variableName, they can
+ * fire input_change triggers, and the builder offers each of them a "Required
+ * field" switch. Declared HERE, in the leaf module, and re-exported by the
+ * builder palette — the player bundle must not import the builder.
+ */
+export const INPUT_WIDGET_TYPES: readonly WidgetType[] = [
   'text-input', 'number-input', 'select-input', 'checkbox',
-  'scan-input', 'photo-capture',
-] as const;
+  'counter', 'pass-fail', 'signature', 'scan-input', 'photo-capture',
+];
+
+/**
+ * Required means required. The gate covers exactly the set the builder offers
+ * the switch on — nothing else would be defensible: an app author who ticks
+ * "Required" on a pass-fail, a signature or a counter has said the run may not
+ * finish without it, and until now the player let all three through. The seeded
+ * QC app booked units as good with `qc_result` absent because of it.
+ *
+ * BEHAVIOUR CHANGE from v1, deliberately: signature, pass-fail and counter now
+ * gate. Apps that ticked Required on one of those and relied on it being
+ * ignored will now stop the operator there.
+ */
+export const REQUIRED_WIDGET_TYPES: readonly WidgetType[] = INPUT_WIDGET_TYPES;
 
 export interface BlockItem {
   widgetId?: string;
@@ -36,6 +53,54 @@ export interface KitGateInput {
 
 function isEmpty(v: unknown): boolean {
   return v === undefined || v === null || v === '';
+}
+
+/** A widget's operator-facing name, tolerating hand-authored apps that put the
+ *  label inside config (the same fallback the player's renderer uses). */
+export function widgetLabel(w: Widget, fallback = 'This field'): string {
+  const configured = (w.config as { label?: unknown } | undefined)?.label;
+  return w.label || (typeof configured === 'string' ? configured : '') || fallback;
+}
+
+/**
+ * Is a required input still unanswered? "Empty" is not one shape:
+ *   • checkbox — must be checked, not merely present (v1 semantics);
+ *   • counter  — must have been TOUCHED. Presence in formData is the whole
+ *                test: setField is the only writer, and starting a run seeds no
+ *                counter defaults, so a key exists only because the operator
+ *                tapped. Requiring the number to have MOVED stranded the run
+ *                whenever the true answer was the initial value — "Defects
+ *                found: 0" on a counter that starts at 0 and cannot go below
+ *                it could never be given. CounterWidget commits on every tap,
+ *                including at the ends of the range, so confirming a zero is
+ *                one tap of either button.
+ *   • signature— a stroke must have been captured (any non-empty signature);
+ *   • the rest — a value that is not undefined / null / ''.
+ */
+export function requiredMissing(w: Widget, val: unknown): boolean {
+  switch (w.type) {
+    case 'checkbox':
+      return val !== true;
+    case 'counter':
+      return isEmpty(val);
+    default:
+      return isEmpty(val);
+  }
+}
+
+/** One line naming the widget and what it wants, in the operator's words. */
+export function requiredMessage(w: Widget): string {
+  const label = widgetLabel(w);
+  switch (w.type) {
+    case 'pass-fail':     return `${label} needs a result`;
+    case 'signature':     return `${label} needs a signature`;
+    case 'counter':       return `${label} needs a count — tap + or − to confirm`;
+    case 'photo-capture': return `${label} needs a photo`;
+    case 'scan-input':    return `${label} needs a scan`;
+    case 'select-input':  return `${label} needs a choice`;
+    case 'checkbox':      return `${label} needs to be checked`;
+    default:              return `${label} is required`;
+  }
 }
 
 /**
@@ -57,9 +122,8 @@ export function getStepBlocks(
 
     // Required inputs empty → block (v1 behavior preserved and extended)
     if ((REQUIRED_WIDGET_TYPES as readonly string[]).includes(w.type) && w.config.required) {
-      const missing = w.type === 'checkbox' ? val !== true : isEmpty(val);
-      if (missing) {
-        blocks.push({ widgetId: w.id, kind: 'required', message: `${w.label || 'This field'} is required` });
+      if (requiredMissing(w, val)) {
+        blocks.push({ widgetId: w.id, kind: 'required', message: requiredMessage(w) });
         continue;
       }
     }
@@ -416,4 +480,162 @@ export function playerTextColor(configured: string | undefined | null, fallback 
   const lum = relativeLuminance(configured);
   if (lum !== null && lum < 0.25) return fallback;
   return configured;
+}
+
+// ─── Where the player sends people, and who it says ran the job ──────────────
+
+/** Roles that manage from the App Library rather than working from the floor. */
+const SUPERVISOR_PLUS = ['developer', 'manager', 'supervisor'];
+
+export interface ExitContext {
+  /** The run was opened from the Operator Portal (?from=operator). */
+  fromOperator: boolean;
+  /** The signed-in user's role, when known. */
+  role?: string | null;
+}
+
+/**
+ * Where "Done", "Exit" and "Back to Library" go. A floor tablet must land back
+ * on the Operator Portal — sending it to /apps turns it into an unlocked
+ * manager console. /apps is only for someone who came from the App Library and
+ * is a supervisor or above.
+ */
+export function exitTarget(ctx: ExitContext): '/operator' | '/apps' {
+  if (ctx.fromOperator) return '/operator';
+  return SUPERVISOR_PLUS.includes(String(ctx.role ?? '')) ? '/apps' : '/operator';
+}
+
+/** Name shown for a run nobody claimed. Never a person-shaped placeholder. */
+export const UNNAMED_OPERATOR = 'Unnamed operator';
+
+/** Display name for a run's operator: the real one, or an honest blank. */
+export function operatorDisplayName(name: string | null | undefined): string {
+  const trimmed = (name ?? '').trim();
+  return trimmed || UNNAMED_OPERATOR;
+}
+
+export interface OperatorAttribution {
+  operator_name?: string;
+  operator_user_id?: string;
+}
+
+/**
+ * The operator fields for a completion / session / andon payload. An unknown
+ * operator is OMITTED, never invented: a run booked to a phantom called
+ * "Operator" ranks beside real people on the leaderboard and blames nobody who
+ * exists for a bad unit.
+ */
+export function operatorAttribution(
+  name: string | null | undefined,
+  userId: string | null | undefined,
+): OperatorAttribution {
+  const out: OperatorAttribution = {};
+  const trimmed = (name ?? '').trim();
+  if (trimmed) out.operator_name = trimmed;
+  if (userId) out.operator_user_id = userId;
+  return out;
+}
+
+export interface PlayLinkParams {
+  appId: string;
+  workOrderId?: string | null;
+  operatorName?: string | null;
+  operatorUserId?: string | null;
+  stationId?: string | null;
+  fromOperator?: boolean;
+}
+
+/** Deep link from the Operator Portal into the player, carrying the VERIFIED
+ *  identity (uid) so the run is attributed to the person, not to their typing. */
+export function buildPlayLink(p: PlayLinkParams): string {
+  const q = new URLSearchParams();
+  if (p.workOrderId) q.set('wo', p.workOrderId);
+  const name = (p.operatorName ?? '').trim();
+  if (name) q.set('name', name);
+  if (p.operatorUserId) q.set('uid', p.operatorUserId);
+  if (p.stationId) q.set('station', p.stationId);
+  if (p.fromOperator) q.set('from', 'operator');
+  const qs = q.toString();
+  return `/play/${p.appId}${qs ? `?${qs}` : ''}`;
+}
+
+// --- One filing per problem, not one per press ------------------------------
+
+/**
+ * Stable signature of everything a step captured. Two forward taps with the
+ * same answers produce the same string; changing any answer changes it.
+ */
+export function stepValueSignature(
+  step: Step | undefined,
+  formData: Record<string, unknown>,
+): string {
+  if (!step) return '';
+  return step.widgets
+    .map(w => {
+      const v = formData[legacyKey(w)];
+      let text: string;
+      try {
+        text = v === undefined ? ' ' : (JSON.stringify(v) ?? String(v));
+      } catch {
+        text = String(v);
+      }
+      return w.id + '=' + text;
+    })
+    .sort()
+    .join('|');
+}
+
+/**
+ * Identity of ONE side-effecting trigger action (create_ncr / save_record) for
+ * one attempt at leaving a step: which step, with which answers, which action.
+ *
+ * `occurrence` is the action's position among the enqueue effects of that one
+ * step_exit evaluation — the engine's enqueue effect carries no trigger id, and
+ * for identical answers the same triggers match in the same order, so position
+ * identifies the authored action exactly as a trigger id would.
+ *
+ * The interpolated PAYLOAD is deliberately not part of the key. An authored
+ * title like "Failed after {{app.elapsed_seconds}}s" renders differently on
+ * every press, which would make every duplicate look like a new report and
+ * defeat the guard entirely.
+ */
+export function sideEffectKey(
+  stepId: string,
+  valueSignature: string,
+  op: string,
+  occurrence: number,
+): string {
+  return [stepId, valueSignature, op, String(occurrence)].join('~');
+}
+
+/**
+ * A step_exit trigger that files an NCR must file it once, not once per press.
+ * A blocked step keeps the forward button live (that is the point - it now
+ * explains itself), so the operator naturally presses again, and every press
+ * re-ran step_exit and raised ANOTHER quality record for the same failure.
+ * Returns true the first time a given action+answers pair is claimed and false
+ * for every repeat; changing an answer produces a new key and files again,
+ * which is a genuinely different report.
+ */
+export function claimSideEffect(fired: Set<string>, key: string): boolean {
+  if (fired.has(key)) return false;
+  fired.add(key);
+  return true;
+}
+
+/**
+ * The way back to the Operator Portal, carrying the identity the player already
+ * verified. Without it the portal asks "Who's working?" and demands the PIN
+ * again after every single unit, which is the fastest way to teach a floor to
+ * stop clocking in at all.
+ */
+export function operatorReturnLink(
+  operatorUserId: string | null | undefined,
+  stationId?: string | null,
+): string {
+  const q = new URLSearchParams();
+  if (operatorUserId) q.set('uid', operatorUserId);
+  if (stationId) q.set('station', stationId);
+  const qs = q.toString();
+  return `/operator${qs ? `?${qs}` : ''}`;
 }

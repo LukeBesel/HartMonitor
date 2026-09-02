@@ -5,6 +5,7 @@
 // unchanged — OperatorPortal.tsx consumes it exactly as before. Anything
 // queued under the legacy key is migrated into the outbox on first load.
 
+import { useCallback, useSyncExternalStore } from 'react';
 import { api } from '../api/client';
 import type { CompletionFlushPayload, KitLineUpdate } from '../api/client';
 import { v4 } from './uuid';
@@ -103,6 +104,39 @@ function notify() {
 export function subscribeOutbox(fn: OutboxListener): () => void {
   listeners.add(fn);
   return () => { listeners.delete(fn); };
+}
+
+/** How many queued items match — the general form behind pendingCount(kinds). */
+export function pendingMatching(predicate: (item: OutboxItem) => boolean): number {
+  return load().filter(predicate).length;
+}
+
+/** Is this exact coalesced item still waiting? Callers that care about ONE
+ *  thing (this run's final save) must not read an unrelated queue as their
+ *  own — an outbox emptied of somebody else's work says nothing about yours. */
+export function isQueued(coalesceKey: string): boolean {
+  return load().some(i => i.coalesceKey === coalesceKey);
+}
+
+/**
+ * Live outbox depth for a component. Every write goes through save(), which
+ * notifies — so a "saved locally" notice built on this clears the moment the
+ * queue drains, with no reload and nothing to poll. Returns a number, so React
+ * compares snapshots by value.
+ *
+ * Pass a list of kinds, or a predicate (memoize it — a new function each render
+ * is re-read each render, which is harmless but pointless).
+ */
+export function useOutboxDepth(
+  filter?: OutboxKind[] | ((item: OutboxItem) => boolean),
+): number {
+  const key = Array.isArray(filter) ? filter.join(',') : '';
+  const fn = typeof filter === 'function' ? filter : undefined;
+  const getSnapshot = useCallback(
+    () => (fn ? pendingMatching(fn) : pendingCount(key ? (key.split(',') as OutboxKind[]) : undefined)),
+    [key, fn],
+  );
+  return useSyncExternalStore(subscribeOutbox, getSnapshot, getSnapshot);
 }
 
 // ─── Public outbox API ────────────────────────────────────────────────────────

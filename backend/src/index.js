@@ -25,6 +25,7 @@ const completionsRouter = require('./routes/completions');
 const tablesRouter      = require('./routes/tables');
 const stationsRouter    = require('./routes/stations');
 const analyticsRouter   = require('./routes/analytics');
+const floorRouter       = require('./routes/floor');
 const { router: workOrdersRouter } = require('./routes/workorders');
 const departmentsRouter  = require('./routes/departments');
 const productTypesRouter = require('./routes/product-types');
@@ -273,6 +274,11 @@ app.use('/api/completions',   writeRole('operator'),   completionsRouter);
 app.use('/api/tables',        writeRole('supervisor'), tablesRouter);
 app.use('/api/stations',      writeRole('supervisor'), stationsRouter);
 app.use('/api/analytics',     analyticsRouter);
+// The one server-side answer to finished-today / running-now / average cycle /
+// pass rate / on track. Deliberately NOT plan-gated: knowing what the floor is
+// doing right now is the product itself, and a Free account with no working
+// day-count has a broken MES, not a cheaper one. Read-only, so no write role.
+app.use('/api/floor',         floorRouter);
 app.use('/api/work-orders',   writeRole('supervisor'), workOrdersRouter);
 app.use('/api/departments',   writeRole('supervisor'), departmentsRouter);
 app.use('/api/product-types', writeRole('supervisor'), productTypesRouter);

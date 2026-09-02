@@ -1,26 +1,16 @@
 import {
   LayoutDashboard,
   AppWindow,
-  Building2,
-  LayoutGrid,
   Calendar,
-  GitBranch,
   BarChart2,
   Package,
   Monitor,
-  ShieldCheck,
-  Gauge,
-  Trophy,
-  ScrollText,
-  UserCog,
   Sparkles,
-  Bell,
   Filter,
   TrendingUp,
   Search,
   Play,
   Plus,
-  Eye,
   CheckCircle2,
   AlertTriangle,
   SlidersHorizontal,
@@ -44,10 +34,16 @@ export interface WalkthroughStep {
 }
 
 /**
- * Per-module guided walkthrough content, keyed by the `moduleId` that each
- * page passes to <ModuleOnboarding/>. When a key exists here the component
- * renders a multi-step paged tour; otherwise it falls back to the legacy
- * single-card behavior using the page's own props.
+ * Per-module guided walkthrough content, keyed by the `moduleId` that each page
+ * passes to <ModuleOnboarding/>. A key here gives that page a "Show me around"
+ * button; NO key means the page shows no button at all, which is the right
+ * answer for most screens.
+ *
+ * FIVE keys, deliberately. There were fifteen, they opened themselves on first
+ * visit, and five of them narrated screens the product no longer has. A tour
+ * nobody asked for that describes furniture nobody can find is worse than
+ * silence, so the list is now the handful of screens where a walk-through
+ * genuinely helps, and every one of them opens only when someone asks for it.
  */
 export const WALKTHROUGHS: Record<string, WalkthroughStep[]> = {
   // ───────────────────────────── Command Center ─────────────────────────────
@@ -82,26 +78,11 @@ export const WALKTHROUGHS: Record<string, WalkthroughStep[]> = {
         'Click an item to jump straight to where you fix it',
       ],
     },
-    {
-      title: 'Live Floor View',
-      body: 'Each card represents a department running right now. The cards give you a live read on who is busy and where work is piling up.',
-      icon: Building2,
-      bullets: [
-        'See active jobs and operators per department',
-        'Throughput shows current pace against plan',
-        'Color cues highlight departments that need help',
-      ],
-    },
-    {
-      title: 'Throughput & alerts',
-      body: 'Below the floor cards, throughput trends and the alert feed give you the bigger picture of momentum across the plant during the shift.',
-      icon: Bell,
-      bullets: [
-        'Throughput charts show the production trend over time',
-        'The alert feed lists recent events as they happen',
-        'Use it to spot a slowdown before it becomes a stoppage',
-      ],
-    },
+    // Two steps used to sit here: "Live Floor View" (a collapsible section of
+    // department cards with pace-against-plan and color cues) and "Throughput &
+    // alerts" (a chart row plus a live alert feed). Neither is on the page any
+    // more — see DASHBOARD_SECTIONS in hooks/useDashboardPrefs.ts, whose retired
+    // ids say so — so both were narrating furniture nobody could find.
     {
       title: 'Make it yours',
       body: 'Use the Customize button in the header to show or hide any section. Set it up once and the Command Center remembers your layout.',
@@ -116,101 +97,7 @@ export const WALKTHROUGHS: Record<string, WalkthroughStep[]> = {
 
   // The App Library has no entry here on purpose: <AppTrainingCoach/> walks
   // people through building and running an app in the product itself, and a
-  // second modal tour on the same screen would compete with it.
-
-  // ───────────────────────────── Department View ────────────────────────────
-  departments: [
-    {
-      title: 'Monitor by department',
-      body: 'Department View gives you a live read on a single department — what is running, what is queued next, and how it is performing.',
-      icon: Building2,
-    },
-    {
-      title: 'Pick a department',
-      body: 'Start by choosing a department from the dropdown. Everything on the page refocuses on the area you select.',
-      icon: Filter,
-      bullets: [
-        'Switch departments any time from the selector',
-        'The view remembers your last choice',
-      ],
-    },
-    {
-      title: 'Live & upcoming work',
-      body: 'See jobs currently in progress alongside the work scheduled to come next, so you can keep the area flowing without gaps.',
-      icon: Clock,
-      bullets: [
-        'Running jobs show operator and progress',
-        'Upcoming work is queued in priority order',
-        'Spot idle time before it costs you output',
-      ],
-    },
-    {
-      title: 'Department metrics',
-      body: 'Key numbers for the selected department summarize throughput and performance so you can compare areas fairly.',
-      icon: BarChart2,
-      bullets: [
-        'Output and pace for the current period',
-        'Use it during stand-ups and shift handoffs',
-      ],
-    },
-    {
-      title: 'Always current',
-      body: 'The page auto-refreshes about every 30 seconds, so leaving it open on a screen gives the floor a living status board.',
-      icon: TrendingUp,
-      bullets: [
-        'No need to reload manually',
-        'Great for a wall display in the department',
-        "You're set — pick an area and keep an eye on it!",
-      ],
-    },
-  ],
-
-  // ─────────────────────────────── SQDC Board ───────────────────────────────
-  sqdc: [
-    {
-      title: 'Your daily lean board',
-      body: 'SQDC tracks the four classic lean metrics — Safety, Quality, Delivery, and Cost — for any day. It is built to run your daily stand-up from one screen.',
-      icon: LayoutGrid,
-    },
-    {
-      title: 'Choose the day',
-      body: 'Pick a date to review. It defaults to today, but you can look back at any day to discuss trends or follow up on past issues.',
-      icon: Calendar,
-      bullets: [
-        'Defaults to the current date',
-        'Step back to review yesterday or last week',
-      ],
-    },
-    {
-      title: 'Filter by department',
-      body: 'Optionally narrow the board to a single department so each area can run its own focused stand-up.',
-      icon: Filter,
-      bullets: [
-        'Leave it on All for a plant-wide view',
-        'Pick one department for a team huddle',
-      ],
-    },
-    {
-      title: 'Read the four panels',
-      body: 'Each of the S, Q, D, and C panels turns green, amber, or red against its target — a quick visual of where you stand.',
-      icon: ShieldCheck,
-      bullets: [
-        'Green means on target, red means action needed',
-        'Use the colors to drive the conversation',
-        'Assign owners to anything not green',
-      ],
-    },
-    {
-      title: 'Dig into the detail',
-      body: 'Within each panel, review the headline number plus the supporting detail rows to understand what is driving the result.',
-      icon: Search,
-      bullets: [
-        'Headline number is the at-a-glance metric',
-        'Detail rows explain the why behind it',
-        "You're ready to run a sharp daily stand-up!",
-      ],
-    },
-  ],
+  // second guide on the same screen would compete with it.
 
   // ──────────────────────────────── Schedule ────────────────────────────────
   schedule: [
@@ -259,53 +146,6 @@ export const WALKTHROUGHS: Record<string, WalkthroughStep[]> = {
     },
   ],
 
-  // ──────────────────────────────── Routings ────────────────────────────────
-  routings: [
-    {
-      title: 'Define how things are made',
-      body: 'A routing is a reusable sequence of manufacturing steps. Define the flow once, then apply it across many work orders for the same product.',
-      icon: GitBranch,
-    },
-    {
-      title: 'Create a routing',
-      body: 'Start a new routing with a clear name and description so anyone can recognize the process it represents.',
-      icon: Plus,
-      bullets: [
-        'Name it after the product or process',
-        'Pick an existing routing on the left to edit it',
-      ],
-    },
-    {
-      title: 'Add ordered steps',
-      body: 'Build the routing by adding steps in the order work is performed. Each step can be linked to an app for operator instructions.',
-      icon: LayoutGrid,
-      bullets: [
-        'One step per operation in the process',
-        'Link a step to an app to drive the work',
-        'Assign a department where the step runs',
-      ],
-    },
-    {
-      title: 'Set cycle times',
-      body: 'Give each step an estimated cycle time. These feed capacity planning and OEE targets so your plans are grounded in reality.',
-      icon: Clock,
-      bullets: [
-        'Estimated time per unit for the step',
-        'Used to plan capacity and measure efficiency',
-      ],
-    },
-    {
-      title: 'Refine as you go',
-      body: 'Use the arrows to reorder steps as your process evolves. A routing is a living document — keep it matching the floor.',
-      icon: TrendingUp,
-      bullets: [
-        'Reorder steps with the up/down arrows',
-        'Update times as the process improves',
-        "You're ready to map out your processes!",
-      ],
-    },
-  ],
-
   // ──────────────────────────────── Analytics ───────────────────────────────
   analytics: [
     {
@@ -348,90 +188,6 @@ export const WALKTHROUGHS: Record<string, WalkthroughStep[]> = {
       bullets: [
         'Export for reports and reviews',
         "You're ready to dig into your numbers!",
-      ],
-    },
-  ],
-
-  // ──────────────────────────────── Dashboards ──────────────────────────────
-  dashboards: [
-    {
-      title: 'Build custom views',
-      body: 'Dashboards are customizable views assembled from live data widgets. Compose the exact screen each audience needs — operators, managers, or a TV wall.',
-      icon: LayoutGrid,
-    },
-    {
-      title: 'Create a dashboard',
-      body: 'Click the + button to start a fresh dashboard. Give it a purpose — a line, a shift, an executive summary — and build from there.',
-      icon: Plus,
-      bullets: [
-        'Start blank and add what matters',
-        'Make one dashboard per audience',
-      ],
-    },
-    {
-      title: 'Add widgets',
-      body: 'Drop in widgets to show your data: charts, KPIs, tables, and status cards each pull live numbers from the system.',
-      icon: BarChart2,
-      bullets: [
-        'KPIs for headline numbers',
-        'Charts for trends, tables for detail',
-        'Status cards for live floor state',
-      ],
-    },
-    {
-      title: 'Arrange the layout',
-      body: 'Drag widgets to arrange the layout until the most important information sits where the eye lands first.',
-      icon: SlidersHorizontal,
-      bullets: [
-        'Drag to reposition any widget',
-        'Put the headline at the top-left',
-      ],
-    },
-    {
-      title: 'Share or display',
-      body: 'Share the dashboard URL with managers, or open it on a TV for an always-on floor display that the whole team can see.',
-      icon: Monitor,
-      bullets: [
-        'Send the link to stakeholders',
-        'Run it full-screen on a wall display',
-        "You're ready to compose your views!",
-      ],
-    },
-  ],
-
-  // ─────────────────────────────── Leaderboard ──────────────────────────────
-  leaderboard: [
-    {
-      title: 'Celebrate performance',
-      body: 'The Leaderboard ranks operators and teams by their production performance to recognize top performers and add a bit of friendly competition.',
-      icon: Trophy,
-    },
-    {
-      title: 'Choose what to rank',
-      body: 'Pick the metric and time period to rank by — output, efficiency, or quality over a shift, day, or week.',
-      icon: Filter,
-      bullets: [
-        'Switch metrics to highlight what matters now',
-        'Compare over the period you care about',
-      ],
-    },
-    {
-      title: 'Read the rankings',
-      body: 'The list shows who is leading and by how much. Use it in stand-ups to recognize wins and spark momentum.',
-      icon: TrendingUp,
-      bullets: [
-        'Top of the list is your standout performer',
-        'Look at gaps to see how tight the race is',
-      ],
-    },
-    {
-      title: 'Keep it fair & fun',
-      body: 'Pair recognition with context — volume, mix, and difficulty vary. Use the board to motivate, not just to measure.',
-      icon: ShieldCheck,
-      bullets: [
-        'Recognize improvement, not just raw totals',
-        'Display it on a TV to keep energy high',
-        "You're ready to celebrate your team!",
       ],
     },
   ],
@@ -483,53 +239,6 @@ export const WALKTHROUGHS: Record<string, WalkthroughStep[]> = {
     },
   ],
 
-  // ───────────────────────────────── Quality ────────────────────────────────
-  quality: [
-    {
-      title: 'Own quality from the floor',
-      body: 'Quality captures pass/fail results and non-conformance reports as work happens, so issues are caught and tracked instead of slipping through.',
-      icon: ShieldCheck,
-    },
-    {
-      title: 'Review inspection results',
-      body: 'See pass/fail outcomes captured by operators during their work. Trends here tell you whether quality is holding steady.',
-      icon: CheckCircle2,
-      bullets: [
-        'Pass/fail rolls up from app inspections',
-        'Watch first-pass yield over time',
-      ],
-    },
-    {
-      title: 'Log a non-conformance',
-      body: 'Create an NCR when something is out of spec. Capture what happened, where, and the disposition so nothing is lost.',
-      icon: AlertTriangle,
-      bullets: [
-        'Record the defect and affected items',
-        'Assign disposition: rework, scrap, or use-as-is',
-        'Tie it back to the job and station',
-      ],
-    },
-    {
-      title: 'Filter and find issues',
-      body: 'Filter by product, department, or date to focus on a specific quality problem and see whether it is recurring.',
-      icon: Filter,
-      bullets: [
-        'Narrow to one product or area',
-        'Spot repeat offenders fast',
-      ],
-    },
-    {
-      title: 'Drive to closure',
-      body: 'Track each issue through to resolution so corrective actions actually happen and the same defect does not return.',
-      icon: TrendingUp,
-      bullets: [
-        'Follow open NCRs until they are closed',
-        'Use trends to prevent the next defect',
-        "You're ready to keep quality high!",
-      ],
-    },
-  ],
-
   // ───────────────────────────────── Stations ───────────────────────────────
   stations: [
     {
@@ -566,7 +275,7 @@ export const WALKTHROUGHS: Record<string, WalkthroughStep[]> = {
     },
     {
       title: 'Watch it live',
-      body: 'Once configured, monitor each station’s status from Plant View or the Command Center to see what is running, idle, or down.',
+      body: 'Once configured, monitor each station’s status from the Command Center or the station’s own page to see what is running, idle, or down.',
       icon: TrendingUp,
       bullets: [
         'Track live status across the floor',
@@ -575,203 +284,15 @@ export const WALKTHROUGHS: Record<string, WalkthroughStep[]> = {
       ],
     },
   ],
-
-  // ───────────────────────────────── OEE ────────────────────────────────────
-  oee: [
-    {
-      title: 'Measure true productivity',
-      body: 'OEE (Overall Equipment Effectiveness) combines Availability, Performance, and Quality into one score that shows how productive your equipment really is.',
-      icon: Gauge,
-    },
-    {
-      title: 'The three factors',
-      body: 'OEE multiplies three numbers. Knowing which one is dragging your score tells you exactly where to focus.',
-      icon: SlidersHorizontal,
-      bullets: [
-        'Availability — is the station actually running?',
-        'Performance — is it running at the ideal pace?',
-        'Quality — are the parts good the first time?',
-      ],
-    },
-    {
-      title: 'Pick station and period',
-      body: 'Choose a station and time range to analyze. OEE only means something against a defined window and a known ideal cycle time.',
-      icon: Filter,
-      bullets: [
-        'Select the station to evaluate',
-        'Set the shift, day, or week to score',
-      ],
-    },
-    {
-      title: 'Read the score',
-      body: 'Review the overall OEE percentage and the breakdown by factor. The lowest factor is your biggest opportunity to improve.',
-      icon: TrendingUp,
-      bullets: [
-        'Headline OEE is the single productivity number',
-        'Drill into the weakest of the three factors',
-      ],
-    },
-    {
-      title: 'Close the loss',
-      body: 'Use the losses behind each factor — downtime, slow cycles, defects — to launch targeted improvements and watch the score climb.',
-      icon: CheckCircle2,
-      bullets: [
-        'Attack downtime, speed, and quality losses',
-        'Re-check OEE after each change',
-        "You're ready to chase 100%!",
-      ],
-    },
-  ],
-
-  // ────────────────────────────── Plant View ────────────────────────────────
-  plant: [
-    {
-      title: 'See the whole floor',
-      body: 'Plant View maps your facility in real time. At a glance you can tell which stations are running, idle, or down across the entire plant.',
-      icon: Building2,
-    },
-    {
-      title: 'Read the station cards',
-      body: 'Each card represents a physical station. Together they form a live map of activity across your facility.',
-      icon: LayoutGrid,
-      bullets: [
-        'One card per configured station',
-        'Layout mirrors your floor at a glance',
-      ],
-    },
-    {
-      title: 'Know the colors',
-      body: 'Status color tells the story instantly so you can spot trouble from across the room.',
-      icon: ShieldCheck,
-      bullets: [
-        'Green — running and producing',
-        'Yellow — idle and waiting for work',
-        'Red — down and needs attention',
-      ],
-    },
-    {
-      title: 'Open a station',
-      body: 'Click any station to see its current app and live output, so you can drill from the big picture down to a single work center.',
-      icon: Eye,
-      bullets: [
-        'View the running app and current numbers',
-        'Confirm a station is on the right job',
-      ],
-    },
-    {
-      title: 'Log downtime',
-      body: 'Use the status buttons to log downtime events when a station stops. Accurate downtime is what makes your OEE and analytics trustworthy.',
-      icon: AlertTriangle,
-      bullets: [
-        'Mark a station down and record the reason',
-        'Clean downtime data sharpens every report',
-        "You're ready to run the floor live!",
-      ],
-    },
-  ],
-
-  // ────────────────────────────── Manager View ──────────────────────────────
-  manager: [
-    {
-      title: 'Your supervisor cockpit',
-      body: 'Manager View rolls up the metrics a supervisor needs — output, exceptions, and team status — into one place to run the shift.',
-      icon: UserCog,
-    },
-    {
-      title: 'Scan the headline numbers',
-      body: 'Start with the summary KPIs to judge how the shift is tracking against plan before you dive into any detail.',
-      icon: TrendingUp,
-      bullets: [
-        'Output and pace versus target',
-        'A quick gut-check on the shift',
-      ],
-    },
-    {
-      title: 'Watch the exceptions',
-      body: 'The exceptions area highlights what is off-plan — late jobs, down stations, quality flags — so you spend your time where it counts.',
-      icon: AlertTriangle,
-      bullets: [
-        'Late and at-risk work orders',
-        'Stations needing attention',
-        'Open quality issues',
-      ],
-    },
-    {
-      title: 'Check on the team',
-      body: 'See who is working and where, so you can balance load and step in before a bottleneck forms.',
-      icon: Building2,
-      bullets: [
-        'Operator activity across stations',
-        'Rebalance work when an area lags',
-      ],
-    },
-    {
-      title: 'Act and follow up',
-      body: 'Jump from any item straight to the module where you resolve it, then come back to confirm the shift is back on track.',
-      icon: CheckCircle2,
-      bullets: [
-        'Click through to fix issues at the source',
-        'Return to verify the numbers recover',
-        "You're ready to run a smooth shift!",
-      ],
-    },
-  ],
-
-  // ──────────────────────────────── Audit Log ───────────────────────────────
-  audit: [
-    {
-      title: 'A complete history',
-      body: 'The Transaction Log records every meaningful action in the system — who did what, and when. It is your single source of truth for traceability.',
-      icon: ScrollText,
-    },
-    {
-      title: 'Read an entry',
-      body: 'Each row captures one event: the user, the action, the affected record, and a timestamp. Together they form an unbroken audit trail.',
-      icon: Search,
-      bullets: [
-        'Who performed the action',
-        'What changed and on which record',
-        'Exactly when it happened',
-      ],
-    },
-    {
-      title: 'Filter to what matters',
-      body: 'Use filters to narrow the log by user, action type, or date range so you can find a specific event in seconds.',
-      icon: Filter,
-      bullets: [
-        'Filter by user or action type',
-        'Bracket the time window you care about',
-      ],
-    },
-    {
-      title: 'Investigate with confidence',
-      body: 'When something looks off, trace it back through the log to understand the full sequence of events and stay audit-ready.',
-      icon: ShieldCheck,
-      bullets: [
-        'Reconstruct what led to an issue',
-        'Support compliance and traceability requests',
-        "You're ready to keep a clean record!",
-      ],
-    },
-  ],
 };
 
-/** Aliases so a page can use a different moduleId for the same content. */
-const ALIASES: Record<string, string> = {
-  'transaction-log': 'audit',
-  auditlog: 'audit',
-  'audit-log': 'audit',
-  'plant-view': 'plant',
-  'manager-view': 'manager',
-  oeetracker: 'oee',
-};
-
-/** Resolve a moduleId to its canonical walkthrough key, applying aliases. */
+// There are no aliases any more. Every alias this file used to carry pointed at
+// a tour for a screen that has since been retired (plant, manager, oee, audit),
+// so an alias table could only ever resolve a page to a tour of somewhere else.
+/** Resolve a moduleId to its walkthrough key. */
 function resolveKey(moduleId: string): string {
   const id = moduleId?.toLowerCase?.() ?? moduleId;
-  if (WALKTHROUGHS[id]) return id;
-  if (ALIASES[id] && WALKTHROUGHS[ALIASES[id]]) return ALIASES[id];
-  return moduleId;
+  return WALKTHROUGHS[id] ? id : moduleId;
 }
 
 /** Get the walkthrough steps for a module, or undefined when none exist. */

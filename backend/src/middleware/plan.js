@@ -8,7 +8,10 @@ const TIER_LEVELS = { free: 0, pro: 1, enterprise: 2 };
 
 function requirePlan(minTier) {
   return (req, res, next) => {
-    // Early access: every feature is open for every account.
+    // Early access: every feature is open for every account. This is the
+    // fail-open path — EARLY_ACCESS defaults ON, so an unset variable opens
+    // every gate; backend/src/config.js prints '[plan] EARLY_ACCESS is on' at
+    // boot in production so it is never a silent condition.
     if (config.earlyAccess) return next();
     const plan = db.prepare('SELECT * FROM plan WHERE company_id = ?').get(req.companyId) ||
       { tier: 'free', status: 'active', trial_ends_at: null, grace_period_ends_at: null };

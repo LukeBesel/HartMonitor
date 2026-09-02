@@ -3,7 +3,7 @@ import {
   MoreVertical, Package, X, Pause, Play, AlertTriangle, WifiOff, Tag, ShieldCheck, LogOut,
   LifeBuoy,
 } from 'lucide-react';
-import { formatDur } from './runtime';
+import { formatDur, operatorDisplayName, UNNAMED_OPERATOR } from './runtime';
 
 export interface PlayerHeaderProps {
   appName: string;
@@ -99,7 +99,11 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
   }, [menuOpen]);
 
   const progress = stepCount > 0 ? ((stepIndex + 1) / stepCount) * 100 : 0;
-  const initial = (operatorName || 'O').trim().charAt(0).toUpperCase();
+  // A run nobody claimed says so. "Operator" reads as a person's name in the
+  // chip, on the leaderboard and on the completion row — and there is no such
+  // person. See operatorDisplayName in the player runtime.
+  const who = operatorDisplayName(operatorName);
+  const initial = who === UNNAMED_OPERATOR ? '?' : who.charAt(0).toUpperCase();
 
   const menuItem = 'w-full flex items-center gap-3 px-4 py-3.5 text-left text-[15px] font-[550] transition-colors hover:brightness-110';
 
@@ -155,7 +159,7 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
 
         {/* Operator chip — phones show the avatar only; the name still reads
             out via the title/aria-label. */}
-        <span className="p-chip" style={{ paddingLeft: 4, minHeight: 36 }} title={operatorName || 'Operator'} aria-label={`Operator ${operatorName || 'Operator'}`}>
+        <span className="p-chip" style={{ paddingLeft: 4, minHeight: 36 }} title={who} aria-label={`Operator ${who}`}>
           {/* --p-accent on its own tint is 3.59:1, which is fine for the 22px+
               numerals it was picked for but not for this 13px initial. The
               lighter step measures 5.38:1 on the same ground. */}
@@ -168,7 +172,7 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
           {/* The name shows at every width. Phone screens used to get the bare
               initial alone, which reads as a mystery badge — "E" — rather than
               as who is clocked in. */}
-          <span className="max-w-[72px] sm:max-w-[120px] truncate">{operatorName || 'Operator'}</span>
+          <span className="max-w-[72px] sm:max-w-[120px] truncate">{who}</span>
           {operatorVerified && <ShieldCheck size={14} style={{ color: 'var(--p-good)' }} />}
         </span>
 

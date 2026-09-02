@@ -2575,5 +2575,19 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_work_orders_company_status    ON work_orders(company_id, status);
 `);
 
+// ─── Numbered .sql migrations ─────────────────────────────────────────────────
+// Dead last in this file, and deliberately so. db.js creates tables all the way
+// down to the line above — andon_calls, pm_schedules, assets, routing_steps,
+// completion_sessions and two dozen others live well below the seed block — so
+// a migration that ALTERs one of them would hit "no such table" on a fresh
+// database while passing on an existing one. Running here means every CREATE
+// and every guarded ALTER has already happened.
+//
+// It also runs at require time rather than at server boot, so every consumer
+// that requires db.js without starting a server (tests, scripts) reads the
+// migrated schema. index.js calls it again after boot; by then it is a no-op
+// second pass. See MIGRATIONS.md.
+require('./db/runMigrations').runMigrations(db);
+
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;

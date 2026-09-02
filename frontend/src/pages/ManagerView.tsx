@@ -11,6 +11,7 @@ import DepartmentFilter from '../components/shared/DepartmentFilter';
 import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
 import { tintedChipStyle } from '../utils/contrast';
 import { useIsDark } from '../utils/useIsDark';
+import { elapsedSeconds, fmtDuration, fmtMinutes } from '../components/apps/appModel';
 
 // ── Types matching actual API response ────────────────────────────────────────
 
@@ -93,23 +94,17 @@ const PRIORITY: Record<string, { label: string; cls: string }> = {
 function useElapsedSeconds(startedAt: string) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
-    const update = () => {
-      const start = new Date(startedAt).getTime();
-      setElapsed(isNaN(start) ? 0 : Math.max(0, Math.floor((Date.now() - start) / 1000)));
-    };
+    // elapsedSeconds parses SQLite's "YYYY-MM-DD HH:MM:SS" as UTC
+    // (parseServerTime) — `new Date(startedAt)` used to read that same string
+    // as LOCAL time, so a run in a UTC-behind timezone (e.g. America/Chicago)
+    // could show "0s" elapsed while another screen reading the identical run
+    // through the shared helper showed several minutes.
+    const update = () => setElapsed(elapsedSeconds(startedAt) ?? 0);
     update();
     const t = setInterval(update, 1000);
     return () => clearInterval(t);
   }, [startedAt]);
   return elapsed;
-}
-
-function formatElapsed(seconds: number) {
-  const h = Math.floor(seconds / 3600);
-  const m = Math.floor((seconds % 3600) / 60);
-  const s = seconds % 60;
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m ${String(s).padStart(2, '0')}s`;
 }
 
 function formatDate(iso: string) {
@@ -127,8 +122,7 @@ function calcETA(wo: WorkOrder): string {
   if (!wo.takt_time_minutes || wo.takt_time_minutes <= 0) return '—';
   const remaining = wo.quantity - wo.quantity_completed;
   const etaMins = remaining * wo.takt_time_minutes;
-  if (etaMins < 60) return `~${Math.round(etaMins)}m`;
-  return `~${(etaMins / 60).toFixed(1)}h`;
+  return `~${fmtMinutes(etaMins)}`;
 }
 
 // ── Sub-components ────────────────────────────────────────────────────────────
@@ -150,7 +144,7 @@ function ActiveRunCard({ run }: { run: ActiveCompletion }) {
       </div>
       <div className="flex items-center gap-2 text-xs text-gray-700 font-mono font-medium">
         <Timer size={12} className="text-blue-500" />
-        <span className="tabular-nums">{formatElapsed(elapsed)}</span>
+        <span className="tabular-nums">{fmtDuration(elapsed)}</span>
       </div>
       {run.work_order_number && (
         <div className="flex items-center gap-1.5 text-xs text-blue-600">
@@ -199,7 +193,7 @@ function WorkOrderCard({ wo }: { wo: WorkOrder }) {
         <span className="text-xs text-gray-400">|</span>
         <span className="text-xs text-gray-600 flex items-center gap-1">
           <Clock size={10} className="flex-shrink-0" />
-          {wo.takt_time_minutes > 0 ? `${wo.takt_time_minutes}m takt` : 'no takt set'}
+          {wo.takt_time_minutes > 0 ? `${fmtMinutes(wo.takt_time_minutes)} takt` : 'no takt set'}
         </span>
         <span className="text-xs text-gray-400">|</span>
         <span className="text-xs text-gray-600" title={wo.takt_time_minutes > 0 ? undefined : 'Set a takt time on this work order to estimate remaining time'}>

@@ -329,7 +329,7 @@ function detach<T>(value: T): T {
   }
 }
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+export async function request<T>(path: string, options?: RequestInit): Promise<T> {
   const method = (options?.method ?? 'GET').toUpperCase();
 
   if (method !== 'GET') {

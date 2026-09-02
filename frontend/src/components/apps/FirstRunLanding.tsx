@@ -9,13 +9,38 @@
 // Deliberately narrow: it fires once per tab, only when the answer is "no
 // runs at all", and never fights a user who clicks Command Center afterwards.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Navigate } from 'react-router-dom';
 import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import { useModules } from '../../context/ModulesContext';
 
 const SESSION_FLAG = 'hm_first_run_landing_checked';
+
+// ── "A first run is being decided" signal ────────────────────────────────────
+// While this component is asking the server whether the company has ever run
+// anything — and while it is redirecting a brand-new account to /apps — it owns
+// the screen. The training coach subscribes to this and stays out of the way,
+// so a first session can never render the coach on top of, or alongside, the
+// welcome tour this hand-off leads to. One guide at a time, always.
+
+let deciding = false;
+const listeners = new Set<() => void>();
+
+function setDeciding(next: boolean): void {
+  if (deciding === next) return;
+  deciding = next;
+  listeners.forEach(l => l());
+}
+
+/** True while the first-run landing check is in flight or redirecting. */
+export function useFirstRunDeciding(): boolean {
+  return useSyncExternalStore(
+    (onChange: () => void) => { listeners.add(onChange); return () => { listeners.delete(onChange); }; },
+    () => deciding,
+    () => false,
+  );
+}
 
 function alreadyChecked(): boolean {
   try { return sessionStorage.getItem(SESSION_FLAG) === '1'; } catch { return true; }
@@ -31,6 +56,13 @@ export default function FirstRunLanding({ children }: { children: React.ReactNod
   const [decision, setDecision] = useState<'checking' | 'stay' | 'apps'>(
     () => (alreadyChecked() ? 'stay' : 'checking'),
   );
+
+  // Publish the signal for as long as this component is undecided, and drop it
+  // the moment it either settles on the page or hands off to /apps.
+  useEffect(() => {
+    setDeciding(decision === 'checking');
+    return () => setDeciding(false);
+  }, [decision]);
 
   useEffect(() => {
     if (decision !== 'checking') return;

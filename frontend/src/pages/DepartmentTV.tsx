@@ -9,7 +9,7 @@ import {
   BarChart, Bar, ResponsiveContainer, XAxis, Tooltip, Cell,
 } from 'recharts';
 import { useTvScale } from '../utils/useTvScale';
-import { fmtMinutes } from '../utils/time';
+import { fmtDuration, fmtMinutes } from '../components/apps/appModel';
 import { shiftUntilReadable } from '../utils/contrast';
 import '../tv.css';
 
@@ -31,7 +31,21 @@ interface TVData {
   status: { running: number; completed_today: number; upcoming: number };
   hourly: { hour: string; count: number }[];
   issues: { type: string; label: string; detail: string }[];
-  leaderboard: { operator_name: string; app_name?: string; duration_minutes: number }[];
+  // duration_seconds is the exact measurement; duration_minutes is the same
+  // value pre-rounded to a tenth for older clients. Prefer seconds so this
+  // board renders the identical string the run's own detail page does,
+  // rather than re-expanding an already-rounded minutes figure.
+  leaderboard: { operator_name: string; app_name?: string; duration_minutes: number; duration_seconds?: number }[];
+  // takt_minutes/over_by_minutes have no seconds equivalent — sqdc.js
+  // pre-rounds each to a tenth of a minute before it ever reaches this
+  // payload (`Math.round(takt * 10) / 10`), so fmtMinutes(6.1) below prints
+  // "6m 6s" for the same takt ManagerView shows as "6m 5s" (computed from
+  // the un-rounded work order value). This is the honest rendering of the
+  // number the endpoint actually sends — the fix belongs on the backend
+  // (return takt_seconds/over_by_seconds instead of a pre-rounded minutes
+  // figure, the same shape the leaderboard's duration_seconds already took),
+  // which is outside this workstream's files (backend/src/routes/sqdc.js);
+  // reported as a wave-2 follow-up rather than edited here.
   behind_takt?: {
     work_order_number: string; operator_name: string; station: string;
     takt_minutes: number; over_by_minutes: number; live: boolean;
@@ -58,13 +72,6 @@ function useClock() {
     return () => clearInterval(t);
   }, []);
   return now;
-}
-
-function fmtDuration(min: number): string {
-  if (min < 1) return `${Math.round(min * 60)}s`;
-  const m = Math.floor(min);
-  const s = Math.round((min - m) * 60);
-  return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 
 function Tile({
@@ -189,10 +196,10 @@ export default function DepartmentTV() {
               <div key={i} className="bg-black/25 rounded-xl px-4 py-1.5 min-w-0">
                 <div className="flex items-baseline gap-3 min-w-0">
                   <span className="font-bold truncate">{b.work_order_number}</span>
-                  <span className="font-bold tabular-nums ml-auto flex-shrink-0">+{fmtMinutes(b.over_by_minutes)}m</span>
+                  <span className="font-bold tabular-nums ml-auto flex-shrink-0">+{fmtMinutes(b.over_by_minutes)}</span>
                 </div>
                 <div className="text-sm text-white/85 truncate">
-                  {b.operator_name} @ {b.station} · over {fmtMinutes(b.takt_minutes)}m takt{b.live ? ' (live)' : ''}
+                  {b.operator_name} @ {b.station} · over {fmtMinutes(b.takt_minutes)} takt{b.live ? ' (live)' : ''}
                 </div>
               </div>
             ))}
@@ -321,7 +328,7 @@ export default function DepartmentTV() {
                         className="text-xl font-bold tabular-nums flex-shrink-0"
                         style={{ color: rank === 1 ? '#fbbf24' : '#fff' }}
                       >
-                        {fmtDuration(l.duration_minutes)}
+                        {l.duration_seconds != null ? fmtDuration(l.duration_seconds) : fmtMinutes(l.duration_minutes)}
                       </div>
                     </div>
                   );
