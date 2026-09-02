@@ -1,19 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 
 // ─── "The numbers lie" regressions ────────────────────────────────────────────
-// What these lock down, on the two screens the launch audit caught inventing
-// numbers:
-//   • a metric with nothing behind it renders "—" AND the reason, never 0 (and
-//     never a red 0% on an app that records no pass/fail checks at all),
+// What these lock down on the cross-app comparison screen:
+//   • a metric with nothing behind it renders "—" AND the reason, never 0,
 //   • durations are formatted in the unit they deserve, so a real 12-second
-//     cycle stops reading "0m",
-//   • a run still in progress shows the day it STARTED in the DATE column.
+//     cycle stops reading "0m".
+//
+// The per-app half of this used to live here too, against the retired
+// /apps/:id/history page. One screen reports one app now, and the same rules
+// are pinned against it in app-detail-tabs.test.tsx.
 
 import { fmtDuration } from '../../components/apps/appModel';
 
-const getAppHistory = vi.fn();
 const getApps = vi.fn();
 const getDepartments = vi.fn();
 const getProductTypes = vi.fn();
@@ -26,7 +26,6 @@ const getQualityData = vi.fn();
 
 vi.mock('../../api/client', () => ({
   api: {
-    get getAppHistory() { return getAppHistory; },
     get getApps() { return getApps; },
     get getDepartments() { return getDepartments; },
     get getProductTypes() { return getProductTypes; },
@@ -42,30 +41,9 @@ vi.mock('../../api/client', () => ({
 vi.mock('../../components/shared/ModuleOnboarding', () => ({ default: () => null }));
 vi.mock('../../components/analytics/StepMetricsPanel', () => ({ StepMetricsPanel: () => null }));
 
-import AppHistory from '../AppHistory';
 import Analytics from '../Analytics';
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
-
-function history(over: Record<string, unknown> = {}) {
-  return {
-    app_id: 'a-1', app_name: 'Torque Log',
-    total_runs: 1, avg_duration: null, best_time: null,
-    pass_rate: null, qc_sample_size: 0,
-    step_averages: [], completions: [], total: 1,
-    ...over,
-  };
-}
-
-function run(over: Record<string, unknown> = {}) {
-  return {
-    id: 'c-1', operator_name: 'Bob',
-    started_at: '2026-08-25 09:00:00', completed_at: '2026-08-25 09:00:12',
-    total_duration_seconds: 12, status: 'completed',
-    work_order_number: null, pass_fail: null,
-    ...over,
-  };
-}
 
 function overview(over: Record<string, unknown> = {}) {
   return {
@@ -74,14 +52,6 @@ function overview(over: Record<string, unknown> = {}) {
     avgCycleTime: 0, avgCycleSeconds: 12, passRate: null, qcSampleSize: 0,
     ...over,
   };
-}
-
-function renderHistory() {
-  return render(
-    <MemoryRouter initialEntries={['/apps/a-1/history']}>
-      <Routes><Route path="/apps/:id/history" element={<AppHistory />} /></Routes>
-    </MemoryRouter>
-  );
 }
 
 beforeEach(() => {
@@ -122,99 +92,14 @@ describe('fmtDuration spans seconds to hours', () => {
   });
 });
 
-// ── App history ──────────────────────────────────────────────────────────────
+// ── App comparison ───────────────────────────────────────────────────────────
 
-describe('AppHistory refuses to invent metrics', () => {
-  it('shows "—" and the reason for an app with no pass/fail checks — not a red 0%', async () => {
-    getAppHistory.mockResolvedValue(history({ completions: [run()], avg_duration: 12, best_time: 12 }));
-    renderHistory();
-
-    await screen.findByText('First-pass yield');
-    expect(screen.queryByText('0%')).toBeNull();
-    expect(screen.getByText('no pass/fail check recorded')).toBeTruthy();
-
-    const card = screen.getByText('First-pass yield').closest('div')!.parentElement!;
-    expect(card.textContent).toContain('—');
-    // Grey, not the red the threshold ladder used to paint on a fabricated 0.
-    expect(card.querySelector('.text-red-600')).toBeNull();
-  });
-
-  it('reports a real pass rate with the sample size behind it', async () => {
-    getAppHistory.mockResolvedValue(history({
-      pass_rate: 96, qc_sample_size: 270, avg_duration: 426, best_time: 381,
-      completions: [run({ pass_fail: 'pass' })],
-    }));
-    renderHistory();
-    expect(await screen.findByText('96%')).toBeTruthy();
-    expect(screen.getByText('from 270 inspected runs')).toBeTruthy();
-  });
-
-  it('prints a 12-second average as 12s, not 0m', async () => {
-    getAppHistory.mockResolvedValue(history({
-      avg_duration: 12, best_time: 12, completions: [run()],
-    }));
-    renderHistory();
-    await screen.findByText('Typical run time');
-    expect(screen.queryByText('0m')).toBeNull();
-    expect(screen.getAllByText('12s').length).toBeGreaterThan(0);
-  });
-
-  it('says why a duration is missing when nothing timed the run', async () => {
-    getAppHistory.mockResolvedValue(history({
-      completions: [run({ total_duration_seconds: null, completed_at: null, status: 'in_progress' })],
-    }));
-    renderHistory();
-    await screen.findByText('Typical run time');
-    expect(screen.getAllByText('no run has been timed yet').length).toBe(2); // avg + best
-  });
-
-  // A run that opened and closed inside one second is measured as zero seconds
-  // by the apps endpoints. Zero is not a cycle time; it is the shape of "nobody
-  // timed it", and every reporting screen has to say so the same way.
-  it('reads a zero-second average as never measured, not as instant', async () => {
-    getAppHistory.mockResolvedValue(history({
-      avg_duration: 0, best_time: 0,
-      completions: [run({ total_duration_seconds: 0, completed_at: '2026-08-25 09:00:00' })],
-    }));
-    renderHistory();
-    await screen.findByText('Typical run time');
-    expect(screen.queryByText('0s')).toBeNull();
-    expect(screen.getAllByText('no run has been timed yet').length).toBe(2); // avg + best
-  });
-
-  it('shows the start date for a run still in progress instead of an empty DATE cell', async () => {
-    getAppHistory.mockResolvedValue(history({
-      completions: [run({ id: 'c-live', completed_at: null, total_duration_seconds: null, status: 'in_progress' })],
-    }));
-    renderHistory();
-    // The run table's DATE cell — the live band above it also says "started",
-    // so scope the assertion to the row rather than the whole page. The cell
-    // carries the time of day as well as the date: on a history where most runs
-    // are from this week, the hour is what tells two of them apart.
-    const table = await screen.findByRole('table');
-    const cell = within(table).getByText(/^started /);
-    expect(cell.textContent).toMatch(/^started Aug 25, \d{1,2}:\d{2}/);
-  });
-
-  it('shows an in-progress run counting up rather than as a finished one', async () => {
-    getAppHistory.mockResolvedValue(history({
-      completions: [run({ id: 'c-live', completed_at: null, total_duration_seconds: null, status: 'in_progress' })],
-    }));
-    renderHistory();
-    const table = await screen.findByRole('table');
-    expect(within(table).getByText('Running now')).toBeTruthy();
-    expect(within(table).getByText(/and counting/)).toBeTruthy();
-  });
-});
-
-// ── Operation analytics ──────────────────────────────────────────────────────
-
-describe('Analytics refuses to invent metrics', () => {
+describe('App comparison refuses to invent metrics', () => {
   it('renders a sub-minute cycle time in seconds rather than 0m', async () => {
     getOverview.mockResolvedValue(overview({ avgCycleSeconds: 12, avgCycleTime: 0 }));
     render(<MemoryRouter><Analytics /></MemoryRouter>);
 
-    await screen.findByText('Avg Cycle Time');
+    await screen.findByText('Average cycle time');
     await waitFor(() => expect(screen.getByText('12s')).toBeTruthy());
     expect(screen.queryByText('0m')).toBeNull();
   });
@@ -225,7 +110,7 @@ describe('Analytics refuses to invent metrics', () => {
     }));
     render(<MemoryRouter><Analytics /></MemoryRouter>);
 
-    await screen.findByText('Avg Cycle Time');
+    await screen.findByText('Average cycle time');
     await waitFor(() => expect(screen.getByText('no completed runs in scope')).toBeTruthy());
     expect(screen.getByText('no pass/fail checks recorded')).toBeTruthy();
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(2);

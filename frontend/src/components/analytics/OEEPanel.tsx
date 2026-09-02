@@ -1,12 +1,12 @@
 import { useState, useCallback } from 'react';
 import {
   Activity, RefreshCw, AlertTriangle, CheckCircle,
-  Plus, X, ChevronDown, ChevronUp, Cpu, TrendingUp, Circle,
+  Plus, X, Cpu, TrendingUp,
   Play, Pause, Wrench, Monitor,
 } from 'lucide-react';
-import { api } from '../api/client';
-import { useAutoRefresh } from '../hooks/useAutoRefresh';
-import LastRefreshed from '../components/shared/LastRefreshed';
+import { api } from '../../api/client';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
+import LastRefreshed from '../shared/LastRefreshed';
 
 // Every factor is nullable: the backend reports `null` for anything it cannot
 // measure (no ideal cycle time configured, no runs today) instead of guessing.
@@ -253,7 +253,16 @@ function MachineCard({
   );
 }
 
-export default function OEETracker() {
+/**
+ * Every station's OEE for today, with the log-an-event control on each card.
+ *
+ * This is what /oee rendered as a top-level nav item. A single-site shop never
+ * needed a whole menu entry for it, so it is a TAB on the app-comparison screen
+ * now — same endpoint, same `calcOEE` on the server, same numbers. The other
+ * (and only other) OEE surface is the per-station card on a station's own page,
+ * which is the drill-down from here.
+ */
+export function OEEPanel() {
   const [machines, setMachines] = useState<OEEMachine[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -293,12 +302,12 @@ export default function OEETracker() {
     : null;
 
   return (
-    <div className="p-6 space-y-6">
+    <div className="space-y-5" data-testid="oee-panel">
       {/* Header */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <div className="flex items-center gap-2.5">
-            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">OEE Dashboard</h1>
+            <h2 className="text-lg font-bold text-gray-900 tracking-tight">OEE today</h2>
             <span className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-green-100 text-green-700 text-[11px] font-semibold">
               <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
               Live

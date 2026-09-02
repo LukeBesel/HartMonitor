@@ -1,35 +1,18 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import type { AppAnalyticsResponse, AppRunStats } from '../../../api/client';
-import type { App } from '../../../types';
+import { describe, it, expect } from 'vitest';
+import type { AppAnalyticsResponse } from '../../../api/client';
 import {
-  appSelectionKey, buildAppOptions, buildHeadlineMetrics, emptyReasonFor, fieldSampleSize,
-  filtersToQuery, hasNarrowingFilters, pickDefaultAppId, readSelectedAppId, resolveAppId,
-  summariseField, writeSelectedAppId, DEFAULT_FILTERS,
+  buildHeadlineMetrics, buildOperatorRollup, emptyReasonFor, fieldSampleSize,
+  filtersFromQuery, filtersToQuery, hasNarrowingFilters, summariseField, DEFAULT_FILTERS,
 } from '../appDashboardModel';
-import type { DashboardAppOption } from '../appDashboardModel';
+import type { EmptyStateApp } from '../appDashboardModel';
 
-// ─── Apps Dashboard model ─────────────────────────────────────────────────────
-// The rule under test throughout: the page may show numbers the server counted
-// and nothing else. Every rate and average is null-checked first, because
-// "never measured" and "measured zero" are different facts.
+// ─── The per-app screen's model ───────────────────────────────────────────────
+// The rule under test throughout: the screen may show numbers the server
+// counted and nothing else. Every rate and average is null-checked first,
+// because "never measured" and "measured zero" are different facts.
 
-function app(over: Partial<App> & { id: string; name: string }): App {
-  return {
-    description: '', status: 'published', steps: [], variables: [],
-    created_at: '2026-01-01 00:00:00', updated_at: '2026-01-01 00:00:00',
-    ...over,
-  };
-}
-
-function stat(over: Partial<AppRunStats> & { app_id: string }): AppRunStats {
-  return { runs_total: 0, runs_7d: 0, in_progress: 0, last_run_at: null, ...over };
-}
-
-function option(over: Partial<DashboardAppOption> & { id: string }): DashboardAppOption {
-  return {
-    name: over.id, status: 'published', departmentId: null,
-    runsTotal: 0, lastRunAt: null, ...over,
-  };
+function option(over: Partial<EmptyStateApp> & { name: string }): EmptyStateApp {
+  return { runsTotal: 0, lastRunAt: null, ...over };
 }
 
 function totals(over: Partial<AppAnalyticsResponse['totals']> = {}): AppAnalyticsResponse['totals'] {
@@ -46,101 +29,6 @@ function field(over: Partial<AppAnalyticsResponse['fields'][number]> & { kind: A
     stats: {}, ...over,
   };
 }
-
-describe('buildAppOptions', () => {
-  it('joins run counters onto the app list', () => {
-    const options = buildAppOptions(
-      [app({ id: 'a1', name: 'Weld Check', department_id: 'd-weld' })],
-      [stat({ app_id: 'a1', runs_total: 12, last_run_at: '2026-08-20 10:00:00' })],
-    );
-    expect(options).toEqual([{
-      id: 'a1', name: 'Weld Check', status: 'published', departmentId: 'd-weld',
-      runsTotal: 12, lastRunAt: '2026-08-20 10:00:00',
-    }]);
-  });
-
-  it('reports an unknown run total when the counters did not load', () => {
-    // Unknown is not zero — the empty state must not claim "never run" because
-    // a stats request dropped.
-    const [only] = buildAppOptions([app({ id: 'a1', name: 'A' })], null);
-    expect(only.runsTotal).toBeNull();
-  });
-
-  it('records a genuine zero when the counters loaded and had nothing to say', () => {
-    const [only] = buildAppOptions([app({ id: 'a1', name: 'A' })], []);
-    expect(only.runsTotal).toBe(0);
-  });
-});
-
-describe('pickDefaultAppId', () => {
-  it('opens on the app that was run most recently', () => {
-    const id = pickDefaultAppId([
-      option({ id: 'old', lastRunAt: '2026-08-01 09:00:00' }),
-      option({ id: 'newest', lastRunAt: '2026-08-19 17:30:00' }),
-      option({ id: 'never' }),
-    ]);
-    expect(id).toBe('newest');
-  });
-
-  it('falls back to the most recently edited app when nothing has ever run', () => {
-    // The API hands apps back updated_at DESC, so first in the list is newest.
-    expect(pickDefaultAppId([option({ id: 'first' }), option({ id: 'second' })])).toBe('first');
-  });
-
-  it('has nothing to open when there are no apps', () => {
-    expect(pickDefaultAppId([])).toBeNull();
-  });
-
-  it('ignores an unparseable timestamp rather than ranking it first', () => {
-    const id = pickDefaultAppId([
-      option({ id: 'broken', lastRunAt: 'not-a-date' }),
-      option({ id: 'real', lastRunAt: '2026-08-19 17:30:00' }),
-    ]);
-    expect(id).toBe('real');
-  });
-});
-
-describe('resolveAppId', () => {
-  const options = [option({ id: 'a' }), option({ id: 'b', lastRunAt: '2026-08-19 10:00:00' })];
-
-  it('keeps a remembered app that is still there', () => {
-    expect(resolveAppId(options, 'a')).toBe('a');
-  });
-
-  it('falls back to the default when the remembered app is gone', () => {
-    expect(resolveAppId(options, 'deleted-app')).toBe('b');
-  });
-
-  it('falls back to the default when nothing is remembered', () => {
-    expect(resolveAppId(options, null)).toBe('b');
-  });
-
-  it('resolves to nothing when there are no apps to pick from', () => {
-    expect(resolveAppId([], 'a')).toBeNull();
-  });
-});
-
-describe('selection persistence', () => {
-  beforeEach(() => localStorage.clear());
-
-  it('remembers the choice per user', () => {
-    writeSelectedAppId('u-1', 'app-1');
-    writeSelectedAppId('u-2', 'app-2');
-    expect(readSelectedAppId('u-1')).toBe('app-1');
-    expect(readSelectedAppId('u-2')).toBe('app-2');
-    expect(appSelectionKey('u-1')).not.toBe(appSelectionKey('u-2'));
-  });
-
-  it('reads back nothing when the user has never picked', () => {
-    expect(readSelectedAppId('u-3')).toBeNull();
-  });
-
-  it('clears the remembered app when handed null', () => {
-    writeSelectedAppId('u-1', 'app-1');
-    writeSelectedAppId('u-1', null);
-    expect(readSelectedAppId('u-1')).toBeNull();
-  });
-});
 
 describe('buildHeadlineMetrics', () => {
   it('refuses to invent an average or a yield for an app with no runs', () => {
@@ -180,16 +68,16 @@ describe('buildHeadlineMetrics', () => {
     const handsOn = buildHeadlineMetrics(
       totals({ runs: 4, completed: 4, avg_duration_s: 381, avg_duration_basis: 'hands_on' }), 30,
     ).find(m => m.key === 'avg_cycle');
-    expect(handsOn?.label).toBe('Avg cycle time · hands-on');
+    expect(handsOn?.label).toBe('Average cycle time · hands-on');
 
     const wallClock = buildHeadlineMetrics(
       totals({ runs: 4, completed: 4, avg_duration_s: 402, avg_duration_basis: 'elapsed' }), 30,
     ).find(m => m.key === 'avg_cycle');
-    expect(wallClock?.label).toBe('Avg cycle time · wall clock');
+    expect(wallClock?.label).toBe('Average cycle time · wall clock');
 
     // Nothing measured ⇒ nothing to name.
     const unknown = buildHeadlineMetrics(totals({ runs: 0 }), 30).find(m => m.key === 'avg_cycle');
-    expect(unknown?.label).toBe('Avg cycle time');
+    expect(unknown?.label).toBe('Average cycle time');
   });
 
   it('separates "no pass/fail check recorded" from a real zero yield', () => {
@@ -226,31 +114,31 @@ describe('emptyReasonFor', () => {
   });
 
   it('says an app has never been run', () => {
-    const app = option({ id: 'a', name: 'Weld Check', runsTotal: 0 });
+    const app = option({ name: 'Weld Check', runsTotal: 0 });
     expect(emptyReasonFor({ ...base, app })).toEqual({ kind: 'never-run', appName: 'Weld Check' });
   });
 
   it('distinguishes "not lately" from "never"', () => {
-    const app = option({ id: 'a', name: 'Weld Check', runsTotal: 40, lastRunAt: '2026-01-04 08:00:00' });
+    const app = option({ name: 'Weld Check', runsTotal: 40, lastRunAt: '2026-01-04 08:00:00' });
     expect(emptyReasonFor({ ...base, app })).toEqual({
       kind: 'no-runs-in-window', appName: 'Weld Check', days: 30, lastRunAt: '2026-01-04 08:00:00',
     });
   });
 
   it('does not claim "never run" when the run total is unknown', () => {
-    const app = option({ id: 'a', name: 'Weld Check', runsTotal: null });
+    const app = option({ name: 'Weld Check', runsTotal: null });
     expect(emptyReasonFor({ ...base, app })?.kind).toBe('no-runs-in-window');
   });
 
   it('blames the filters when filters are on', () => {
-    const app = option({ id: 'a', name: 'Weld Check', runsTotal: 40 });
+    const app = option({ name: 'Weld Check', runsTotal: 40 });
     expect(emptyReasonFor({ ...base, app, filtersActive: true })).toEqual({
       kind: 'no-match-filters', appName: 'Weld Check', days: 30,
     });
   });
 
   it('is not an empty state at all once runs exist', () => {
-    const app = option({ id: 'a', name: 'Weld Check', runsTotal: 40 });
+    const app = option({ name: 'Weld Check', runsTotal: 40 });
     expect(emptyReasonFor({ ...base, app, runsInWindow: 3 })).toBeNull();
   });
 
@@ -272,6 +160,45 @@ describe('filters', () => {
   it('does not count the day window as a narrowing filter', () => {
     expect(hasNarrowingFilters({ ...DEFAULT_FILTERS, days: 365 })).toBe(false);
     expect(hasNarrowingFilters({ ...DEFAULT_FILTERS, operator: 'Sam' })).toBe(true);
+  });
+
+  it('reads back the slice a retired deep link was carrying', () => {
+    // /apps/:id/analytics?days=7&operator=Sam&work_order_id=wo-1 was a link the
+    // old Apps Dashboard handed out; the one per-app screen has to land on that
+    // same slice rather than on a default.
+    const round = filtersFromQuery(new URLSearchParams('days=7&operator=Sam&work_order_id=wo-1'));
+    expect(round).toEqual({ days: 7, operator: 'Sam', workOrderId: 'wo-1', productTypeId: '' });
+  });
+
+  it('falls back to the default window rather than honouring one nothing offers', () => {
+    expect(filtersFromQuery(new URLSearchParams('days=13')).days).toBe(DEFAULT_FILTERS.days);
+    expect(filtersFromQuery(new URLSearchParams('')).days).toBe(DEFAULT_FILTERS.days);
+  });
+});
+
+describe('buildOperatorRollup', () => {
+  it('orders people busiest first and sizes each bar against the busiest', () => {
+    const rows = buildOperatorRollup([
+      { operator_name: 'Kim', runs: 2, avg_duration_s: 300 },
+      { operator_name: 'Sam', runs: 8, avg_duration_s: 125 },
+    ]);
+    expect(rows.map(r => r.name)).toEqual(['Sam', 'Kim']);
+    expect(rows[0].share).toBe(1);
+    expect(rows[1].share).toBe(0.25);
+    expect(rows[0].avgCycle).toBe('2m 5s');
+  });
+
+  it('has no average for somebody whose runs were never timed', () => {
+    // "avg 0s" would name them the fastest person on the floor.
+    const [row] = buildOperatorRollup([{ operator_name: 'Sam', runs: 3, avg_duration_s: 0 }]);
+    expect(row.avgCycle).toBeNull();
+    expect(row.avgNote).toBe('none of their runs was timed');
+  });
+
+  it('names an unattributed run rather than dropping it', () => {
+    const [row] = buildOperatorRollup([{ operator_name: '', runs: 1, avg_duration_s: null }]);
+    expect(row.name).toBe('Unknown');
+    expect(row.runs).toBe(1);
   });
 });
 

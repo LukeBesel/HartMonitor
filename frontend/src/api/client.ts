@@ -408,8 +408,6 @@ export const api = {
     request<AppAnalyticsResponse>(`/apps/${id}/analytics${appAnalyticsQS(params)}`),
   downloadAppAnalyticsCsv: (id: string, params?: AppAnalyticsParams) =>
     downloadBlob(`/apps/${id}/export.csv${appAnalyticsQS(params)}`, 'app-analytics-export.csv'),
-  downloadAllCompanyData: () =>
-    downloadBlob('/config/export-data', `hartmonitor-export-${new Date().toISOString().slice(0, 10)}.json`),
 
   // ── Completions
   getCompletions: (params?: { limit?: number; status?: string; operator_name?: string }) => {

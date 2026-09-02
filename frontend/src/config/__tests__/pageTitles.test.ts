@@ -106,14 +106,25 @@ describe('resolvePageTitle', () => {
     expect(resolvePageTitle('/plant')).toBe(`Command Center${SUFFIX}`);
     expect(resolvePageTitle('/transaction-log')).toBe(`Audit Log${SUFFIX}`);
     expect(resolvePageTitle('/leaderboard/tv')).toBe(`Leaderboard${SUFFIX}`);
-    expect(resolvePageTitle('/step-metrics')).toBe(`Operation Analytics${SUFFIX}`);
+    expect(resolvePageTitle('/step-metrics')).toBe(`App comparison${SUFFIX}`);
+    // The three per-app screens that became tabs, and the OEE page that became
+    // one — each titled with where it lands.
+    expect(resolvePageTitle('/apps/dashboard')).toBe(`App Library${SUFFIX}`);
+    expect(resolvePageTitle('/apps/42/history')).toBe(`App Details${SUFFIX}`);
+    expect(resolvePageTitle('/apps/42/analytics')).toBe(`App Details${SUFFIX}`);
+    expect(resolvePageTitle('/oee')).toBe(`App comparison${SUFFIX}`);
   });
 
   it('no longer names a screen that was deleted', () => {
-    const retired = ['Manager View', 'Transaction Log', 'Leaderboard TV', 'Departments'];
+    const retired = [
+      'Manager View', 'Transaction Log', 'Leaderboard TV', 'Departments',
+      'Apps Dashboard', 'App History', 'App Analytics', 'OEE Tracker', 'Operation Analytics',
+    ];
     const named = [
       '/', '/manager', '/departments', '/departments/d-1', '/departments/d-1/tv',
       '/transaction-log', '/audit-log', '/leaderboard', '/leaderboard/tv', '/dashboard',
+      '/apps', '/apps/a-1', '/apps/dashboard', '/apps/a-1/history', '/apps/a-1/analytics',
+      '/oee', '/analytics',
     ].map(resolveScreenName);
     for (const gone of retired) {
       expect(named, `a route still resolves to "${gone}"`).not.toContain(gone);

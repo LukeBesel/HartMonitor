@@ -1,106 +1,18 @@
-// Pure logic behind Apps → Dashboard: which app the page opens on, where that
-// choice is remembered, and — the rule the whole screen turns on — which
-// headline numbers the analytics payload can actually support.
+// Pure logic behind the one per-app screen (/apps/:id): the filters its one
+// filter bar sends, the headline numbers the analytics payload can actually
+// support, the "who ran it" rollup, and the four different nothings.
+//
+// The app picker that used to live here went with Apps → Dashboard: the app
+// card in the library is the only entrance to per-app data now, so there is
+// no remembered selection to resolve.
 //
 // Every function here is a pure read over data the server sent. A metric that
 // the data cannot support comes back as `value: null` carrying the reason, so
 // the page renders "—" and says why instead of printing a zero nobody measured.
 // Nothing in here derives a number the server did not already count.
 
-import type { AppAnalyticsResponse, AppRunStats } from '../../api/client';
-import type { App } from '../../types';
-import { durationBasisLabel, fmtDuration, measuredSeconds, parseServerTime, pluralize } from './appModel';
-
-// ─── App options (the picker at the top) ─────────────────────────────────────
-
-export interface DashboardAppOption {
-  id: string;
-  name: string;
-  status: App['status'];
-  /** Which department owns the app — the only department signal on this page. */
-  departmentId: string | null;
-  /**
-   * Lifetime runs across all time, from /apps/stats. `null` when that call
-   * failed: unknown is not zero, and the empty state must not claim an app has
-   * never been run just because a stats request dropped.
-   */
-  runsTotal: number | null;
-  /** Last time anybody ran it, all-time. Null when never run (or unknown). */
-  lastRunAt: string | null;
-}
-
-/**
- * Join the app list with its run counters. Apps arrive from `GET /apps` already
- * ordered `updated_at DESC`; that order is preserved and becomes the tiebreak
- * for apps nobody has run yet.
- */
-export function buildAppOptions(apps: App[], stats: AppRunStats[] | null): DashboardAppOption[] {
-  const byId = new Map<string, AppRunStats>();
-  for (const s of stats ?? []) byId.set(s.app_id, s);
-  return apps.map(app => {
-    const stat = byId.get(app.id);
-    return {
-      id: app.id,
-      name: app.name,
-      status: app.status,
-      departmentId: app.department_id ?? null,
-      runsTotal: stats === null ? null : stat?.runs_total ?? 0,
-      lastRunAt: stat?.last_run_at ?? null,
-    };
-  });
-}
-
-/**
- * The app the page opens on when nothing is remembered: whichever was run most
- * recently, so arriving here shows data instead of asking a question. Apps
- * nobody has run sort last, keeping the incoming `updated_at DESC` order.
- */
-export function pickDefaultAppId(options: DashboardAppOption[]): string | null {
-  let best: DashboardAppOption | null = null;
-  let bestAt = -Infinity;
-  for (const option of options) {
-    const at = parseServerTime(option.lastRunAt)?.getTime();
-    if (at === undefined) continue;
-    if (at > bestAt) { best = option; bestAt = at; }
-  }
-  return best?.id ?? options[0]?.id ?? null;
-}
-
-/**
- * Which app to show. A remembered id that no longer exists — deleted, another
- * company's, or filtered out of the current department — falls back to the
- * default rather than leaving the page pointed at nothing.
- */
-export function resolveAppId(options: DashboardAppOption[], storedId: string | null): string | null {
-  if (storedId && options.some(o => o.id === storedId)) return storedId;
-  return pickDefaultAppId(options);
-}
-
-// ─── Remembering the choice (per user, per browser) ──────────────────────────
-
-const SELECTION_PREFIX = 'hm_appdash_app';
-
-/** Keyed by user so two people sharing a workstation don't inherit each other's app. */
-export function appSelectionKey(userId?: string | null): string {
-  return userId ? `${SELECTION_PREFIX}_${userId}` : SELECTION_PREFIX;
-}
-
-export function readSelectedAppId(userId?: string | null): string | null {
-  try {
-    return localStorage.getItem(appSelectionKey(userId)) || null;
-  } catch {
-    return null; // private mode — the choice just won't survive a reload
-  }
-}
-
-export function writeSelectedAppId(userId: string | null | undefined, appId: string | null): void {
-  try {
-    if (appId) localStorage.setItem(appSelectionKey(userId), appId);
-    else localStorage.removeItem(appSelectionKey(userId));
-  } catch {
-    /* private mode — nothing to persist to */
-  }
-}
+import type { AppAnalyticsResponse } from '../../api/client';
+import { durationBasisLabel, fmtDuration, measuredSeconds, pluralize } from './appModel';
 
 // ─── Filters the analytics endpoint actually honours ─────────────────────────
 // GET /api/apps/:id/analytics filters on exactly these four (see
@@ -136,6 +48,27 @@ export function filtersToQuery(filters: AppDashboardFilters): string {
   return `?${qs.toString()}`;
 }
 
+/**
+ * The filters a URL is carrying, in the SAME parameter names the API takes —
+ * `days`, `operator`, `work_order_id`, `product_type_id`. The retired Apps
+ * Dashboard handed those four to /apps/:id/analytics through the query string,
+ * so reading them here is what keeps every one of those links landing on the
+ * slice it named rather than on a reset page.
+ *
+ * A `days` outside the offered windows falls back to the default rather than
+ * being sent on to the server to be clamped into a window nothing on screen
+ * says out loud.
+ */
+export function filtersFromQuery(params: URLSearchParams): AppDashboardFilters {
+  const days = Number.parseInt(params.get('days') ?? '', 10);
+  return {
+    days: (DAY_PRESETS as readonly number[]).includes(days) ? days : DEFAULT_FILTERS.days,
+    operator: params.get('operator') ?? '',
+    workOrderId: params.get('work_order_id') ?? '',
+    productTypeId: params.get('product_type_id') ?? '',
+  };
+}
+
 // ─── Headline metrics ────────────────────────────────────────────────────────
 
 export interface HeadlineMetric {
@@ -166,8 +99,8 @@ export function buildHeadlineMetrics(
       // different, both-correct numbers for the same runs, and an unlabelled
       // average is what made two screens look like they contradicted each other.
       label: measuredSeconds(totals.avg_duration_s) !== null && durationBasisLabel(totals.avg_duration_basis)
-        ? `Avg cycle time · ${durationBasisLabel(totals.avg_duration_basis)}`
-        : 'Avg cycle time',
+        ? `Average cycle time · ${durationBasisLabel(totals.avg_duration_basis)}`
+        : 'Average cycle time',
       // The server averages wall clock between start and finish, so runs that
       // opened and closed inside one second average out to 0. Zero seconds is
       // not a cycle time anyone can act on — it is the shape of "nobody timed
@@ -222,9 +155,17 @@ export type DashboardEmptyReason =
   | { kind: 'no-runs-in-window'; appName: string; days: number; lastRunAt: string | null }
   | { kind: 'no-match-filters'; appName: string; days: number };
 
+/** The little the empty states need to know about the app itself. */
+export interface EmptyStateApp {
+  name: string;
+  /** Lifetime runs, or null when that counter is unknown — never assumed zero. */
+  runsTotal: number | null;
+  lastRunAt: string | null;
+}
+
 export function emptyReasonFor(input: {
   appCount: number;
-  app: DashboardAppOption | null;
+  app: EmptyStateApp | null;
   runsInWindow: number;
   days: number;
   filtersActive: boolean;
@@ -282,4 +223,49 @@ export function fieldSampleSize(field: AppAnalyticsResponse['fields'][number]): 
 function fmtNumber(n: number | null | undefined): string {
   if (n === null || n === undefined) return '—';
   return Number.isInteger(n) ? String(n) : String(Math.round(n * 1000) / 1000);
+}
+
+// ─── Who ran it ──────────────────────────────────────────────────────────────
+
+/** One person's row in the "who ran it" rollup. */
+export interface OperatorRollupRow {
+  /** Their name, or "Unknown" when the run recorded none. */
+  name: string;
+  runs: number;
+  /** 0–1, this person's runs against the busiest person's — the bar's width. */
+  share: number;
+  /** Their average cycle, already formatted, or null when nothing timed them. */
+  avgCycle: string | null;
+  /** Why the average is missing, or what it was measured over. */
+  avgNote: string;
+}
+
+/**
+ * The "who ran it" rollup, ordered busiest first.
+ *
+ * An operator whose runs were never timed has NO average — rendering "avg 0s"
+ * there would name them the fastest person on the floor, which is the exact
+ * shape of the bug `measuredSeconds` exists to stop. The share is taken against
+ * the busiest person in the slice, so the bars compare people with each other
+ * rather than with a total nothing on screen shows.
+ */
+export function buildOperatorRollup(
+  rows: AppAnalyticsResponse['by_operator'],
+): OperatorRollupRow[] {
+  const busiest = Math.max(1, ...rows.map(r => r.runs));
+  return rows
+    .slice()
+    .sort((a, b) => b.runs - a.runs)
+    .map(row => {
+      const seconds = measuredSeconds(row.avg_duration_s);
+      return {
+        name: row.operator_name || 'Unknown',
+        runs: row.runs,
+        share: row.runs / busiest,
+        avgCycle: seconds === null ? null : fmtDuration(seconds),
+        avgNote: seconds === null
+          ? 'none of their runs was timed'
+          : `average cycle time over ${pluralize(row.runs, 'run')}`,
+      };
+    });
 }

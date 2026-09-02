@@ -1,23 +1,52 @@
+// App comparison — the cross-app screen.
+//
+// One app's own numbers live on ONE screen: /apps/:id, reached by clicking the
+// app's card. This screen is the other half of that split — it compares apps
+// with each other, and it carries OEE as a tab, because a single-site shop
+// never needed a top-level menu item for /oee.
+//
+//   Compare   throughput, cycle time, quality and per-app / per-operator rollups
+//   OEE       every station's OEE today, the cards /oee used to render
+//
+// The vocabulary matches the Command Center's, deliberately: "Average cycle
+// time" and "Pass rate" mean here exactly what they mean there, and every
+// duration on screen is printed by the one shared formatter.
+
 import { useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api, AnalyticsFilters } from '../api/client';
 import { AnalyticsOverview } from '../types';
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis,
   Tooltip, ResponsiveContainer, CartesianGrid, Legend, PieChart, Pie, Cell
 } from 'recharts';
-import { TrendingUp, CheckCircle, Clock, Users, Activity, BarChart2, Filter, X, Timer, ChevronDown, AlertTriangle, RefreshCw } from 'lucide-react';
+import { TrendingUp, CheckCircle, Clock, Users, Activity, BarChart2, Filter, X, Timer, ChevronDown, AlertTriangle, RefreshCw, Cpu } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
+import TabBar from '../components/shared/TabBar';
 import { StepMetricsPanel } from '../components/analytics/StepMetricsPanel';
+import { OEEPanel } from '../components/analytics/OEEPanel';
 import { fmtDuration } from '../components/apps/appModel';
 
-const COLORS = ['#22c55e', '#ef4444', '#3b82f6', '#f59e0b', '#8b5cf6'];
 const DAYS_OPTIONS = [7, 14, 30, 90];
 
 function Skeleton({ className }: { className?: string }) {
   return <div className={`animate-pulse bg-gray-200 rounded ${className ?? ''}`} />;
 }
 
+type Tab = 'compare' | 'oee';
+
 export default function Analytics() {
+  // The tab is in the URL, so /analytics?tab=oee is a link somebody can send —
+  // and the retired /oee bookmark lands straight on it.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab: Tab = searchParams.get('tab') === 'oee' ? 'oee' : 'compare';
+  const setTab = (next: Tab) => setSearchParams(prev => {
+    const params = new URLSearchParams(prev);
+    if (next === 'compare') params.delete('tab');
+    else params.set('tab', next);
+    return params;
+  }, { replace: true });
+
   const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
   const [throughput, setThroughput] = useState<any[]>([]);
   const [cycleTimes, setCycleTimes] = useState<any[]>([]);
@@ -36,7 +65,7 @@ export default function Analytics() {
   const [productTypeId, setProductTypeId] = useState('');
   const [departmentId, setDepartmentId] = useState('');
 
-  // ── Step-metrics drill-down (revealed once a department + operation chosen) ──
+  // ── Step-metrics drill-down: pick an app, read its per-step timing ──
   const [drillAppId, setDrillAppId] = useState('');
   const [drillOpen, setDrillOpen] = useState(true);
 
@@ -85,7 +114,7 @@ export default function Analytics() {
   const clearFilters = () => { setAppId(''); setProductTypeId(''); setDepartmentId(''); setDrillAppId(''); };
   const selectedDeptName = departments.find((d: any) => d.id === departmentId)?.name;
 
-  // When the department changes, reset the operation drill-down selection.
+  // When the department changes, reset the per-app drill-down selection.
   useEffect(() => { setDrillAppId(''); }, [departmentId]);
 
   // passRate is null until at least one run records a QC result — never chart a
@@ -100,10 +129,10 @@ export default function Analytics() {
     <div className="p-6 space-y-6">
       <ModuleOnboarding
         moduleId="analytics"
-        title="Analytics"
-        description="Analytics turns your completion data into insights about throughput, efficiency, and trends."
+        title="App comparison"
+        description="App comparison turns your completion data into insights about throughput, efficiency, and trends across every app."
         steps={[
-          "Select an app and date range to analyze",
+          "Pick a date range and compare your apps",
           "Compare actual vs. ideal cycle times",
           "Spot bottlenecks and overtime stations",
           "Export data for offline reporting",
@@ -113,23 +142,43 @@ export default function Analytics() {
       />
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Operation Analytics</h1>
-          <p className="text-gray-500 text-sm mt-0.5">Throughput, cycle time and quality across every operation — pick an operation below to drill into per-step timing</p>
+          <h1 className="text-2xl font-bold text-gray-900">App comparison</h1>
+          <p className="text-gray-500 text-sm mt-0.5">
+            Throughput, cycle time and quality across every app — one app's own numbers live on its
+            own screen, reached from its card in the App Library.
+          </p>
         </div>
-        <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
-          {DAYS_OPTIONS.map(d => (
-            <button
-              key={d}
-              onClick={() => setDays(d)}
-              className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                days === d ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              {d}d
-            </button>
-          ))}
-        </div>
+        {tab === 'compare' && (
+          <div className="flex gap-1 bg-gray-100 rounded-lg p-1">
+            {DAYS_OPTIONS.map(d => (
+              <button
+                key={d}
+                onClick={() => setDays(d)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  days === d ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                {d}d
+              </button>
+            ))}
+          </div>
+        )}
       </div>
+
+      <TabBar
+        items={[
+          { key: 'compare', label: 'Compare', icon: <BarChart2 size={15} /> },
+          { key: 'oee', label: 'OEE', icon: <Cpu size={15} /> },
+        ]}
+        active={tab}
+        onSelect={setTab}
+        ariaLabel="App comparison screens"
+      />
+
+      {tab === 'oee' && <OEEPanel />}
+
+      {tab === 'compare' && (
+      <div className="space-y-6">
 
       {/* Filter bar */}
       <div className="card p-3 flex flex-wrap items-center gap-3">
@@ -192,7 +241,7 @@ export default function Analytics() {
         </div>
       </div>
 
-      {/* ── Operation drill-down: pick an operation → per-step timing ──
+      {/* ── Per-app drill-down: pick an app → per-step timing ──
           Step metrics are per-app, so this is NOT gated on picking a department
           any more — that gate made the page's own "drill into step timing"
           promise unreachable for anyone who never used departments. */}
@@ -202,26 +251,26 @@ export default function Analytics() {
             <Timer size={15} className="text-blue-600" /> Step Metrics
           </div>
           <div className="flex items-center gap-2">
-            <label className="text-xs text-gray-500">Operation</label>
+            <label className="text-xs text-gray-500">App</label>
             <select
               className="input-field text-sm py-1.5 min-w-[14rem]"
               value={drillAppId}
               onChange={e => setDrillAppId(e.target.value)}
             >
-              <option value="">Select an operation…</option>
+              <option value="">Select an app…</option>
               {apps
                 .filter((a: any) => a.status === 'published')
                 .map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           </div>
           {/* Step timing comes from GET /analytics/step-metrics/:appId, which is
-              per-operation and takes no department parameter — it reads every run
-              of the chosen operation. Saying so beats letting the panel sit under
+              per-app and takes no department parameter — it reads every run
+              of the chosen app. Saying so beats letting the panel sit under
               a department filter looking like it obeyed it. */}
           {departmentId && (
             <span className="flex items-center gap-1.5 text-xs text-amber-600">
               <AlertTriangle size={12} className="shrink-0" />
-              All runs of this operation — not narrowed to {selectedDeptName ?? 'the selected department'}
+              All runs of this app — not narrowed to {selectedDeptName ?? 'the selected department'}
             </span>
           )}
           {drillAppId && (
@@ -242,7 +291,7 @@ export default function Analytics() {
           )
         ) : (
           <div className="p-6 text-center text-sm text-gray-400">
-            Choose an operation above to see its per-step cycle times, takt adherence and trends.
+            Choose an app above to see its per-step cycle times, takt adherence and trends.
           </div>
         )}
       </div>
@@ -279,15 +328,15 @@ export default function Analytics() {
       <>
       {/* KPI cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <KPICard icon={<CheckCircle size={18} className="text-green-600" />} bg="bg-green-50" label="Total Completions"
+        <KPICard icon={<CheckCircle size={18} className="text-green-600" />} bg="bg-green-50" label="Runs completed"
           value={overview ? overview.totalCompletions : null} note={overview ? null : 'not loaded'} />
         {/* Seconds in, unit out: fmtDuration prints 12s / 3m 20s / 1h 5m, so a
-            sub-minute operation stops reading "0m". */}
-        <KPICard icon={<Clock size={18} className="text-blue-600" />} bg="bg-blue-50" label="Avg Cycle Time"
+            sub-minute app stops reading "0m". */}
+        <KPICard icon={<Clock size={18} className="text-blue-600" />} bg="bg-blue-50" label="Average cycle time"
           title="Wall clock from run start to run finish, over completed runs only."
           value={overview?.avgCycleSeconds != null ? fmtDuration(overview.avgCycleSeconds) : null}
           note={overview?.avgCycleSeconds != null ? 'start to finish, completed runs' : 'no completed runs in scope'} />
-        <KPICard icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50" label="Pass Rate"
+        <KPICard icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50" label="Pass rate"
           value={passRate !== null ? `${passRate}%` : null}
           note={passRate !== null
             ? `from ${overview?.qcSampleSize ?? 0} inspected run${overview?.qcSampleSize === 1 ? '' : 's'}`
@@ -438,6 +487,8 @@ export default function Analytics() {
         </div>
       </div>
       </>
+      )}
+      </div>
       )}
     </div>
   );

@@ -66,12 +66,16 @@ const TITLE_ROUTES: TitleRoute[] = [
   { path: '/shift-notes', screen: 'Shift Notes' },
 
   // ── Apps ───────────────────────────────────────────────────────────────────
-  // "Dashboard" on its own would read as the Command Center in a tab strip, so
-  // this one is qualified with the workspace it lives in.
-  { path: '/apps/dashboard', screen: 'Apps Dashboard' },
+  // One screen per app: its runs, its operators and its step times are tabs on
+  // /apps/:id, so there is one title for all of them.
   { path: '/apps/:id/build', screen: 'App Builder' },
-  { path: '/apps/:id/history', screen: 'App History' },
-  { path: '/apps/:id/analytics', screen: 'App Analytics' },
+  // Retired, and redirecting: /apps/dashboard → /apps, and the two per-app
+  // screens → their tab on /apps/:id. Listed above the parameterised route so
+  // the static segment is not swallowed by it, and titled with where they land
+  // so the tab does not blink "Page Not Found" mid-redirect.
+  { path: '/apps/dashboard', screen: 'App Library' },
+  { path: '/apps/:id/history', screen: 'App Details' },
+  { path: '/apps/:id/analytics', screen: 'App Details' },
   { path: '/apps/:id', screen: 'App Details' },
   { path: '/apps', screen: 'App Library' },
 
@@ -124,8 +128,7 @@ const TITLE_ROUTES: TitleRoute[] = [
   { path: '/tables/:id', screen: 'Table' },
   { path: '/tables', screen: 'Tables' },
   { path: '/leaderboard', screen: 'Leaderboard' },
-  { path: '/oee', screen: 'OEE Tracker' },
-  { path: '/analytics', screen: 'Operation Analytics' },
+  { path: '/analytics', screen: 'App comparison' },
   { path: '/facilities', screen: 'Facilities' },
   { path: '/audit-log', screen: 'Audit Log' },
   { path: '/admin', screen: 'Admin Dashboard' },
@@ -143,7 +146,9 @@ const TITLE_ROUTES: TitleRoute[] = [
   { path: '/departments', screen: 'Command Center' },
   { path: '/leaderboard/tv', screen: 'Leaderboard' },
   { path: '/transaction-log', screen: 'Audit Log' },
-  { path: '/step-metrics', screen: 'Operation Analytics' },
+  { path: '/step-metrics', screen: 'App comparison' },
+  // OEE is a tab on App comparison now, not a screen of its own.
+  { path: '/oee', screen: 'App comparison' },
 ];
 
 /** The screen name for a path, without the brand suffix. */
