@@ -1032,6 +1032,10 @@ export default function Schedule() {
   const [dispatchRows, setDispatchRows] = useState<DispatchRow[]>([]);
   const [dispatchLoading, setDispatchLoading] = useState(false);
   const [dispatchError, setDispatchError] = useState<string | null>(null);
+  /** How much the WHOLE plant has ready. Asked for only when the filtered list
+   *  came back empty, so the ordinary path never pays for it — and it is what
+   *  lets the empty state tell "nothing released" from "nothing here". */
+  const [dispatchElsewhere, setDispatchElsewhere] = useState(0);
 
   const [statusFilter, setStatusFilter] = useState('All');
   const [priorityFilter, setPriorityFilter] = useState('All');
@@ -1102,12 +1106,22 @@ export default function Schedule() {
     setDispatchLoading(true);
     setDispatchError(null);
     try {
+      const scoped = !!(dispatchDept.departmentId || dispatchStationId);
       const res = await getFloorDispatch({
         site_id: selectedSiteId || undefined,
         department_id: dispatchDept.departmentId || undefined,
         station_id: dispatchStationId || undefined,
       });
       setDispatchRows(res.rows);
+      // Only when this came back empty under a filter is the second question
+      // worth asking — and only then is the answer worth anything.
+      if (res.rows.length === 0 && scoped) {
+        const plant = await getFloorDispatch({ site_id: selectedSiteId || undefined })
+          .catch(() => null);
+        setDispatchElsewhere(plant?.rows.length ?? 0);
+      } else {
+        setDispatchElsewhere(0);
+      }
     } catch (e: any) {
       setDispatchRows([]);
       setDispatchError(e?.message || 'Failed to load the dispatch queue');
@@ -1486,6 +1500,8 @@ export default function Schedule() {
           onStart={startDispatchRow}
           onCreate={() => openCreate()}
           canEdit={canEdit}
+          elsewhere={dispatchElsewhere}
+          onClearScope={() => { dispatchDept.setDepartmentId(''); setDispatchStationId(''); }}
         />
       ) : loading ? (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3">
@@ -1605,7 +1621,7 @@ export default function Schedule() {
 
 function DispatchView({
   rows, loading, error, departmentFilter, stations, stationId, onChooseStation,
-  onRefresh, onStart, onCreate, canEdit,
+  onRefresh, onStart, onCreate, canEdit, elsewhere, onClearScope,
 }: {
   rows: DispatchRow[];
   loading: boolean;
@@ -1618,6 +1634,10 @@ function DispatchView({
   onStart: (row: DispatchRow) => void;
   onCreate: () => void;
   canEdit: boolean;
+  /** How much the whole plant has ready, asked for ONLY when this list came
+   *  back empty under a filter — so the ordinary path pays nothing for it. */
+  elsewhere: number;
+  onClearScope: () => void;
 }) {
   // The station list is the picked department's when one is picked — offering
   // a welder under a Paint filter is offering work that cannot be there.
@@ -1632,7 +1652,10 @@ function DispatchView({
           filter={departmentFilter}
           allLabel="All departments"
           matchCount={rows.length}
-          matchNoun={rows.length === 1 ? 'ready' : 'ready'}
+          // "ready" was wrong twice over: the queue also carries the operations
+          // that are RUNNING, and the standing apps that need no work order at
+          // all. What the number counts is things you can start.
+          matchNoun="available"
         />
 
         {stationOptions.length > 0 && (
@@ -1669,21 +1692,38 @@ function DispatchView({
           {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-14" />)}
         </div>
       ) : rows.length === 0 ? (
-        // Not a zeroed list. A dispatch queue is empty for exactly one reason —
-        // nothing has been released with a routing — and saying so with the way
-        // to fix it is the difference between an empty screen and a broken one.
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm py-16 flex flex-col items-center gap-3 text-center px-6">
+        // Not a zeroed list — and not one sentence for two different situations
+        // either. "Nothing has been released anywhere" and "nothing is ready in
+        // Weld, though the plant is busy" want opposite actions, and telling a
+        // supervisor to go and create a work order when there are eleven of
+        // them one filter away is worse than saying nothing.
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm py-16 flex flex-col items-center gap-3 text-center px-6" data-testid="dispatch-empty">
           <PlayCircle size={28} className="text-gray-300" />
-          <p className="text-gray-700 font-medium">Release a job with a routing to see it here</p>
-          <p className="text-xs text-gray-500 max-w-md">
-            A dispatch queue is made of a released job's operations. Create a work order,
-            pick a routing on it and press Release — every operation then appears here in
-            the order the floor should run it.
-          </p>
-          {canEdit && (
-            <button onClick={onCreate} className="btn-primary" data-testid="dispatch-empty-create">
-              <Plus size={16} /> New Work Order
-            </button>
+          {elsewhere > 0 ? (
+            <>
+              <p className="text-gray-700 font-medium">Nothing is ready here right now</p>
+              <p className="text-xs text-gray-500 max-w-md">
+                The plant has {elsewhere} thing{elsewhere === 1 ? '' : 's'} ready to run — just not
+                under this filter.
+              </p>
+              <button onClick={onClearScope} className="btn-secondary" data-testid="dispatch-empty-clear">
+                Show the whole plant
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-gray-700 font-medium">Release a job with a routing to see it here</p>
+              <p className="text-xs text-gray-500 max-w-md">
+                A dispatch queue is made of a released job's operations. Create a work order,
+                pick a routing on it and press Release — every operation then appears here in
+                the order the floor should run it.
+              </p>
+              {canEdit && (
+                <button onClick={onCreate} className="btn-primary" data-testid="dispatch-empty-create">
+                  <Plus size={16} /> New Work Order
+                </button>
+              )}
+            </>
           )}
         </div>
       ) : (

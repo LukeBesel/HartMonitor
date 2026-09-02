@@ -78,6 +78,18 @@ export function getOperatorHistory(operatorName: string, limit = 50): Promise<Op
  * actually on. The newest row for each (work order, operation, app) is the one
  * they were on; the rest are the same work, listed again.
  *
+ * WHAT `work_order_operation_id` DOES TODAY: completions do not carry it yet —
+ * the column arrives with the scrap workstream, written by the player from the
+ * `op` on the deep link. Until it does, every run reads `undefined` there and
+ * the key is effectively (work order, app): two runs on operation 1 and
+ * operation 4 of the same job, in the same app, COLLAPSE INTO ONE ROW.
+ *
+ * That is the right trade while the column is missing — the alternative is the
+ * pile this replaces — and it stops being a trade the moment the column lands,
+ * with no change here. Both behaviours are pinned in
+ * pages/__tests__/operator-portal.test.tsx so the change is visible when it
+ * happens rather than discovered.
+ *
  * This HIDES rows. It closes nothing, touches no other operator's run, and asks
  * the server for nothing — the reaper's twelve-hour rule is a separate
  * question, and dedupe is not allowed to be a stealth answer to it.
@@ -150,5 +162,10 @@ export function dispatchRowLabel(row: Pick<DispatchRow,
   if (row.no_work_order) return 'No work order needed';
   if (row.operation_sequence == null || row.operation_count == null) return 'Operation';
   const name = (row.operation_name ?? '').trim();
-  return `Op ${row.operation_sequence} of ${row.operation_count}${name ? ` · ${name}` : ''}`;
+  // A routing whose steps are called "Op 1", "Step 2" and so on — which the
+  // importer and the demo seed both produce — otherwise reads "Op 1 of 4 · Op
+  // 1", saying the same number twice and looking like a rendering fault.
+  const echoesSequence = new RegExp(`^(op|operation|step)\\s*0*${row.operation_sequence}$`, 'i').test(name);
+  const suffix = name && !echoesSequence ? ` · ${name}` : '';
+  return `Op ${row.operation_sequence} of ${row.operation_count}${suffix}`;
 }

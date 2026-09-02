@@ -239,6 +239,9 @@ export interface WipRow {
   quantity_required: number;
   /** The operation's status when released, else the work order's own. */
   status: string;
+  /** The JOB's status, always — so a reader can see that the thing they
+   *  searched for is cancelled or finished without parsing the sentence. */
+  work_order_status: string;
   started_at: string | null;
   released: boolean;
   /** The whole answer, in one sentence, written by the server so the Schedule,
@@ -258,11 +261,19 @@ export interface WipAnswer {
   answer: string | null;
   /** Why there is no answer, for the screen to print instead of an empty box. */
   reason: string | null;
+  /** How many jobs matched in total — which is not `results.length` once a
+   *  popular part is capped. */
+  total_matches: number;
+  /** True when the plant has more jobs on this part than the page shows. */
+  truncated: boolean;
+  /** Say so on screen: "25" read as "all of them" is a wrong answer. */
+  truncated_note: string | null;
 }
 
 /** One department's work in progress, by operation. */
 export interface WipDepartment {
-  department_id: string;
+  /** null on the 'No department' bucket — the work that belongs to none. */
+  department_id: string | null;
   department_name: string;
   department_color: string | null;
   running: number;
@@ -279,11 +290,18 @@ export interface WipDepartment {
   scrap_today_reason: string | null;
 }
 
+/** The plant's totals. Taken ungrouped, so work belonging to no department is
+ *  in them — summing the rows is exactly how such work used to vanish. */
+export interface WipTotals extends Omit<WipDepartment, 'department_id' | 'department_name' | 'department_color'> {
+  /** What the totals are a total OF, said out loud. */
+  basis: string;
+}
+
 export interface WipSummary {
   plant_date: string;
   timezone: string;
   departments: WipDepartment[];
-  totals: Omit<WipDepartment, 'department_id' | 'department_name' | 'department_color'>;
+  totals: WipTotals;
   scope: { site_id: string | null; department_id: string | null; valid: boolean };
 }
 

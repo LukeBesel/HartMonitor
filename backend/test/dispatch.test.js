@@ -198,6 +198,14 @@ describe('dispatch: what to run next here', () => {
     }, 'paint routing');
     A.paintRouting = paintRouting.id;
 
+    // A routing whose steps name no department at all — the shape that used to
+    // vanish from the WIP strip entirely.
+    const noDept = await ok('POST', '/api/routings', {
+      token: A.token,
+      body: { name: 'Unfiled', steps: [{ step_number: 1, name: 'Do it', app_id: A.weldApp }] },
+    }, 'department-less routing');
+    A.noDeptRouting = noDept.id;
+
     async function workOrder(body) {
       return ok('POST', '/api/work-orders', { token: A.token, body }, `work order ${body.work_order_number}`);
     }
@@ -279,6 +287,35 @@ describe('dispatch: what to run next here', () => {
 
     A.companyId = raw.prepare('SELECT id FROM organizations WHERE name = ?').get('Dispatch Works').id;
     raw.close();
+
+    // The per-unit good/scrap columns arrive with the scrap workstream this
+    // wave. The strip has to be right the day they land, so the fixture adds
+    // them here and the assertions below cover both sides of that line: null
+    // with a reason while nothing is counted, and a total that loses nothing
+    // once something is.
+    const withCounts = new Database(DB_PATH);
+    for (const col of ['quantity_good', 'quantity_scrap']) {
+      const has = withCounts.prepare('PRAGMA table_info(completions)').all().some(c => c.name === col);
+      if (!has) withCounts.exec(`ALTER TABLE completions ADD COLUMN ${col} INTEGER`);
+    }
+    withCounts.close();
+
+    // Somebody who has run something, once, but not today — a measured zero,
+    // as against a name nobody has ever seen.
+    A.idleOperator = 'Hedy Lamarr';
+    const old = await ok('POST', '/api/completions', {
+      token: A.token, body: { app_id: A.qcApp, operator_name: A.idleOperator },
+    }, 'idle operator run');
+    await ok('PUT', `/api/completions/${old.id}`, {
+      token: A.token, body: { status: 'completed', data: {} },
+    }, 'finish idle run');
+    const stale = new Database(DB_PATH);
+    stale.prepare('UPDATE completions SET started_at = ?, completed_at = ? WHERE id = ?').run(
+      toSqlite(new Date(Date.now() - 40 * 3600000)),
+      toSqlite(new Date(Date.now() - 39 * 3600000)),
+      old.id,
+    );
+    stale.close();
 
     // A finished run, stamped at 22:00 on the plant's own day in Detroit. In
     // UTC that is the small hours of TOMORROW — which is precisely the reading
@@ -369,12 +406,21 @@ describe('dispatch: what to run next here', () => {
     assert.equal(paint.rows.some(r => r.app_id === A.auditApp && r.no_work_order), true,
       'the Paint app on no routing is a standing job for Paint');
 
-    // An app that IS somebody's operation is started from that job, not twice:
-    // 'Paint Booth Check' is on the Paint routing, so it is an operation row
-    // here and not also a standing one.
-    assert.equal(paint.rows.some(r => r.app_id === A.paintApp && r.kind === 'operation'), true);
-    assert.equal(paint.rows.some(r => r.app_id === A.paintApp && r.no_work_order), false,
-      'an app already offered as somebody\'s operation is not offered a second time');
+    // ── M2 ──
+    // An app can be BOTH a routing step and a standing job, and they are two
+    // different pieces of work. 'Paint Booth Check' is operation 1 of the Paint
+    // job AND a gate anybody may run on nothing in particular; an earlier
+    // version dropped the standing row the moment the operation existed, so a
+    // floor lost the standing job exactly when it got busy.
+    assert.equal(paint.rows.some(r => r.app_id === A.paintApp && r.kind === 'operation'), true,
+      'it is somebody\'s operation');
+    assert.equal(paint.rows.some(r => r.app_id === A.paintApp && r.no_work_order), true,
+      'and it is still runnable with no work order at all — two rows, two pieces of work');
+
+    // The order still holds: jobs first, standing rows after them.
+    const kinds = paint.rows.map(r => r.kind);
+    assert.deepEqual([...kinds].sort().reverse(), kinds,
+      'operations before apps — "operation" sorts after "app", so reversed-sorted equals as-is');
   });
 
   // ── 2. The order, with each key decisive ──────────────────────────────────
@@ -524,10 +570,28 @@ describe('dispatch: what to run next here', () => {
     assert.notEqual(localDate('UTC', A.eveningStamp), A.plantDate,
       'the fixture is pointless unless 22:00 Detroit is a different UTC date');
 
-    // Somebody else's day is not this operator's.
-    const other = await get(A.token, '/api/floor/snapshot?operator_name=Grace%20Hopper');
-    assert.equal(other.finished_today_for_operator, 0,
-      'zero is a measurement here — Grace finished nothing today');
+    // A name is not a key: case and stray spaces are the same person.
+    for (const spelling of ['ada%20lovelace', '%20Ada%20Lovelace%20', 'ADA%20LOVELACE']) {
+      const same = await get(A.token, `/api/floor/snapshot?operator_name=${spelling}`);
+      assert.equal(same.finished_today_for_operator, 1,
+        `"${decodeURIComponent(spelling)}" is the same operator`);
+    }
+  });
+
+  it('says nothing rather than zero about a name it has never seen', async () => {
+    // ── MINOR (b) ──
+    // "You finished nothing today" and "we have never heard of you" are
+    // different statements, and a misspelled name printing 0 reads as a bad
+    // shift rather than a typo.
+    const unknown = await get(A.token, '/api/floor/snapshot?operator_name=Grace%20Hopper');
+    assert.equal(unknown.finished_today_for_operator, null);
+    assert.match(unknown.finished_today_for_operator_reason, /no run has ever been recorded under that name/i);
+
+    // Somebody who HAS run something, but not today, is a measured zero.
+    const idle = await get(A.token, `/api/floor/snapshot?operator_name=${encodeURIComponent(A.idleOperator)}`);
+    assert.equal(idle.finished_today_for_operator, 0,
+      'zero is a measurement here — this operator ran something once, just not today');
+    assert.equal(idle.finished_today_for_operator_reason, null);
   });
 
   it('says nothing rather than zero when nobody said who is asking', async () => {
@@ -573,6 +637,244 @@ describe('dispatch: what to run next here', () => {
     assert.equal(res.totals.good_today, null);
     assert.equal(res.totals.scrap_today, null);
     assert.match(res.totals.scrap_today_reason, /not counted yet/);
+  });
+
+
+  // ── 7. A job that is over is not "at" anywhere ────────────────────────────
+
+  it('says a cancelled job was cancelled, and a finished one is finished', async () => {
+    // ── M6 ──
+    // "WO-2026-047 is at operation 3 of 7, 12 of 50 done" about a job somebody
+    // cancelled last week sends a supervisor to a machine to look for work
+    // nobody is ever going to do.
+    const cancelled = await ok('POST', '/api/work-orders', {
+      token: A.token,
+      body: {
+        work_order_number: 'WO-2026-047', part_number: 'PN-OVER', part_name: 'Lever',
+        quantity: 4, priority: 'low', department_id: A.weld,
+      },
+    }, 'cancelled job');
+    await ok('POST', `/api/work-orders/${cancelled.id}/release`, { token: A.token, body: { routing_id: A.shortRouting } }, 'release cancelled');
+
+    const done = await ok('POST', '/api/work-orders', {
+      token: A.token,
+      body: {
+        work_order_number: 'WO-2026-048', part_number: 'PN-OVER', part_name: 'Lever',
+        quantity: 4, priority: 'low', department_id: A.weld,
+      },
+    }, 'finished job');
+    const doneOps = (await ok('POST', `/api/work-orders/${done.id}/release`, { token: A.token, body: { routing_id: A.shortRouting } }, 'release finished')).operations;
+
+    const raw = new Database(DB_PATH);
+    raw.prepare("UPDATE work_orders SET status = 'cancelled' WHERE id = ?").run(cancelled.id);
+    raw.prepare("UPDATE work_orders SET status = 'completed', quantity_completed = 4 WHERE id = ?").run(done.id);
+    raw.close();
+
+    const wasCancelled = await get(A.token, '/api/floor/wip?q=WO-2026-047');
+    assert.equal(wasCancelled.answer, 'WO-2026-047 was cancelled');
+    assert.equal(wasCancelled.result.work_order_status, 'cancelled');
+    assert.equal(wasCancelled.result.operation_sequence, null,
+      'a cancelled job is not standing at an operation');
+
+    const isDone = await get(A.token, '/api/floor/wip?q=WO-2026-048');
+    assert.equal(isDone.answer, `WO-2026-048 is complete: ${doneOps.length} of ${doneOps.length} operations`);
+    assert.equal(isDone.result.work_order_status, 'completed');
+
+    // …and a part search is "where is my WIP", so neither of them is in it.
+    const byPart = await get(A.token, '/api/floor/wip?q=PN-OVER');
+    assert.equal(byPart.match, 'none',
+      'both jobs on this part are over, so the part has no work in progress');
+    assert.match(byPart.reason, /no work order or part number matches/i);
+  });
+
+  it('says a held operation is held, and why', async () => {
+    // ── MINOR ──
+    // A job stopped on purpose is not "in progress at operation 1". Somebody is
+    // waiting for an answer, and the reason lives on the work order because a
+    // status word cannot carry one.
+    const op = A.opsC.find(o => o.sequence === 1);
+    const held = await api('PUT', `/api/work-orders/${A.woC.id}/operations/${op.id}`, {
+      token: A.token, body: { status: 'on_hold', hold_reason: 'waiting on material' },
+    });
+    assert.ok(held.status < 300, `holding: ${JSON.stringify(held.json)}`);
+
+    const res = await get(A.token, '/api/floor/wip?q=WO-2026-044');
+    assert.match(res.answer, /on hold/i, `expected an on-hold sentence, got: ${res.answer}`);
+    assert.equal(res.result.status, 'on_hold');
+
+    // Put it back — the ordering fixture above depends on it being ready.
+    await ok('PUT', `/api/work-orders/${A.woC.id}/operations/${op.id}`, {
+      token: A.token, body: { status: 'ready' },
+    }, 'un-hold');
+  });
+
+  it('lists them all rather than picking one when a NUMBER is ambiguous', async () => {
+    // ── MINOR (a) ──
+    // "2026-042" is a real thing a floor types, and it matches this plant's
+    // WO-2026-042 as well as an imported job whose number carries no prefix at
+    // all. Two jobs answering to what somebody typed is a fact they have to
+    // see; printing results[0] as THE answer sends them to one machine with
+    // total confidence and a 50% chance.
+    const bare = await ok('POST', '/api/work-orders', {
+      token: A.token,
+      body: {
+        work_order_number: '2026-042', part_number: 'PN-IMPORTED', part_name: 'Imported',
+        quantity: 6, priority: 'low', department_id: A.weld,
+      },
+    }, 'prefix-less job');
+
+    const res = await get(A.token, '/api/floor/wip?q=2026-042');
+    assert.equal(res.match, 'work_order');
+    assert.equal(res.result, null, 'no silent pick');
+    assert.equal(res.results.length, 2, 'both jobs answer to what was typed');
+    assert.deepEqual(
+      res.results.map(r => r.work_order_number).sort(),
+      ['2026-042', 'WO-2026-042'],
+    );
+    assert.match(res.answer, /2 work orders answer to "2026-042"/);
+
+    // Spelling the prefix out does not disambiguate, and must not pretend to:
+    // the candidate rule exists precisely because "WO-2026-042" and "2026-042"
+    // are the same thing said two ways, so while both jobs exist BOTH answers
+    // are honest ones and the searcher gets to choose.
+    const spelled = await get(A.token, '/api/floor/wip?q=WO-2026-042');
+    assert.equal(spelled.results.length, 2);
+    assert.equal(spelled.result, null);
+
+    // Clear the twin away — the fixture is shared, and a second job answering
+    // to "2026-042" is not what the earlier assertions expect.
+    await ok('DELETE', `/api/work-orders/${bare.id}`, { token: A.token }, 'remove prefix-less job');
+
+    const alone = await get(A.token, '/api/floor/wip?q=WO-2026-042');
+    assert.equal(alone.results.length, 1, 'one job, one sentence, no list');
+    assert.equal(alone.result.work_order_id, A.woA.id);
+    assert.equal(alone.answer, 'WO-2026-042 is at operation 3 of 7 (Weld), 12 of 50 done');
+  });
+
+  // ── 8. A keystroke is not a hundred queries ───────────────────────────────
+
+  it('answers a part with sixty jobs on it in a fixed number of statements', async () => {
+    // ── M5 ──
+    // This box is typed into. The version this replaces asked
+    // currentOperationFor per matching row — two statements each, 122 for sixty
+    // jobs — on every keystroke, on two screens.
+    const many = 60;
+    for (let i = 0; i < many; i++) {
+      const wo = await ok('POST', '/api/work-orders', {
+        token: A.token,
+        body: {
+          work_order_number: `WO-2026-9${String(i).padStart(2, '0')}`,
+          part_number: 'PN-CROWD', part_name: 'Crowd', quantity: 3,
+          priority: 'medium', department_id: A.weld,
+        },
+      }, `crowd ${i}`);
+      await ok('POST', `/api/work-orders/${wo.id}/release`, { token: A.token, body: { routing_id: A.shortRouting } }, `release crowd ${i}`);
+    }
+
+    // Measured in THIS process, against the same database file, the way
+    // test/wo-operations.test.js measures the work-order list.
+    process.env.DATABASE_PATH = DB_PATH;
+    process.env.SEED_DEMO_DATA = 'false';
+    const db = require('../src/db');
+    const { wipSearch, plantContext, WIP_PART_LIMIT } = require('../src/plantTruth');
+    const rawPrepare = db.prepare.bind(db);
+
+    // The route resolves the plant day ONCE per request and hands the context
+    // in (that read is one statement, and it is the request's, not this
+    // search's), so measure what the route actually costs here.
+    const ctx = plantContext(A.companyId);
+
+    let statements = 0;
+    db.prepare = sql => { statements++; return rawPrepare(sql); };
+    let answer;
+    try {
+      answer = wipSearch(ctx, 'PN-CROWD');
+    } finally {
+      db.prepare = rawPrepare;
+    }
+
+    console.log(`      # statements for ${many} matching jobs: ${statements}`);
+    // Four: one pass that answers both questions and carries the group totals,
+    // two for workOrderOperations' own "where does each job stand" (a count and
+    // a pointer lookup), and one for the start stamps. A job whose pointer is
+    // stale costs ONE more sweep for the whole page — still fixed, still not
+    // per row.
+    assert.ok(statements <= 4,
+      `answering about ${many} jobs took ${statements} statements`);
+    assert.ok(statements < many, 'the cost is still growing with the number of jobs');
+
+    // …and the page is capped, and SAYS it is capped, so nobody reads 25 as all.
+    assert.equal(answer.results.length, WIP_PART_LIMIT);
+    assert.equal(answer.total_matches, many);
+    assert.equal(answer.truncated, true);
+    assert.match(answer.truncated_note, new RegExp(`first ${WIP_PART_LIMIT} of ${many}`));
+    assert.match(answer.answer, new RegExp(`^${many} work orders carry part PN-CROWD$`));
+  });
+
+  // ── 9. Nothing is counted nowhere ─────────────────────────────────────────
+
+  it('counts work that belongs to no department, in its own bucket and in the totals', async () => {
+    // ── M1 ──
+    // The strip grouped by department and summed the ROWS, so a standing-app
+    // run (no work order, no station, therefore no department) and a work order
+    // nobody filed under one were dropped from both. The plant counted 12 good
+    // and the screen said 7, and nothing on it said which five went.
+    const inWeld = await ok('POST', '/api/completions', {
+      token: A.token, body: { app_id: A.weldApp, work_order_id: A.woA.id, operator_name: 'Ada Lovelace' },
+    }, 'counted run in Weld');
+    const orphanRun = await ok('POST', '/api/completions', {
+      token: A.token, body: { app_id: A.qcApp, operator_name: 'Ada Lovelace' },
+    }, 'standing-app run, no department');
+    for (const id of [inWeld.id, orphanRun.id]) {
+      await ok('PUT', `/api/completions/${id}`, { token: A.token, body: { status: 'completed', data: {} } }, 'finish');
+    }
+
+    // A released job filed under no department at all — its operations belong
+    // nowhere either.
+    const homeless = await ok('POST', '/api/work-orders', {
+      token: A.token,
+      body: {
+        work_order_number: 'WO-2026-049', part_number: 'PN-NOWHERE', part_name: 'Orphan',
+        quantity: 2, priority: 'low',
+      },
+    }, 'department-less job');
+    await ok('POST', `/api/work-orders/${homeless.id}/release`, { token: A.token, body: { routing_id: A.noDeptRouting } }, 'release homeless');
+
+    const raw = new Database(DB_PATH);
+    const stamp = raw.prepare('UPDATE completions SET quantity_good = ?, quantity_scrap = ?, completed_at = ? WHERE id = ?');
+    const nowish = toSqlite(new Date());
+    stamp.run(7, 2, nowish, inWeld.id);      // counted, in Weld
+    stamp.run(5, 1, nowish, orphanRun.id);   // counted, in no department at all
+    raw.close();
+
+    const res = await get(A.token, '/api/floor/wip-summary');
+
+    const weld = res.departments.find(d => d.department_name === 'Weld');
+    assert.equal(weld.good_today, 7, 'Weld counted seven');
+    assert.equal(weld.scrap_today, 2);
+
+    const nowhere = res.departments.find(d => d.department_name === 'No department');
+    assert.ok(nowhere, 'the work that belongs to no department has a row of its own');
+    assert.equal(nowhere.department_id, null);
+    assert.equal(nowhere.good_today, 5, 'and the five nobody could file are in it');
+    assert.equal(nowhere.scrap_today, 1);
+    assert.ok(nowhere.queued > 0, "…as are the department-less job's operations");
+
+    // The totals are the PLANT's, taken ungrouped — never the sum of the rows,
+    // which is exactly how the five went missing.
+    assert.equal(res.totals.good_today, 12, 'the plant counted twelve good');
+    assert.equal(res.totals.scrap_today, 3, 'and three scrap');
+    assert.equal(res.totals.good_today_sample, 2);
+    assert.match(res.totals.basis, /department or not/);
+
+    const summed = res.departments.reduce((n, d) => n + (d.good_today ?? 0), 0);
+    assert.equal(summed, res.totals.good_today,
+      'with the bucket present the rows now add up to the total — that is the point of it');
+
+    // A department filter is a department's scope: no orphan bucket there.
+    const scoped = await get(A.token, `/api/floor/wip-summary?department_id=${A.weld}`);
+    assert.equal(scoped.departments.some(d => d.department_name === 'No department'), false);
+    assert.equal(scoped.totals.good_today, 7, 'and the total is that department\'s');
   });
 
   it('is bound to the plant\'s day like every other floor number', async () => {

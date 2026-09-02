@@ -166,30 +166,49 @@ function dispatch(rows: unknown[]) {
   };
 }
 
+/**
+ * One open run, in the shape GET /api/completions?status=in_progress ACTUALLY
+ * returns on this branch.
+ *
+ * There is no `work_order_operation_id` on a completion yet — it arrives with
+ * the scrap workstream, written by the player from the `op` on the deep link.
+ * Every fixture here that omits it is describing today's real payload, and the
+ * one that supplies it is describing the day after that column lands.
+ */
+function openRun(over: Record<string, unknown> = {}) {
+  return {
+    id: 'run-0',
+    app_id: 'app-weld',
+    app_name: 'Weld Cell',
+    station_id: null,
+    work_order_id: 'wo-1',
+    operator_name: 'Ada Lovelace',
+    // SQLite writes 'YYYY-MM-DD HH:MM:SS' with no zone marker. It is UTC; only
+    // the reader can say so, which is the whole point of stampIn.
+    started_at: '2026-09-02 02:30:00',
+    completed_at: null,
+    status: 'in_progress',
+    data: {},
+    step_times: {},
+    last_session: null,
+    ...over,
+  };
+}
+
 /** Thirteen open runs over three pieces of work — one tablet reload after
- *  another, exactly what the shift actually produces. */
+ *  another, exactly what the shift actually produces. No operation ids: this is
+ *  the payload as it is today. */
 function thirteenOpenRuns() {
-  const pairs = [
-    { work_order_id: 'wo-1', work_order_operation_id: 'op-1', app_id: 'app-weld', app_name: 'Weld Cell' },
-    { work_order_id: 'wo-2', work_order_operation_id: 'op-2', app_id: 'app-weld', app_name: 'Weld Cell' },
-    { work_order_id: null, work_order_operation_id: null, app_id: 'app-qc', app_name: 'Final QC Inspection' },
+  const pieces = [
+    { work_order_id: 'wo-1', app_id: 'app-weld', app_name: 'Weld Cell' },
+    { work_order_id: 'wo-2', app_id: 'app-weld', app_name: 'Weld Cell' },
+    { work_order_id: null, app_id: 'app-qc', app_name: 'Final QC Inspection' },
   ];
-  const runs: Record<string, unknown>[] = [];
-  for (let i = 0; i < 13; i++) {
-    const pair = pairs[i % 3];
-    runs.push({
-      id: `run-${i}`,
-      ...pair,
-      station_id: null,
-      operator_name: 'Ada Lovelace',
-      // 2026-09-02 02:30 UTC — which in Chicago is the evening of the 1st.
-      started_at: `2026-09-02 02:${String(30 - i).padStart(2, '0')}:00`,
-      completed_at: null,
-      status: 'in_progress',
-      step_times: {},
-    });
-  }
-  return runs;
+  return Array.from({ length: 13 }, (_, i) => openRun({
+    id: `run-${i}`,
+    ...pieces[i % 3],
+    started_at: `2026-09-02 02:${String(30 - i).padStart(2, '0')}:00`,
+  }));
 }
 
 /** The current URL, on screen, so a test can assert what a tap navigated to. */
@@ -224,7 +243,14 @@ beforeEach(() => {
   getStations.mockResolvedValue([
     { id: 'st-1', name: 'Weld Cell A', status: 'active', department_id: 'd-weld' },
   ]);
-  getWorkOrders.mockResolvedValue([]);
+  getWorkOrders.mockResolvedValue([
+    { id: 'wo-1', work_order_number: 'WO-2026-042', part_number: 'PN-BRACKET-9', part_name: 'Bracket',
+      quantity: 50, quantity_completed: 12, takt_time_minutes: 0, priority: 'critical',
+      status: 'in_progress', app_id: 'app-weld' },
+    { id: 'wo-2', work_order_number: 'WO-2026-043', part_number: 'PN-PLATE-2', part_name: 'Plate',
+      quantity: 10, quantity_completed: 0, takt_time_minutes: 0, priority: 'high',
+      status: 'in_progress', app_id: 'app-weld' },
+  ]);
   getCompletions.mockResolvedValue([]);
   getFloorSnapshot.mockResolvedValue(snapshot());
   getFloorDispatch.mockResolvedValue(dispatch([
@@ -333,11 +359,13 @@ describe('an interrupted job comes back as ONE row', () => {
     // the one this row is offering.
     expect(url.searchParams.get('run')).toBe('run-0');
     expect(url.searchParams.get('wo')).toBe('wo-1');
-    expect(url.searchParams.get('op')).toBe('op-1');
     expect(url.searchParams.get('from')).toBe('operator');
-    // A job with three open runs on it: the id is the whole point — without it
-    // the player has only 'wo-1' and cannot tell which unit was meant.
+    // A job with several open runs on it: the id is the whole point — without
+    // it the player has only 'wo-1' and cannot tell which unit was meant.
     expect(url.pathname).toBe('/play/app-weld');
+    // No `op` today: completions do not carry work_order_operation_id on this
+    // branch, and inventing one on the link would be worse than omitting it.
+    expect(url.searchParams.get('op')).toBeNull();
   });
 
   it('caps the list and offers the rest, rather than an uncapped pile', async () => {
@@ -461,5 +489,203 @@ describe('nothing on this screen decides what "today" means', () => {
     expect(src).not.toMatch(/function fmt/);
     // And the tile reads the server's figure by name.
     expect(src).toContain('finished_today_for_operator');
+  });
+});
+
+describe('what one Resume row collapses, before and after the operation column', () => {
+  // ── M4 ──
+  // completions do not carry work_order_operation_id yet; it arrives with the
+  // scrap workstream, written by the player from the `op` on the deep link.
+  // Both sides of that line are pinned here, so the day the column lands the
+  // change in behaviour is visible rather than discovered.
+
+  const twoOperationsOneJob = (withColumn: boolean) => [
+    openRun({
+      id: 'run-op1', work_order_id: 'wo-1', app_id: 'app-weld',
+      started_at: '2026-09-02 02:10:00',
+      ...(withColumn ? { work_order_operation_id: 'op-1' } : {}),
+    }),
+    openRun({
+      id: 'run-op4', work_order_id: 'wo-1', app_id: 'app-weld',
+      started_at: '2026-09-02 02:30:00',
+      ...(withColumn ? { work_order_operation_id: 'op-4' } : {}),
+    }),
+  ];
+
+  it('TODAY, with no operation on a completion, collapses op 1 and op 4 into one row', async () => {
+    const runs = twoOperationsOneJob(false);
+    // Sanity: this is the payload shape the API really returns right now.
+    expect('work_order_operation_id' in runs[0]).toBe(false);
+
+    request.mockImplementation((path: string) =>
+      Promise.resolve(typeof path === 'string' && path.includes('status=in_progress') ? runs : []));
+
+    renderPortal();
+    await clockIn();
+    await waitFor(() => expect(screen.getAllByTestId('resume-row')).toHaveLength(1));
+
+    // The key is (work order, operation, app) and the operation is missing from
+    // both, so it degrades to (work order, app). That is the right trade while
+    // the column is absent — the alternative is the pile of identical rows this
+    // replaced — and the newest run is the one offered.
+    const url = () => new URL(screen.getByTestId('location').textContent ?? '', 'http://x');
+    fireEvent.click(screen.getByText('Resume'));
+    expect(url().searchParams.get('run')).toBe('run-op4');
+  });
+
+  it('AFTER the column lands, the same two runs stay two rows', async () => {
+    request.mockImplementation((path: string) =>
+      Promise.resolve(typeof path === 'string' && path.includes('status=in_progress')
+        ? twoOperationsOneJob(true) : []));
+
+    renderPortal();
+    await clockIn();
+    await waitFor(() => expect(screen.getAllByTestId('resume-row')).toHaveLength(2));
+    // Two operations of one job are two pieces of work, and nothing in
+    // dedupeRuns has to change for that to become true.
+    expect(screen.getAllByText('Resume')).toHaveLength(2);
+  });
+});
+
+describe('a Resume row says WHICH job it is', () => {
+  // ── M7 ──
+  // Four rows reading "Weld Cell · 9:30 PM" are indistinguishable, and the link
+  // now resumes one specific run — so the row has to name the job before the
+  // operator taps it.
+  beforeEach(() => {
+    request.mockImplementation((path: string) =>
+      Promise.resolve(typeof path === 'string' && path.includes('status=in_progress')
+        ? [
+          openRun({ id: 'run-a', work_order_id: 'wo-1', started_at: '2026-09-02 02:30:00' }),
+          openRun({ id: 'run-b', work_order_id: 'wo-2', started_at: '2026-09-02 02:20:00' }),
+        ] : []));
+  });
+
+  it('names the work order, the part and the app on every row', async () => {
+    renderPortal();
+    await clockIn();
+    const rows = await screen.findAllByTestId('resume-row');
+
+    expect(rows[0].textContent).toContain('WO-2026-042');
+    expect(rows[0].textContent).toContain('Bracket');
+    expect(rows[0].textContent).toContain('PN-BRACKET-9');
+    expect(rows[1].textContent).toContain('WO-2026-043');
+    expect(rows[1].textContent).toContain('Plate');
+    // Two rows that a person can actually tell apart.
+    expect(rows[0].textContent).not.toEqual(rows[1].textContent);
+  });
+
+  it('falls back to the app when a run carries no work order at all', async () => {
+    request.mockImplementation((path: string) =>
+      Promise.resolve(typeof path === 'string' && path.includes('status=in_progress')
+        ? [openRun({ id: 'run-q', work_order_id: null, app_id: 'app-qc', app_name: 'Final QC Inspection' })]
+        : []));
+    renderPortal();
+    await clockIn();
+    const rows = await screen.findAllByTestId('resume-row');
+    expect(rows[0].textContent).toContain('Final QC Inspection');
+  });
+});
+
+describe('nothing on this screen reads the tablet’s clock', () => {
+  // ── M3 ──
+  // The history rows went through `timeAgo`, which parses a zone-less SQLite
+  // stamp as the BROWSER's local time: the same finished run read "8 minutes
+  // ago" on a kiosk set to UTC and "9 hours ago" on the one somebody had left
+  // on Tokyo. Same class of mistake as counting "today" in the browser, three
+  // lines below a tile that no longer does.
+  const FINISHED = [{
+    id: 'c-1', app_id: 'app-weld', app_name: 'Weld Cell', operator_name: 'Ada Lovelace',
+    work_order_id: 'wo-1', started_at: '2026-09-02 01:00:00', completed_at: '2026-09-02 01:07:31',
+    status: 'completed', step_times: { 0: 200, 1: 251 },
+  }];
+
+  /** Render the history tab with the process pretending to be in `tz`. */
+  async function historyTextIn(tz: string) {
+    const original = process.env.TZ;
+    process.env.TZ = tz;
+    try {
+      getCompletions.mockResolvedValue(FINISHED);
+      const view = renderPortal();
+      await clockIn();
+      fireEvent.click(screen.getByText('History'));
+      const row = await screen.findByTestId('history-row');
+      const text = row.textContent ?? '';
+      view.unmount();
+      return text;
+    } finally {
+      process.env.TZ = original;
+    }
+  }
+
+  it('renders the same history stamp whatever the device is set to', async () => {
+    const inUtc = await historyTextIn('UTC');
+    const inTokyo = await historyTextIn('Asia/Tokyo');
+    expect(inUtc).toEqual(inTokyo);
+    // …and it is the PLANT's zone, which the payload names: 01:07 UTC is the
+    // evening of the 1st in Chicago.
+    const plant = new Intl.DateTimeFormat('en-US', {
+      timeZone: ZONE, month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    }).format(new Date('2026-09-02T01:07:31Z'));
+    expect(inUtc).toContain(`Finished ${plant}`);
+    expect(plant).not.toEqual(new Intl.DateTimeFormat('en-US', {
+      timeZone: 'UTC', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+    }).format(new Date('2026-09-02T01:07:31Z')));
+  });
+
+  it('carries no browser-clock helper of its own', async () => {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const src = fs.readFileSync(path.resolve(process.cwd(), 'src/pages/OperatorPortal.tsx'), 'utf8');
+    // The exact shape that shipped the bug, kept as a cheap backstop under the
+    // render assertions above — those are the real check.
+    expect(src).not.toMatch(/function isToday/);
+    expect(src).toContain('finished_today_for_operator');
+    // Run stamps go through the plant's zone, never `timeAgo`'s local parse.
+    expect(src).not.toMatch(/timeAgo\(c\./);
+  });
+});
+
+describe('a queue row never says the same number twice', () => {
+  it('suppresses an operation name that is only its own sequence', async () => {
+    // ── MINOR (d) ──
+    // The importer and the demo seed both produce routings whose steps are
+    // called "Op 1", "Step 2" and so on, which rendered "Op 1 of 4 · Op 1".
+    getFloorDispatch.mockResolvedValue(dispatch([
+      operation({ work_order_operation_id: 'op-a', operation_sequence: 1, operation_count: 4, operation_name: 'Op 1' }),
+      operation({ work_order_operation_id: 'op-b', work_order_number: 'WO-2026-043', operation_sequence: 2, operation_count: 4, operation_name: 'Weld' }),
+    ]));
+    renderPortal();
+    await clockIn();
+    await screen.findAllByTestId('job-row');
+
+    expect(screen.getByText('Op 1 of 4')).toBeTruthy();
+    expect(screen.queryByText('Op 1 of 4 · Op 1')).toBeNull();
+    // A real name still shows.
+    expect(screen.getByText('Op 2 of 4 · Weld')).toBeTruthy();
+  });
+});
+
+describe('the history tiles count what the list shows', () => {
+  it('labels the Recent tile as completed when the list also holds open runs', async () => {
+    // ── MINOR (e) ──
+    getCompletions.mockResolvedValue([
+      { id: 'c-1', app_id: 'app-weld', app_name: 'Weld Cell', operator_name: 'Ada Lovelace',
+        work_order_id: 'wo-1', started_at: '2026-09-02 01:00:00', completed_at: '2026-09-02 01:07:31',
+        status: 'completed', step_times: { 0: 451 } },
+      { id: 'c-2', app_id: 'app-weld', app_name: 'Weld Cell', operator_name: 'Ada Lovelace',
+        work_order_id: 'wo-1', started_at: '2026-09-02 02:00:00', completed_at: null,
+        status: 'in_progress', step_times: {} },
+    ]);
+    renderPortal();
+    await clockIn();
+    fireEvent.click(screen.getByText('History'));
+
+    const tile = await screen.findByTestId('recent-tile');
+    // One finished of two listed — said, rather than "1 total in history" over
+    // a list of two.
+    expect(tile).toHaveTextContent('1');
+    expect(tile).toHaveTextContent('completed of 2 listed');
+    expect(screen.getAllByTestId('history-row')).toHaveLength(2);
   });
 });

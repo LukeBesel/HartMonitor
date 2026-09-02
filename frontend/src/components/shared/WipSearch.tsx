@@ -120,14 +120,19 @@ export default function WipSearch({
           </p>
         )}
 
-        {/* A part number several open jobs share is not a job. Say how many, and
-            say where each one is, rather than picking one and being wrong. */}
+        {/* Several jobs — a shared part number, or two jobs answering to what
+            was typed. Say how many, and say where each one is, rather than
+            picking one and being confidently wrong. A capped page SAYS it is
+            capped: "25" read as "all of them" is a wrong answer. */}
         {!looking && !error && answer && !answer.result && answer.results.length > 1 && (
           <div data-testid="wip-answer">
             <p className={`text-sm font-medium ${onDark ? 'text-white' : 'text-gray-900'}`}>{answer.answer}</p>
             <ul className={`mt-1 space-y-0.5 text-xs ${muted}`}>
               {answer.results.map(r => <li key={r.work_order_id}>{r.answer}</li>)}
             </ul>
+            {answer.truncated_note && (
+              <p className={`mt-1 text-[11px] ${muted}`} data-testid="wip-truncated">{answer.truncated_note}</p>
+            )}
           </div>
         )}
 

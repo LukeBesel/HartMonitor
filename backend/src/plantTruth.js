@@ -895,6 +895,7 @@ const DISPATCH_REASONS = {
   // Stated once, in REASONS, so the snapshot's key and this one cannot drift.
   no_operator: REASONS.no_operator,
   unknown_operator: 'that operator is not on this company\'s roster',
+  unknown_name: 'no run has ever been recorded under that name',
 };
 
 /**
@@ -1048,11 +1049,13 @@ function dispatchQueue(ctxOrCompanyId, opts = {}) {
   }));
 
   // ── The apps that need no work order ───────────────────────────────────────
-  // Scoped the same way the operations are, and de-duplicated against them: an
-  // app already offered as somebody's operation is started from that job, not
-  // twice.
-  const onAnOperation = new Set(operations.map(r => r.app_id).filter(Boolean));
-
+  // Scoped exactly the way the operations are, and NOT de-duplicated against
+  // them. An earlier version dropped a standing app the moment one released
+  // operation happened to use it, which is a different claim entirely: "run
+  // this app on nothing in particular" and "run operation 3 of WO-1042" are two
+  // pieces of work, and the second one existing does not retire the first. A
+  // floor that runs Final QC both as a routing step and as a standing gate lost
+  // the standing row exactly when it got busy.
   const appClauses = ['ap.company_id = ?', "ap.status = 'published'"];
   const appParams = [companyId];
   if (scope.department_id) { appClauses.push('ap.department_id = ?'); appParams.push(scope.department_id); }
@@ -1073,7 +1076,7 @@ function dispatchQueue(ctxOrCompanyId, opts = {}) {
     WHERE ${appClauses.join(' AND ')}
     ORDER BY ap.name COLLATE NOCASE ASC
   `).all(...appParams)
-    .filter(app => !requiresWorkOrder(app) && !onAnOperation.has(app.id))
+    .filter(app => !requiresWorkOrder(app))
     .map(app => ({
       kind: 'app',
       no_work_order: true,
@@ -1126,63 +1129,154 @@ function workOrderNumberCandidates(query) {
 }
 
 /**
+ * How many jobs one part-number search will answer about.
+ *
+ * A part with sixty open jobs is a real answer, and printing sixty sentences
+ * into a search box under somebody's cursor is not — nor is paying for sixty
+ * jobs' worth of lookups on every keystroke. The page is capped and the payload
+ * SAYS it was capped, so nobody reads "25" as "all of them".
+ */
+const WIP_PART_LIMIT = 25;
+
+/** Work-order statuses that mean the job is not work in progress any more. */
+const WIP_FINISHED = Object.freeze(['completed', 'cancelled']);
+
+/**
  * Where ONE job stands, in the shape the search box prints.
  *
- * Where it stands is workOrderOperations.currentOperationFor's answer, imported
- * rather than re-derived — the drawer on the Schedule, the work-order API and
- * this search box must not be able to disagree about which operation a job is
- * on.
+ * `summary` is workOrderOperations' own answer about which operation the job is
+ * standing on, resolved for the whole page at once by the caller — the drawer
+ * on the Schedule, the work-order API and this search box must not be able to
+ * disagree about where a job is, and asking per row turned a keystroke into
+ * two statements per matching job.
+ *
+ * `startedAt` is that operation's start stamp, looked up in the same batch.
  */
-function wipRow(ctx, wo) {
-  const op = woOps.currentOperationFor(ctx.company_id, wo);
-  const released = !!wo.released_at && !!op;
+function wipRow(ctx, wo, summary, startedAt) {
+  const released = !!wo.released_at && !!summary;
 
-  if (!released) {
-    return {
-      work_order_id: wo.id,
-      work_order_number: wo.work_order_number,
-      part_number: wo.part_number,
-      part_name: wo.part_name,
-      operation_sequence: null,
-      /** A count: this job has no operations, which is a measurement. */
-      operation_count: 0,
-      operation_name: null,
-      department_name: wo.department_name ?? null,
-      quantity_completed: wo.quantity_completed,
-      quantity_required: wo.quantity,
-      status: wo.status,
-      started_at: null,
-      released: false,
-      answer: `${wo.work_order_number} is not released: at ${wo.status}`,
-    };
-  }
-
-  const where = op.department_name ? ` (${op.department_name})` : '';
-  return {
+  const base = {
     work_order_id: wo.id,
     work_order_number: wo.work_order_number,
     part_number: wo.part_number,
     part_name: wo.part_name,
-    operation_sequence: op.sequence,
-    operation_count: op.of,
-    operation_name: op.name,
-    department_name: op.department_name ?? null,
-    quantity_completed: op.quantity_completed,
-    quantity_required: op.quantity_required,
-    status: op.status,
-    started_at: op.started_at ?? null,
-    released: true,
-    answer: `${wo.work_order_number} is at operation ${op.sequence} of ${op.of}`
-      + `${where}, ${op.quantity_completed} of ${op.quantity_required} done`,
+    department_name: wo.department_name ?? null,
+    released,
+    /** The job's own status, always — a reader must be able to see that the
+     *  thing they searched for is over without parsing the sentence. */
+    work_order_status: wo.status,
   };
+
+  // ── A job that is over is not "at" anywhere ────────────────────────────────
+  // Answering "WO-2026-047 is at operation 3 of 7, 12 of 50 done" about a job
+  // somebody cancelled last week sends a supervisor to a machine to look for
+  // work that nobody is ever going to do.
+  if (wo.status === 'cancelled') {
+    return {
+      ...base,
+      operation_sequence: null,
+      operation_count: summary ? summary.of : 0,
+      operation_name: null,
+      quantity_completed: wo.quantity_completed,
+      quantity_required: wo.quantity,
+      status: wo.status,
+      started_at: null,
+      answer: `${wo.work_order_number} was cancelled`,
+    };
+  }
+  if (wo.status === 'completed') {
+    const of = summary ? summary.of : 0;
+    return {
+      ...base,
+      operation_sequence: summary ? summary.sequence : null,
+      operation_count: of,
+      operation_name: summary ? summary.name : null,
+      quantity_completed: wo.quantity_completed,
+      quantity_required: wo.quantity,
+      status: wo.status,
+      started_at: null,
+      answer: of > 0
+        ? `${wo.work_order_number} is complete: ${of} of ${of} operations`
+        : `${wo.work_order_number} is complete`,
+    };
+  }
+
+  if (!released) {
+    return {
+      ...base,
+      operation_sequence: null,
+      /** A count: this job has no operations, which is a measurement. */
+      operation_count: 0,
+      operation_name: null,
+      quantity_completed: wo.quantity_completed,
+      quantity_required: wo.quantity,
+      status: wo.status,
+      started_at: null,
+      answer: `${wo.work_order_number} is not released: at ${wo.status}`,
+    };
+  }
+
+  const where = summary.department_name ? ` (${summary.department_name})` : '';
+  // An operation the supervisor stopped on purpose is not "in progress at
+  // operation 3" — somebody is waiting for an answer, and the reason why is a
+  // column on the work order because a status word cannot carry one.
+  const held = summary.status === 'on_hold'
+    ? ` — on hold${wo.hold_reason ? `: ${wo.hold_reason}` : ''}`
+    : '';
+  return {
+    ...base,
+    department_name: summary.department_name ?? wo.department_name ?? null,
+    operation_sequence: summary.sequence,
+    operation_count: summary.of,
+    operation_name: summary.name,
+    quantity_completed: summary.qty_good,
+    quantity_required: summary.qty_required,
+    status: summary.status,
+    started_at: startedAt ?? null,
+    answer: `${wo.work_order_number} is at operation ${summary.sequence} of ${summary.of}`
+      + `${where}, ${summary.qty_good} of ${summary.qty_required} done${held}`,
+  };
+}
+
+/**
+ * Turn a page of matched work orders into answer rows, in a FIXED number of
+ * statements however many of them there are.
+ *
+ * currentOperationSummaries costs at most three (a count, a pointer lookup and,
+ * only for jobs whose pointer is stale, one sweep); the start stamps are one
+ * more. The version this replaces called currentOperationFor per row, which is
+ * two statements each — 122 of them for sixty jobs, behind a box somebody types
+ * into.
+ */
+function wipRows(ctx, workOrders) {
+  if (workOrders.length === 0) return [];
+  const summaries = woOps.currentOperationSummaries(ctx.company_id, workOrders);
+
+  // The start stamps for the operations those summaries named, in one lookup.
+  const opIds = [...summaries.values()].filter(Boolean).map(s => s.id);
+  const startedAt = new Map();
+  if (opIds.length > 0) {
+    const rows = db.prepare(
+      `SELECT id, started_at FROM work_order_operations
+       WHERE company_id = ? AND id IN (${opIds.map(() => '?').join(',')})`
+    ).all(ctx.company_id, ...opIds);
+    for (const r of rows) startedAt.set(r.id, r.started_at);
+  }
+
+  return workOrders.map(wo => {
+    const summary = summaries.get(wo.id) ?? null;
+    return wipRow(ctx, wo, summary, summary ? startedAt.get(summary.id) : null);
+  });
 }
 
 /**
  * Answer "where is WO-1042?" in one sentence.
  *
  * A work-order number wins over a part number — somebody typing a job number is
- * asking about that job. A part number can match several open jobs, and then
- * the answer is the list rather than a guess at which one they meant.
+ * asking about that job. Either can match more than one job, and then the
+ * answer is the LIST rather than a silent pick of the first row: two jobs with
+ * the same number is a data problem the searcher needs to see, not one this
+ * function should hide by choosing.
  *
  * Company-scoped at the SELECT: another tenant's work order is not "found and
  * hidden", it is simply not found, and no name of theirs is ever read.
@@ -1201,59 +1295,118 @@ function wipSearch(ctxOrCompanyId, rawQuery) {
     results: [],
     answer: null,
     reason: null,
+    /** How many jobs matched in total, and how many of them are on this page. */
+    total_matches: 0,
+    truncated: false,
+    truncated_note: null,
   };
 
   if (!query) return { ...base, reason: 'type a work order or part number' };
 
-  const SELECT = `
-    SELECT wo.*, d.name AS department_name
-    FROM work_orders wo
-    LEFT JOIN departments d ON d.id = wo.department_id
-  `;
-
+  // ── ONE statement for both questions ───────────────────────────────────────
+  // "Is this a work-order number?" and "is it a part number?" used to be two
+  // selects plus a count, and this box is typed into on two screens. A single
+  // pass tags each row with which question it answered, carries its group's
+  // total in a window function, and caps each group's page — so the cost of a
+  // keystroke does not depend on how many jobs the plant has on that part.
+  //
+  // The number group is at most a handful of rows (work_order_number is unique
+  // per company and there are three candidate spellings), so only the part
+  // group can ever be capped.
   const candidates = workOrderNumberCandidates(query);
-  const byNumber = db.prepare(`
-    ${SELECT}
-    WHERE wo.company_id = ?
-      AND UPPER(wo.work_order_number) IN (${candidates.map(() => '?').join(',')})
-    ORDER BY wo.created_at DESC
-  `).all(companyId, ...candidates);
+  const numberMatch = `UPPER(wo.work_order_number) IN (${candidates.map(() => '?').join(',')})`;
+  const matched = db.prepare(`
+    SELECT * FROM (
+      SELECT m.*,
+             COUNT(*)     OVER (PARTITION BY m.matched_number) AS group_total,
+             ROW_NUMBER() OVER (PARTITION BY m.matched_number
+                                ORDER BY (m.due_date IS NULL), m.due_date ASC,
+                                         m.work_order_number ASC) AS rn
+      FROM (
+        SELECT wo.*, d.name AS department_name,
+               CASE WHEN ${numberMatch} THEN 1 ELSE 0 END AS matched_number
+        FROM work_orders wo
+        LEFT JOIN departments d ON d.id = wo.department_id
+        WHERE wo.company_id = ?
+          AND (
+            ${numberMatch}
+            OR (
+              UPPER(wo.part_number) = ?
+              -- Work IN PROGRESS: a part search is "where are my jobs for this
+              -- part", and a finished or cancelled job is not one of them.
+              -- Asking by NUMBER still finds them, and says plainly they are over.
+              AND wo.status NOT IN (${WIP_FINISHED.map(() => '?').join(',')})
+            )
+          )
+      ) m
+    ) WHERE rn <= ?
+  `).all(
+    ...candidates,
+    companyId,
+    ...candidates,
+    query.toUpperCase(),
+    ...WIP_FINISHED,
+    WIP_PART_LIMIT,
+  );
+
+  const byNumber = matched.filter(r => r.matched_number === 1)
+    // Newest first, the way the number path has always answered. The group is
+    // at most a handful of rows, so this is free.
+    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
 
   if (byNumber.length > 0) {
-    const results = byNumber.map(wo => wipRow(ctx, wo));
+    const results = wipRows(ctx, byNumber);
+    // `single`, not `one` — `one()` is this module's query-parameter helper and
+    // shadowing it inside a block that also reads query parameters is how a
+    // later edit acquires a very quiet bug.
+    const single = results.length === 1;
     return {
       ...base,
       match: 'work_order',
-      result: results[0],
+      // More than one job answering to the same number is a data problem the
+      // searcher has to see. Picking results[0] and printing it as THE answer
+      // is how a supervisor is sent to the wrong machine with confidence.
+      result: single ? results[0] : null,
       results,
-      answer: results[0].answer,
+      answer: single
+        ? results[0].answer
+        : `${results.length} work orders answer to "${query}"`,
+      total_matches: results.length,
     };
   }
 
-  const byPart = db.prepare(`
-    ${SELECT}
-    WHERE wo.company_id = ?
-      AND UPPER(wo.part_number) = ?
-      AND wo.status != 'cancelled'
-    ORDER BY wo.due_date IS NULL, wo.due_date ASC, wo.work_order_number ASC
-  `).all(companyId, query.toUpperCase());
-
-  if (byPart.length === 1) {
-    const results = byPart.map(wo => wipRow(ctx, wo));
-    return { ...base, match: 'part_number', result: results[0], results, answer: results[0].answer };
+  const byPart = matched.filter(r => r.matched_number === 0);
+  if (byPart.length === 0) {
+    return { ...base, reason: `no work order or part number matches "${query}"` };
   }
-  if (byPart.length > 1) {
-    const results = byPart.map(wo => wipRow(ctx, wo));
+
+  const total = byPart[0].group_total;
+  const results = wipRows(ctx, byPart);
+  const truncated = total > results.length;
+  const truncatedNote = truncated
+    ? `showing the first ${results.length} of ${total} open jobs on this part`
+    : null;
+
+  if (results.length === 1 && !truncated) {
     return {
       ...base,
       match: 'part_number',
-      result: null,
+      result: results[0],
       results,
-      answer: `${results.length} work orders carry part ${byPart[0].part_number}`,
+      answer: results[0].answer,
+      total_matches: total,
     };
   }
-
-  return { ...base, reason: `no work order or part number matches "${query}"` };
+  return {
+    ...base,
+    match: 'part_number',
+    result: null,
+    results,
+    answer: `${total} work orders carry part ${byPart[0].part_number}`,
+    total_matches: total,
+    truncated,
+    truncated_note: truncatedNote,
+  };
 }
 
 // ─── WIP by operation, per department ─────────────────────────────────────────
@@ -1289,6 +1442,12 @@ function completionCountColumns() {
  * good/scrap are null WITH A REASON until the counts exist. A plant that has
  * never recorded a scrap count has not made zero scrap.
  */
+/** The bucket a record with no department lands in, so nothing is counted
+ *  nowhere. A run with no work order and no station has no department — and a
+ *  strip that silently drops it reports less good and less scrap than the plant
+ *  actually made, which is the one direction a quality number must never err. */
+const NO_DEPARTMENT = 'no department';
+
 function wipSummary(ctxOrCompanyId, opts = {}) {
   const ctx = asContext(ctxOrCompanyId);
   const companyId = ctx.company_id;
@@ -1318,26 +1477,31 @@ function wipSummary(ctxOrCompanyId, opts = {}) {
   if (scope.department_id) { opClauses.push(`${OP_DEPARTMENT} = ?`); opParams.push(scope.department_id); }
   if (scope.site_id)       { opClauses.push('(wo.site_id = ? OR wo.site_id IS NULL)'); opParams.push(scope.site_id); }
 
+  // Grouped on a COALESCEd key, so an operation whose job has no department is
+  // counted in the 'No department' bucket rather than dropped on the floor.
   const byDept = {};
+  const opTotals = { running: 0, queued: 0 };
   if (scope.valid) {
     for (const row of db.prepare(`
-      SELECT ${OP_DEPARTMENT} AS dept_id, o.status AS status, COUNT(*) AS n
+      SELECT COALESCE(${OP_DEPARTMENT}, '${NO_DEPARTMENT}') AS dept_id, o.status AS status, COUNT(*) AS n
       FROM work_order_operations o
       JOIN work_orders wo ON wo.id = o.work_order_id AND wo.company_id = o.company_id
       WHERE ${opClauses.join(' AND ')}
       GROUP BY dept_id, o.status
     `).all(...opParams)) {
       const bucket = (byDept[row.dept_id] ??= { running: 0, queued: 0 });
-      if (row.status === 'running') bucket.running += row.n;
-      else bucket.queued += row.n;
+      const key = row.status === 'running' ? 'running' : 'queued';
+      bucket[key] += row.n;
+      opTotals[key] += row.n;
     }
   }
 
   // 2 — today's counted units, by department, when the columns exist.
   const quantities = {};
+  const quantityTotals = { good: 0, scrap: 0, good_sample: 0, scrap_sample: 0 };
   if (scope.valid && (counts.good || counts.scrap)) {
     const w = completionWhere(companyId, scope);
-    const DEPT = 'COALESCE(wo.department_id, st.department_id)';
+    const DEPT = `COALESCE(COALESCE(wo.department_id, st.department_id), '${NO_DEPARTMENT}')`;
     const goodSum   = counts.good  ? 'SUM(COALESCE(c.quantity_good, 0))'  : 'NULL';
     const scrapSum  = counts.scrap ? 'SUM(COALESCE(c.quantity_scrap, 0))' : 'NULL';
     const goodSeen  = counts.good  ? 'SUM(CASE WHEN c.quantity_good  IS NOT NULL THEN 1 ELSE 0 END)' : '0';
@@ -1351,18 +1515,23 @@ function wipSummary(ctxOrCompanyId, opts = {}) {
       GROUP BY ${DEPT}
     `).all(...w.params, ctx.day, ctx.day)) {
       quantities[row.dept_id] = row;
+      quantityTotals.good        += row.good  || 0;
+      quantityTotals.scrap       += row.scrap || 0;
+      quantityTotals.good_sample += row.good_sample  || 0;
+      quantityTotals.scrap_sample += row.scrap_sample || 0;
     }
   }
 
-  const rows = departments.map(dept => {
-    const ops = byDept[dept.id] || { running: 0, queued: 0 };
-    const q = quantities[dept.id];
+  /** One strip entry, from whatever landed in its bucket. */
+  const entry = (id, name, color) => {
+    const ops = byDept[id] || { running: 0, queued: 0 };
+    const q = quantities[id];
     const goodSample  = counts.good  ? (q?.good_sample  || 0) : 0;
     const scrapSample = counts.scrap ? (q?.scrap_sample || 0) : 0;
     return {
-      department_id: dept.id,
-      department_name: dept.name,
-      department_color: dept.color,
+      department_id: id === NO_DEPARTMENT ? null : id,
+      department_name: name,
+      department_color: color,
       running: ops.running,
       queued: ops.queued,
       /** What "queued" counted. Named, so it cannot quietly change meaning. */
@@ -1374,26 +1543,40 @@ function wipSummary(ctxOrCompanyId, opts = {}) {
       scrap_today_sample: scrapSample,
       scrap_today_reason: scrapSample > 0 ? null : DISPATCH_REASONS.not_counted,
     };
-  });
+  };
 
-  const sum = (key) => rows.reduce((n, r) => n + (r[key] || 0), 0);
-  const goodSampleTotal  = rows.reduce((n, r) => n + r.good_today_sample, 0);
-  const scrapSampleTotal = rows.reduce((n, r) => n + r.scrap_today_sample, 0);
+  const rows = departments.map(d => entry(d.id, d.name, d.color));
 
+  // The bucket for everything that belongs to no department — a standing-app
+  // run, a work order nobody filed under one. It appears only when it has
+  // something in it (an empty row on every tidy plant's screen is noise), and
+  // never under a department filter, where the scope IS a department.
+  const orphan = byDept[NO_DEPARTMENT] || quantities[NO_DEPARTMENT];
+  if (orphan && !scope.department_id && scope.valid) {
+    rows.push(entry(NO_DEPARTMENT, 'No department', null));
+  }
+
+  // The TOTALS come from the ungrouped aggregate above, never from summing the
+  // rows: the rows are what this company has departments for, and summing them
+  // is precisely how a run that belongs to none disappears from the plant's own
+  // total. 12 good counted, 7 printed, and nobody can tell which five went.
   return {
     plant_date: ctx.plant_date,
     timezone: ctx.timezone,
     departments: rows,
     totals: {
-      running: sum('running'),
-      queued: sum('queued'),
+      running: opTotals.running,
+      queued: opTotals.queued,
       queued_basis: 'ready + queued operations',
-      good_today: goodSampleTotal > 0 ? sum('good_today') : null,
-      good_today_sample: goodSampleTotal,
-      good_today_reason: goodSampleTotal > 0 ? null : DISPATCH_REASONS.not_counted,
-      scrap_today: scrapSampleTotal > 0 ? sum('scrap_today') : null,
-      scrap_today_sample: scrapSampleTotal,
-      scrap_today_reason: scrapSampleTotal > 0 ? null : DISPATCH_REASONS.not_counted,
+      good_today: quantityTotals.good_sample > 0 ? quantityTotals.good : null,
+      good_today_sample: quantityTotals.good_sample,
+      good_today_reason: quantityTotals.good_sample > 0 ? null : DISPATCH_REASONS.not_counted,
+      scrap_today: quantityTotals.scrap_sample > 0 ? quantityTotals.scrap : null,
+      scrap_today_sample: quantityTotals.scrap_sample,
+      scrap_today_reason: quantityTotals.scrap_sample > 0 ? null : DISPATCH_REASONS.not_counted,
+      /** What the totals are a total OF, said out loud: everything in scope,
+       *  including the work that belongs to no department. */
+      basis: 'every operation and run in scope, department or not',
     },
     scope: { site_id: scope.site_id, department_id: scope.department_id, valid: scope.valid },
   };
@@ -1427,11 +1610,24 @@ function finishedTodayForOperator(ctxOrCompanyId, scope, operator = {}) {
     clause = 'c.operator_user_id = ?';
     value = owned;
   } else {
-    clause = 'c.operator_name = ?';
+    // A name typed on a tablet is not a key. 'ada lovelace', 'Ada Lovelace' and
+    // ' Ada Lovelace ' are one person, and a BINARY comparison told two of them
+    // they had finished nothing today.
+    clause = 'TRIM(c.operator_name) = TRIM(?) COLLATE NOCASE';
     value = name.trim();
   }
 
   const w = completionWhere(ctx.company_id, scope);
+
+  // Has this operator ever appeared on a run at all? The difference matters:
+  // "you have finished nothing today" is a measurement, and "we have never
+  // heard of you" is a typo or the wrong tablet — printing 0 for the second is
+  // how a misspelled name looks like a bad shift.
+  const known = db.prepare(`
+    SELECT 1 AS ok FROM completions c WHERE c.company_id = ? AND ${clause} LIMIT 1
+  `).get(ctx.company_id, value);
+  if (!known) return { count: null, reason: DISPATCH_REASONS.unknown_name };
+
   const count = db.prepare(`
     SELECT COUNT(*) AS n ${COMPLETIONS_FROM}
     WHERE ${w.sql} AND c.status = 'completed'
@@ -1467,6 +1663,7 @@ module.exports = {
   // ── Dispatch, WIP and one operator's day ──
   DISPATCHABLE_STATUSES,
   DISPATCH_REASONS,
+  WIP_PART_LIMIT,
   requiresWorkOrder,
   dispatchQueue,
   wipSearch,

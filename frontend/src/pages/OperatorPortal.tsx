@@ -364,6 +364,32 @@ export default function OperatorPortal() {
     }));
   };
 
+  /**
+   * What ONE open run is, in words.
+   *
+   * A completion carries ids, not names: the work-order number lives on the
+   * work order (already loaded for the Report tab) and the operation's name and
+   * position live on the queue. Four Resume rows reading "Bracket Assembly ·
+   * 5:18 AM" are indistinguishable, and the deep link now resumes one specific
+   * run — so the row says which job, which operation when the run names one,
+   * and which app.
+   */
+  const describeRun = (run: OperatorRun) => {
+    const wo = workOrders.find(w => w.id === run.work_order_id) ?? null;
+    const op = run.work_order_operation_id
+      ? queue.find(r => r.work_order_operation_id === run.work_order_operation_id) ?? null
+      : null;
+    const title = wo
+      ? `${wo.work_order_number}${wo.part_name ? ` · ${wo.part_name}` : ''}`
+      : run.app_name;
+    const detail = [
+      op ? dispatchRowLabel(op) : null,
+      wo?.part_number ?? null,
+      wo ? run.app_name : null,
+    ].filter(Boolean).join(' · ');
+    return { title, detail };
+  };
+
   /** Move the tablet to another station: the queue is the station's, so it is
    *  reloaded, and the choice is remembered the way the player remembers it. */
   const chooseStation = (next: string) => {
@@ -483,7 +509,10 @@ export default function OperatorPortal() {
             onChooseStation={chooseStation}
             openRuns={openRuns}
             onResume={handleResume}
+            describeRun={describeRun}
             timezone={snapshot?.timezone ?? null}
+            filtered={!!stationId}
+            onClearStation={() => chooseStation('')}
           />
         )}
         {activeTab === 'history' && (
@@ -881,7 +910,8 @@ function BottomNav({ active, onChange }: { active: Tab; onChange: (t: Tab) => vo
 
 function JobsTab({
   rows, error, selectedRow, setSelectedRow, onStartJob, onRefresh,
-  stations, stationId, onChooseStation, openRuns, onResume, timezone,
+  stations, stationId, onChooseStation, openRuns, onResume, describeRun, timezone,
+  filtered, onClearStation,
 }: {
   rows: DispatchRow[];
   error: string | null;
@@ -894,9 +924,17 @@ function JobsTab({
   onChooseStation: (id: string) => void;
   openRuns: OperatorRun[] | null;
   onResume: (run: OperatorRun) => void;
+  /** What one open run IS, in words — the job it is on, the operation when the
+   *  run carries one, and the app. Resolved by the parent, which holds the work
+   *  orders and the queue. */
+  describeRun: (run: OperatorRun) => { title: string; detail: string };
   /** The zone the SERVER reports the plant in. Every stamp below is printed in
    *  it — never the tablet's own, which on an unboxed kiosk is a guess. */
   timezone: string | null;
+  /** True when a station is chosen: an empty list then means "nothing here",
+   *  which is a different sentence from "nothing anywhere". */
+  filtered: boolean;
+  onClearStation: () => void;
 }) {
   const [refreshing, setRefreshing] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
@@ -1015,7 +1053,16 @@ function JobsTab({
                 className="bg-blue-500/10 border border-blue-400/30 rounded-xl p-3 flex items-center gap-3 min-h-[44px]"
               >
                 <div className="flex-1 min-w-0">
-                  <div className="text-white text-sm font-semibold truncate">{run.app_name}</div>
+                  {/* WHICH job. Four rows reading "Bracket Assembly · 5:18 AM"
+                      are indistinguishable, and the link now resumes ONE
+                      specific run — so the row has to say which one it is
+                      before the operator taps it. */}
+                  <div className="text-white text-sm font-semibold truncate">
+                    {describeRun(run).title}
+                  </div>
+                  {describeRun(run).detail && (
+                    <div className="text-blue-200/80 text-xs truncate">{describeRun(run).detail}</div>
+                  )}
                   <div className="text-blue-200/80 text-xs truncate">
                     Started {stampIn(run.started_at, timezone ?? 'UTC')}
                   </div>
@@ -1045,11 +1092,20 @@ function JobsTab({
           <CheckCircle size={40} className="mx-auto mb-3 text-green-400" />
           <div className="text-white font-semibold text-lg">All caught up!</div>
           <div className="text-blue-200/80 text-sm mt-1">
-            {stationId
+            {filtered
               ? 'Nothing is ready at this station right now'
               : 'Nothing is ready to run right now'}
           </div>
-          <div className="text-blue-200/80 text-xs mt-3">Check with your supervisor for new assignments</div>
+          {filtered ? (
+            <button
+              onClick={onClearStation}
+              className="mt-3 min-h-[44px] px-4 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white text-sm font-semibold"
+            >
+              Show every station
+            </button>
+          ) : (
+            <div className="text-blue-200/80 text-xs mt-3">Check with your supervisor for new assignments</div>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
@@ -1212,6 +1268,10 @@ function HistoryTab({
   // own midnight while the Command Center carried on with the plant's — the
   // same minute, two different answers, and the tablet's was the wrong one.
   const finishedToday = snapshot?.finished_today_for_operator ?? null;
+  // Every stamp on this tab is printed in the zone the SERVER reports, never
+  // the tablet's. 'UTC' is the fallback the snapshot itself uses when a company
+  // has set no zone — it is the server's answer either way, not the device's.
+  const zone = snapshot?.timezone ?? 'UTC';
   const todayReason = snapshot?.finished_today_for_operator_reason
     ?? (snapshot ? null : 'today\u2019s count has not loaded yet');
 
@@ -1227,10 +1287,15 @@ function HistoryTab({
               : (todayReason ?? 'not measured yet')}
           </div>
         </div>
-        <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-4">
+        <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-4" data-testid="recent-tile">
           <div className="text-blue-200/80 text-xs font-medium uppercase tracking-wide">Recent</div>
           <div className="text-white text-3xl font-bold mt-1">{totalCompleted}</div>
-          <div className="text-blue-200/80 text-xs mt-0.5">total in history</div>
+          {/* It counts FINISHED runs; the list below also shows the ones still
+              open. "total in history" over a number that ignores half the rows
+              underneath it is a tile disagreeing with its own list. */}
+          <div className="text-blue-200/80 text-xs mt-0.5">
+            completed{list.length > totalCompleted ? ` of ${list.length} listed` : ' in this list'}
+          </div>
         </div>
       </div>
 
@@ -1275,7 +1340,15 @@ function HistoryTab({
                 <div className="flex-1 min-w-0">
                   <div className="text-white text-sm font-medium truncate">{c.app_name}</div>
                   <div className="text-blue-200/80 text-xs">
-                    {c.status === 'completed' ? timeAgo(c.completed_at || c.started_at) : `Started ${timeAgo(c.started_at)}`}
+                    {/* The PLANT's clock. `timeAgo` reads a zone-less SQLite
+                        stamp as the TABLET's local time, so the same finished
+                        run read "8 minutes ago" on a kiosk set to UTC and "9
+                        hours ago" on the one somebody had left on Tokyo — the
+                        same class of mistake as counting "today" in the
+                        browser, three lines below a tile that now does not. */}
+                    {c.status === 'completed'
+                      ? `Finished ${stampIn(c.completed_at || c.started_at, zone)}`
+                      : `Started ${stampIn(c.started_at, zone)}`}
                   </div>
                   <div className="text-blue-200/80 text-xs" data-testid="history-duration">
                     {seconds != null
