@@ -5,6 +5,7 @@ import type { Step, Widget, KitLine } from '../../../types';
 import {
   getStepBlocks, summarizeBlocks, kitProgress, evaluateKitScan,
   scopedKitLines, valueInputFor, legacyKey, stepShowsKit, collectStepTriggers,
+  INPUT_WIDGET_TYPES, REQUIRED_WIDGET_TYPES, requiredMissing, requiredMessage,
 } from '../runtime';
 
 function widget(partial: Partial<Widget> & { id: string; type: Widget['type'] }): Widget {
@@ -25,12 +26,11 @@ function kitLine(partial: Partial<KitLine> & { id: string }): KitLine {
   };
 }
 
-describe('standing validation gate (spec §5.5)', () => {
-  it('preserves the exact v1 required check (text/number/select/checkbox)', () => {
+describe('required means required (every type the builder offers it on)', () => {
+  it('gates the text/number/select/checkbox core exactly as v1 did', () => {
     const s = step([
       widget({ id: 'w1', type: 'text-input', label: 'Serial', config: { required: true } }),
       widget({ id: 'w2', type: 'checkbox', label: 'Confirmed', config: { required: true } }),
-      widget({ id: 'w3', type: 'signature', label: 'Sig', config: { required: true } }), // never gated in v1
     ]);
     let blocks = getStepBlocks(s, {}, null, null);
     expect(blocks.map(b => b.widgetId)).toEqual(['w1', 'w2']);
@@ -41,6 +41,95 @@ describe('standing validation gate (spec §5.5)', () => {
     // checkbox false (not just missing) still blocks — v1 semantics
     blocks = getStepBlocks(s, { w1: 'ABC', w2: false }, null, null);
     expect(blocks.map(b => b.widgetId)).toEqual(['w2']);
+  });
+
+  // The bug this table closes: the builder offered "Required field" on nine
+  // widget types and the player enforced six, so a required pass-fail,
+  // signature or counter was decoration. The seeded QC app completed with
+  // `qc_result` absent — the plant's final quality gate booking a unit as good
+  // with no inspection result in it.
+  const EMPTY_AND_SATISFIED: Record<string, { empty: unknown; filled: unknown }> = {
+    'text-input':    { empty: '',        filled: 'ABC' },
+    'number-input':  { empty: '',        filled: '12' },
+    'select-input':  { empty: undefined, filled: 'Option 1' },
+    'checkbox':      { empty: false,     filled: true },
+    'counter':       { empty: undefined, filled: 0 },   // a committed zero counts
+    'pass-fail':     { empty: undefined, filled: 'Pass' },
+    'signature':     { empty: '',        filled: 'M. Lopez' },
+    'scan-input':    { empty: '',        filled: 'LOT-0001' },
+    'photo-capture': { empty: undefined, filled: '/uploads/a.jpg' },
+  };
+
+  it.each(INPUT_WIDGET_TYPES)('blocks a required, empty %s', type => {
+    const fixture = EMPTY_AND_SATISFIED[type];
+    expect(fixture, `no fixture for input type ${type} — add one and make it gate`).toBeDefined();
+    const w = widget({ id: 'w', type, label: 'Ships as-is?', config: { required: true } });
+    const blocks = getStepBlocks(step([w]), { w: fixture.empty }, null, null);
+    expect(blocks).toHaveLength(1);
+    expect(blocks[0]).toMatchObject({ widgetId: 'w', kind: 'required' });
+    expect(blocks[0].message).toContain('Ships as-is?');   // named, always
+
+    expect(getStepBlocks(step([w]), { w: fixture.filled }, null, null)).toHaveLength(0);
+  });
+
+  it.each(INPUT_WIDGET_TYPES)('leaves an OPTIONAL %s alone', type => {
+    const w = widget({ id: 'w', type, config: {} });
+    expect(getStepBlocks(step([w]), {}, null, null)).toHaveLength(0);
+  });
+
+  it('gates every type the builder offers "Required" on — no drift', () => {
+    // Adding a tenth input type without gating it fails here.
+    for (const t of INPUT_WIDGET_TYPES) {
+      expect(REQUIRED_WIDGET_TYPES).toContain(t);
+    }
+    expect(INPUT_WIDGET_TYPES).toHaveLength(9);
+    // ... and nothing gates that the builder never offered it on.
+    for (const t of REQUIRED_WIDGET_TYPES) {
+      expect(INPUT_WIDGET_TYPES).toContain(t);
+    }
+  });
+
+  // An honest zero is an answer. "Defects found" on a counter that starts at 0
+  // and cannot go below it has 0 as its most common true value; requiring the
+  // number to have MOVED stranded that run with no way out at all — the minus
+  // button was disabled and the plus button was a lie. Touching the counter is
+  // the test, and CounterWidget commits on every tap, including at the ends of
+  // the range, so confirming a zero is one tap.
+  it('a required counter is satisfied by an honest zero, once it is confirmed', () => {
+    const w = widget({ id: 'c', type: 'counter', label: 'Defects found', config: { required: true, initialValue: 0, min: 0 } });
+    expect(requiredMissing(w, undefined)).toBe(true);     // untouched — nothing recorded
+    expect(requiredMissing(w, 0)).toBe(false);            // confirmed zero — an answer
+    expect(requiredMissing(w, 4)).toBe(false);
+    expect(requiredMessage(w)).toBe('Defects found needs a count — tap + or − to confirm');
+    // Blocks the step while untouched, clears the moment a zero is committed.
+    expect(getStepBlocks(step([w]), {}, null, null)).toHaveLength(1);
+    expect(getStepBlocks(step([w]), { c: 0 }, null, null)).toHaveLength(0);
+
+    const fromFive = widget({ id: 'c', type: 'counter', label: 'Cores', config: { required: true, initialValue: 5 } });
+    expect(requiredMissing(fromFive, 5)).toBe(false);
+    expect(requiredMissing(fromFive, undefined)).toBe(true);
+  });
+
+  it('a required signature needs a captured stroke', () => {
+    const w = widget({ id: 'sg', type: 'signature', label: 'Inspector', config: { required: true } });
+    expect(getStepBlocks(step([w]), { sg: '' }, null, null)[0].message).toBe('Inspector needs a signature');
+    expect(getStepBlocks(step([w]), { sg: 'M. Lopez' }, null, null)).toHaveLength(0);
+  });
+
+  it('names the widget in the operator\'s words, per type', () => {
+    const msg = (type: Parameters<typeof widget>[0]['type'], config = {}) =>
+      requiredMessage(widget({ id: 'w', type, label: 'Ships as-is?', config }));
+    expect(msg('pass-fail')).toBe('Ships as-is? needs a result');
+    expect(msg('photo-capture')).toBe('Ships as-is? needs a photo');
+    expect(msg('scan-input')).toBe('Ships as-is? needs a scan');
+    expect(msg('select-input')).toBe('Ships as-is? needs a choice');
+    expect(msg('checkbox')).toBe('Ships as-is? needs to be checked');
+    expect(msg('text-input')).toBe('Ships as-is? is required');
+    // Hand-authored apps put the label in config; the message still names it.
+    expect(requiredMessage(widget({ id: 'w', type: 'pass-fail', config: { label: 'Ships as-is?' } })))
+      .toBe('Ships as-is? needs a result');
+    expect(requiredMessage(widget({ id: 'w', type: 'text-input', config: {} })))
+      .toBe('This field is required');
   });
 
   it('uses variableName as the formData key (legacy key parity)', () => {

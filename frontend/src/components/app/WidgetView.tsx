@@ -792,7 +792,7 @@ export function WidgetView({ widget, value, onChange, onNext, onPrev, onComplete
 
 // Read-only positioned stage used by the player for canvas-mode steps. Scales a
 // CANVAS_W-wide logical canvas to fit, then absolutely positions each widget.
-export function CanvasStage({ widgets, height, background, values, onChange, onNext, onPrev, onComplete }: {
+export function CanvasStage({ widgets, height, background, values, onChange, onNext, onPrev, onComplete, invalidByWidget }: {
   widgets: Widget[];
   height: number;
   background?: string;
@@ -801,6 +801,9 @@ export function CanvasStage({ widgets, height, background, values, onChange, onN
   onNext: () => void;
   onPrev: () => void;
   onComplete: () => void;
+  /** widgetId -> why it is blocking. The player scrolls to `pw-<id>` and rings
+   *  it; a canvas step has to be reachable the same way a flow step is. */
+  invalidByWidget?: Record<string, string>;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const scale = useCanvasScale(containerRef);
@@ -821,11 +824,22 @@ export function CanvasStage({ widgets, height, background, values, onChange, onN
               ? (w.config.variableRef || w.id)
               : (w.config.variableName || w.id);
             return (
-              <div key={w.id} style={{
-                position: 'absolute', left: l.x, top: l.y, width: l.width, height: l.height,
-                transform: l.rotation ? `rotate(${l.rotation}deg)` : undefined,
-                opacity: w.config.opacity ?? 1,
-              }}>
+              <div
+                key={w.id}
+                id={`pw-${w.id}`}
+                data-widget-id={w.id}
+                tabIndex={-1}
+                style={{
+                  position: 'absolute', left: l.x, top: l.y, width: l.width, height: l.height,
+                  transform: l.rotation ? `rotate(${l.rotation}deg)` : undefined,
+                  opacity: w.config.opacity ?? 1,
+                  scrollMarginTop: 96,
+                  scrollMarginBottom: 96,
+                  outline: invalidByWidget?.[w.id] ? '2px solid var(--p-bad)' : 'none',
+                  outlineOffset: 4,
+                  borderRadius: 10,
+                }}
+              >
                 <WidgetView
                   widget={w}
                   value={values[key]}

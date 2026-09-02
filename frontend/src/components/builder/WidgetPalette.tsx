@@ -47,12 +47,13 @@ export const WIDGET_META: Record<WidgetType, WidgetMeta> = {
 
 export const PALETTE_GROUPS = ['Display', 'Inputs', 'Actions', 'Production'] as const;
 
-/** Input-like widget types — they capture values, carry variableName, and can
- *  fire input_change triggers. */
-export const INPUT_WIDGET_TYPES: readonly WidgetType[] = [
-  'text-input', 'number-input', 'select-input', 'checkbox',
-  'counter', 'pass-fail', 'signature', 'scan-input', 'photo-capture',
-];
+/** Input-like widget types — they capture values, carry variableName, can fire
+ *  input_change triggers, and are offered a "Required field" switch here.
+ *  The list LIVES in the player runtime (the leaf module) so the one place that
+ *  enforces "required" and the one place that offers it cannot drift apart;
+ *  re-exported here because the builder surfaces import it from the palette.
+ *  The dependency only runs one way: the player never imports the builder. */
+export { INPUT_WIDGET_TYPES } from '../player/runtime';
 
 export function defaultWidget(type: WidgetType): Widget {
   const base: Widget = { id: uuidv4(), type, label: '', order: 0, config: {} };
