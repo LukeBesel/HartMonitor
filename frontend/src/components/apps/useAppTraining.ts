@@ -85,6 +85,9 @@ export interface AppTrainingState {
   /** Index of the first unfinished milestone, or -1 when everything is done. */
   activeIndex: number;
   complete: boolean;
+  /** True once the account has a published app AND a completed run. The coach
+   *  renders nothing from here on. */
+  graduated: boolean;
   dismissed: boolean;
   collapsed: boolean;
   /** The app the training is following (most recently edited), if any. */
@@ -164,6 +167,19 @@ export function trainingMilestones(
   return TRAINING_STEPS.map(def => ({ def, done: doneById[def.id] }));
 }
 
+/** The coach's whole job is getting an account to its first published app and
+ *  its first completed run. Once BOTH exist the account has done the thing, and
+ *  a panel that keeps teaching it is a panel in the way — so this is the one
+ *  question that stands the coach down, for good, from real account data.
+ *
+ *  Note this is deliberately NOT "every milestone ticked": the last milestone
+ *  ('data') is a local navigation flag, and letting a browser-side preference
+ *  decide whether a shipping account still needs coaching is how the coach
+ *  outstayed its welcome in the first place. */
+export function trainingGraduated(apps: App[], hasCompletions: boolean): boolean {
+  return hasCompletions && apps.some(a => a.status === 'published');
+}
+
 /** Called by the analytics / run-history surfaces: the user has now seen the
  *  data a run captured, which is the final training milestone. */
 export function markTrainingDataSeen(userId: string | undefined): void {
@@ -212,9 +228,13 @@ export function useAppTraining(
 
   useEffect(() => { setPrefs(readPrefs(userId)); }, [userId]);
 
-  // Keep multiple mounted readers (coach + any page badge) in sync.
+  // Keep multiple mounted readers (coach + any page badge) in sync, and take the
+  // event as a cue that something in the account moved — publishing an app and
+  // finishing a run both land here. Re-reading the apps/completions the moment
+  // it fires is what makes the milestones advance on the real events instead of
+  // waiting for the next route change to notice.
   useEffect(() => {
-    const sync = () => setPrefs(readPrefs(userId));
+    const sync = () => { setPrefs(readPrefs(userId)); setNonce(n => n + 1); };
     window.addEventListener(TRAINING_PREFS_EVENT, sync);
     window.addEventListener('storage', sync);
     return () => {
@@ -268,6 +288,7 @@ export function useAppTraining(
     total: milestones.length,
     activeIndex,
     complete: activeIndex === -1,
+    graduated: trainingGraduated(apps, hasCompletions),
     dismissed: prefs.dismissed,
     collapsed: prefs.collapsed,
     targetApp,

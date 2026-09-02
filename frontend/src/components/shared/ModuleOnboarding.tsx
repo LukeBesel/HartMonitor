@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { X, ArrowLeft, ArrowRight, Check } from 'lucide-react';
+import { useState } from 'react';
+import { X, ArrowLeft, ArrowRight, Check, Compass } from 'lucide-react';
 import { getWalkthrough, WalkthroughStep } from '../../config/walkthroughs';
 import { LIGHT_GROUND, readableInk, shiftUntilReadable } from '../../utils/contrast';
 
@@ -45,7 +45,8 @@ export function markWalkthroughSeen(moduleId: string): void {
   }
 }
 
-/** Clear the "seen" flag so a walkthrough auto-shows again. Optional helper. */
+/** Clear the "seen" flag. Kept for callers that want a clean slate; nothing
+ *  auto-shows any more, so this only affects the button's own state. */
 export function resetWalkthrough(moduleId: string): void {
   try {
     localStorage.removeItem(STORAGE_PREFIX + moduleId);
@@ -54,59 +55,87 @@ export function resetWalkthrough(moduleId: string): void {
   }
 }
 
+/**
+ * A page's tour, and nothing else on first paint.
+ *
+ * This component used to open its walkthrough over the page the moment someone
+ * arrived, because its localStorage key was absent — which is true of every
+ * page on every account exactly once, so a first session meant a modal on nine
+ * different screens. In an audit two clicks failed outright because one of
+ * those overlays was in front of the thing being clicked.
+ *
+ * It now renders a small "Show me around" button instead. Same props, same call
+ * signature (nine pages mount it and none of them changed), same seen-state
+ * helpers — the only difference is that the tour waits to be asked. Pages whose
+ * moduleId has no entry in WALKTHROUGHS render nothing at all: a button that
+ * opens a tour of a screen we deleted is worse than no button.
+ */
 export default function ModuleOnboarding({
   moduleId,
   title,
-  description,
-  steps,
+  // `description` and `steps` stay in the props interface because nine pages
+  // pass them and none of those pages may change; the walkthrough registry is
+  // what the tour actually reads.
   icon: Icon,
   color,
   overview,
   overviewTitle = 'Tour the whole system',
 }: ModuleOnboardingProps) {
   const storageKey = STORAGE_PREFIX + moduleId;
-  const [visible, setVisible] = useState(false);
-
-  useEffect(() => {
-    const seen = localStorage.getItem(storageKey);
-    if (!seen) setVisible(true);
-  }, [storageKey]);
-
-  const dismiss = () => {
-    localStorage.setItem(storageKey, '1');
-    setVisible(false);
-  };
-
-  if (!visible) return null;
+  const [open, setOpen] = useState(false);
 
   const walkthrough = getWalkthrough(moduleId);
+  const hasTour = !!walkthrough && walkthrough.length > 0;
 
-  if (walkthrough && walkthrough.length > 0) {
-    return (
-      <PagedWalkthrough
-        title={title}
-        color={color}
-        moduleIcon={Icon}
-        steps={walkthrough}
-        overview={overview}
-        overviewTitle={overviewTitle}
-        onDismiss={dismiss}
-      />
-    );
-  }
+  // No content for this page — render nothing rather than a button that opens
+  // an empty tour. (The legacy single-card fallback below still covers pages
+  // that pass their own `steps` and DO have a walkthrough registered.)
+  if (!hasTour) return null;
 
-  // ───────────────── Legacy single-card fallback (backward compatible) ───────
+  const dismiss = () => {
+    try { localStorage.setItem(storageKey, '1'); } catch { /* private mode */ }
+    setOpen(false);
+  };
+
   return (
-    <LegacyCard
-      title={title}
-      description={description}
-      steps={steps}
-      Icon={Icon}
-      color={color}
-      overview={overview}
-      overviewTitle={overviewTitle}
-      onDismiss={dismiss}
-    />
+    <>
+      <ShowMeAroundButton title={title} color={color} onClick={() => setOpen(true)} />
+      {open && (
+        <PagedWalkthrough
+          title={title}
+          color={color}
+          moduleIcon={Icon}
+          steps={walkthrough!}
+          overview={overview}
+          overviewTitle={overviewTitle}
+          onDismiss={dismiss}
+        />
+      )}
+    </>
+  );
+}
+
+/* ─────────────────────────── The one visible control ──────────────────────── */
+
+/** Small, secondary, and quiet: it sits above the page heading on a 390px phone
+ *  without pushing anything around, and it inherits the app's dark-mode
+ *  retrofit (`.dark .bg-white`, `.dark .border-gray-200`, `.dark .text-gray-*`
+ *  in index.css) rather than inventing its own palette. */
+function ShowMeAroundButton({
+  title, color, onClick,
+}: { title: string; color: string; onClick: () => void }) {
+  return (
+    <div className="flex justify-end">
+      <button
+        type="button"
+        onClick={onClick}
+        aria-label={`Show me around ${title}`}
+        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-gray-200 bg-white text-xs font-semibold text-gray-600 hover:bg-gray-50 hover:text-gray-900 transition-colors"
+      >
+        <Compass size={13} style={{ color }} aria-hidden />
+        Show me around
+      </button>
+    </div>
   );
 }
 
@@ -315,140 +344,23 @@ function OverviewPage({
   );
 }
 
-/* ───────────────────────────── Legacy single card ─────────────────────────── */
-
-interface LegacyProps {
-  title: string;
-  description: string;
-  steps: string[];
-  Icon: React.ElementType;
-  color: string;
-  overview?: OverviewItem[];
-  overviewTitle: string;
-  onDismiss: () => void;
-}
-
-function LegacyCard({
-  title,
-  description,
-  steps,
-  Icon,
-  color,
-  overview,
-  overviewTitle,
-  onDismiss,
-}: LegacyProps) {
-  const [checked, setChecked] = useState(false);
-  const hasOverview = !!overview && overview.length > 0;
-
-  return (
-    <Backdrop>
-      <div
-        className={`bg-white rounded-2xl shadow-2xl w-full ${
-          hasOverview ? 'max-w-2xl' : 'max-w-[480px]'
-        } max-h-[90vh] overflow-y-auto`}
-      >
-        {/* Gradient header */}
-        <div
-          className="relative px-7 pt-8 pb-7 flex flex-col items-center text-center"
-          style={{ background: `linear-gradient(135deg, ${color}22 0%, ${color}44 100%)` }}
-        >
-          <button
-            onClick={onDismiss}
-            className="absolute top-3 right-3 text-gray-400 hover:text-gray-600 transition-colors"
-          >
-            <X size={18} />
-          </button>
-          <div
-            className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4 shadow-lg"
-            style={{ backgroundColor: color, color: readableInk(color) }}
-          >
-            <Icon size={28} />
-          </div>
-          <h2 className="text-xl font-bold text-gray-900 mb-1">{title}</h2>
-          <p className="text-sm text-gray-600 leading-relaxed max-w-[440px]">{description}</p>
-        </div>
-
-        {/* Steps */}
-        <div className="px-7 py-5">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-            Getting started
-          </p>
-          <ol className="space-y-2.5">
-            {steps.map((step, i) => (
-              <li key={i} className="flex items-start gap-3">
-                <span
-                  className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold mt-0.5"
-                  style={{ backgroundColor: color, color: readableInk(color) }}
-                >
-                  {i + 1}
-                </span>
-                <span className="text-sm text-gray-700 leading-snug">{step}</span>
-              </li>
-            ))}
-          </ol>
-        </div>
-
-        {/* System overview (Dashboard only) */}
-        {hasOverview && (
-          <div className="px-7 pb-2">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">
-              {overviewTitle}
-            </p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-              {overview!.map(({ icon: ItemIcon, label, desc }) => (
-                <div
-                  key={label}
-                  className="flex items-start gap-3 p-3 rounded-xl border border-gray-100 bg-gray-50/60"
-                >
-                  <div
-                    className="flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center"
-                    style={{ backgroundColor: `${color}1a`, color: shiftUntilReadable(color, LIGHT_GROUND) }}
-                  >
-                    <ItemIcon size={16} />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-sm font-semibold text-gray-800 leading-tight">{label}</div>
-                    <div className="text-xs text-gray-500 leading-snug mt-0.5">{desc}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Footer */}
-        <div className="px-7 pt-4 pb-6 flex flex-col gap-3">
-          <button
-            onClick={onDismiss}
-            className="w-full py-2.5 rounded-xl text-sm font-semibold transition-colors"
-            style={{ backgroundColor: color, color: readableInk(color) }}
-          >
-            Got it, let's go!
-          </button>
-          <label className="flex items-center justify-center gap-2 text-xs text-gray-400 hover:text-gray-600 transition-colors cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={checked}
-              onChange={e => {
-                setChecked(e.target.checked);
-                if (e.target.checked) onDismiss();
-              }}
-              className="rounded border-gray-300 text-gray-600 focus:ring-0"
-            />
-            Don't show again
-          </label>
-        </div>
-      </div>
-    </Backdrop>
-  );
-}
+/* The legacy single-card fallback lived here. It only ever rendered for a
+ * moduleId with no entry in WALKTHROUGHS, and that case now renders nothing at
+ * all, so the card was unreachable code describing pages we no longer tour. */
 
 /* ─────────────────────────────────── Shared ───────────────────────────────── */
 
+/** The tour is a real dialog, and says so. Declaring the role is what lets a
+ *  test — and a screen reader — count how many guides are on screen at once;
+ *  the answer for a new account is meant to be at most one. */
 function Backdrop({ children }: { children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-6">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Guided tour"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-6"
+    >
       {children}
     </div>
   );

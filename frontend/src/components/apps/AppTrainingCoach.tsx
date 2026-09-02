@@ -9,13 +9,14 @@ import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Check, ChevronDown, ChevronUp, X, ArrowRight, GraduationCap,
-  Sparkles, RefreshCw, PartyPopper,
+  Sparkles, RefreshCw,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useModules } from '../../context/ModulesContext';
 import { useCompanySetting } from '../../context/BrandingContext';
 import { ONBOARDING_DONE_EVENT } from '../shared/OnboardingWizard';
 import { useAppTraining, TrainingStepId } from './useAppTraining';
+import { useFirstRunDeciding } from './FirstRunLanding';
 
 /** Routes where the coach belongs: the apps surfaces plus the screens the
  *  training sends people back to. Deliberately NOT the operator player —
@@ -72,32 +73,32 @@ export default function AppTrainingCoach() {
   // Only check progress on the screens that can actually show the coach.
   const trainingEnabled = !!user && canEdit && isEnabled('apps') && coachAllowedOn(location.pathname);
   const training = useAppTraining(user?.id, location.pathname, trainingEnabled);
-  const [justFinished, setJustFinished] = useState(false);
   const [manuallyOpened, setManuallyOpened] = useState(false);
   const isNarrow = useIsNarrow();
   const welcomeDone = useWelcomeDone(user?.role);
-
-  // Celebrate once when the last milestone lands, then let the user close it.
-  useEffect(() => {
-    if (training.complete && !training.dismissed) setJustFinished(true);
-  }, [training.complete, training.dismissed]);
+  const firstRunDeciding = useFirstRunDeciding();
 
   // Moving to another screen resets the "I opened it anyway" override.
   useEffect(() => { setManuallyOpened(false); }, [location.pathname]);
 
+  // The account has a published app and a completed run: it has done the thing
+  // the coach exists to teach, so the coach is done. It used to hang on for a
+  // sixth milestone ("look at the data") that no account event can satisfy —
+  // only a click on one particular screen — which is how a shipping shop still
+  // had a training panel following it around.
   const visible =
     !!user && canEdit && isEnabled('apps') && welcomeDone
+    && !training.graduated
     && !training.dismissed
+    && !firstRunDeciding
     && coachAllowedOn(location.pathname)
-    && !(training.loading && training.doneCount === 0)
-    && (!training.complete || justFinished);
+    && !(training.loading && training.doneCount === 0);
 
   // Starts as the pill wherever a panel would be in the way: the builder (the
   // coach points AT its regions) and anything narrower than a desktop.
   const wantsPill = isBuilderRoute(location.pathname) || isNarrow;
   const showAsPill =
-    visible && !training.complete
-    && (training.collapsed || (wantsPill && !manuallyOpened));
+    visible && (training.collapsed || (wantsPill && !manuallyOpened));
 
   // Only the expanded panel needs a gutter; the pill is small enough to float.
   useEffect(() => {
@@ -157,31 +158,11 @@ export default function AppTrainingCoach() {
     );
   }
 
-  // ── Completed celebration ──
-  if (training.complete) {
-    return (
-      <Shell>
-        <div className="p-5 text-center">
-          <div className="w-11 h-11 rounded-2xl bg-green-100 text-green-600 flex items-center justify-center mx-auto mb-3">
-            <PartyPopper size={22} />
-          </div>
-          <h3 className="text-[15px] font-bold text-gray-900">You built and ran an app</h3>
-          <p className="text-[13px] text-gray-500 mt-1.5 leading-relaxed">
-            That is the whole loop: build it, publish it, your floor runs it, the data lands back here.
-            Everything else in HartMonitor plugs into these runs.
-          </p>
-          <div className="flex gap-2 mt-4">
-            <button onClick={() => { setJustFinished(false); training.dismiss(); }} className="btn-secondary flex-1 justify-center">
-              Close
-            </button>
-            <button onClick={() => { setJustFinished(false); training.dismiss(); navigate('/apps'); }} className="btn-primary flex-1 justify-center">
-              Build another <ArrowRight size={14} />
-            </button>
-          </div>
-        </div>
-      </Shell>
-    );
-  }
+  // There is no "you finished!" panel any more. Finishing means the account has
+  // a published app and a completed run — and at that moment `visible` above is
+  // already false, so the coach simply stops being there. A celebration modal
+  // that has to be dismissed is one more thing between a new customer and their
+  // product.
 
   // ── Expanded coach ──
   return (

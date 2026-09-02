@@ -615,7 +615,11 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   // Kept deliberately small — two steps, its own runs on Station 2 — but real
   // enough that its analytics tiles, operators and captured values are populated.
   const qcAppId = uuidv4();
-  const qcTorqueW = uuidv4(), qcResultW = uuidv4();
+  const qcTorqueW = uuidv4(), qcResultW = uuidv4(), qcVisualStep = uuidv4();
+  // One title, used by the trigger the app carries AND by the seeded quality
+  // record for the run that already failed — the demo's history has to look
+  // like something the demo's own app could have produced.
+  const QC_HOLD_NCR_TITLE = 'Final QC fail — unit held at pack-out';
   // Same key vocabulary as sampleAppSteps above: instruction copy under
   // `content`, the label on the WIDGET, a placeholder in every input. This app
   // was first authored with `text` and a config-level label — keys the player
@@ -626,10 +630,45 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
       { id: uuidv4(), type: 'instruction', order: 0, label: 'What to check', config: { content: 'Confirm the two frame bolts hold 15 Nm before the unit ships. Use the calibrated torque wrench at the bench — set it to 15 and pull until it clicks.', backgroundColor: '#eff6ff' } },
       { id: qcTorqueW, type: 'number-input', order: 1, label: 'Verified torque (Nm)', config: { variableName: 'final_torque', required: true, placeholder: 'Reading off the wrench, e.g. 15' } },
     ] },
-    { id: uuidv4(), name: 'Final visual', order: 1, layout: 'stacked', takt_time: 60, widgets: [
+    { id: qcVisualStep, name: 'Final visual', order: 1, layout: 'stacked', takt_time: 60, widgets: [
       { id: uuidv4(), type: 'instruction', order: 0, label: 'Look it over', config: { content: 'Scratches, missing hardware, loose harness. Pass sends it to pack-out; Fail holds it and raises a quality record.' } },
       { id: qcResultW, type: 'pass-fail', order: 1, label: 'Ships as-is?', config: { variableName: 'qc_result', required: true } },
-    ] },
+    ],
+      // The instruction above makes a promise, so the app has to keep it. This
+      // is the trigger the builder's Triggers tab writes for
+      //   When the step is left → If [Ships as-is?] equals "Fail"
+      //   → Create NCR, then Block with error
+      // and it is the same shape TriggerEditor.tsx emits and
+      // routes/apps.js validates: a widget ValueRef on the left (pass-fail
+      // widgets hold the literal strings 'Pass' / 'Fail'), a static on the
+      // right, actions in order.
+      //
+      // Order matters: the engine stops a trigger's remaining actions at
+      // block_with_error, so the NCR is raised FIRST and the block second.
+      // Blocking cancels the navigation, which on the last step is the run's
+      // own completion — that is the hold. A failed unit cannot be finished
+      // with a green "Complete!", which is exactly what the copy says.
+      triggers: [{
+        id: uuidv4(),
+        name: 'Fail holds the unit',
+        event: 'step_exit',
+        match: 'all',
+        conditions: [{ left: { kind: 'widget', name: qcResultW }, op: 'eq', right: { kind: 'static', value: 'Fail' } }],
+        actions: [
+          {
+            type: 'create_ncr',
+            severity: 'major',
+            title: QC_HOLD_NCR_TITLE,
+            description: 'Final visual failed at the pack-out quality gate. The unit is held for disposition — do not ship it. Raised automatically by the Final QC Inspection app.',
+          },
+          {
+            type: 'block_with_error',
+            text: 'Fail recorded — this unit is HELD. A quality record has been raised. Set the unit aside for disposition and tell your supervisor; do not send it to pack-out.',
+          },
+        ],
+        enabled: true,
+      }],
+    },
   ];
   db.prepare(`INSERT INTO apps (id, name, description, status, steps, company_id) VALUES (?, ?, ?, 'published', ?, ?)`)
     .run(qcAppId, 'Final QC Inspection', 'Pack-out quality gate — a torque re-check and a ship/hold decision.', JSON.stringify(qcSteps), orgId);
@@ -637,6 +676,14 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   const qcWidgets = widgetIndex(qcSteps);
   const insQcCompletion = db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, operator_user_id, started_at, completed_at, status, data, step_times, takt_exceeded_steps, company_id)
     VALUES (?, ?, 'Final QC Inspection', ?, ?, ?, datetime('now', ?), datetime('now', ?), 'completed', ?, ?, ?, ?)`);
+  // A run that recorded a Fail can never be a COMPLETED run any more — the
+  // step_exit trigger above blocks the last navigation, so the operator's only
+  // way out of a held unit is to leave the job. That closes the run as
+  // 'abandoned' with reason 'operator', which is what routes/completions.js
+  // stamps on that transition, so the held run below is seeded in exactly the
+  // state the live app would leave it in. No completed_at: it never finished.
+  const insQcHeldCompletion = db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, operator_user_id, started_at, status, abandoned_reason, data, step_times, takt_exceeded_steps, company_id)
+    VALUES (?, ?, 'Final QC Inspection', ?, ?, ?, datetime('now', ?), 'abandoned', 'operator', ?, ?, ?, ?)`);
   // end-minutes-ago, duration, torque, result — spread across ~4 days and 3 operators.
   // The last one has to fall inside today or Station 2 reports no inspected run
   // today at all — which is true, but only because the seed put it in yesterday.
@@ -645,6 +692,7 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
     [5730, 4, 15.1, 'Pass'], [4290, 5, 14.9, 'Pass'], [2850, 4, 15.2, 'Pass'],
     [1400, 6, 14.6, 'Fail'], [1380, 4, 15.0, 'Pass'], [qcToday, 5, 15.3, 'Pass'],
   ];
+  let qcHeldCompletionId = null, qcHeldAgoMin = null;
   qcRuns.forEach(([end, dur, torque, result], i) => {
     const cid = uuidv4();
     const [operatorUserId, operatorName] = ops[i % 3];
@@ -653,16 +701,24 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
     // the same one-in-a-few over-takt texture the assembly app's history has.
     const qcStepTimes = { 0: 4 + (i % 3), 1: 40 + (i % 2) * 12 };
     const qcTakts = qcSteps.map(st => Number(st.takt_time) || 0);
-    insQcCompletion.run(
-      cid, qcAppId, st2, operatorName, operatorUserId,
-      `-${end + dur} minutes`, `-${end} minutes`,
-      JSON.stringify({ final_torque: torque, qc_result: result }),
-      JSON.stringify(qcStepTimes),
-      JSON.stringify(Object.entries(qcStepTimes)
-        .filter(([idx, sec]) => qcTakts[idx] > 0 && sec > qcTakts[idx])
-        .map(([idx]) => Number(idx))),
-      orgId
-    );
+    const exceeded = JSON.stringify(Object.entries(qcStepTimes)
+      .filter(([idx, sec]) => qcTakts[idx] > 0 && sec > qcTakts[idx])
+      .map(([idx]) => Number(idx)));
+    const runData = JSON.stringify({ final_torque: torque, qc_result: result });
+    if (result === 'Fail') {
+      qcHeldCompletionId = cid;
+      qcHeldAgoMin = end;
+      insQcHeldCompletion.run(
+        cid, qcAppId, st2, operatorName, operatorUserId,
+        `-${end + dur} minutes`, runData, JSON.stringify(qcStepTimes), exceeded, orgId
+      );
+    } else {
+      insQcCompletion.run(
+        cid, qcAppId, st2, operatorName, operatorUserId,
+        `-${end + dur} minutes`, `-${end} minutes`, runData,
+        JSON.stringify(qcStepTimes), exceeded, orgId
+      );
+    }
     for (const [varName, raw] of Object.entries({ final_torque: torque, qc_result: result })) {
       const w = qcWidgets[varName];
       if (!w) continue;
@@ -671,6 +727,20 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
         isNum ? 'number' : 'pass_fail', isNum ? null : String(raw).toLowerCase(), isNum ? raw : null, `-${end} minutes`);
     }
   });
+
+  // The quality record the held run raised. The app's trigger writes exactly
+  // this — same title, same severity, same completion link — so the NCR list,
+  // the run it points at, and the app that produced it all tell one story
+  // instead of three. Without it the demo would show a Fail with nothing to
+  // show for it, which is the contradiction the trigger was added to end.
+  if (qcHeldCompletionId) {
+    insNcr.run(uuidv4(), `${tag}-NCR-104`, QC_HOLD_NCR_TITLE,
+      'Final visual failed at the pack-out quality gate. The unit is held for disposition — do not ship it. Raised automatically by the Final QC Inspection app.',
+      'major', 'open', 'production',
+      qcAppId, qcHeldCompletionId, null, null, 'Demo Visitor', '', '',
+      db.prepare(`SELECT date('now', '+2 days') AS d`).get().d, null,
+      `-${Math.max(1, qcHeldAgoMin) * 60} seconds`, orgId);
+  }
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────

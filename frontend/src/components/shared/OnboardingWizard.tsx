@@ -70,11 +70,11 @@ const STEPS: Step[] = [
     kind: 'tour',
     icon: Tablet,
     title: 'Operators run it',
-    body: 'Publish, and the app is live on the floor. The player is a full-screen, tablet-first runtime — big targets, one clear next action, and it keeps working when the Wi-Fi drops.',
+    body: 'Publish, and the app is live on the floor. The player is a full-screen, tablet-first runtime — big targets, one clear next action, and a run in progress keeps going if the Wi-Fi drops.',
     bullets: [
       'Operators sign in with a badge or PIN and pick their job',
       'Takt countdowns, kit checks and photo evidence are built in',
-      'Work done offline queues up and flushes when the connection returns',
+      'A run already started keeps recording offline and syncs when you reconnect.',
     ],
   },
   {
@@ -198,7 +198,12 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
   const back = () => setIndex(i => Math.max(0, i - 1));
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Welcome to HartMonitor"
+      className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+    >
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-5">
