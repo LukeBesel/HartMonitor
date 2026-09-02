@@ -1,4 +1,4 @@
-// ─── Request help (app shell) ─────────────────────────────────────────────────
+// ─── Call for help (app shell) ────────────────────────────────────────────────
 // The same Andon mechanism the operator player uses, available from anywhere in
 // the management app — a supervisor at a desk, a materials clerk in the aisle,
 // anyone who needs a team to know they're needed. Raised outside a run there is
@@ -79,7 +79,7 @@ function RequestHelpModal({ onClose }: { onClose: () => void }) {
         className="card w-full max-w-lg max-h-[88vh] overflow-y-auto"
         onClick={e => e.stopPropagation()}
         role="dialog"
-        aria-label="Request help"
+        aria-label="Call for help"
       >
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
           <div className="flex items-center gap-2.5">
@@ -87,7 +87,7 @@ function RequestHelpModal({ onClose }: { onClose: () => void }) {
               <LifeBuoy size={17} />
             </span>
             <div>
-              <h2 className="font-semibold text-gray-900 leading-tight">Request help</h2>
+              <h2 className="font-semibold text-gray-900 leading-tight">Call for help</h2>
               <p className="text-xs text-gray-500">Let a team know they're needed</p>
             </div>
           </div>
@@ -205,20 +205,20 @@ function RequestHelpModal({ onClose }: { onClose: () => void }) {
 }
 
 /** Sidebar entry point — sits beside Alerts so raising and reading help
- *  requests live in the same corner of the shell. */
+ *  calls live in the same corner of the shell. */
 export default function RequestHelpButton({ collapsed }: { collapsed: boolean }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <button
         onClick={() => setOpen(true)}
-        title={collapsed ? 'Request help' : undefined}
+        title={collapsed ? 'Call for help' : undefined}
         className={`flex items-center rounded-xl text-sm font-medium text-red-300/90 hover:text-white hover:bg-red-500/20 transition-all w-full ${
           collapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
         }`}
       >
         <LifeBuoy size={15} className="flex-shrink-0" />
-        {!collapsed && <span className="flex-1 text-left">Request help</span>}
+        {!collapsed && <span className="flex-1 text-left">Call for help</span>}
       </button>
       {/* Portalled to <body>: the sidebar is a transformed element, which makes
           it the containing block for any `position: fixed` descendant — without

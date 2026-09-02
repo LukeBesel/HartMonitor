@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import {
   LayoutDashboard, AppWindow, Database, BarChart3,
   Calendar, Trophy,
-  Users, Cpu, LayoutGrid,
+  Users, Cpu, LayoutGrid, Monitor,
   Package, ShieldCheck,
   Factory, CalendarRange, Layers, Tablet, Network, GitBranch,
   Boxes,
@@ -71,7 +71,7 @@ export const PINNED_ITEMS: NavItem[] = [];
 
 // Two-level navigation: the sidebar (level 1) lists only these workspaces; the
 // content-header tab bar (level 2) lists the focused workspace's screens.
-// A multi-tab page (Training, the CMMS, Materials) gets exactly ONE nav item —
+// A multi-tab page (Training, Maintenance, Materials) gets exactly ONE nav item —
 // its page-internal tabs are the sub-navigation.
 export const SECTIONS: NavSection[] = [
   {
@@ -88,6 +88,13 @@ export const SECTIONS: NavSection[] = [
       { to: '/dashboard',   icon: LayoutDashboard, label: 'Command Center', exact: true, module: 'production' },
       { to: '/andon',       icon: Bell,       label: 'Andon Board',     module: 'andon' },
       { to: '/shift-notes', icon: BookOpen,   label: 'Shift Notes',     module: 'shifts' },
+      // The physical thing an app runs on. It had no menu item at all — /stations
+      // was reachable only by typing the URL or landing on it from Settings —
+      // while three screens named it three different ways. One name (station),
+      // one entry, in the workspace that runs the floor. No `minRole`: anybody
+      // may READ the station list; the page itself keeps create/edit behind
+      // `canEdit`, the same gate it always had.
+      { to: '/stations',    icon: Monitor,    label: 'Stations',        module: 'production' },
       { to: '/reports/production', icon: BarChart3, label: 'Reports',   module: 'production' },
     ],
   },
@@ -123,10 +130,10 @@ export const SECTIONS: NavSection[] = [
     id: 'maintenance_ops',
     label: 'Maintenance',
     icon: Wrench,
-    description: 'Assets, PM schedules, maintenance work orders',
+    description: 'Assets, PM schedules, maintenance jobs',
     proOnly: true,
     items: [
-      { to: '/maintenance',  icon: Wrench,    label: 'CMMS',    proOnly: true, module: 'maintenance' },
+      { to: '/maintenance',  icon: Wrench,    label: 'Maintenance', proOnly: true, module: 'maintenance' },
       { to: '/reports/maintenance', icon: BarChart3, label: 'Reports', module: 'maintenance' },
     ],
   },
@@ -206,7 +213,10 @@ export const SECTIONS: NavSection[] = [
     icon: BarChart3,
     description: 'Analyze results and quality',
     items: [
-      { to: '/dashboards',       icon: LayoutGrid,  label: 'Dashboards',       module: 'apps' },
+      // One place to build and read a custom report. The saved thing is a
+      // REPORT — "dashboard" is the Command Center's word and naming both with
+      // it made one saved report look like two different objects.
+      { to: '/dashboards',       icon: LayoutGrid,  label: 'Report Builder',   module: 'apps' },
       // Tables are the lookup data an app READS (part specs, torque windows)
       // and where a "save a record" trigger WRITES. They sat in the Apps tab
       // row looking like a spreadsheet feature nobody asked for; they belong

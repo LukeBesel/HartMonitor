@@ -1,93 +1,44 @@
 import { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { AlertTriangle } from 'lucide-react';
-import DashboardView from './DashboardView';
+import DashboardView, { ReportSkeleton, ReportLoadFailed } from './DashboardView';
 
-// Per-workspace Reports pages (/reports/:category). Each category resolves to
-// the company's dedicated report dashboard — auto-created server-side on first
-// visit with sensible defaults — then renders the existing DashboardView
-// experience (grid, card editor, persistence) IN PLACE rather than forking it.
-// Rendering in place (instead of redirecting to /dashboards/:id) is what keeps
-// the URL — and therefore the sidebar workspace and its screen tabs — on the
-// workspace whose Reports tab the user clicked.
+// ─── /reports/:category — a resolver, and nothing else ────────────────────────
+// Each workspace's Reports screen IS the company's saved report for that
+// workspace (auto-created server-side on first visit). This file's whole job is
+// to turn the category in the URL into that report's id and hand it to the one
+// report view — no header, no error card, no skeleton of its own. When it had
+// its own chrome, one saved report looked like two different objects depending
+// on whether you opened it from a workspace's Reports tab or from the Report
+// Builder; the cards, the filter bar and the edit toggle all come from
+// DashboardView either way.
 //
-// The hand-off is also what puts the department/app/site filter bar and the
-// live freshness stamp on these pages: DashboardView owns both, and because the
-// filter selection is keyed by dashboard id, each workspace's Reports page
-// remembers its own scope independently of the custom dashboards.
-
-const CATEGORY_LABELS: Record<string, string> = {
-  production: 'Production Reports',
-  inventory: 'Inventory Reports',
-  quality: 'Quality Reports',
-  kaizen: 'Kaizen Reports',
-  maintenance: 'Maintenance Reports',
-  people: 'People Reports',
-};
+// It resolves IN PLACE rather than redirecting to /dashboards/:id, which is
+// what keeps the URL — and therefore the sidebar workspace and its tab bar — on
+// the workspace whose Reports tab the reader clicked.
 
 export default function CategoryReports() {
   const { category } = useParams<{ category: string }>();
-  const [dashboardId, setDashboardId] = useState<string | null>(null);
+  const [reportId, setReportId] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [retryKey, setRetryKey] = useState(0);
-  const isValid = !!category && category in CATEGORY_LABELS;
 
   useEffect(() => {
-    if (!isValid || !category) return;
+    if (!category) return;
     let cancelled = false;
     setError('');
-    setDashboardId(null);
+    setReportId(null);
     api.getCategoryDashboard(category)
-      .then(d => { if (!cancelled) setDashboardId(d.id); })
+      .then(d => { if (!cancelled) setReportId(d.id); })
+      // An unknown category answers with the server's own list of the real
+      // ones, so this screen never keeps a second copy of that list.
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load reports');
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load this report');
       });
     return () => { cancelled = true; };
-  }, [category, isValid, retryKey]);
+  }, [category, retryKey]);
 
-  if (!isValid) {
-    return (
-      <div className="p-6 flex flex-col items-center justify-center py-24 gap-3 text-center">
-        <AlertTriangle size={40} className="text-red-400" />
-        <div>
-          <p className="font-medium text-gray-500">Unknown reports workspace</p>
-          <p className="text-sm text-gray-400 mt-1">
-            "{category}" is not a valid workspace — try production, inventory, quality, kaizen, maintenance or people.
-          </p>
-        </div>
-        <Link to="/dashboard" className="text-blue-600 text-sm hover:underline">← Back to Command Center</Link>
-      </div>
-    );
-  }
-
-  if (error) {
-    return (
-      <div className="p-6 flex flex-col items-center justify-center py-24 gap-3 text-center">
-        <AlertTriangle size={40} className="text-red-400" />
-        <div>
-          <p className="font-medium text-gray-500">Couldn't load {CATEGORY_LABELS[category!]}</p>
-          <p className="text-sm text-gray-400 mt-1">{error}</p>
-        </div>
-        <button className="btn-secondary" onClick={() => setRetryKey(k => k + 1)}>Retry</button>
-        <Link to="/dashboard" className="text-blue-600 text-sm hover:underline">← Back to Command Center</Link>
-      </div>
-    );
-  }
-
-  if (!dashboardId) {
-    // Same skeleton shape DashboardView shows while loading.
-    return (
-      <div className="p-6 space-y-5">
-        <div className="h-9 w-64 animate-pulse bg-gray-200 rounded-lg" />
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {[1, 2, 3, 4].map(i => (
-            <div key={i} className="h-48 animate-pulse bg-white border border-gray-200 rounded-2xl" />
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  return <DashboardView dashboardId={dashboardId} />;
+  if (error) return <ReportLoadFailed message={error} onRetry={() => setRetryKey(k => k + 1)} />;
+  if (!reportId) return <ReportSkeleton />;
+  return <DashboardView dashboardId={reportId} />;
 }

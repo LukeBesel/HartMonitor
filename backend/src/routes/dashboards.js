@@ -1,7 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
-const { avgRunSecondsSQL, roundSeconds } = require('../cycleTime');
+const { avgRunSecondsSQL, avgRunBasisSQL, roundSeconds } = require('../cycleTime');
 const { logActivity } = require('../activity');
 const { plantDayShift } = require('../plantDay');
 
@@ -230,18 +230,24 @@ function computeCardData(card, companyId, filters = {}) {
 
   switch (card.type) {
 
+    // Every metric card carries a `unit` saying what its number IS — 'count',
+    // 'percent' or 'duration' — so the view formats it instead of sniffing the
+    // card's title for the word "min". A duration also carries the seconds it
+    // averaged (`avg_cycle_seconds`) and what those runs were measured on
+    // (`avg_cycle_basis`), which is what lets a report card print a duration
+    // through the same formatter as every other screen.
     case 'metric': {
       switch (card.metric_key) {
         case 'total_completions':
-          return { value: db.prepare(`SELECT COUNT(*) as c FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed'${scope.where}`).get(companyId, ...scope.params).c };
+          return { unit: 'count', value: db.prepare(`SELECT COUNT(*) as c FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed'${scope.where}`).get(companyId, ...scope.params).c };
         case 'today_completions': {
           // The plant's today, so a custom dashboard tile agrees with the
           // Command Center tile beside it instead of rolling over at midnight UTC.
           const day = plantDayShift(companyId);
-          return { value: db.prepare(`SELECT COUNT(*) as c FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND date(c.completed_at, ?)=date('now', ?)${scope.where}`).get(companyId, day, day, ...scope.params).c };
+          return { unit: 'count', value: db.prepare(`SELECT COUNT(*) as c FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND date(c.completed_at, ?)=date('now', ?)${scope.where}`).get(companyId, day, day, ...scope.params).c };
         }
         case 'active_runs':
-          return { value: db.prepare(`SELECT COUNT(*) as c FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='in_progress'${scope.where}`).get(companyId, ...scope.params).c };
+          return { unit: 'count', value: db.prepare(`SELECT COUNT(*) as c FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='in_progress'${scope.where}`).get(companyId, ...scope.params).c };
         case 'pass_rate': {
           // Only runs that actually recorded a Pass/Fail count — runs with no QC
           // step are not silently scored as passes, and no QC data at all reports
@@ -254,43 +260,68 @@ function computeCardData(card, companyId, filters = {}) {
             else if (v.some(x => x === 'Pass')) { total++; pass++; }
           }
           return total > 0
-            ? { value: Math.round((pass / total) * 100), suffix: '%', sample_size: total }
-            : { value: null, empty_reason: 'No pass/fail results recorded yet' };
+            ? { unit: 'percent', value: Math.round((pass / total) * 100), suffix: '%', sample_size: total }
+            : { unit: 'percent', value: null, empty_reason: 'No pass/fail results recorded yet' };
         }
         case 'avg_cycle': {
-          const row = db.prepare(`SELECT ${avgRunSecondsSQL('c')} as v FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND c.completed_at IS NOT NULL${scope.where}`).get(companyId, ...scope.params);
+          const row = db.prepare(`
+            SELECT ${avgRunSecondsSQL('c')}    as v,
+                   ${avgRunBasisSQL('c')}      as basis,
+                   COUNT(*)                    as n
+            FROM completions c${scope.join}
+            WHERE c.company_id = ? AND c.status='completed' AND c.completed_at IS NOT NULL${scope.where}
+          `).get(companyId, ...scope.params);
           // Null-checked, not truthiness-checked: a line averaging a few seconds
           // per unit is a fast line, not an empty one, and `row?.v ? …` filed it
           // under "No completed runs yet".
+          //
+          // Seconds are the number; the rounded minutes (`value`/`suffix`) stay
+          // for one release so an older client keeps rendering. A new client
+          // reads `unit` + `avg_cycle_seconds` and never re-rounds.
           return row?.v != null
-            ? { value: Math.round((row.v / 60) * 10) / 10, seconds: roundSeconds(row.v), suffix: 'm' }
-            : { value: null, empty_reason: 'No completed runs yet' };
+            ? {
+                unit: 'duration',
+                value: Math.round((row.v / 60) * 10) / 10,
+                seconds: roundSeconds(row.v),
+                avg_cycle_seconds: roundSeconds(row.v),
+                avg_cycle_basis: row.basis ?? null,
+                sample_size: row.n,
+                suffix: 'm',
+              }
+            : {
+                unit: 'duration',
+                value: null,
+                seconds: null,
+                avg_cycle_seconds: null,
+                avg_cycle_basis: null,
+                empty_reason: 'No completed runs yet',
+              };
         }
         case 'period_completions':
-          return { value: db.prepare(`SELECT COUNT(*) as c FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND c.completed_at >= date('now','-'||?||' days')${scope.where}`).get(companyId, days, ...scope.params).c };
+          return { unit: 'count', value: db.prepare(`SELECT COUNT(*) as c FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND c.completed_at >= date('now','-'||?||' days')${scope.where}`).get(companyId, days, ...scope.params).c };
         // Workspace-report metrics (seeded by the /category/:category endpoint)
         case 'low_stock_items':
           // Deliberately unfiltered: reorder points are company-wide, so slicing
           // on-hand by site would report items as short that are stocked elsewhere.
-          return { value: db.prepare(`
+          return { unit: 'count', value: db.prepare(`
             SELECT COUNT(*) as c FROM items i
             WHERE i.company_id = ? AND i.is_active = 1 AND i.reorder_point > 0
               AND COALESCE((SELECT SUM(sl.quantity) FROM stock_levels sl WHERE sl.item_id = i.id), 0) <= i.reorder_point
           `).get(companyId).c };
         case 'open_ncrs': {
           const n = ncrScope(appId, filters);
-          return { value: db.prepare(`SELECT COUNT(*) as c FROM ncrs n${n.join} WHERE n.company_id = ? AND n.status NOT IN ('resolved','closed')${n.where}`).get(companyId, ...n.params).c };
+          return { unit: 'count', value: db.prepare(`SELECT COUNT(*) as c FROM ncrs n${n.join} WHERE n.company_id = ? AND n.status NOT IN ('resolved','closed')${n.where}`).get(companyId, ...n.params).c };
         }
         case 'open_maintenance_wos': {
           const where = filters.department_id ? ' AND department_id = ?' : '';
           const params = filters.department_id ? [filters.department_id] : [];
-          return { value: db.prepare(`SELECT COUNT(*) as c FROM maintenance_work_orders WHERE company_id = ? AND status IN ('open','in_progress','on_hold')${where}`).get(companyId, ...params).c };
+          return { unit: 'count', value: db.prepare(`SELECT COUNT(*) as c FROM maintenance_work_orders WHERE company_id = ? AND status IN ('open','in_progress','on_hold')${where}`).get(companyId, ...params).c };
         }
         case 'pm_due': {
           const join = filters.department_id ? ' LEFT JOIN assets a ON a.id = p.asset_id' : '';
           const where = filters.department_id ? ' AND a.department_id = ?' : '';
           const params = filters.department_id ? [filters.department_id] : [];
-          return { value: db.prepare(`
+          return { unit: 'count', value: db.prepare(`
             SELECT COUNT(*) as c FROM pm_schedules p${join}
             WHERE p.company_id = ? AND p.next_due_at IS NOT NULL
               AND date(p.next_due_at) <= date('now', ?, '+7 days')${where}
@@ -303,12 +334,12 @@ function computeCardData(card, companyId, filters = {}) {
             FROM training_records tr${t.join} WHERE tr.company_id = ?${t.where}
           `).get(companyId, ...t.params);
           return row.total > 0
-            ? { value: Math.round((row.certified / row.total) * 100), suffix: '%', sample_size: row.total }
-            : { value: null, empty_reason: 'No training records yet' };
+            ? { unit: 'percent', value: Math.round((row.certified / row.total) * 100), suffix: '%', sample_size: row.total }
+            : { unit: 'percent', value: null, empty_reason: 'No training records yet' };
         }
         default:
           // An unknown metric key is a configuration problem, not a zero.
-          return { value: null, empty_reason: `Unknown metric "${card.metric_key}"` };
+          return { unit: 'count', value: null, empty_reason: `Unknown metric "${card.metric_key}"` };
       }
     }
 
@@ -321,7 +352,7 @@ function computeCardData(card, companyId, filters = {}) {
             AND c.completed_at >= date('now','-'||?||' days')${scope.where}
           GROUP BY date(c.completed_at) ORDER BY date ASC
         `).all(companyId, days, ...scope.params);
-        return { series: [{ name: 'Completions', data: rows.map(r => ({ date: r.date, value: r.count })) }] };
+        return { unit: 'count', series: [{ name: 'Completions', data: rows.map(r => ({ date: r.date, value: r.count })) }] };
       }
       if (metric === 'cycle_time') {
         const rows = db.prepare(`
@@ -331,7 +362,11 @@ function computeCardData(card, companyId, filters = {}) {
             AND c.completed_at >= date('now','-'||?||' days')${scope.where}
           GROUP BY date(c.completed_at) ORDER BY date ASC
         `).all(companyId, days, ...scope.params);
-        return { series: [{ name: 'Avg Cycle (min)', data: rows }] };
+        // The values are minutes; `unit` says so, so the chart formats them
+        // through the one duration formatter instead of the view sniffing the
+        // series NAME for the word "min". A tooltip reading "30s" beside a tile
+        // reading "30s" is the whole point.
+        return { unit: 'minutes', series: [{ name: 'Avg Cycle', data: rows }] };
       }
       if (metric === 'quality') {
         const rows = db.prepare(`
@@ -354,7 +389,7 @@ function computeCardData(card, companyId, filters = {}) {
         }
         const data = Object.entries(byDate).sort(([a],[b])=>a.localeCompare(b))
           .map(([date, v]) => ({ date, value: Math.round((v.pass/v.total)*100) }));
-        return { series: [{ name: 'Pass Rate %', data }] };
+        return { unit: 'percent', series: [{ name: 'Pass Rate %', data }] };
       }
       // Workspace-report series (seeded by the /category/:category endpoint)
       if (metric === 'ncr_trend') {
@@ -365,7 +400,7 @@ function computeCardData(card, companyId, filters = {}) {
           WHERE n.company_id = ? AND n.created_at >= date('now','-'||?||' days')${n.where}
           GROUP BY date(n.created_at) ORDER BY date ASC
         `).all(companyId, days, ...n.params);
-        return { series: [{ name: 'NCRs Opened', data: rows }] };
+        return { unit: 'count', series: [{ name: 'NCRs Opened', data: rows }] };
       }
       if (metric === 'stock_movements') {
         // Movements carry a location, so only site is meaningful here.
@@ -378,9 +413,9 @@ function computeCardData(card, companyId, filters = {}) {
           WHERE i.company_id = ? AND m.created_at >= date('now','-'||?||' days')${where}
           GROUP BY date(m.created_at) ORDER BY date ASC
         `).all(companyId, days, ...params);
-        return { series: [{ name: 'Stock Movements', data: rows }] };
+        return { unit: 'count', series: [{ name: 'Stock Movements', data: rows }] };
       }
-      return { series: [] };
+      return { unit: 'count', series: [] };
     }
 
     case 'distribution': {
@@ -476,7 +511,7 @@ function computeCardData(card, companyId, filters = {}) {
           FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed'${scope.where}
           GROUP BY c.operator_name ORDER BY value DESC LIMIT ?
         `).all(companyId, ...scope.params, limit);
-        return { rows, label: 'Completions' };
+        return { rows, label: 'Completions', unit: 'count' };
       }
       if (metric === 'cycle_time') {
         const rows = db.prepare(`
@@ -485,9 +520,11 @@ function computeCardData(card, companyId, filters = {}) {
           FROM completions c${scope.join} WHERE c.company_id = ? AND c.status='completed' AND c.completed_at IS NOT NULL${scope.where}
           GROUP BY c.operator_name HAVING COUNT(*) >= 3 ORDER BY value ASC LIMIT ?
         `).all(companyId, ...scope.params, limit);
-        return { rows, label: 'Avg Cycle (min)', lower_is_better: true };
+        // `unit` is the fact; the label no longer has to smuggle it in as the
+        // word "min" for the view to sniff back out.
+        return { rows, label: 'Avg Cycle', unit: 'minutes', lower_is_better: true };
       }
-      return { rows: [] };
+      return { rows: [], unit: 'count' };
     }
 
     case 'wo_status': {

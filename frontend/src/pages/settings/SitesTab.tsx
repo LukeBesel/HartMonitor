@@ -1,4 +1,4 @@
-// ─── Sites, departments, work stations and shifts ───────────────────────────
+// ─── Sites, departments, stations and shifts ────────────────────────────────
 import Toggle from '../../components/shared/Toggle';
 import { useState, useEffect, useRef } from 'react';
 import { Building2, Plus, Trash2, Edit2, X, ChevronRight, MapPin, Network, Code, Cpu } from 'lucide-react';
@@ -227,17 +227,17 @@ export function SitesTab() {
       await api.createStation({ name: newStationName.trim(), department_id: selectedDept.id, site_id: selectedSite!.id });
       setNewStationName(''); setAddingStation(false);
       loadStations(selectedDept.id);
-    } catch (err: any) { showToast(err.message || 'Failed to add workstation', 'error'); }
+    } catch (err: any) { showToast(err.message || 'Failed to add station', 'error'); }
     finally { setSavingStation(false); }
   };
 
   const handleDeleteStation = async (id: string, name: string) => {
-    if (!confirm(`Delete workstation "${name}"?`)) return;
+    if (!confirm(`Delete station "${name}"?`)) return;
     setDeletingId(id);
     try {
       await api.deleteStation(id);
       if (selectedDept) loadStations(selectedDept.id);
-    } catch (err: any) { showToast(err.message || 'Failed to delete workstation', 'error'); }
+    } catch (err: any) { showToast(err.message || 'Failed to delete station', 'error'); }
     finally { setDeletingId(null); }
   };
 
@@ -264,7 +264,7 @@ export function SitesTab() {
         <div className="text-xs text-gray-600 leading-relaxed">
           <span className="font-semibold text-gray-800">Build your facility hierarchy here.</span>
           {' '}Click a <span className="font-medium text-gray-700">Site</span> to see its departments,
-          then click a <span className="font-medium text-gray-700">Department</span> to manage its workstations.
+          then click a <span className="font-medium text-gray-700">Department</span> to manage its stations.
           Apps and work orders are then assigned to these.
         </div>
       </div>
@@ -405,11 +405,11 @@ export function SitesTab() {
           )}
         </div>
 
-        {/* Column 3: Workstations */}
+        {/* Column 3: Stations */}
         <div className={colCls}>
           <div className={headCls}>
             <div className="min-w-0 flex items-center gap-1.5 overflow-hidden">
-              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex-shrink-0">Workstations</span>
+              <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex-shrink-0">Stations</span>
               {selectedDept && <span className="text-xs text-gray-400 truncate">· {selectedDept.name}</span>}
             </div>
             {selectedDept && (
@@ -429,7 +429,7 @@ export function SitesTab() {
             ) : stations.length === 0 && !addingStation ? (
               <div className={emptyCls}>
                 <Cpu size={22} className="text-gray-200" />
-                No workstations yet — click Add
+                No stations yet — click Add
               </div>
             ) : stations.map(s => (
               <div key={s.id} className="flex items-center justify-between px-3 py-2.5 border-b border-gray-50 hover:bg-gray-50 group">
@@ -451,14 +451,14 @@ export function SitesTab() {
             <div className="border-t border-gray-100 p-2.5 flex-shrink-0 space-y-1.5">
               <input
                 className="input-field w-full text-xs"
-                placeholder="Workstation name (e.g. Station A-1)"
+                placeholder="Station name (e.g. Station A-1)"
                 value={newStationName}
                 onChange={e => setNewStationName(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter') handleAddStation(); if (e.key === 'Escape') setAddingStation(false); }}
               />
               <div className="flex gap-1.5">
                 <button onClick={handleAddStation} disabled={!newStationName.trim() || savingStation} className="btn-primary text-xs py-1 px-3 flex-1">
-                  {savingStation ? 'Saving…' : 'Add Workstation'}
+                  {savingStation ? 'Saving…' : 'Add Station'}
                 </button>
                 <button onClick={() => { setAddingStation(false); setNewStationName(''); }} className="text-xs text-gray-400 hover:text-gray-600 px-2">✕</button>
               </div>

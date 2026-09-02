@@ -93,7 +93,7 @@ export const WALKTHROUGHS: Record<string, WalkthroughStep[]> = {
     },
     {
       title: 'Runs as they land',
-      body: 'Every run your apps record appears here with the time it took, and anything still on the bench counts up live so you can see what is taking longer than it should.',
+      body: 'Every run your apps record appears here with the time it took, and anything still running counts up live so you can see what is taking longer than it should.',
       icon: Clock,
       target: '[data-tour="latest-runs"]',
     },
@@ -252,16 +252,16 @@ export const WALKTHROUGHS: Record<string, WalkthroughStep[]> = {
   // ───────────────────────────────── Stations ───────────────────────────────
   stations: [
     {
-      title: 'Set up your work centers',
-      body: 'Stations are your physical workstations linked to apps. Configure each one so the floor knows what to run and the system can measure it.',
+      title: 'Set up your stations',
+      body: 'A station is one place on your floor where work happens, linked to the app that runs there. Configure each one so the floor knows what to run and the system can measure it.',
       icon: Monitor,
     },
     {
       title: 'Create a station',
-      body: 'Add a station for each physical workstation on your floor. This is the bridge between a real machine or bench and the system.',
+      body: 'Add a station for each place work happens on your floor. This is the bridge between the real floor and the system.',
       icon: Plus,
       bullets: [
-        'One station per physical work center',
+        'One station per place work happens',
         'Name it to match the floor signage',
       ],
     },

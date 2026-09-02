@@ -5,6 +5,13 @@
 // and validation of the category segment. Spins up the real server against a
 // throwaway database.
 //
+// Also covers the report CARD PAYLOAD, because a workspace's Reports page and a
+// custom report are the same object rendered by the same view: every metric
+// card says what its number IS (`unit`), a duration hands back the seconds it
+// averaged and what those runs were measured on, and a metric with nothing
+// behind it says why instead of reporting a zero. Without the unit the view was
+// sniffing the card's LABEL for the word "min" to decide how to format it.
+//
 // Uses Node built-ins only (node:test + global fetch). Run with: npm test
 
 const { describe, it, before, after } = require('node:test');
@@ -208,5 +215,101 @@ describe('Per-category Reports dashboards', () => {
   it('requires authentication', async () => {
     const r = await api('GET', '/api/dashboards/category/production', {});
     assert.equal(r.status, 401);
+  });
+
+  // ── The card payload says what its number is ───────────────────────────────
+
+  it('gives every metric card a unit, so no view has to guess from a label', async () => {
+    const d = await api('GET', '/api/dashboards/category/production', { token: tokenB });
+    const data = await api('GET', `/api/dashboards/${d.json.id}/data`, { token: tokenB });
+    assert.equal(data.status, 200);
+    const byId = Object.fromEntries(data.json.cards.map(c => [c.card_id, c.data]));
+    for (const card of d.json.cards.filter(c => c.type === 'metric')) {
+      const payload = byId[card.id];
+      assert.ok(payload, `metric card ${card.title} returned no payload`);
+      assert.ok(
+        ['count', 'percent', 'duration'].includes(payload.unit),
+        `metric "${card.title}" must carry a unit, got ${JSON.stringify(payload.unit)}`,
+      );
+    }
+  });
+
+  it('reports an average cycle in seconds, with its basis, and says why when there is none', async () => {
+    // Company B has run nothing yet: "—" and a reason, never a zero.
+    const empty = await api('GET', '/api/dashboards/category/production', { token: tokenB });
+    const emptyCard = empty.json.cards.find(c => c.metric_key === 'avg_cycle');
+    assert.ok(emptyCard, 'production reports must include an average cycle card');
+    const emptyData = await api('GET', `/api/dashboards/${empty.json.id}/data`, { token: tokenB });
+    const emptyPayload = emptyData.json.cards.find(c => c.card_id === emptyCard.id).data;
+    assert.equal(emptyPayload.unit, 'duration');
+    assert.equal(emptyPayload.value, null);
+    assert.equal(emptyPayload.avg_cycle_seconds, null);
+    assert.equal(emptyPayload.avg_cycle_basis, null);
+    assert.ok(emptyPayload.empty_reason, 'an empty average must say why');
+
+    // One run of exactly 30 hands-on seconds, for company B.
+    const app = await api('POST', '/api/apps', { token: tokenB, body: { name: 'Cycle App', status: 'published' } });
+    assert.equal(app.status, 201);
+    const run = await api('POST', '/api/completions', { token: tokenB, body: { app_id: app.json.id, operator_name: 'Ana' } });
+    assert.equal(run.status, 201);
+    const done = await api('PUT', `/api/completions/${run.json.id}`, {
+      token: tokenB, body: { status: 'completed', step_times: { 'step-1': 30 } },
+    });
+    assert.equal(done.status, 200);
+
+    const filled = await api('GET', `/api/dashboards/${empty.json.id}/data`, { token: tokenB });
+    const payload = filled.json.cards.find(c => c.card_id === emptyCard.id).data;
+    assert.equal(payload.unit, 'duration');
+    // The seconds are the number the view formats — 30s, exactly as every other
+    // screen prints the same run. The rounded minutes stay for one release.
+    assert.equal(payload.avg_cycle_seconds, 30);
+    assert.equal(payload.seconds, 30);
+    assert.equal(payload.value, 0.5);
+    assert.equal(payload.avg_cycle_basis, 'hands_on');
+    assert.equal(payload.sample_size, 1);
+  });
+
+  it('says a cycle-time CHART is in minutes, so its axis and tooltip read like a duration', async () => {
+    // The tile and the chart beside it are the same average. While the series
+    // was named "Avg Cycle (min)" and the view sniffed that name, the tile read
+    // "30s" and the chart read "0.5" — one number, two readings.
+    const d = await api('GET', '/api/dashboards/category/production', { token: tokenB });
+    const chart = d.json.cards.find(c => c.type === 'time_series' && c.series === 'cycle_time');
+    assert.ok(chart, 'production reports must include a cycle time trend');
+    const data = await api('GET', `/api/dashboards/${d.json.id}/data`, { token: tokenB });
+    const payload = data.json.cards.find(c => c.card_id === chart.id).data;
+    assert.equal(payload.unit, 'minutes');
+    assert.equal(payload.series[0].name, 'Avg Cycle');
+    assert.ok(!/\bmin\b/i.test(payload.series[0].name), 'the unit is a field, not a word in the series name');
+    // The one run seeded above averaged 30 seconds = 0.5 minutes.
+    assert.deepEqual(payload.series[0].data.map(r => r.value), [0.5]);
+  });
+
+  it('says a leaderboard of cycle times is in minutes instead of hiding it in the label', async () => {
+    const d = await api('GET', '/api/dashboards/category/production', { token: tokenB });
+    const cards = [
+      ...d.json.cards,
+      { id: 'lb-cycle', type: 'leaderboard', title: 'Fastest operators', leaderboard_metric: 'cycle_time', size: 'md' },
+      { id: 'lb-count', type: 'leaderboard', title: 'Most completions', leaderboard_metric: 'completions', size: 'md' },
+    ];
+    const upd = await api('PUT', `/api/dashboards/${d.json.id}`, { token: tokenB, body: { cards } });
+    assert.equal(upd.status, 200);
+
+    const data = await api('GET', `/api/dashboards/${d.json.id}/data`, { token: tokenB });
+    const byId = Object.fromEntries(data.json.cards.map(c => [c.card_id, c.data]));
+    assert.equal(byId['lb-cycle'].unit, 'minutes');
+    assert.equal(byId['lb-cycle'].label, 'Avg Cycle');
+    assert.ok(!/\bmin\b/i.test(byId['lb-cycle'].label), 'the unit is a field, not a word in the label');
+    assert.equal(byId['lb-count'].unit, 'count');
+  });
+
+  // ── The retired second answer ──────────────────────────────────────────────
+
+  it('no longer serves GET /analytics/manager-view', async () => {
+    // Four screens used to answer "what is the floor doing"; one does now, and
+    // this endpoint's last consumer went with the others. A route nobody reads
+    // is a second answer waiting to disagree with /plant-view.
+    const r = await api('GET', '/api/analytics/manager-view', { token: tokenA });
+    assert.equal(r.status, 404);
   });
 });

@@ -295,17 +295,17 @@ export default function StationView() {
           </div>
         </div>
 
-        {/* Machine events */}
+        {/* Station events */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-gray-900">Machine Events</h2>
+            <h2 className="font-semibold text-gray-900">Station Events</h2>
             <Link to="/analytics?tab=oee" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
-              <Gauge size={12} /> OEE Tracker
+              <Gauge size={12} /> OEE
             </Link>
           </div>
           <div className="space-y-2.5">
             {recentEvents.length === 0 && (
-              <div className="text-center text-gray-400 text-xs py-6">No events logged. Use the OEE Tracker to log up/down/maintenance events.</div>
+              <div className="text-center text-gray-400 text-xs py-6">No events logged. Log up/down/maintenance events from the OEE tab on App comparison.</div>
             )}
             {recentEvents.map(ev => (
               <div key={ev.id} className="flex items-start gap-2.5 text-xs">

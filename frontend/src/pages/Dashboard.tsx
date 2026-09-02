@@ -27,6 +27,7 @@ import { attentionIcon, attentionLabel } from '../config/attention';
 import { ANDON_TEAMS, ANDON_TEAM_ORDER, teamConfig } from '../config/andonTeams';
 import { subscribeRealtime, isAndonEvent } from '../utils/realtime';
 import { onTrackSentence } from '../utils/floorWording';
+import { displayId, hasCompanyTag } from '../utils/ids';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
 import OnboardingWizard from '../components/shared/OnboardingWizard';
@@ -76,7 +77,7 @@ interface PlantViewData {
      *  still open. The column heading is "When", so this is what it shows. */
     activity_at?: string | null;
     completed_at?: string | null;
-    /** When the run went on the bench. What a live elapsed counts from. */
+    /** When the run started. What a live elapsed counts from. */
     started_at?: string | null;
     /** True for the rows a completions table may count as completions. */
     is_complete?: boolean;
@@ -195,7 +196,7 @@ function SkeletonBox({ className = '' }: { className?: string }) {
   return <div className={`bg-gray-200 animate-pulse rounded ${className}`} />;
 }
 
-/** Seconds a still-open run has been on the bench, ticking once a second — the
+/** Seconds a still-open run has been running, ticking once a second — the
  *  one thing the retired third floor screen did that nothing else did. */
 function useLiveElapsed(startedAt: string | null | undefined, fallback: number | null | undefined) {
   const [seconds, setSeconds] = useState<number | null>(() => elapsedSeconds(startedAt) ?? fallback ?? null);
@@ -518,11 +519,11 @@ export default function Dashboard() {
   const attentionHidden = attention.length - attentionShown.length;
   const openCallCount = allAttention.filter(i => i.type === 'andon_call').length;
 
-  // A brand-new workspace: nothing has ever been scheduled, run, or flagged.
+  // A brand-new company: nothing has ever been scheduled, run, or flagged.
   // The CTA disappears the moment sample data (which creates work orders) loads.
   // Never shown while a filter is on — an empty DEPARTMENT is not an empty
   // company, and "build your first app" would be a lie on a running plant.
-  const isEmptyWorkspace = !loading && !floorLoading && !!snapshot && !filtersActive
+  const isEmptyCompany = !loading && !floorLoading && !!snapshot && !filtersActive
     && snapshot.total_work_orders === 0
     && snapshot.finished_today === 0
     && snapshot.running_now === 0
@@ -600,7 +601,7 @@ export default function Dashboard() {
           { icon: LayoutDashboard, label: 'Command Center', desc: 'Your home base — what needs attention, then the whole plant, live.' },
           { icon: Tablet,          label: 'Operator Portal', desc: 'The shop-floor screen operators use to pick a job and start working.' },
           { icon: AppWindow,       label: 'App Library & Builder', desc: 'Build drag-and-drop digital work instructions, then publish them.' },
-          { icon: Building2,       label: 'Departments & Stations', desc: 'Define work centers and watch live status across the floor.' },
+          { icon: Building2,       label: 'Departments & Stations', desc: 'Define stations and watch live status across the floor.' },
           { icon: CalendarRange,   label: 'Planning & Schedule', desc: 'Schedule work orders, balance capacity, and plan inventory.' },
           { icon: GitBranch,       label: 'Routings', desc: 'Define step-by-step manufacturing sequences with cycle times.' },
           { icon: BarChart2,       label: 'Reporting & Analytics', desc: 'Track throughput, cycle times, OEE, and custom dashboards.' },
@@ -624,7 +625,7 @@ export default function Dashboard() {
       />
 
       {/* First-run empty state — offer to populate a realistic starter dataset */}
-      {isEmptyWorkspace && (
+      {isEmptyCompany && (
         <div className="rounded-2xl border border-pink-200 bg-gradient-to-br from-pink-50 via-white to-indigo-50 p-6 sm:p-8 shadow-sm">
           <div className="flex flex-col sm:flex-row sm:items-center gap-5">
             <div className="w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 text-white shadow-lg"
@@ -632,7 +633,7 @@ export default function Dashboard() {
               <Sparkles size={26} />
             </div>
             <div className="flex-1 min-w-0">
-              <h2 className="text-lg font-bold text-gray-900">Your workspace is ready — build your first app</h2>
+              <h2 className="text-lg font-bold text-gray-900">Your company is set up — build your first app</h2>
               <p className="text-sm text-gray-600 mt-1">
                 Every number on this page comes from an app your floor runs. Build one — a guided
                 procedure with the checks and readings you want captured — and this dashboard fills
@@ -787,6 +788,8 @@ export default function Dashboard() {
                         <span className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full border ${cfg.chip}`}>
                           {item.target_label ?? item.team_label ?? cfg.label}
                         </span>
+                        {/* A composite label the server wrote — an id, a
+                            separator and a sentence. Printed as it came. */}
                         <span className="text-sm font-medium text-gray-900 truncate">{item.label}</span>
                         <span className={`text-xs font-semibold tabular-nums ${item.severity === 'red' ? 'text-red-600' : 'text-amber-600'}`}>
                           {item.age_minutes ?? 0}m
@@ -867,7 +870,7 @@ export default function Dashboard() {
           and shrink together. */}
       {/* The card is here whatever the company has in it. A tour step, and a
           manager's eye, both need somewhere stable to land: on a brand-new
-          workspace with no departments and no apps this says what would make
+          company with no departments and no apps this says what would make
           filtering possible instead of vanishing. */}
       <div className="card p-4 sm:p-5" data-testid="department-picker" data-tour="filters">
         {/* "Where is WO-1042?" — the same box, and the same server-written
@@ -1163,7 +1166,7 @@ export default function Dashboard() {
       </div>
 
       {/* Latest runs — the cycle times as they are captured, one row per run,
-          and a live count-up on whatever is still on the bench. */}
+          and a live count-up on whatever is still running. */}
       <div className="card p-5" data-tour="latest-runs">
         <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
           <div className="min-w-0">
@@ -1334,7 +1337,9 @@ export default function Dashboard() {
               <div key={wo.id} className="border border-gray-100 rounded-lg p-3">
                 <div className="flex items-center justify-between gap-2 mb-1.5">
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="font-semibold text-xs text-gray-900 truncate">{wo.work_order_number}</span>
+                    {/* WO-1001, the way the traveller and the barcode say it.
+                        The stored id carries a company tag; it stays in `title`. */}
+                    <span className="font-semibold text-xs text-gray-900 truncate" title={hasCompanyTag(wo.work_order_number) ? wo.work_order_number : undefined}>{displayId(wo.work_order_number)}</span>
                     <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${SCHEDULE_PILL[wo.schedule_status] ?? 'bg-gray-100 text-gray-600'}`}>
                       {wo.schedule_status.replace('_', ' ')}
                     </span>
@@ -1383,7 +1388,7 @@ export default function Dashboard() {
 
 /** One row of Latest runs. Three states, three honest readings.
  *
- *  A finished run has a cycle time. A run still on the bench has an
+ *  A finished run has a cycle time. A run that is still running has an
  *  elapsed-so-far, which is a different measurement, is labelled as one, and
  *  counts up live rather than freezing at whatever the last poll returned. An
  *  abandoned run has neither: nothing ever stamped it finished, so any figure

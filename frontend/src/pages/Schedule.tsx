@@ -21,6 +21,7 @@ import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
 import { getFloorDispatch, type DispatchRow } from '../api/floor';
 import { dispatchRowLabel } from '../api/operator';
 import { buildPlayLink } from '../components/player/runtime';
+import { displayId, hasCompanyTag } from '../utils/ids';
 import {
   previewWorkOrderImport, commitWorkOrderImport, verdictLabel,
   IMPORT_COLUMNS, IMPORT_TEMPLATE_URL,
@@ -1739,9 +1740,18 @@ function DispatchView({
               >
                 <div className="min-w-[12rem] flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-semibold text-gray-900 [font-variant-numeric:tabular-nums]">
-                      {row.work_order_number ?? row.app_name}
+                    {/* The number on the traveller, not the one in the
+                        database: the stored id carries a company tag the floor
+                        never says out loud. The full id stays in `title` for a
+                        support ticket to quote. */}
+                    <span
+                      className="font-semibold text-gray-900 [font-variant-numeric:tabular-nums]"
+                      title={hasCompanyTag(row.work_order_number) ? row.work_order_number! : undefined}
+                    >
+                      {row.work_order_number ? displayId(row.work_order_number) : row.app_name}
                     </span>
+                    {/* A part number is the customer's own numbering — never
+                        trimmed. "100234-01" is a part, not a tagged id. */}
                     {row.part_number && (
                       <span className="text-xs text-gray-500 font-mono">{row.part_number}</span>
                     )}
@@ -2130,7 +2140,7 @@ function ListView({
                   className={`hover:bg-gray-50 transition-colors ${isHighlighted(wo.id) ? 'nav-highlight' : ''}`}
                 >
                   <td className="px-4 py-3">
-                    <span className="font-mono text-xs font-semibold text-blue-700">{wo.work_order_number}</span>
+                    <span className="font-mono text-xs font-semibold text-blue-700" title={hasCompanyTag(wo.work_order_number) ? wo.work_order_number : undefined}>{displayId(wo.work_order_number)}</span>
                     {/* Where the job stands, on the row itself. Only for a
                         released job — a work order with no operations says
                         nothing here rather than "op 0 of 0". */}
@@ -2293,7 +2303,7 @@ function GanttView({
             return (
               <div key={wo.id} className="flex items-center border-b border-gray-100 hover:bg-gray-50 transition-colors h-10">
                 <div className="w-48 flex-shrink-0 px-4 text-xs text-gray-700 truncate border-r border-gray-100 flex flex-col justify-center">
-                  <span className="font-mono font-semibold text-blue-700">{wo.work_order_number}</span>
+                  <span className="font-mono font-semibold text-blue-700" title={hasCompanyTag(wo.work_order_number) ? wo.work_order_number : undefined}>{displayId(wo.work_order_number)}</span>
                   <span className="text-gray-500 truncate">{wo.part_name}</span>
                 </div>
                 <div className="flex-1 relative h-full">

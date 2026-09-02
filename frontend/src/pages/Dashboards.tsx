@@ -8,6 +8,14 @@ import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import { usePlan } from '../context/PlanContext';
 import { useAuth } from '../context/AuthContext';
 
+// ─── Report Builder (/dashboards) ─────────────────────────────────────────────
+// The one place to build and read a custom report. The saved thing is a REPORT
+// everywhere on this screen and inside it: "dashboard" names exactly one screen
+// in this product — the Command Center at /dashboard — and using the same word
+// for a saved object made one report look like two different things depending
+// on which door you came in by. The API's `dashboards` endpoints and the
+// `Dashboard` row type keep their names; the reader never sees either.
+
 export default function Dashboards() {
   const navigate = useNavigate();
   const [dashboards, setDashboards] = useState<Dashboard[]>([]);
@@ -27,7 +35,7 @@ export default function Dashboards() {
     setLoading(true);
     api.getDashboards()
       .then(d => { setDashboards(d); setLoadError(''); })
-      .catch((err: any) => setLoadError(err?.message || 'Failed to load dashboards'))
+      .catch((err: any) => setLoadError(err?.message || 'Failed to load your reports'))
       .finally(() => setLoading(false));
   };
 
@@ -45,7 +53,7 @@ export default function Dashboards() {
         setCreating(false);
         setLimitReason(err.message);
       } else {
-        alert(err.message || 'Failed to create dashboard');
+        alert(err.message || 'Failed to create this report');
       }
     } finally {
       setSaving(false);
@@ -53,12 +61,12 @@ export default function Dashboards() {
   };
 
   const handleDelete = async (id: string, name: string) => {
-    if (!confirm(`Delete dashboard "${name}"?`)) return;
+    if (!confirm(`Delete report "${name}"?`)) return;
     try {
       await api.deleteDashboard(id);
       setDashboards(prev => prev.filter(d => d.id !== id));
     } catch (err: any) {
-      alert(err.message || 'Failed to delete dashboard');
+      alert(err.message || 'Failed to delete this report');
     }
   };
 
@@ -84,13 +92,13 @@ export default function Dashboards() {
     <div className="min-h-screen bg-[#f8fafc] p-6 space-y-6">
       <ModuleOnboarding
         moduleId="dashboards"
-        title="Dashboards"
-        description="Dashboards are customizable views built from live data widgets."
+        title="Report Builder"
+        description="A report is a page of live cards you build yourself — KPIs, trends, breakdowns and tables, from your own production data."
         steps={[
-          "Click + to create a new dashboard",
-          "Add widgets: charts, KPIs, tables, status cards",
-          "Drag to arrange the layout",
-          "Share the URL with managers or display on a TV",
+          "Create a report and give it a name",
+          "Add cards: KPIs, charts, tables, status",
+          "Set each card's app, period and size",
+          "Share the URL with managers or display it on a TV",
         ]}
         icon={LayoutGrid}
         color="#ec4899"
@@ -99,16 +107,16 @@ export default function Dashboards() {
         <div>
           <div className="flex items-center gap-2">
             <LayoutGrid size={20} className="text-blue-600" />
-            <h1 className="text-2xl font-bold text-gray-900">Dashboards</h1>
+            <h1 className="text-2xl font-bold text-gray-900">Report Builder</h1>
           </div>
-          <p className="text-gray-500 text-sm mt-0.5">Build custom analytics dashboards from your production data</p>
+          <p className="text-gray-500 text-sm mt-0.5">Build a custom report from your production data</p>
         </div>
         {canEdit && (
           <button
             onClick={() => setCreating(true)}
             className="btn-primary"
           >
-            <Plus size={16} /> New Dashboard
+            <Plus size={16} /> New Report
           </button>
         )}
       </div>
@@ -116,12 +124,12 @@ export default function Dashboards() {
       {/* Create form */}
       {canEdit && creating && (
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm p-5 space-y-3">
-          <div className="text-sm font-semibold text-gray-900">Create New Dashboard</div>
+          <div className="text-sm font-semibold text-gray-900">Create a report</div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-gray-600 mb-1">Dashboard Name *</label>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Report name *</label>
               <input className="input-field" value={newName} onChange={e => setNewName(e.target.value)}
-                placeholder="e.g. Production Overview, Quality Report..."
+                placeholder="e.g. Line A Weekly, Quality Summary…"
                 onKeyDown={e => e.key === 'Enter' && handleCreate()} />
             </div>
             <div>
@@ -152,7 +160,7 @@ export default function Dashboards() {
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm py-16 flex flex-col items-center gap-3 text-center">
           <AlertTriangle size={40} className="text-red-400" />
           <div>
-            <p className="font-medium text-gray-500">Couldn't load dashboards</p>
+            <p className="font-medium text-gray-500">Couldn't load your reports</p>
             <p className="text-sm text-gray-400 mt-1">{loadError}</p>
           </div>
           <button className="btn-secondary" onClick={load}>Retry</button>
@@ -160,12 +168,12 @@ export default function Dashboards() {
       ) : dashboards.length === 0 ? (
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm py-16 text-center">
           <BarChart3 size={40} className="mx-auto mb-3 text-gray-200" />
-          <div className="text-gray-500 font-medium">No dashboards yet</div>
-          <p className="text-gray-400 text-sm mt-1">Create your first custom analytics dashboard</p>
+          <div className="text-gray-500 font-medium">No reports yet</div>
+          <p className="text-gray-400 text-sm mt-1">Build your first custom report from your production data</p>
           {canEdit && (
             <div className="flex flex-wrap items-center justify-center gap-2 mt-4">
               <button onClick={() => setCreating(true)} className="btn-primary">
-                <Plus size={16} /> Create Dashboard
+                <Plus size={16} /> Create a report
               </button>
               {isAtLeast('manager') && (
                 <button onClick={handleLoadSampleData} disabled={loadingSample} className="btn-secondary">

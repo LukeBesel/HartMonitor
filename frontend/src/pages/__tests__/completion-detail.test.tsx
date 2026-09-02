@@ -12,7 +12,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 // It now reads `step_times` for the times and the app blob for step names and
 // takt (in BOTH key spellings — the analytics endpoint only knows the legacy
 // `takt_time`, so v2 apps came back with no takt at all), resolves the station
-// id against the station list, and keeps a run that is still on the bench
+// id against the station list, and keeps a run that is still running
 // legible as running.
 
 const getCompletionDetail = vi.fn();
@@ -209,7 +209,14 @@ describe('CompletionDetail keeps a live run legible as live', () => {
     renderPage();
     await screen.findByText('Running now');
     expect(screen.getByText(/Running for/i)).toBeTruthy();
-    expect(screen.getByText(/still running/)).toBeTruthy();
+    // Both the elapsed line and the cycle-time cell say the same thing about
+    // the same run — "still running" — where one of them used to say the
+    // product's own phrase, "still on the bench".
+    expect(screen.getAllByText(/still running/).length).toBe(2);
+    // "Still on the bench" was this product's own phrase for it. A run in
+    // progress is RUNNING, in the same words the status chip and the per-app
+    // screen use, and the bench is nowhere on the page.
+    expect(document.body.textContent).not.toMatch(/bench/i);
     // A run that has not finished cannot be compared against an average yet.
     expect(screen.getAllByText('this run has not finished').length).toBe(2);
   });

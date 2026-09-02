@@ -134,6 +134,13 @@ test('claiming a sandbox keeps the workspace instead of starting an empty one', 
   const owner = claim.json.token;
   const me = await api('GET', '/api/auth/me', { token: owner });
   assert.equal(me.status, 200);
+  // The STORED role stays 'developer' — it is the permission level every role
+  // check and the users-table CHECK are written against — while the API hands
+  // the screens the name they print for it. A plant manager who created the
+  // account is the Owner; "developer" is a word no plant calls a person, and
+  // Settings used to print it straight out of the database.
+  assert.equal(me.json.role, 'developer', 'the stored role is untouched');
+  assert.equal(me.json.display_role, 'Owner', 'and it is shown as Owner');
   assert.equal(me.json.company_id, before.company.company_id, 'SAME workspace — not a new organisation');
   assert.equal(me.json.company_name, `Hart Machining ${stamp}`, 'renamed to the claimer’s company');
 

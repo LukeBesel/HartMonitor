@@ -73,9 +73,16 @@ describe('findSectionForPath (route → workspace derivation)', () => {
 
   it('returns null for routes outside every workspace', () => {
     expect(findSectionForPath('/settings')).toBeNull();
-    expect(findSectionForPath('/stations')).toBeNull();
     expect(findSectionForPath('/completions/c-1')).toBeNull();
     expect(findSectionForPath('/')).toBeNull();
+  });
+
+  it('puts the station list inside Production, where the floor is run', () => {
+    // /stations had no menu item at all: it was reachable by typing the URL or
+    // by landing on it from Settings, while three screens called the same
+    // physical thing three different names.
+    expect(findSectionForPath('/stations')?.id).toBe('production');
+    expect(findSectionForPath('/stations/st-1')?.id).toBe('production');
   });
 
   it('does not treat shared path prefixes as sub-routes', () => {
@@ -130,6 +137,38 @@ describe('one live-floor screen', () => {
   it('keeps the one production log, under its one name', () => {
     const paths = SECTIONS.flatMap(s => s.items.map(i => i.to));
     expect(paths.filter(p => p === '/audit-log')).toHaveLength(1);
+  });
+});
+
+describe('one name per thing', () => {
+  const labelFor = (to: string) => SECTIONS.flatMap(s => s.items).find(i => i.to === to)?.label;
+
+  it('gives the station list a menu item, named Stations', () => {
+    const production = SECTIONS.find(s => s.id === 'production')!;
+    const stations = production.items.find(i => i.to === '/stations');
+    expect(stations, 'Production has no Stations item').toBeDefined();
+    expect(stations!.label).toBe('Stations');
+    // Reading the list is open to everybody; the page itself keeps create and
+    // edit behind `canEdit`, which is the gate it always had.
+    expect(stations!.minRole).toBeUndefined();
+    expect(stations!.module).toBe('production');
+    // Reports stays last in the workspace.
+    expect(production.items[production.items.length - 1].to).toBe('/reports/production');
+  });
+
+  it('calls maintenance Maintenance, never an acronym', () => {
+    expect(labelFor('/maintenance')).toBe('Maintenance');
+    const labels = SECTIONS.flatMap(s => s.items.map(i => i.label));
+    expect(labels).not.toContain('CMMS');
+  });
+
+  it('names /dashboards for what it builds: reports', () => {
+    // "Dashboard" names exactly one screen — the Command Center at /dashboard.
+    // The saved thing you build at /dashboards is a report.
+    expect(labelFor('/dashboards')).toBe('Report Builder');
+    expect(labelFor('/dashboard')).toBe('Command Center');
+    const labels = SECTIONS.flatMap(s => s.items.map(i => i.label));
+    expect(labels).not.toContain('Dashboards');
   });
 });
 

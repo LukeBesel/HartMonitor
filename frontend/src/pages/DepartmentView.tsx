@@ -343,7 +343,7 @@ export default function DepartmentView() {
                 <div className="text-center text-gray-400 text-xs py-6">No runs recorded here yet</div>
               )}
               {recentCompletions.slice(0, 8).map(c => {
-                // A run still on the bench has elapsed time, not a cycle time.
+                // A run that is still running has elapsed time, not a cycle time.
                 // Printing it unlabelled would quietly fold a job that has not
                 // finished into the reader's sense of what a cycle costs.
                 const running = c.status === 'in_progress';
