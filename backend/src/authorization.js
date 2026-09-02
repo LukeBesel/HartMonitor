@@ -18,7 +18,8 @@
 //          and user id are copied FROM THE GRANT. Client-supplied values are
 //          ignored entirely.
 //
-// A grant is company-scoped, expires, and can be redeemed exactly once.
+// A grant is company-scoped, expires, is bound to the purpose it was raised
+// for, and can be redeemed exactly once.
 
 const crypto = require('crypto');
 const db = require('./db');
@@ -42,18 +43,39 @@ function issueGrant({ companyId, user, purpose = 'ncr' }) {
 }
 
 /**
- * Redeems a grant. Returns the authorizer { user_id, display_name, role } on
- * success, or null when the id is unknown, belongs to another company, has
- * expired, or was already used. Marks the row used in the same statement, so
- * two concurrent redemptions cannot both win.
+ * Redeems a grant FOR ONE STATED PURPOSE. Returns the authorizer
+ * { user_id, display_name, role } on success, or null when the id is unknown,
+ * belongs to another company, has expired, was already used, or was minted for
+ * something else. Marks the row used in the same statement, so two concurrent
+ * redemptions cannot both win.
+ *
+ * The purpose match is a SECURITY boundary, not bookkeeping. Without it every
+ * grant is a skeleton key: a supervisor who signs off one in-run NCR mints a
+ * twelve-hour credential that would equally have authorized a qualification
+ * override on any app for any operator. `purpose` is chosen by the client that
+ * asks for the PIN, so it is not a claim about identity — but it IS a claim
+ * about what the supervisor was shown and agreed to, and redeeming a grant for
+ * a different job than the one it was raised for must fail.
+ *
+ * Callers therefore pass the purpose they mean, and it must equal the purpose
+ * the grant was minted with, character for character. That makes the string a
+ * place to bind context too: routes/training.js mints
+ * `qualification_override:<app id>:<operator>` so one supervisor approval
+ * cannot be spent on a different app or a different person.
+ *
+ * @param {string} grantId
+ * @param {string} companyId
+ * @param {string} purpose  must equal the grant's own purpose exactly
  */
-function redeemGrant(grantId, companyId, usedFor = '') {
+function redeemGrant(grantId, companyId, purpose = '') {
   if (!grantId || typeof grantId !== 'string') return null;
+  if (!purpose || typeof purpose !== 'string') return null;
   const claimed = db.prepare(`
     UPDATE authorization_grants
        SET used_at = datetime('now'), used_for = ?
      WHERE id = ? AND company_id = ? AND used_at IS NULL AND expires_at > datetime('now')
-  `).run(String(usedFor).slice(0, 120), grantId, companyId);
+       AND purpose = ?
+  `).run(String(purpose).slice(0, 120), grantId, companyId, purpose);
   if (claimed.changes !== 1) return null;
   const row = db.prepare('SELECT user_id, display_name, role FROM authorization_grants WHERE id = ?').get(grantId);
   return row || null;

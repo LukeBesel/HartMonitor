@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import {
   GraduationCap, Award, ClipboardList, BarChart3, Plus, X, Pencil, Trash2,
   CheckCircle2, Clock, AlertTriangle, XCircle, RefreshCw, Search, ChevronDown,
@@ -1261,6 +1261,18 @@ export default function Training() {
   const { tab: tabParam } = useParams<{ tab: string }>();
 
   const [tab, setTab] = useState<Tab>(() => tabFromParam(tabParam));
+  // Six tabs are wider than the content column at 1024px, and TabBar scrolls
+  // inside itself rather than widening the page — which means the tab you are
+  // on can sit outside the visible strip, so the screen looks like it has no
+  // selected tab at all. Bring the current one into view. `block: 'nearest'`
+  // keeps this horizontal: it must never scroll the page down to a tab strip.
+  const tabStripRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const active = tabStripRef.current?.querySelector('[aria-current="page"]') as HTMLElement | null;
+    if (active && typeof active.scrollIntoView === 'function') {
+      active.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+    }
+  }, [tab]);
   const [summary, setSummary] = useState<any>(null);
   const [matrix, setMatrix] = useState<any>(null);
   const [matrixError, setMatrixError] = useState<string | null>(null);
@@ -1412,12 +1424,14 @@ export default function Training() {
         <span className="text-sm text-gray-400">{new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}</span>
       </div>
 
-      <TabBar
-        items={TABS.map(t => ({ key: t.id, label: t.label, icon: <t.icon size={15} /> }))}
-        active={tab}
-        onSelect={setTab}
-        ariaLabel="Training screens"
-      />
+      <div ref={tabStripRef}>
+        <TabBar
+          items={TABS.map(t => ({ key: t.id, label: t.label, icon: <t.icon size={15} /> }))}
+          active={tab}
+          onSelect={setTab}
+          ariaLabel="Training screens"
+        />
+      </div>
 
       {/* Tab content */}
       {tab === 'overview' && (

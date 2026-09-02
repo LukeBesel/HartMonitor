@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 import {
-  startRun as startRunRequest, notQualified,
+  startRun as startRunRequest, notQualified, verifyOverrideAuthorizer, mintOverrideToken,
 } from '../api/training';
 import type { NotQualified } from '../api/training';
 import { fmtDuration } from '../components/apps/appModel';
@@ -131,6 +131,15 @@ export default function AppPlayer() {
   const overrideProofRef = useRef<string | null>(null);
   /** The run is skipped straight past setup at most once per visit. */
   const autoStartedRef = useRef(false);
+  /**
+   * Did the deep link name the station, or is this just the last station this
+   * browser happened to use? Only the first is a fact about where the operator
+   * is standing. hm_station is a helpful default to PRESELECT; silently booking
+   * a run to it — on a tablet that was carried to another cell, or a spare
+   * picked off a bench — attributes work to the wrong machine and nobody sees
+   * a screen that says so.
+   */
+  const stationFromLink = searchParams.get('station') !== null;
   /** The operator has seen the concurrent-run warning and chosen to go on. */
   const [concurrentAck, setConcurrentAck] = useState(false);
   /** Abandoning is a destructive choice, so it gets a sheet that says what is
@@ -1202,12 +1211,23 @@ export default function AppPlayer() {
    * and the server writes the permanent override record itself.
    */
   const approveQualification = useCallback(async (pin: string) => {
-    if (qualSubmitting) return;
+    if (qualSubmitting || !id) return;
     setQualSubmitting(true);
     setQualError('');
     try {
-      const auth = await api.verifyAuthorizer(pin);
-      overrideProofRef.current = auth.authorization_id;
+      // Two bound steps, not one loose credential. The PIN is verified FOR THIS
+      // app and this operator (the purpose string carries both), and the grant
+      // that comes back is immediately exchanged for a token scoped to the same
+      // pair. Nothing the tablet holds afterwards would start anything else.
+      const who = { appId: id, userId: operatorUserId, operatorName };
+      const auth = await verifyOverrideAuthorizer(pin, who);
+      const minted = await mintOverrideToken({
+        appId: id,
+        userId: operatorUserId,
+        operatorName,
+        authorizerProof: auth.authorization_id,
+      });
+      overrideProofRef.current = minted.token;
       await startRun();
       pushToast('info', `Approved by ${auth.display_name}`);
     } catch (err) {
@@ -1216,7 +1236,7 @@ export default function AppPlayer() {
     } finally {
       setQualSubmitting(false);
     }
-  }, [qualSubmitting, startRun, pushToast]);
+  }, [qualSubmitting, id, operatorUserId, operatorName, startRun, pushToast]);
 
   // ── Nothing the portal already knows is asked twice ───────────────────────
   // The Operator Portal deep link carries who (uid), where (station) and what
@@ -1226,7 +1246,10 @@ export default function AppPlayer() {
   //
   // It waits for the in-progress list, because skipping setup must never skip
   // the concurrent-run warning — a silent auto-start onto a unit somebody else
-  // already has open would be worse than the screen it replaces.
+  // already has open would be worse than the screen it replaces. And it counts
+  // only a station the LINK named: a station merely remembered in this
+  // browser's localStorage is offered as a preselected default on the setup
+  // screen, never used to book a run nobody was shown.
   useEffect(() => {
     if (autoStartedRef.current) return;
     if (loading || !app || previewMode || status !== 'setup' || starting) return;
@@ -1234,7 +1257,7 @@ export default function AppPlayer() {
     const needed = setupNeeded(
       {
         operatorUserId,
-        stationId: selectedStationId,
+        stationId: stationFromLink ? selectedStationId : '',
         workOrderId: selectedWorkOrderId,
         partNumber: manualPartNumber,
         productTypeId: selectedProductTypeId,
@@ -1246,7 +1269,7 @@ export default function AppPlayer() {
     autoStartedRef.current = true;
     void startRun();
   }, [
-    loading, app, previewMode, status, starting, jobsLoaded, jobs,
+    loading, app, previewMode, status, starting, jobsLoaded, jobs, stationFromLink,
     operatorUserId, selectedStationId, selectedWorkOrderId, manualPartNumber,
     selectedProductTypeId, productTypes.length, productTypeLocked, startRun,
   ]);
@@ -1669,7 +1692,7 @@ export default function AppPlayer() {
           {/* Two-up fields. Each cell is one question; on a phone they stack. */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
             <div>
-              <label className="p-label">Operator</label>
+              <label className="p-label" htmlFor="setup-operator">Operator</label>
               {operatorUserId ? (
                 <div className="p-well flex items-center gap-2.5 px-4" style={{ minHeight: 56 }}>
                   <BadgeCheck size={19} style={{ color: 'var(--p-good)' }} />
@@ -1681,6 +1704,7 @@ export default function AppPlayer() {
                 </div>
               ) : (
                 <input
+                  id="setup-operator"
                   className="p-input" placeholder="Enter your name…" value={operatorName}
                   onChange={e => setOperatorName(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') void startRun(); }}
@@ -1706,8 +1730,8 @@ export default function AppPlayer() {
 
             {stations.length > 0 && (
               <div>
-                <label className="p-label">Station (optional)</label>
-                <select className="p-input" value={selectedStationId} onChange={e => setSelectedStationId(e.target.value)}>
+                <label className="p-label" htmlFor="setup-station">Station (optional)</label>
+                <select id="setup-station" className="p-input" value={selectedStationId} onChange={e => setSelectedStationId(e.target.value)}>
                   <option value="">— No station —</option>
                   {stations.map(s => (
                     <option key={s.id} value={s.id}>{s.name}{s.location ? ` · ${s.location}` : ''}</option>
@@ -1718,8 +1742,8 @@ export default function AppPlayer() {
 
             {workOrders.length > 0 && (
               <div>
-                <label className="p-label">Work Order {requireContext ? '' : '(optional)'}</label>
-                <select className="p-input" value={selectedWorkOrderId} onChange={e => { setSelectedWorkOrderId(e.target.value); setConcurrentAck(false); }}>
+                <label className="p-label" htmlFor="setup-work-order">Work Order {requireContext ? '' : '(optional)'}</label>
+                <select id="setup-work-order" className="p-input" value={selectedWorkOrderId} onChange={e => { setSelectedWorkOrderId(e.target.value); setConcurrentAck(false); }}>
                   <option value="">— No work order —</option>
                   {workOrders.map(wo => (
                     <option key={wo.id} value={wo.id}>{wo.work_order_number} · {wo.part_name} ({wo.quantity_completed}/{wo.quantity})</option>
@@ -1755,13 +1779,14 @@ export default function AppPlayer() {
 
             {productTypes.length > 0 && (
               <div>
-                <label className="p-label flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                <label className="p-label flex flex-wrap items-center gap-x-1.5 gap-y-1" htmlFor="setup-product-type">
                   <span className="inline-flex items-center gap-1.5">
                     <Tag size={14} style={{ color: 'var(--p-accent)' }} /> Product Type
                   </span>
                   {productTypeLocked && <span className="p-chip p-chip-gold" style={{ fontSize: 11 }}><Lock size={10} /> from work order</span>}
                 </label>
                 <select
+                  id="setup-product-type"
                   className="p-input" value={selectedProductTypeId} disabled={productTypeLocked}
                   onChange={e => setSelectedProductTypeId(e.target.value)}
                 >

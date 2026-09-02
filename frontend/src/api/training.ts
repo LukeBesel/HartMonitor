@@ -76,7 +76,7 @@ export const ENFORCEMENT_COPY: Record<TrainingEnforcement, { label: string; cons
   },
   block: {
     label: 'Block',
-    consequence: 'An operator with no sign-off, or an expired one, cannot start — until a supervisor approves it with their PIN. Every approval is kept, naming both people.',
+    consequence: "An operator with no sign-off, or an expired one, cannot start — until a supervisor approves it with their PIN. Every approval is kept, naming both people. The check is against the identity the tablet asserts (badge, PIN, or the typed name), so it is only as strong as how your floor clocks in.",
   },
 };
 
@@ -106,6 +106,39 @@ export function getOverrides(): Promise<QualificationOverride[]> {
 
 export function getBlockedStarts(days = 7): Promise<BlockedStarts> {
   return request<BlockedStarts>(`/training/blocked-starts?days=${days}`);
+}
+
+/**
+ * The purpose string a supervisor's PIN is asked for, binding one approval to
+ * one app and one person.
+ *
+ * It must match backend/src/qualification.js `overridePurpose` character for
+ * character: the server recomputes it from its own request body and hands it to
+ * redeemGrant, which only opens a grant minted with that exact purpose. That is
+ * what stops a grant raised to sign off an in-run NCR — or raised for a
+ * different operator on a different app — from being spent as an override here.
+ * A backend test asserts the two implementations agree.
+ */
+export function overridePurpose(appId: string, userId?: string | null, operatorName?: string | null): string {
+  const who = userId ? `u:${userId}` : `n:${(operatorName ?? '').trim().toLowerCase()}`;
+  return `qualification_override:${appId}:${who}`;
+}
+
+/**
+ * Verify a supervisor's PIN *for this override specifically*.
+ *
+ * This is the same POST /api/operators/verify-authorizer the in-run NCR sheet
+ * uses; the difference is the purpose, which names the app and the operator.
+ * The generic api.verifyAuthorizer() in client.ts sends no purpose at all, so
+ * its grants say 'ncr' and are useless here — deliberately.
+ */
+export function verifyOverrideAuthorizer(pin: string, p: {
+  appId: string; userId?: string | null; operatorName?: string | null;
+}): Promise<{ authorization_id: string; user_id: string; display_name: string; role: string }> {
+  return request('/operators/verify-authorizer', {
+    method: 'POST',
+    body: JSON.stringify({ pin, purpose: overridePurpose(p.appId, p.userId, p.operatorName) }),
+  });
 }
 
 /** Exchange a verified supervisor grant for a one-shot start token (10 min). */
@@ -139,12 +172,10 @@ export interface StartRunPayload {
  * X-Qualification-Override header — the header is the ONLY difference, so a
  * plant with the gate off sends exactly the request it sends today.
  *
- * The proof is either a token from mintOverrideToken(), or the
- * `authorization_id` a supervisor PIN just produced at
- * POST /api/operators/verify-authorizer. The player sends the second, because
- * /api/training is behind a supervisor write role and a tablet signed in as an
- * operator cannot call it — an override an operator can never obtain would not
- * be an override at all.
+ * The proof is a token from mintOverrideToken(), and only that: a raw
+ * supervisor grant is refused. The grant is the ticket to the token door, never
+ * the door itself, so a twelve-hour NCR sign-off can never be replayed as a
+ * universal start permit.
  */
 export function startRun<T = { id: string }>(payload: StartRunPayload, overrideProof?: string | null): Promise<T> {
   return request<T>('/completions', {

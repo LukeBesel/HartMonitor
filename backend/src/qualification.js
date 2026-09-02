@@ -40,7 +40,6 @@ const db = require('./db');
 const vocab = require('./vocab');
 const { plantDayShift } = require('./plantDay');
 const { logActivity } = require('./activity');
-const { redeemGrant } = require('./authorization');
 
 /** org_settings key holding the company's enforcement mode. */
 const ENFORCEMENT_KEY = 'training_enforcement';
@@ -51,6 +50,7 @@ const LOG_ENTITY = 'qualification';
 /** Action prefixes, so counting one kind never counts the other. */
 const BLOCKED_ACTION = 'Blocked start';
 const OVERRIDE_ACTION = 'Qualification override';
+const JOIN_ACTION = 'Qualification on join';
 
 /** How long a minted override token is good for. Long enough for a supervisor
  *  to walk over and type a PIN; short enough that a token left on a tablet is
@@ -151,12 +151,22 @@ function checkQualification(companyId, { userId, operatorName, appId }) {
   // the comparison carry the same shift, which is the whole rule in plantDay.js.
   __stats.trainingQueries += 1;
   const day = plantDayShift(companyId);
+  // UNIQUE(company_id, user_id, app_id) means there is normally one row — but a
+  // database restored from a double-seed, or migrated from before that
+  // constraint, can hold several. Picking whichever one SQLite happened to
+  // return first would make the gate non-deterministic on exactly the accounts
+  // least able to explain it, so the order is stated: a live certification
+  // wins, then the most recently touched row.
   const record = db.prepare(`
     SELECT status, certified_date, expiry_date,
            CASE WHEN expiry_date IS NOT NULL AND date(expiry_date) < date('now', ?)
                 THEN 1 ELSE 0 END AS lapsed
     FROM training_records
     WHERE company_id = ? AND user_id = ? AND app_id = ?
+    ORDER BY CASE WHEN status = 'certified' THEN 0 ELSE 1 END,
+             COALESCE(updated_at, created_at) DESC,
+             rowid DESC
+    LIMIT 1
   `).get(day, companyId, operator.id, appId);
 
   let state = 'none';
@@ -184,17 +194,21 @@ function checkQualification(companyId, { userId, operatorName, appId }) {
 // authorization grant. That mechanism is reused verbatim rather than a second
 // copy of PIN handling being written here.
 //
-// The header X-Qualification-Override on the start request therefore carries
-// ONE of two things, both single use and both rooted in that same PIN check:
+// The exchange is deliberately TWO steps, and both of them are bound:
 //
-//   • a token from POST /api/training/overrides — scoped to this app AND this
-//     operator, valid for ten minutes. This is the shape the API contract
-//     describes and what an integration would use.
-//   • an authorization grant id straight from verify-authorizer. This is what
-//     the player sends, because /api/training is mounted behind a supervisor
-//     write role: a tablet signed in as an operator can call verify-authorizer
-//     but cannot call /api/training/overrides at all, and an override an
-//     operator can never obtain is not an override.
+//   1. POST /api/operators/verify-authorizer { pin, purpose } where purpose is
+//      overridePurpose(appId, userId, operatorName) — see below. The grant that
+//      comes back can only ever be redeemed for that exact purpose string,
+//      because redeemGrant() matches on it (backend/src/authorization.js).
+//   2. POST /api/training/overrides exchanges that grant for a TOKEN, which
+//      this module holds, scoped to the same app and operator, for ten minutes.
+//
+// Only the token is accepted in the X-Qualification-Override header. A raw
+// grant is NOT, and that is the point: a grant raised for an in-run NCR
+// sign-off (purpose 'ncr', twelve-hour TTL) would otherwise have been a
+// skeleton key that started any app for any operator in the company. A
+// qualification grant is likewise useless anywhere but the exact app and
+// person the supervisor was shown when they typed their PIN.
 //
 // Tokens live in this process's memory, like the PIN lockout counters in
 // routes/operators.js: they are valid for ten minutes and are consumed once.
@@ -202,6 +216,22 @@ function checkQualification(companyId, { userId, operatorName, appId }) {
 // entry — the durable record is the qualification_overrides row, and that is
 // written to the database the moment a proof is consumed.
 const pendingOverrides = new Map();
+
+/**
+ * The purpose string that binds one supervisor approval to one app and one
+ * person. It is what the PIN is asked for and what the grant is redeemed for,
+ * so an approval raised for "Cara on Final QC" cannot be spent on "Maria on
+ * Bracket Assembly" — the strings differ and redeemGrant() refuses.
+ *
+ * The frontend builds the identical string (frontend/src/api/training.ts), so
+ * any change here has to change there; the test asserts both ends agree.
+ */
+function overridePurpose(appId, userId, operatorName) {
+  const who = userId
+    ? `u:${userId}`
+    : `n:${String(operatorName || '').trim().toLowerCase()}`;
+  return `qualification_override:${appId}:${who}`;
+}
 
 function sweepOverrides(now = Date.now()) {
   for (const [token, entry] of pendingOverrides) {
@@ -285,18 +315,9 @@ function consumeOverrideProof(companyId, proof, { appId, userId, operatorName, a
     return recordOverride(companyId, minted, { appName });
   }
 
-  // Otherwise: a supervisor authorization grant, redeemed the same way an
-  // in-run NCR redeems one. redeemGrant is atomic and single use.
-  const grant = redeemGrant(proof, companyId, 'qualification_override');
-  if (!grant) return null;
-  return recordOverride(companyId, {
-    app_id: appId,
-    user_id: userId || null,
-    operator_name: String(operatorName || ''),
-    approved_by_user_id: grant.user_id,
-    approved_by_name: grant.display_name || '',
-    reason: '',
-  }, { appName });
+  // Anything else — including a raw authorization grant — is not an override.
+  // The grant is the ticket to the token door, never the door itself.
+  return null;
 }
 
 /** Record a refused start so a manager can see what the setting is costing. */
@@ -324,7 +345,7 @@ function blockedStartsByApp(companyId, days = 7) {
       AND created_at >= datetime('now', ?)
     GROUP BY entity_id
   `).all(companyId, LOG_ENTITY, `${BLOCKED_ACTION}%`, window);
-  const out = {};
+  const out = Object.create(null);
   for (const r of rows) out[r.app_id] = r.blocked;
   return out;
 }
@@ -379,7 +400,12 @@ function enforceQualification(req, res, next) {
   let state = check.state;
   let overrideId = null;
   const proof = req.get('X-Qualification-Override');
-  if (proof) {
+  // Only spend an approval on a start that would otherwise be refused. A
+  // supervisor's ten-minute token burned by a certified operator's run — or by
+  // a run in 'warn', where nothing was going to be stopped — is an approval
+  // silently consumed for nothing, and the next start (the one that needed it)
+  // is refused with the supervisor already walked away.
+  if (proof && mode === 'block' && check.state !== 'certified') {
     overrideId = consumeOverrideProof(companyId, proof, {
       appId, userId: check.user_id, operatorName: check.operator_name, appName: check.app_name,
     });
@@ -425,10 +451,117 @@ function enforceQualification(req, res, next) {
   next();
 }
 
+/**
+ * The same gate on the OTHER door into a run.
+ *
+ * Refusing a start and then leaving `POST /api/completions/:id/sessions` open
+ * is not a gate, it is a speed bump: the refused operator taps "Resume their
+ * run" on the very next screen, joins somebody else's certified run, works the
+ * unit and completes it — and the finished record still reads
+ * qualification_state 'certified', because that is who STARTED it. The run
+ * history would then state, in writing, that a qualified person did work that
+ * an unqualified person did.
+ *
+ * So joining is gated too, with the same three modes. Two deliberate
+ * differences from the start gate:
+ *
+ *   • it stamps NOTHING on the completion. The run's qualification_state
+ *     belongs to whoever started it and must not be rewritten by a later
+ *     joiner — least of all downgraded, which would libel the person who
+ *     started it correctly. The joiner's own state goes in the activity log
+ *     (completion_sessions has no column for it, and completions.js is not
+ *     this workstream's file to alter).
+ *   • the app is resolved from the completion, company-scoped, not from the
+ *     request body — a joiner does not get to name the app they are joining.
+ */
+function enforceQualificationForJoin(req, res, next) {
+  const companyId = req.companyId;
+  if (!companyId) return next();
+
+  const mode = enforcementMode(companyId);
+  if (mode === 'off') return next();   // same hard short circuit as the start gate
+
+  const completion = db.prepare(
+    'SELECT id, app_id, app_name FROM completions WHERE id = ? AND company_id = ?'
+  ).get(req.params.id, companyId);
+  if (!completion) return next();      // the router answers 404, as it always has
+
+  const userId = req.body?.operator_user_id || null;
+  const operatorName = req.body?.operator_name || '';
+
+  let check;
+  try {
+    check = checkQualification(companyId, { userId, operatorName, appId: completion.app_id });
+  } catch (err) {
+    req.log?.error?.({ err }, 'qualification check failed (join)');
+    return next();
+  }
+  if (!check.required) return next();
+
+  let state = check.state;
+  const proof = req.get('X-Qualification-Override');
+  if (proof && mode === 'block' && check.state !== 'certified') {
+    const overrideId = consumeOverrideProof(companyId, proof, {
+      appId: completion.app_id, userId: check.user_id,
+      operatorName: check.operator_name, appName: check.app_name,
+    });
+    if (overrideId) {
+      state = 'override';
+      // The run already exists, so the override can point at it immediately.
+      try {
+        db.prepare('UPDATE qualification_overrides SET completion_id = ? WHERE id = ? AND company_id = ?')
+          .run(completion.id, overrideId, companyId);
+      } catch (err) {
+        req.log?.error?.({ err }, 'linking join override to its run failed');
+      }
+    }
+  }
+
+  if (mode === 'block' && state !== 'certified' && state !== 'override') {
+    recordBlockedStart(companyId, {
+      appId: completion.app_id, appName: check.app_name,
+      operatorName: check.operator_name, state,
+    });
+    return res.status(403).json({
+      error: check.state === 'expired'
+        ? `${check.operator_name || 'This operator'} is not signed off for ${check.app_name} — the certification has expired.`
+        : `${check.operator_name || 'This operator'} is not signed off for ${check.app_name}.`,
+      code: 'NOT_QUALIFIED',
+      app_name: check.app_name,
+      operator_name: check.operator_name,
+      state: check.state,
+      expiry_date: check.expiry_date,
+    });
+  }
+
+  // Warn (or an approved join): the run's own stamp is left alone and the
+  // joiner's state is recorded against the run, so the history says who picked
+  // it up and what was true of them.
+  const stamp = vocab.isValid('QUALIFICATION_STATE', state) ? state : '';
+  const sendJson = res.json.bind(res);
+  res.json = (body) => {
+    try {
+      if (res.statusCode === 201 && stamp) {
+        logActivity(
+          companyId, LOG_ENTITY, completion.app_id,
+          `${JOIN_ACTION}: ${check.operator_name || 'Unnamed operator'} joined `
+            + `${check.app_name} — ${stamp}`,
+          check.operator_name || 'System',
+        );
+        if (body && typeof body === 'object') body.qualification_state = stamp;
+      }
+    } catch (err) {
+      req.log?.error?.({ err }, 'recording joiner qualification failed');
+    }
+    return sendJson(body);
+  };
+  next();
+}
+
 module.exports = {
-  ENFORCEMENT_KEY, LOG_ENTITY, BLOCKED_ACTION, OVERRIDE_ACTION, OVERRIDE_TTL_MS,
-  enforcementMode, setEnforcementMode, checkQualification,
+  ENFORCEMENT_KEY, LOG_ENTITY, BLOCKED_ACTION, OVERRIDE_ACTION, JOIN_ACTION, OVERRIDE_TTL_MS,
+  enforcementMode, setEnforcementMode, checkQualification, overridePurpose,
   issueOverrideToken, consumeOverrideProof, recordBlockedStart, blockedStartsByApp,
-  enforceQualification,
+  enforceQualification, enforceQualificationForJoin,
   __stats,
 };

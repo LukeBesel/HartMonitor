@@ -12,8 +12,10 @@
 // org_settings row, an uncertified operator starts a run exactly as today. The
 // rest is what a company gets once it deliberately chooses Warn or Block.
 //
-// Runs with EARLY_ACCESS=true because /api/training is a pro feature and this
-// suite is about the gate, not the plan check.
+// Runs with EARLY_ACCESS=false — the plan gate is live — because one of the
+// things that has to hold is that a company which downgrades to Free while
+// enforcement is on Block can still reach the switch to turn it off. A gate you
+// cannot open because of a billing state is a trapdoor, not a safety feature.
 //
 // Uses Node built-ins only (node:test + global fetch). Run with:
 //   node --test test/training-enforcement.test.js
@@ -48,7 +50,11 @@ function startServer() {
         PORT: String(PORT),
         DATABASE_PATH: DB_PATH,
         SEED_DEMO_DATA: 'false',
-        EARLY_ACCESS: 'true',
+        // The plan gate is LIVE in this suite. /api/training is a pro feature,
+        // so every company below is granted pro deliberately — except the one
+        // in the last describe, which proves a downgraded company can still
+        // reach the switch that stops its floor.
+        EARLY_ACCESS: 'false',
         BACKUP_DIR: '',
         APP_URL: BASE,
         SMTP_HOST: '', SMTP_USER: '', SMTP_PASS: '',
@@ -130,20 +136,37 @@ after(() => {
 
 const world = {};
 
+/** The in-process handle, opened once, on the same file the server is using. */
+function localDb() {
+  return require('../src/db');
+}
+
+/** The gate module itself, for the pure helpers the wire format depends on. */
+function qualModule() {
+  return require('../src/qualification');
+}
+
+/** Sign up a company and put it on pro, since /api/training is a pro feature. */
+async function signupCompany(name, email, { pro = true } = {}) {
+  const signup = await api('POST', '/api/auth/signup', {
+    body: { company_name: name, email, password: 'SecretPass1', display_name: 'Ada Admin' },
+  });
+  assert.equal(signup.status, 201, `signup ${name}: ${JSON.stringify(signup.json)}`);
+  const token = signup.json.token;
+  const me = await api('GET', '/api/auth/me', { token });
+  assert.equal(me.status, 200, `me: ${JSON.stringify(me.json)}`);
+  if (pro) {
+    localDb().prepare("UPDATE plan SET tier = 'pro' WHERE company_id = ?").run(me.json.company_id);
+  }
+  return { token, companyId: me.json.company_id };
+}
+
 before(async () => {
   await startServer();
 
-  const signup = await api('POST', '/api/auth/signup', {
-    body: {
-      company_name: 'Gated Co', email: 'admin@gated.test',
-      password: 'SecretPass1', display_name: 'Ada Admin',
-    },
-  });
-  assert.equal(signup.status, 201, `signup: ${JSON.stringify(signup.json)}`);
-  world.token = signup.json.token;
-  const me = await api('GET', '/api/auth/me', { token: world.token });
-  assert.equal(me.status, 200, `me: ${JSON.stringify(me.json)}`);
-  world.companyId = me.json.company_id;
+  const co = await signupCompany('Gated Co', 'admin@gated.test');
+  world.token = co.token;
+  world.companyId = co.companyId;
 
   const app = await api('POST', '/api/apps', { token: world.token, body: { name: 'Final QC Inspection' } });
   assert.equal(app.status, 201, `app: ${JSON.stringify(app.json)}`);
@@ -334,13 +357,8 @@ describe('block refuses the start and says why', () => {
   it('reports "—" rather than zero for an app nothing has been measured against', async () => {
     // A fresh company has refused nobody. "0 blocked starts" would read as a
     // gate that is on and quiet; the truth is that nothing has been measured.
-    const other = await api('POST', '/api/auth/signup', {
-      body: {
-        company_name: 'Unmeasured Co', email: 'admin@unmeasured.test',
-        password: 'SecretPass1', display_name: 'Ben Boss',
-      },
-    });
-    const t = other.json.token;
+    const other = await signupCompany('Unmeasured Co', 'admin@unmeasured.test');
+    const t = other.token;
     const a = await api('POST', '/api/apps', { token: t, body: { name: 'Nothing Yet' } });
     await api('PUT', `/api/apps/${a.json.id}`, { token: t, body: { status: 'published' } });
     const blocked = await api('GET', '/api/training/blocked-starts', { token: t });
@@ -359,10 +377,7 @@ describe('an expiry lapses at the start of the plant\'s day', () => {
     // Two companies, one record shape, one difference: where the plant is.
     // Company A sits in the skewed zone; company B is left on UTC.
     const mk = async (label, email, tz) => {
-      const s = await api('POST', '/api/auth/signup', {
-        body: { company_name: label, email, password: 'SecretPass1', display_name: 'Tz Admin' },
-      });
-      const t = s.json.token;
+      const t = (await signupCompany(label, email)).token;
       if (tz) {
         const cfg = await api('PUT', '/api/config', { token: t, body: { timezone: tz } });
         assert.equal(cfg.status, 200, `timezone: ${JSON.stringify(cfg.json)}`);
@@ -439,22 +454,146 @@ describe('an expiry lapses at the start of the plant\'s day', () => {
 // ─── 5. A supervisor's override: one PIN, one start, one permanent record ────
 
 describe('a supervisor override permits exactly one start and leaves a record', () => {
-  async function overrideToken(who) {
-    const auth = await api('POST', '/api/operators/verify-authorizer', {
-      token: world.token, body: { pin: '4417', purpose: 'qualification_override' },
+  /**
+   * The real two-step exchange. The PIN is verified FOR this app and this
+   * operator — the purpose string carries both — and only then is the grant
+   * exchanged for a token scoped to the same pair.
+   */
+  async function verifyFor(who, { appId = world.appId, token = world.token, pin = '4417' } = {}) {
+    return api('POST', '/api/operators/verify-authorizer', {
+      token,
+      body: { pin, purpose: qualModule().overridePurpose(appId, who.id, who.name) },
     });
+  }
+
+  async function overrideToken(who, { appId = world.appId, token = world.token } = {}) {
+    const auth = await verifyFor(who, { appId, token });
     assert.equal(auth.status, 200, `verify-authorizer: ${JSON.stringify(auth.json)}`);
     const minted = await api('POST', '/api/training/overrides', {
-      token: world.token,
-      body: { app_id: world.appId, user_id: who.id, operator_name: who.name, authorizer_proof: auth.json.authorization_id },
+      token,
+      body: { app_id: appId, user_id: who.id, operator_name: who.name, authorizer_proof: auth.json.authorization_id },
     });
     assert.equal(minted.status, 201, `mint override: ${JSON.stringify(minted.json)}`);
     return minted.json.token;
   }
 
+  it('refuses a grant raised for something else — an NCR sign-off is not a start permit', async () => {
+    // Exactly what the in-run "Report quality issue" sheet mints: no purpose,
+    // so the server stores 'ncr'. It is a valid, unused, twelve-hour grant from
+    // a real supervisor PIN — and it must buy nothing here.
+    const ncrGrant = await api('POST', '/api/operators/verify-authorizer', {
+      token: world.token, body: { pin: '4417' },
+    });
+    assert.equal(ncrGrant.status, 200, `verify-authorizer: ${JSON.stringify(ncrGrant.json)}`);
+
+    const minted = await api('POST', '/api/training/overrides', {
+      token: world.token,
+      body: {
+        app_id: world.appId, user_id: world.uncertifiedId, operator_name: 'Uma Uncertified',
+        authorizer_proof: ncrGrant.json.authorization_id,
+      },
+    });
+    assert.equal(minted.status, 403, `an NCR grant must not mint an override: ${JSON.stringify(minted.json)}`);
+    assert.equal(minted.json.code, 'AUTHORIZATION_INVALID');
+
+    // And it is not accepted as a start proof either — a raw grant never is.
+    const run = await startRun(UMA(), { headers: { 'X-Qualification-Override': ncrGrant.json.authorization_id } });
+    assert.equal(run.status, 403, 'a raw authorization grant must not start a blocked run');
+    assert.equal(run.json.code, 'NOT_QUALIFIED');
+  });
+
+  it('refuses an approval raised for a different app or a different person', async () => {
+    const second = await api('POST', '/api/apps', { token: world.token, body: { name: 'Second Line QC' } });
+    await api('PUT', `/api/apps/${second.json.id}`, { token: world.token, body: { status: 'published' } });
+
+    // The supervisor was asked about Cara on the SECOND app.
+    const auth = await verifyFor(CARA(), { appId: second.json.id });
+    assert.equal(auth.status, 200, JSON.stringify(auth.json));
+
+    // Spending it on Maria-equivalent (Uma) on the FIRST app must fail.
+    const wrongBoth = await api('POST', '/api/training/overrides', {
+      token: world.token,
+      body: {
+        app_id: world.appId, user_id: world.uncertifiedId, operator_name: 'Uma Uncertified',
+        authorizer_proof: auth.json.authorization_id,
+      },
+    });
+    assert.equal(wrongBoth.status, 403, `wrong app AND wrong operator: ${JSON.stringify(wrongBoth.json)}`);
+
+    // Right person, wrong app.
+    const authApp = await verifyFor(UMA(), { appId: second.json.id });
+    const wrongApp = await api('POST', '/api/training/overrides', {
+      token: world.token,
+      body: {
+        app_id: world.appId, user_id: world.uncertifiedId, operator_name: 'Uma Uncertified',
+        authorizer_proof: authApp.json.authorization_id,
+      },
+    });
+    assert.equal(wrongApp.status, 403, `wrong app: ${JSON.stringify(wrongApp.json)}`);
+
+    // Right app, wrong person.
+    const authWho = await verifyFor(CARA());
+    const wrongWho = await api('POST', '/api/training/overrides', {
+      token: world.token,
+      body: {
+        app_id: world.appId, user_id: world.uncertifiedId, operator_name: 'Uma Uncertified',
+        authorizer_proof: authWho.json.authorization_id,
+      },
+    });
+    assert.equal(wrongWho.status, 403, `wrong operator: ${JSON.stringify(wrongWho.json)}`);
+  });
+
+  it('is minted by the operator\'s own session — the case the override exists for', async () => {
+    // /api/training is behind a supervisor write role; the override door is
+    // mounted in front of it precisely so a tablet signed in as an operator can
+    // reach it. If this 403s, no operator can ever be let through.
+    const login = await api('POST', '/api/auth/login', {
+      body: { email: 'uma@gated.test', password: 'SecretPass1' },
+    });
+    assert.equal(login.status, 200, `operator login: ${JSON.stringify(login.json)}`);
+
+    const token = await overrideToken(UMA(), { token: login.json.token });
+    const run = await api('POST', '/api/completions', {
+      token: login.json.token,
+      headers: { 'X-Qualification-Override': token },
+      body: { app_id: world.appId, operator_user_id: world.uncertifiedId, operator_name: 'Uma Uncertified' },
+    });
+    assert.equal(run.status, 201, `operator-session override start: ${JSON.stringify(run.json)}`);
+    assert.equal(run.json.qualification_state, 'override');
+  });
+
+  it('builds the same purpose string on both sides of the wire', async () => {
+    // The frontend has to ask for the PIN with EXACTLY the purpose the server
+    // will redeem it for, or every override fails in production while every
+    // backend test passes. Read the shipped client and check the formula.
+    const src = fs.readFileSync(
+      path.join(__dirname, '..', '..', 'frontend', 'src', 'api', 'training.ts'), 'utf8',
+    );
+    assert.match(src, /qualification_override:\$\{appId\}:\$\{who\}/,
+      'frontend overridePurpose must build `qualification_override:<app>:<who>`');
+    assert.match(src, /userId \? `u:\$\{userId\}` : `n:\$\{\(operatorName \?\? ''\)\.trim\(\)\.toLowerCase\(\)\}`/,
+      'frontend must resolve the operator half the same way the server does');
+    assert.equal(
+      qualModule().overridePurpose('app-1', 'user-9', 'Ignored'),
+      'qualification_override:app-1:u:user-9',
+    );
+    assert.equal(
+      qualModule().overridePurpose('app-1', null, '  Uma Uncertified '),
+      'qualification_override:app-1:n:uma uncertified',
+    );
+  });
+
+  async function overrideLogEntries() {
+    // scope=all — 'qualification' is not one of the Transaction Log's
+    // production entity types, so the default production scope would hide it.
+    const log = await api('GET', '/api/activity?scope=all&limit=500', { token: world.token });
+    return log.json.filter(e => e.entity_type === 'qualification' && /Qualification override/.test(e.action));
+  }
+
   it('writes one override row and one activity entry naming both people', async () => {
     const listBefore = await api('GET', '/api/training/overrides', { token: world.token });
     const countBefore = listBefore.json.length;
+    const logBefore = (await overrideLogEntries()).length;
 
     const token = await overrideToken(UMA());
     const run = await startRun(UMA(), { headers: { 'X-Qualification-Override': token } });
@@ -472,13 +611,9 @@ describe('a supervisor override permits exactly one start and leaves a record', 
     assert.equal(row.completion_id, run.json.id,
       'the override must point at the run it permitted');
 
-    // scope=all — 'qualification' is not one of the Transaction Log's
-    // production entity types, so the default production scope would hide it.
-    const log = await api('GET', '/api/activity?scope=all&limit=500', { token: world.token });
-    const entries = log.json.filter(
-      e => e.entity_type === 'qualification' && /Qualification override/.test(e.action),
-    );
-    assert.equal(entries.length, 1, `expected one override log entry, got ${entries.length}`);
+    const entries = await overrideLogEntries();
+    assert.equal(entries.length, logBefore + 1,
+      `exactly one new override log entry, got ${entries.length - logBefore}`);
     assert.match(entries[0].action, /Uma Uncertified/, 'the log must name the operator');
     assert.match(entries[0].action, /Sam Supervisor/, 'the log must name the supervisor');
   });
@@ -495,13 +630,7 @@ describe('a supervisor override permits exactly one start and leaves a record', 
   });
 
   it('refuses a PIN belonging to another company\'s supervisor', async () => {
-    const other = await api('POST', '/api/auth/signup', {
-      body: {
-        company_name: 'Neighbour Co', email: 'admin@neighbour.test',
-        password: 'SecretPass1', display_name: 'Nia Neighbour',
-      },
-    });
-    const otherToken = other.json.token;
+    const otherToken = (await signupCompany('Neighbour Co', 'admin@neighbour.test')).token;
     const otherSup = await api('POST', '/api/users', {
       token: otherToken,
       body: { email: 'sup@neighbour.test', display_name: 'Neil Neighbour', password: 'SecretPass1', role: 'supervisor' },
@@ -534,6 +663,240 @@ describe('a supervisor override permits exactly one start and leaves a record', 
     // Nor used raw as a start proof.
     const run = await startRun(UMA(), { headers: { 'X-Qualification-Override': theirAuth.json.authorization_id } });
     assert.equal(run.status, 403, 'a cross-tenant proof must not start a blocked run');
+  });
+});
+
+// ─── 5b. Role first: a viewer cannot spend anybody's approval ────────────────
+
+describe('the write role is answered before the gate', () => {
+  it('refuses a viewer without burning an approval or writing any record', async () => {
+    const viewer = await api('POST', '/api/users', {
+      token: world.token,
+      body: { email: 'val@gated.test', display_name: 'Val Viewer', password: 'SecretPass1', role: 'viewer' },
+    });
+    assert.equal(viewer.status, 201, JSON.stringify(viewer.json));
+    const login = await api('POST', '/api/auth/login', {
+      body: { email: 'val@gated.test', password: 'SecretPass1' },
+    });
+    assert.equal(login.status, 200, JSON.stringify(login.json));
+
+    // A genuine, unspent supervisor approval, minted the proper way.
+    const auth = await api('POST', '/api/operators/verify-authorizer', {
+      token: world.token,
+      body: { pin: '4417', purpose: qualModule().overridePurpose(world.appId, world.uncertifiedId, 'Uma Uncertified') },
+    });
+    const minted = await api('POST', '/api/training/overrides', {
+      token: world.token,
+      body: {
+        app_id: world.appId, user_id: world.uncertifiedId, operator_name: 'Uma Uncertified',
+        authorizer_proof: auth.json.authorization_id,
+      },
+    });
+    assert.equal(minted.status, 201, JSON.stringify(minted.json));
+    const token = minted.json.token;
+
+    const overridesBefore = (await api('GET', '/api/training/overrides', { token: world.token })).json.length;
+    const blockedBefore = (await api('GET', '/api/training/blocked-starts', { token: world.token }))
+      .json.apps.find(a => a.app_id === world.appId)?.blocked ?? 0;
+
+    // A viewer can never book a run. If the gate ran first it would still spend
+    // the token, write a permanent override row naming a supervisor who
+    // authorized nothing of the sort, and add a blocked start to a manager's
+    // report — all for a request that was going to be refused anyway.
+    const attempt = await api('POST', '/api/completions', {
+      token: login.json.token,
+      headers: { 'X-Qualification-Override': token },
+      body: { app_id: world.appId, operator_user_id: world.uncertifiedId, operator_name: 'Uma Uncertified' },
+    });
+    assert.equal(attempt.status, 403, `a viewer must not book a run: ${JSON.stringify(attempt.json)}`);
+    assert.notEqual(attempt.json.code, 'NOT_QUALIFIED', 'refused for role, not for certification');
+
+    const overridesAfter = (await api('GET', '/api/training/overrides', { token: world.token })).json.length;
+    const blockedAfter = (await api('GET', '/api/training/blocked-starts', { token: world.token }))
+      .json.apps.find(a => a.app_id === world.appId)?.blocked ?? 0;
+    assert.equal(overridesAfter, overridesBefore, 'no override row was written');
+    assert.equal(blockedAfter, blockedBefore, 'no blocked start was recorded');
+
+    // And the proof is untouched: the operator it was raised for can still use it.
+    const real = await startRun(UMA(), { headers: { 'X-Qualification-Override': token } });
+    assert.equal(real.status, 201, `the approval must survive the viewer's attempt: ${JSON.stringify(real.json)}`);
+    assert.equal(real.json.qualification_state, 'override');
+  });
+});
+
+// ─── 5c. The other door into a run: joining one already open ─────────────────
+
+describe('joining a run is gated exactly like starting one', () => {
+  let runId;
+
+  before(async () => {
+    await setEnforcement('block');
+    const started = await startRun(CARA());
+    assert.equal(started.status, 201, `certified start: ${JSON.stringify(started.json)}`);
+    assert.equal(started.json.qualification_state, 'certified');
+    runId = started.json.id;
+  });
+
+  function join(who, token = world.token) {
+    return api('POST', `/api/completions/${runId}/sessions`, {
+      token,
+      body: { operator_name: who.name, operator_user_id: who.id },
+    });
+  }
+
+  it('refuses an uncertified operator joining a certified run, and leaves its stamp alone', async () => {
+    const attempt = await join(UMA());
+    assert.equal(attempt.status, 403, `expected a refusal: ${JSON.stringify(attempt.json)}`);
+    assert.equal(attempt.json.code, 'NOT_QUALIFIED');
+    assert.equal(attempt.json.app_name, 'Final QC Inspection');
+    assert.equal(attempt.json.operator_name, 'Uma Uncertified');
+
+    // Without this gate the refused operator taps "Resume", finishes the unit,
+    // and the record still says a certified person did the work.
+    const run = await api('GET', `/api/completions/${runId}`, { token: world.token });
+    assert.equal(run.json.qualification_state, 'certified',
+      "the starter's verdict must not be rewritten by a joiner");
+    assert.equal(run.json.sessions.filter(x => x.operator_name === 'Uma Uncertified').length, 0,
+      'no session was opened for the refused operator');
+  });
+
+  it('records the refusal as a blocked start', async () => {
+    const blocked = await api('GET', '/api/training/blocked-starts', { token: world.token });
+    const row = blocked.json.apps.find(a => a.app_id === world.appId);
+    assert.ok(row.blocked >= 1, `a refused join is a refused start of work: ${JSON.stringify(row)}`);
+  });
+
+  it('lets the same person join in warn, records what was true, and still leaves the stamp', async () => {
+    await setEnforcement('warn');
+    const joined = await join(UMA());
+    assert.equal(joined.status, 201, `warn must not stop a join: ${JSON.stringify(joined.json)}`);
+    assert.equal(joined.json.qualification_state, 'none', 'the joiner’s own state is reported');
+
+    const run = await api('GET', `/api/completions/${runId}`, { token: world.token });
+    assert.equal(run.json.qualification_state, 'certified', "the run's own stamp is unchanged");
+
+    const log = await api('GET', '/api/activity?scope=all&limit=500', { token: world.token });
+    const entries = log.json.filter(e => e.entity_type === 'qualification' && /Qualification on join/.test(e.action));
+    assert.equal(entries.length, 1, `expected one join entry, got ${entries.length}`);
+    assert.match(entries[0].action, /Uma Uncertified/);
+    assert.match(entries[0].action, /none/);
+  });
+
+  it('does not look at training at all with the gate off', async () => {
+    await setEnforcement('off');
+    const joined = await join(UMA());
+    assert.equal(joined.status, 201, `off must not stop a join: ${JSON.stringify(joined.json)}`);
+    assert.equal(joined.json.qualification_state, undefined, 'off states nothing about the joiner');
+    await setEnforcement('block');
+  });
+});
+
+// ─── 5d. Two small honesty rules ─────────────────────────────────────────────
+
+describe('what the blocked-starts report is allowed to claim', () => {
+  it('says "—" for an app it has never refused anybody on, beside one it has', async () => {
+    const quiet = await api('POST', '/api/apps', { token: world.token, body: { name: 'Never Refused Anyone' } });
+    await api('PUT', `/api/apps/${quiet.json.id}`, { token: world.token, body: { status: 'published' } });
+
+    const blocked = await api('GET', '/api/training/blocked-starts?days=7', { token: world.token });
+    const busy = blocked.json.apps.find(a => a.app_id === world.appId);
+    const idle = blocked.json.apps.find(a => a.app_id === quiet.json.id);
+
+    assert.ok(busy.blocked >= 1, `the app that refused people has a count: ${JSON.stringify(busy)}`);
+    assert.equal(idle.blocked, null,
+      'an app nothing has been measured against reads "—", not a confident zero');
+    assert.equal(blocked.json.empty_reason, null, 'something was measured somewhere');
+  });
+});
+
+describe('an approval is spent only when it is needed', () => {
+  it('survives a start that was never going to be refused', async () => {
+    await setEnforcement('block');
+    const token = await api('POST', '/api/operators/verify-authorizer', {
+      token: world.token,
+      body: { pin: '4417', purpose: qualModule().overridePurpose(world.appId, world.uncertifiedId, 'Uma Uncertified') },
+    }).then(auth => api('POST', '/api/training/overrides', {
+      token: world.token,
+      body: {
+        app_id: world.appId, user_id: world.uncertifiedId, operator_name: 'Uma Uncertified',
+        authorizer_proof: auth.json.authorization_id,
+      },
+    })).then(m => m.json.token);
+
+    // Sent along with a run in WARN, where nothing was going to be stopped. A
+    // token quietly burned here is a supervisor who has already walked away and
+    // an operator refused on the start that actually needed it.
+    await setEnforcement('warn');
+    const warned = await startRun(UMA(), { headers: { 'X-Qualification-Override': token } });
+    assert.equal(warned.status, 201);
+    assert.equal(warned.json.qualification_state, 'none', 'warn did not consume the approval');
+
+    // And a certified operator's start in block must not spend it either.
+    await setEnforcement('block');
+    const certified = await startRun(CARA(), { headers: { 'X-Qualification-Override': token } });
+    assert.equal(certified.status, 201);
+    assert.equal(certified.json.qualification_state, 'certified');
+
+    // Still good for the start it was raised for.
+    const used = await startRun(UMA(), { headers: { 'X-Qualification-Override': token } });
+    assert.equal(used.status, 201, `the approval must still be usable: ${JSON.stringify(used.json)}`);
+    assert.equal(used.json.qualification_state, 'override');
+  });
+});
+
+describe('which training record is read when a database holds more than one', () => {
+  it('orders certified first, then most recently touched', () => {
+    // UNIQUE(company_id, user_id, app_id) means this is unreachable through the
+    // API today, so this is a source guard rather than a round trip: the case
+    // it protects is a database restored from a double seed or migrated from
+    // before that constraint, where "whichever row SQLite returned first" would
+    // make the gate non-deterministic for exactly the accounts least able to
+    // explain it.
+    const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'qualification.js'), 'utf8');
+    const query = src.slice(src.indexOf('FROM training_records'), src.indexOf('`).get(day, companyId'));
+    assert.match(query, /ORDER BY CASE WHEN status = 'certified' THEN 0 ELSE 1 END/);
+    assert.match(query, /COALESCE\(updated_at, created_at\) DESC/);
+    assert.match(query, /LIMIT 1/);
+  });
+
+  it('still reads a single record exactly as before', async () => {
+    const check = await api('GET',
+      `/api/training/records/check?app_id=${world.appId}&user_id=${world.certifiedId}`,
+      { token: world.token });
+    assert.equal(check.json.state, 'certified');
+  });
+});
+
+// ─── 5e. The switch that stops the floor is never behind a paywall ──────────
+
+describe('a company that downgrades can still turn enforcement off', () => {
+  it('keeps the training module paid, and the safety switch reachable', async () => {
+    // Pro today: sets Block like anyone else.
+    const co = await signupCompany('Lapsed Plan Co', 'admin@lapsed.test');
+    const on = await api('PUT', '/api/training/enforcement', {
+      token: co.token, body: { enforcement: 'block' },
+    });
+    assert.equal(on.status, 200, `set block: ${JSON.stringify(on.json)}`);
+
+    // Subscription lapses back to Free.
+    localDb().prepare(
+      "UPDATE plan SET tier = 'free', trial_ends_at = NULL, grace_period_ends_at = NULL WHERE company_id = ?"
+    ).run(co.companyId);
+
+    // The paid module is closed, as it should be…
+    const matrix = await api('GET', '/api/training/matrix', { token: co.token });
+    assert.equal(matrix.status, 403, `the training module stays paid: ${JSON.stringify(matrix.json)}`);
+    assert.equal(matrix.json.code, 'PLAN_REQUIRED');
+
+    // …but the gate that is currently stopping their floor is not. Both
+    // directions, or it is a trapdoor.
+    const read = await api('GET', '/api/training/enforcement', { token: co.token });
+    assert.equal(read.status, 200, `reading the setting must not be paywalled: ${JSON.stringify(read.json)}`);
+    assert.equal(read.json.enforcement, 'block');
+
+    const off = await api('PUT', '/api/training/enforcement', { token: co.token, body: { enforcement: 'off' } });
+    assert.equal(off.status, 200, `turning it off must not be paywalled: ${JSON.stringify(off.json)}`);
+    assert.equal(off.json.enforcement, 'off');
   });
 });
 

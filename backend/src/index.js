@@ -275,7 +275,18 @@ app.use('/api/apps',          writeRole('supervisor'), appsRouter);
 // books runs stays untouched by it; with `training_enforcement` unset (which is
 // every existing customer) it returns before reading a single training row.
 // See backend/src/qualification.js.
-app.post('/api/completions', require('./qualification').enforceQualification);
+//
+// writeRole comes FIRST on both lines. A gate that runs before the role check
+// lets a viewer — who can never book a run — still spend a supervisor's
+// one-shot approval and write a permanent override row, or manufacture blocked
+// -start records that make a manager's report lie. Answer "you may not write"
+// before answering "are you signed off".
+//
+// Both doors into a run are gated. Refusing a start and leaving the session
+// join open is a speed bump, not a gate: the refused operator taps "Resume" and
+// finishes the unit on somebody else's certified run.
+app.post('/api/completions',              writeRole('operator'), require('./qualification').enforceQualification);
+app.post('/api/completions/:id/sessions', writeRole('operator'), require('./qualification').enforceQualificationForJoin);
 app.use('/api/completions',   writeRole('operator'),   completionsRouter);
 app.use('/api/tables',        writeRole('supervisor'), tablesRouter);
 app.use('/api/stations',      writeRole('supervisor'), stationsRouter);
@@ -316,6 +327,13 @@ app.use('/api/routings',      requirePlan('pro'), routingsRouter);
 app.use('/api/upload',        uploadRouter);
 app.use('/api/sqdc',          sqdcRouter);
 app.use('/api/operators',     operatorsRouter);
+// Three training routes sit OUTSIDE both gates below, on their own router:
+// GET/PUT /enforcement, because a plan gate on the switch that stops the floor
+// is a trapdoor a downgraded company cannot climb out of, and POST /overrides,
+// because the session that needs an override is an operator's. Unmatched paths
+// fall straight through to the full router on the next line. See the comment at
+// the top of routes/training.js.
+app.use('/api/training',      trainingRouter.gateRouter);
 app.use('/api/training',      requirePlan('pro'), writeRole('supervisor'), trainingRouter);
 app.use('/api/andon',         writeRole('operator'),   andonRouter);
 app.use('/api/capa',          requirePlan('pro'), writeRole('operator'),   capaRouter);

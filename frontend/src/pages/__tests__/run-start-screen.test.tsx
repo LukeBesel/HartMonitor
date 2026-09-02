@@ -119,6 +119,11 @@ function jobOnSameUnit(over: Record<string, unknown> = {}) {
   };
 }
 
+/** Every POST /completions the player made, as [path, options] pairs. */
+function startCalls() {
+  return request.mock.calls.filter(c => c[0] === '/completions');
+}
+
 /** Render the player at a deep link, on the /play/:id route the app uses. */
 function renderPlayer(search: string) {
   return render(
@@ -133,6 +138,8 @@ function renderPlayer(search: string) {
 }
 
 let confirmSpy: ReturnType<typeof vi.spyOn>;
+/** What POST /completions answers next — an object to resolve, or an Error. */
+let startResponse: unknown;
 
 beforeEach(() => {
   localStorage.clear();
@@ -146,7 +153,25 @@ beforeEach(() => {
   getKits.mockResolvedValue([]);
   resolveBOM.mockResolvedValue(null);
   openCompletionSession.mockResolvedValue({ id: 'sess-1' });
-  request.mockResolvedValue({ id: 'run-1', qualification_state: '' });
+  // One mock for every typed call in api/training.ts, routed by path — the
+  // approval flow is a three-request exchange and the test has to see all of it.
+  startResponse = { id: 'run-1', qualification_state: '' };
+  request.mockImplementation((path: string) => {
+    if (path === '/operators/verify-authorizer') {
+      return Promise.resolve({
+        authorization_id: 'grant-1', user_id: 'sup-1', display_name: 'Sam Supervisor', role: 'supervisor',
+      });
+    }
+    if (path === '/training/overrides') {
+      return Promise.resolve({ token: 'tok-1', expires_in_seconds: 600, app_name: 'Final QC Inspection', approved_by: 'Sam Supervisor' });
+    }
+    if (path === '/completions') {
+      const next = startResponse;
+      if (next instanceof Error) return Promise.reject(next);
+      return Promise.resolve(next);
+    }
+    return Promise.resolve({});
+  });
   // window.confirm must never be reached again. If anything calls it, the
   // spy answers false AND the assertion below fails.
   confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false);
@@ -169,7 +194,7 @@ describe('a deep link that already knows who, where and what', () => {
     // And the run it booked carries the identity the portal verified, so the
     // completion is attributable without anyone retyping anything.
     expect(request).toHaveBeenCalledWith('/completions', expect.objectContaining({ method: 'POST' }));
-    const body = JSON.parse((request.mock.calls[0][1] as { body: string }).body);
+    const body = JSON.parse((startCalls()[0][1] as { body: string }).body);
     expect(body).toMatchObject({
       app_id: APP_ID,
       operator_user_id: 'u-alex',
@@ -182,7 +207,7 @@ describe('a deep link that already knows who, where and what', () => {
   it('still asks when the link is missing the station', async () => {
     renderPlayer(`?uid=u-alex&name=Alex%20Operator&wo=${WORK_ORDER.id}&from=operator`);
     expect(await screen.findByRole('button', { name: /start process/i })).toBeInTheDocument();
-    expect(request).not.toHaveBeenCalled();
+    expect(startCalls()).toHaveLength(0);
   });
 
   it('still asks when the app offers a product type nobody has chosen', async () => {
@@ -191,7 +216,21 @@ describe('a deep link that already knows who, where and what', () => {
     ]);
     renderPlayer(`?uid=u-alex&name=Alex%20Operator&station=${STATION.id}&wo=${WORK_ORDER.id}&from=operator`);
     expect(await screen.findByRole('button', { name: /start process/i })).toBeInTheDocument();
-    expect(request).not.toHaveBeenCalled();
+    expect(startCalls()).toHaveLength(0);
+  });
+
+  it('does not book a run to a station only this browser remembers', async () => {
+    // hm_station is the last station THIS BROWSER used. On a tablet carried to
+    // another cell, or a spare picked off a bench, it is not where the operator
+    // is standing — and a silently mis-attributed run is worse than one more
+    // screen. It is offered as a preselected default instead.
+    localStorage.setItem('hm_station', STATION.id);
+    renderPlayer(`?uid=u-alex&name=Alex%20Operator&wo=${WORK_ORDER.id}&from=operator`);
+
+    expect(await screen.findByRole('button', { name: /start process/i })).toBeInTheDocument();
+    expect(startCalls()).toHaveLength(0);
+    const stationSelect = screen.getByLabelText(/station/i) as HTMLSelectElement;
+    expect(stationSelect.value).toBe(STATION.id);
   });
 });
 
@@ -215,7 +254,7 @@ describe('a run already open on the same unit', () => {
 
     // And it is a blocking confirmation, not a note.
     expect(start).toBeDisabled();
-    expect(request).not.toHaveBeenCalled();
+    expect(startCalls()).toHaveLength(0);
 
     await userEvent.click(screen.getByRole('button', { name: /start a separate run anyway/i }));
     expect(await screen.findByRole('button', { name: /start process/i })).toBeEnabled();
@@ -226,7 +265,7 @@ describe('a run already open on the same unit', () => {
     renderPlayer(`?uid=u-alex&name=Alex%20Operator&station=${STATION.id}&wo=${WORK_ORDER.id}&from=operator`);
 
     expect(await screen.findByTestId('concurrent-run-warning')).toBeInTheDocument();
-    expect(request).not.toHaveBeenCalled();
+    expect(startCalls()).toHaveLength(0);
   });
 
   it('says nothing when the open run is on a different unit', async () => {
@@ -276,7 +315,7 @@ describe('a start refused because the operator is not signed off', () => {
   }
 
   it('names the app, the operator and the expiry, and asks for a supervisor PIN', async () => {
-    request.mockRejectedValueOnce(refuse());
+    startResponse = refuse();
     renderPlayer(`?uid=u-alex&name=Alex%20Operator&station=${STATION.id}&wo=${WORK_ORDER.id}&from=operator`);
 
     const sheet = await screen.findByRole('dialog', { name: /not signed off/i });
@@ -288,22 +327,39 @@ describe('a start refused because the operator is not signed off', () => {
     expect(pin).not.toHaveAttribute('autofocus');
   });
 
-  it('retries the start once a supervisor PIN is accepted', async () => {
-    request.mockRejectedValueOnce(refuse());
-    verifyAuthorizer.mockResolvedValue({
-      authorization_id: 'grant-1', user_id: 'sup-1', display_name: 'Sam Supervisor', role: 'supervisor',
-    });
+  it('asks for the PIN against THIS app and operator, then retries with a bound token', async () => {
+    startResponse = refuse();
     renderPlayer(`?uid=u-alex&name=Alex%20Operator&station=${STATION.id}&wo=${WORK_ORDER.id}&from=operator`);
 
     const sheet = await screen.findByRole('dialog', { name: /not signed off/i });
+    startResponse = { id: 'run-2', qualification_state: 'override' };
     await userEvent.type(within(sheet).getByLabelText(/supervisor pin/i), '4417');
     await userEvent.click(within(sheet).getByRole('button', { name: /approve & start/i }));
 
-    // The retry carries the single-use proof in the header, and only then does
-    // the player move on to step one.
-    await waitFor(() => expect(request).toHaveBeenCalledTimes(2));
-    const retry = request.mock.calls[1][1] as { headers?: Record<string, string> };
-    expect(retry.headers).toMatchObject({ 'X-Qualification-Override': 'grant-1' });
+    await waitFor(() => expect(startCalls()).toHaveLength(2));
+
+    // 1. The PIN is verified for a purpose naming this app AND this operator,
+    //    so the grant it mints cannot be spent anywhere else — and a grant
+    //    raised for an in-run NCR ('ncr') cannot be spent here.
+    const verify = request.mock.calls.find(c => c[0] === '/operators/verify-authorizer');
+    expect(verify).toBeTruthy();
+    expect(JSON.parse((verify![1] as { body: string }).body)).toEqual({
+      pin: '4417',
+      purpose: `qualification_override:${APP_ID}:u:u-alex`,
+    });
+
+    // 2. The grant is exchanged for a token bound to the same pair.
+    const mint = request.mock.calls.find(c => c[0] === '/training/overrides');
+    expect(mint).toBeTruthy();
+    expect(JSON.parse((mint![1] as { body: string }).body)).toMatchObject({
+      app_id: APP_ID, user_id: 'u-alex', authorizer_proof: 'grant-1',
+    });
+
+    // 3. Only the TOKEN reaches the start header — never the raw grant.
+    const retry = startCalls()[1][1] as { headers?: Record<string, string> };
+    expect(retry.headers).toMatchObject({ 'X-Qualification-Override': 'tok-1' });
+    expect(retry.headers!['X-Qualification-Override']).not.toBe('grant-1');
+
     expect(await screen.findByText('Weld inspection')).toBeInTheDocument();
   });
 });
