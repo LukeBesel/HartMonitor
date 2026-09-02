@@ -573,17 +573,22 @@ router.get('/department/:id', (req, res) => {
     ...openNcrs.map(n => ({ type: 'ncr', label: n.ncr_number, detail: `${n.title} (${n.severity})` })),
   ];
 
-  // Leaderboard: fastest completions in the department for the date.
+  // Leaderboard: the fastest run of each operator in the department for the
+  // date — one slot per person, or one operator's five runs fill the board and
+  // the wall says nothing about the rest of the crew.
   const leaderboardRows = db.prepare(`
-    SELECT c.operator_name, c.app_name,
-           ROUND(${runSecondsSQL('c')} / 60.0, 1) AS duration_minutes,
-           ${runSecondsSQL('c')} AS duration_seconds
-    FROM completions c
-    LEFT JOIN work_orders wo ON wo.id = c.work_order_id
-    LEFT JOIN stations    st ON st.id = c.station_id
-    WHERE c.company_id = ? AND ${COMPLETION_DEPT} = ? AND c.status = 'completed'
-      AND c.completed_at IS NOT NULL AND date(c.completed_at, ?) = ?
-      AND ${runSecondsSQL('c')} IS NOT NULL
+    SELECT operator_name, app_name, duration_minutes, duration_seconds FROM (
+      SELECT c.operator_name, c.app_name,
+             ROUND(${runSecondsSQL('c')} / 60.0, 1) AS duration_minutes,
+             ${runSecondsSQL('c')} AS duration_seconds,
+             ROW_NUMBER() OVER (PARTITION BY c.operator_name ORDER BY ${runSecondsSQL('c')} ASC) AS rn
+      FROM completions c
+      LEFT JOIN work_orders wo ON wo.id = c.work_order_id
+      LEFT JOIN stations    st ON st.id = c.station_id
+      WHERE c.company_id = ? AND ${COMPLETION_DEPT} = ? AND c.status = 'completed'
+        AND c.completed_at IS NOT NULL AND date(c.completed_at, ?) = ?
+        AND ${runSecondsSQL('c')} IS NOT NULL
+    ) WHERE rn = 1
     ORDER BY duration_seconds ASC LIMIT 5
   `).all(cid, deptId, day, date);
 

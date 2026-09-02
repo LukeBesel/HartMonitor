@@ -1134,7 +1134,7 @@ router.get('/daily-brief', (req, res) => {
       SELECT COUNT(*) AS c FROM andon_calls a
       LEFT JOIN stations s ON s.id = a.station_id
       WHERE a.company_id = ? AND a.status IN ('open', 'acknowledged') AND (${missing.join(' OR ')})
-    `).get(cid).c, 'unrouted help requests');
+    `).get(cid).c, 'unrouted calls');
   }
   for (const c of openCalls) {
     const team = andonTeamOf(c);
