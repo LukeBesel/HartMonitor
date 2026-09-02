@@ -1,4 +1,14 @@
-// ─── Which workspaces the plant shows in the sidebar ────────────────────────
+// ─── Which workspaces the plant shows, and what this device shows of them ────
+//
+// The old Navigation tab did two different jobs under one heading, and only
+// one of them was ever anybody's to do. Turning a whole workspace off changes
+// the sidebar for EVERY person in the company — that is plant configuration,
+// it now lives in org_settings, and it belongs with the rest of the company's
+// settings behind the manager gate. Hiding a single item, or reordering one,
+// changes nothing for anybody else: it is this device's own copy, it was open
+// to every role, and taking it away from operators to tidy the tab strip would
+// have been a real loss for the people who use the fewest screens. So it moved
+// to My Account instead, where the other "just me" settings live.
 import Toggle from '../../components/shared/Toggle';
 import { useState } from 'react';
 import { Check, RotateCcw, ChevronDown, ChevronUp, ChevronRight } from 'lucide-react';
@@ -7,43 +17,24 @@ import { useNavPrefs } from '../../context/NavPrefsContext';
 import { SECTIONS } from '../../config/navigation';
 import { SectionHeader } from './shared';
 
-// ─── Tab: Navigation / Workspaces ─────────────────────────────────────────────
+// ─── Company-wide: which workspaces exist for everyone here (manager+) ───────
 
 export function NavigationTab() {
-  const {
-    isItemHidden, toggleItem,
-    isSectionHidden, toggleSection,
-    resetNavPrefs,
-    itemOrder, moveItem,
-    sectionsError,
-  } = useNavPrefs();
-  const { user } = useAuth();
-  const isDeveloper = user?.role === 'developer';
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const { isSectionHidden, toggleSection, resetWorkspaces, sectionsError } = useNavPrefs();
 
-  // Apply the saved custom order to a section's items (matches the sidebar).
-  const orderedItems = (section: typeof SECTIONS[number]) => {
-    // Platform-staff items are not a customer's sidebar to arrange, and listing
-    // one here would announce HartMonitor's operator console to everybody.
-    const items = section.items.filter(i => !i.platformStaffOnly);
-    const order = itemOrder[section.id];
-    if (!order || order.length === 0) return items;
-    return [...items].sort((a, b) => {
-      const ia = order.indexOf(a.to); const ib = order.indexOf(b.to);
-      if (ia === -1 && ib === -1) return 0;
-      if (ia === -1) return 1;
-      if (ib === -1) return -1;
-      return ia - ib;
-    });
+  const confirmReset = () => {
+    // This is not "reset my sidebar" any more — it turns every workspace back
+    // on for every person in the company, which is not something to discover
+    // afterwards.
+    if (confirm('Show every workspace for everyone in the company?')) resetWorkspaces();
   };
 
   return (
-    <div className="space-y-8 max-w-2xl">
-      {/* Workspaces */}
+    <div className="space-y-6 max-w-2xl">
       <div>
         <SectionHeader
           title="Workspaces"
-          subtitle="Pick the areas this plant actually uses. Turn one off and it disappears from the sidebar for everyone here -- keeping things simple."
+          subtitle="Pick the areas this plant actually uses. Turn one off and it disappears from the sidebar for everyone in the company -- keeping things simple."
         />
         {/* A refused save has already put the switches back; say why rather
             than letting one flick itself off again with no explanation. */}
@@ -82,7 +73,50 @@ export function NavigationTab() {
         </div>
       </div>
 
-      {/* Advanced: per-item visibility + (developers) reordering */}
+      <div className="flex items-center justify-between gap-4 pt-2 border-t border-gray-100">
+        <p className="text-xs text-gray-500">
+          Command Center always stays visible. This choice is saved for the whole company --
+          hiding items just for yourself is in My Account.
+        </p>
+        <button onClick={confirmReset} className="btn-secondary text-sm whitespace-nowrap flex items-center gap-1.5">
+          <RotateCcw size={13} /> Reset to Defaults
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── This device: hide or reorder individual items (any role) ───────────────
+
+export function MyNavigationTab() {
+  const {
+    isItemHidden, toggleItem,
+    isSectionHidden,
+    itemOrder, moveItem,
+    resetMyNavPrefs,
+  } = useNavPrefs();
+  const { user } = useAuth();
+  const isDeveloper = user?.role === 'developer';
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Apply the saved custom order to a section's items (matches the sidebar).
+  const orderedItems = (section: typeof SECTIONS[number]) => {
+    // Platform-staff items are not a customer's sidebar to arrange, and listing
+    // one here would announce HartMonitor's operator console to everybody.
+    const items = section.items.filter(i => !i.platformStaffOnly);
+    const order = itemOrder[section.id];
+    if (!order || order.length === 0) return items;
+    return [...items].sort((a, b) => {
+      const ia = order.indexOf(a.to); const ib = order.indexOf(b.to);
+      if (ia === -1 && ib === -1) return 0;
+      if (ia === -1) return 1;
+      if (ib === -1) return -1;
+      return ia - ib;
+    });
+  };
+
+  return (
+    <div className="space-y-6 max-w-2xl">
       <div>
         <button
           onClick={() => setShowAdvanced(v => !v)}
@@ -154,11 +188,11 @@ export function NavigationTab() {
 
       <div className="flex items-center justify-between gap-4 pt-2 border-t border-gray-100">
         <p className="text-xs text-gray-500">
-          Command Center always stays visible. Workspaces are saved for the whole company; the
-          per-item switches below stay on this device.
+          Command Center always stays visible. Nothing here leaves this device -- an item switched
+          off is still there for everyone else.
         </p>
-        <button onClick={resetNavPrefs} className="btn-secondary text-sm whitespace-nowrap flex items-center gap-1.5">
-          <RotateCcw size={13} /> Reset to Defaults
+        <button onClick={resetMyNavPrefs} className="btn-secondary text-sm whitespace-nowrap flex items-center gap-1.5">
+          <RotateCcw size={13} /> Reset My Sidebar
         </button>
       </div>
     </div>

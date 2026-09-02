@@ -62,7 +62,7 @@ export default function Layout() {
   const { isFree, isEnterprise } = usePlan();
   const { user, logout } = useAuth();
   const { companyName, logoUrl } = useBranding();
-  const { isItemHidden, isSectionHidden, itemOrder } = useNavPrefs();
+  const { isItemHidden, isSectionHidden, itemOrder, sectionsLoading } = useNavPrefs();
   const { canShowNavItem } = usePermissions();
   const [logoError, setLogoError] = useState(false);
   const navigate = useNavigate();
@@ -88,7 +88,11 @@ export default function Layout() {
   // Sections filtered to this company's enabled modules, then to the user's
   // Settings toggles for the sidebar list.
   const moduleSections = useVisibleSections();
-  const enabledSections = moduleSections.filter(s => !isSectionHidden(s.id));
+  // Which workspaces this company shows is the company's answer, fetched once
+  // a session exists (and remembered on this device between visits). On a
+  // device that has never had it, paint no workspace list rather than painting
+  // the ones this plant has switched off and snatching them away a moment later.
+  const enabledSections = sectionsLoading ? [] : moduleSections.filter(s => !isSectionHidden(s.id));
   // Five workspaces up front, the rest under "More". Nine top-level choices is
   // more than anyone scans; these four are the ones a plant manager reaches for
   // occasionally rather than daily, and Settings → Modules can remove them

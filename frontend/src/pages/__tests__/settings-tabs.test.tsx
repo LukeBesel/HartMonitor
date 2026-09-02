@@ -43,7 +43,10 @@ vi.mock('../settings/ThemeTab', () => ({ ThemeTab: () => <div>theme panel</div> 
 vi.mock('../settings/CompanyTab', () => ({ CompanyTab: () => <div>company panel</div> }));
 vi.mock('../settings/PlanTab', () => ({ PlanTab: () => <div>plan panel</div> }));
 vi.mock('../settings/ModulesTab', () => ({ ModulesTab: () => <div>modules panel</div> }));
-vi.mock('../settings/NavigationTab', () => ({ NavigationTab: () => <div>navigation panel</div> }));
+vi.mock('../settings/NavigationTab', () => ({
+  NavigationTab: () => <div>navigation panel</div>,
+  MyNavigationTab: () => <div>my sidebar panel</div>,
+}));
 vi.mock('../settings/SitesTab', () => ({ SitesTab: () => <div>sites panel</div> }));
 vi.mock('../settings/NotificationsTab', () => ({ NotificationsTab: () => <div>notifications panel</div> }));
 vi.mock('../settings/ApiTab', () => ({ ApiTab: () => <div>api panel</div> }));
@@ -114,6 +117,26 @@ describe('the tab strip is four tabs, not thirteen', () => {
     expect(shell()).toHaveAttribute('data-group', 'account');
     expect(screen.getByText('account panel')).toBeInTheDocument();
   });
+
+  it('still gives an operator the per-device sidebar controls ?tab=sidebar meant', () => {
+    // The old Navigation tab was ungated, and half of it — hiding individual
+    // items on your own device — was never the company's business. That half
+    // lives in My Account now, so the link keeps working for the roles that
+    // only ever used that half.
+    role = 'operator';
+    open('?tab=sidebar');
+    expect(shell()).toHaveAttribute('data-group', 'account');
+    expect(shell()).toHaveAttribute('data-section', 'my-nav');
+    expect(screen.getByText('my sidebar panel')).toBeInTheDocument();
+    expect(screen.queryByText('navigation panel')).toBeNull();
+  });
+
+  it('sends a manager following the same link to the company-wide workspaces', () => {
+    open('?tab=sidebar');
+    expect(shell()).toHaveAttribute('data-group', 'company');
+    expect(shell()).toHaveAttribute('data-section', 'sidebar');
+    expect(screen.getByText('navigation panel')).toBeInTheDocument();
+  });
 });
 
 describe('every link Settings has ever answered to still lands', () => {
@@ -126,7 +149,7 @@ describe('every link Settings has ever answered to still lands', () => {
     ['users',         'company',      'users'],
     ['plan',          'company',      'plan'],
     ['modules',       'company',      'modules'],
-    ['sidebar',       'company',      'sidebar'],
+    ['sidebar',       'company',      'sidebar'],   // as a manager; see the operator case below
     ['sites',         'facility',     'sites'],
     ['facility',      'facility',     'sites'],
     ['notifications', 'facility',     'notifications'],
@@ -188,6 +211,13 @@ describe('a group addresses its own sections', () => {
 });
 
 describe('each group renders all of its sections', () => {
+  it('stacks the account sections behind one tab', () => {
+    open('?tab=account');
+    for (const id of ['account', 'theme', 'my-nav']) {
+      expect(document.getElementById(`settings-section-${id}`)).not.toBeNull();
+    }
+  });
+
   it('stacks the company sections behind one tab', () => {
     open('?tab=company');
     for (const id of ['company', 'users', 'plan', 'modules', 'sidebar']) {

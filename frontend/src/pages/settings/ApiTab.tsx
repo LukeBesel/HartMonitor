@@ -344,7 +344,7 @@ export function ApiTab() {
             to push real-time events to your other systems.
           </p>
           <p className="text-xs text-gray-500 mt-3">
-            Visit the <span className="font-semibold">Plan &amp; Billing</span> tab to upgrade.
+            Visit the <span className="font-semibold">Plan &amp; Billing</span> section under Company to upgrade.
           </p>
         </div>
       </div>

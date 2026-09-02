@@ -219,13 +219,13 @@ const MODULE_GUIDES: ModuleGuide[] = [
     steps: [
       'Settings → Users → "Invite User" to add a teammate by email.',
       'Assign one of five roles: Developer (full access), Manager, Supervisor, Operator, Viewer.',
-      'Settings → Permissions lets you show or hide specific nav items per role.',
+      'Settings → Company → Users & Access lets you show or hide specific nav items per role.',
       'Viewers can see everything but can\'t create, edit, or delete anything.',
       'Operators can log completions and NCRs; Supervisors can also manage apps and stations.',
     ],
     tips: [
       'Most shop-floor workers should be Operator role -- they can use the portal and log issues.',
-      'The Permissions tab lets you, for example, hide Planning from operators who don\'t need it.',
+      'The permissions matrix lets you, for example, hide Planning from operators who don\'t need it.',
     ],
   },
 ];

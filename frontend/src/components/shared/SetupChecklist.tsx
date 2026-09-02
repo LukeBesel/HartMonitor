@@ -54,7 +54,7 @@ const INITIAL_ITEMS: ChecklistItem[] = [
 type LoadState = 'loading' | 'ready' | 'error';
 
 export function SetupChecklist() {
-  const { user, canEdit } = useAuth();
+  const { user, canEdit, isAtLeast } = useAuth();
   const { isEnabled } = useModules();
   const { pathname } = useLocation();
   const [items, setItems] = useState<ChecklistItem[]>(INITIAL_ITEMS);
@@ -78,12 +78,17 @@ export function SetupChecklist() {
         if (stored) { setDismissed(true); return; }
         if (stored === null && localStorage.getItem(key)) {
           // Never answered company-wide, but this device remembers a dismissal.
-          // Hand it to the company once, then stop carrying it here.
+          // Hand it to the company once, then stop carrying it here — but only
+          // if this account may write company settings at all. An operator
+          // firing a PUT that can only ever answer 403, on every single page
+          // load, forever, is not a migration; it is a permanent error.
           setDismissed(true);
-          try {
-            await saveSetupChecklistDismissed(true);
-            localStorage.removeItem(key);
-          } catch { /* a member who may not write keeps the device flag */ }
+          if (isAtLeast('manager')) {
+            try {
+              await saveSetupChecklistDismissed(true);
+              localStorage.removeItem(key);
+            } catch { /* keep the device flag until a write succeeds */ }
+          }
           return;
         }
       } catch {
@@ -152,11 +157,14 @@ export function SetupChecklist() {
 
   const dismiss = () => {
     setDismissed(true);
-    saveSetupChecklistDismissed(true).catch(() => {
-      // Saving for the company needs manager or above. Somebody who may not do
-      // that still gets to put the list away on the screen in front of them.
+    // Saving for the company needs manager or above. Somebody who may not do
+    // that still gets to put the list away on the screen in front of them —
+    // without a request that was never going to be allowed.
+    const keepOnDevice = () => {
       try { localStorage.setItem(deviceKey(user?.id), '1'); } catch { /* ignore */ }
-    });
+    };
+    if (!isAtLeast('manager')) { keepOnDevice(); return; }
+    saveSetupChecklistDismissed(true).catch(keepOnDevice);
   };
 
   return (

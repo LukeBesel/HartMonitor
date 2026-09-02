@@ -1,5 +1,6 @@
 // ─── Plan, add-on slots, checkout and billing history ───────────────────────
 import { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { CreditCard, Check, ClipboardList, Package, ShoppingCart, ShieldCheck, Star, Zap, AlertCircle, Plus, Trash2, X, AppWindow, LayoutGrid, BarChart3, CalendarRange, Cpu, GitBranch } from 'lucide-react';
 import { usePlan } from '../../context/PlanContext';
 import { api } from '../../api/client';
@@ -202,6 +203,7 @@ function AddonCard({ addonType, addon, owned, onPurchase, onRemove }: {
 
 export function PlanTab() {
   const { plan, loading, refresh, isFree, isPro, isEnterprise } = usePlan();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [checkout, setCheckout] = useState<CheckoutItem | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -220,17 +222,22 @@ export function PlanTab() {
   }, []);
 
   // Handle return from Stripe Checkout (?checkout=success|cancel).
+  //
+  // Cleared through the router, not window.history.replaceState. Settings is
+  // one screen with four tabs now, and the shell reads the router's own copy of
+  // the query: a raw replaceState left that copy holding ?checkout=success, so
+  // the next tab click wrote it back into the address bar and "Payment
+  // successful" fired all over again.
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const result = params.get('checkout');
+    const result = searchParams.get('checkout');
     if (!result) return;
     if (result === 'success') { showToast('Payment successful -- your plan is now active.'); refresh(); }
     else if (result === 'cancel') showToast('Checkout canceled -- no charge was made.', 'error');
-    params.delete('checkout');
-    const qs = params.toString();
-    window.history.replaceState({}, '', window.location.pathname + (qs ? `?${qs}` : ''));
+    const next = new URLSearchParams(searchParams);
+    next.delete('checkout');
+    setSearchParams(next, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [searchParams]);
 
   const isLive = billingMode !== 'demo';
 

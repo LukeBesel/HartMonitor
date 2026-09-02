@@ -9,7 +9,7 @@
 //
 // It is now a shell over four groups, each a page of titled sections:
 //
-//   My Account     me: my login, my theme
+//   My Account     me: my login, my theme, my own sidebar
 //   Company        us: the company, its people, its plan, its modules, its nav
 //   Facility       the plant: sites, departments, stations, shifts, alerts
 //   Integrations   data in and out: API keys, webhooks, export, guides
@@ -19,12 +19,12 @@
 // settings/groups.ts) — including `?tab=facility`, which was printed by the
 // product but never existed as a tab, and used to land silently on My Account.
 
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Settings, Key, Building2, Network, Plug } from 'lucide-react';
 import TabBar from '../components/shared/TabBar';
 import { useAuth } from '../context/AuthContext';
-import { GROUPS, resolveTarget, type GroupId } from './settings/groups';
+import { GROUPS, groupById, resolveTarget, type GroupId } from './settings/groups';
 import AccountSettings from './settings/AccountSettings';
 import CompanySettings from './settings/CompanySettings';
 import FacilitySettings from './settings/FacilitySettings';
@@ -38,45 +38,109 @@ const GROUP_ICONS: Record<GroupId, React.ReactNode> = {
 };
 
 const GROUP_BLURBS: Record<GroupId, string> = {
-  account:      'Your login and how the product looks on this screen.',
+  account:      'Your login, how the product looks, and your own sidebar.',
   company:      'The company, its people, its plan and what they see.',
   facility:     'Sites, departments, work stations, shifts and alerts.',
   integrations: 'API keys, webhooks, data export and the guides.',
 };
 
+/** Stop nudging a section into view once it has held still this long. */
+const SETTLED_MS = 300;
+/** And stop regardless after this, however restless the page is. */
+const GIVE_UP_MS = 3000;
+
 export default function SettingsPage() {
   const { isAtLeast } = useAuth();
   const [params, setParams] = useSearchParams();
+  const groupRef = useRef<HTMLDivElement>(null);
 
-  // Only the groups this person may actually open. A role that cannot open a
-  // group is not shown a tab that answers 403.
-  const tabs = useMemo(
-    () => GROUPS.filter(g => !g.minRole || isAtLeast(g.minRole)),
+  const canOpen = useCallback(
+    (id: GroupId) => {
+      const def = GROUPS.find(g => g.id === id);
+      return !!def && (!def.minRole || isAtLeast(def.minRole));
+    },
     [isAtLeast],
   );
 
-  const requested = resolveTarget(params.get('tab'), params.get('section'));
-  // Deep-linking into a group this role cannot open falls back to the first one
-  // it can — never to a blank screen.
-  const allowed = tabs.some(t => t.id === requested.group);
-  const target = allowed
-    ? requested
-    : resolveTarget(tabs[0]?.id ?? 'account', null);
+  // Only the groups this person may actually open. A role that cannot open a
+  // group is not shown a tab that answers 403.
+  const tabs = useMemo(() => GROUPS.filter(g => canOpen(g.id)), [canOpen]);
 
-  // Put the addressed section in front of the reader. Groups render all their
-  // sections stacked, so the deep link is an anchor rather than a second tab
-  // strip. jsdom has no layout, so guard the call rather than assume it.
+  const target = resolveTarget(params.get('tab'), params.get('section'), canOpen);
+
+  // A page can only scroll as far as it is tall. The last section of a group —
+  // Notifications, say — sat two thirds down the screen however hard we aimed
+  // at it, because there was nothing below it to scroll into. A deep link to
+  // anything but a group's first section gets a viewport of empty room at the
+  // end so its target can actually come up to the top; a plain tab click, which
+  // is already at the top, does not pay for it.
+  const needsRoom = target.section !== groupById(target.group).sections[0];
+
+  // ── Put the addressed section in front of the reader, and keep it there ────
+  //
+  // Groups render their sections stacked, so a deep link is an anchor rather
+  // than a second tab strip. Scrolling to it once on mount was not enough: the
+  // sections above the target fetch their own data and grow as it lands, which
+  // pushed the target back down the page — ?tab=users used to settle halfway
+  // through the company form, and ?tab=plan inside the permissions matrix.
+  // So we re-aim while the target keeps moving, and stop as soon as it holds
+  // still, gives up, or the reader takes over by scrolling themselves.
   useEffect(() => {
-    const el = document.getElementById(`settings-section-${target.section}`);
-    if (el && typeof el.scrollIntoView === 'function') {
-      el.scrollIntoView({ block: 'start', behavior: 'auto' });
+    const anchorId = `settings-section-${target.section}`;
+    const el = () => document.getElementById(anchorId);
+    const first = el();
+    if (!first || typeof first.scrollIntoView !== 'function') return;
+
+    let done = false;
+    let lastTop = -1;
+    let settle: ReturnType<typeof setTimeout> | null = null;
+    let giveUp: ReturnType<typeof setTimeout> | null = null;
+    let observer: ResizeObserver | null = null;
+
+    const stop = () => {
+      if (done) return;
+      done = true;
+      if (settle) clearTimeout(settle);
+      if (giveUp) clearTimeout(giveUp);
+      observer?.disconnect();
+      for (const evt of ['wheel', 'touchstart', 'keydown'] as const) {
+        window.removeEventListener(evt, stop);
+      }
+    };
+
+    const aim = () => {
+      if (done) return;
+      const node = el();
+      if (!node) return;
+      if (node.offsetTop === lastTop) return;   // nothing moved; leave it alone
+      lastTop = node.offsetTop;
+      node.scrollIntoView({ block: 'start', behavior: 'auto' });
+      if (settle) clearTimeout(settle);
+      settle = setTimeout(stop, SETTLED_MS);
+    };
+
+    aim();
+    // The reader's own scroll wins immediately — nothing is more annoying than
+    // a page that pulls itself back while you are reading it.
+    for (const evt of ['wheel', 'touchstart', 'keydown'] as const) {
+      window.addEventListener(evt, stop, { passive: true });
     }
+    if (typeof ResizeObserver === 'function' && groupRef.current) {
+      observer = new ResizeObserver(aim);
+      observer.observe(groupRef.current);
+    }
+    giveUp = setTimeout(stop, GIVE_UP_MS);
+    return stop;
   }, [target.group, target.section]);
 
   const selectGroup = (id: GroupId) => {
-    const next = new URLSearchParams(params);
+    // Built from the address bar rather than from the router's copy: PlanTab
+    // strips ?checkout after showing "Payment successful", and a stale copy
+    // held here would put it back and fire the toast again on the next click.
+    const next = new URLSearchParams(window.location.search);
     next.set('tab', id);
     next.delete('section');
+    next.delete('checkout');
     setParams(next, { replace: false });
   };
 
@@ -105,12 +169,13 @@ export default function SettingsPage() {
         className="mb-6"
       />
 
-      <div data-testid="settings-group" data-group={target.group} data-section={target.section}>
+      <div ref={groupRef} data-testid="settings-group" data-group={target.group} data-section={target.section}>
         {target.group === 'account'      && <AccountSettings />}
         {target.group === 'company'      && <CompanySettings />}
         {target.group === 'facility'     && <FacilitySettings />}
         {target.group === 'integrations' && <IntegrationSettings />}
       </div>
+      {needsRoom && <div aria-hidden className="h-screen" />}
     </div>
   );
 }
