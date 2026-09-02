@@ -13,7 +13,16 @@ import { useOnlineStatus } from '../hooks/useOnlineStatus';
 import { getQueuedNCRs, queueNCR, syncQueuedNCRs } from '../utils/offlineQueue';
 import { useMessages } from '../context/MessagesContext';
 import { useAuth } from '../context/AuthContext';
+import { buildPlayLink } from '../components/player/runtime';
 import type { MessageSeverity } from '../types';
+
+/** A floor identity, as far as it is actually known. `id` is a real user this
+ *  work can be booked to; null means the person typed a name and nothing more,
+ *  and the run will carry no user id rather than a made-up one. */
+export interface OperatorIdentity {
+  id: string | null;
+  display_name: string;
+}
 
 interface RosterEntry {
   id: string;
@@ -92,6 +101,9 @@ export default function OperatorPortal() {
   const [step, setStep] = useState<'name' | 'main'>('name');
   const [activeTab, setActiveTab] = useState<Tab>('jobs');
   const [operatorName, setOperatorName] = useState('');
+  /** The verified user behind the name, when there is one. Carried into every
+   *  run this portal starts so completions.operator_user_id is a real person. */
+  const [operatorUserId, setOperatorUserId] = useState<string | null>(null);
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(false);
   const [identifyError, setIdentifyError] = useState('');
@@ -121,9 +133,13 @@ export default function OperatorPortal() {
       .finally(() => setRosterLoaded(true));
   }, []);
 
-  // Finalize a verified identity and enter the portal.
-  const identify = async (name: string) => {
+  // Finalize a verified identity and enter the portal. The whole identity is
+  // kept — the id as well as the name — because the id is what attributes the
+  // work; a name alone is just text that happens to look like a person.
+  const identify = async (who: OperatorIdentity) => {
+    const name = who.display_name;
     setOperatorName(name);
+    setOperatorUserId(who.id);
     localStorage.setItem('hm_operator_name', name);
     setLoading(true);
     setIdentifyError('');
@@ -167,15 +183,26 @@ export default function OperatorPortal() {
 
   const handleNameSubmit = async () => {
     if (!operatorName.trim()) return;
-    await identify(operatorName.trim());
+    // Typed by hand: a name, no verified user behind it.
+    await identify({ id: null, display_name: operatorName.trim() });
   };
 
   const handleStartJob = () => {
     if (!selectedWO?.app_id) return;
-    navigate(`/play/${selectedWO.app_id}?wo=${selectedWO.id}&name=${encodeURIComponent(operatorName.trim())}`);
+    navigate(buildPlayLink({
+      appId: selectedWO.app_id,
+      workOrderId: selectedWO.id,
+      operatorName,
+      operatorUserId,
+      stationId: localStorage.getItem('hm_station'),
+      // The way back: this run belongs to the floor, so Done, Exit and
+      // Back all return here rather than dropping a tablet into /apps.
+      fromOperator: true,
+    }));
   };
 
   const switchOperator = () => {
+    setOperatorUserId(null);
     setStep('name');
     setSelectedWO(null);
     setCompletions(null);
@@ -291,13 +318,13 @@ function IdentifyScreen({
   roster: RosterEntry[];
   rosterLoaded: boolean;
   loading: boolean;
-  currentUser: { display_name?: string; role?: string } | null;
+  currentUser: { id?: string; display_name?: string; role?: string } | null;
   manualMode: boolean;
   setManualMode: (v: boolean) => void;
   operatorName: string;
   setOperatorName: (v: string) => void;
   onManualSubmit: () => void;
-  onIdentify: (name: string) => void;
+  onIdentify: (who: OperatorIdentity) => void;
   onExit: () => void;
   identifyError?: string;
 }) {
@@ -316,7 +343,9 @@ function IdentifyScreen({
     if (op.has_pin) {
       setSelectedOp(op); setPin(''); setPinError(false);
     } else {
-      onIdentify(op.display_name); // no PIN configured — identify directly
+      // No PIN configured for this account — the tile IS the identification the
+      // company has set up, so the run is still booked to that real user.
+      onIdentify({ id: op.id, display_name: op.display_name });
     }
   };
 
@@ -324,8 +353,9 @@ function IdentifyScreen({
     if (!selectedOp || pin.length < 4 || verifying) return;
     setVerifying(true); setPinError(false);
     try {
+      // { id, display_name } — the id is the point of verifying at all.
       const res = await api.verifyOperatorPin({ user_id: selectedOp.id, pin });
-      await onIdentify(res.display_name);
+      await onIdentify({ id: res.id, display_name: res.display_name });
     } catch {
       setPinError(true); setPin('');
     } finally {
@@ -339,7 +369,7 @@ function IdentifyScreen({
     setVerifying(true);
     try {
       const res = await api.verifyOperatorPin({ badge_code: code });
-      await onIdentify(res.display_name);
+      await onIdentify({ id: res.id, display_name: res.display_name });
     } catch {
       setScanError(`Badge "${code}" not recognized`);
     } finally {
@@ -515,7 +545,7 @@ function IdentifyScreen({
 
           {isSelfOperator && (
             <button
-              onClick={() => onIdentify(currentUser!.display_name!)}
+              onClick={() => onIdentify({ id: currentUser!.id ?? null, display_name: currentUser!.display_name! })}
               disabled={loading}
               className="w-full mb-4 h-14 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white rounded-2xl font-bold text-base transition-colors flex items-center justify-center gap-2 shadow-lg shadow-blue-900/40"
             >

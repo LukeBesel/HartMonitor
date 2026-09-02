@@ -5,6 +5,7 @@
 // unchanged — OperatorPortal.tsx consumes it exactly as before. Anything
 // queued under the legacy key is migrated into the outbox on first load.
 
+import { useCallback, useSyncExternalStore } from 'react';
 import { api } from '../api/client';
 import type { CompletionFlushPayload, KitLineUpdate } from '../api/client';
 import { v4 } from './uuid';
@@ -103,6 +104,21 @@ function notify() {
 export function subscribeOutbox(fn: OutboxListener): () => void {
   listeners.add(fn);
   return () => { listeners.delete(fn); };
+}
+
+/**
+ * Live outbox depth for a component. Every write goes through save(), which
+ * notifies — so a "saved locally" notice built on this clears the moment the
+ * queue drains, with no reload and nothing to poll. Returns a number, so React
+ * compares snapshots by value.
+ */
+export function useOutboxDepth(kinds?: OutboxKind[]): number {
+  const key = kinds ? kinds.join(',') : '';
+  const getSnapshot = useCallback(
+    () => pendingCount(key ? (key.split(',') as OutboxKind[]) : undefined),
+    [key],
+  );
+  return useSyncExternalStore(subscribeOutbox, getSnapshot, getSnapshot);
 }
 
 // ─── Public outbox API ────────────────────────────────────────────────────────

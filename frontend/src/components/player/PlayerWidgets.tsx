@@ -460,7 +460,9 @@ export default function PlayerWidget(props: PlayerWidgetProps) {
       return <TimerWidget widget={widget} readOnly={readOnly} onTimerDone={onTimerDone} onTimerTick={onTimerTick} />;
 
     case 'counter':
-      return <CounterWidget widget={widget} value={value} onChange={onChange} />;
+      // withError so a required counter can say why it is blocking, exactly
+      // like every other input — the gate covers it now.
+      return withError(<CounterWidget widget={widget} value={value} onChange={onChange} />);
 
     case 'pass-fail':
       return withError(

@@ -14,6 +14,9 @@ export interface PlayerFooterProps {
   onBack: () => void;
   onNext: () => void;
   onComplete: () => void;
+  /** Take the operator to whatever is blocking them: scroll it into view,
+   *  highlight it, name it. Makes the reason line a button. */
+  onShowBlocker?: () => void;
 }
 
 /** 72px trigger-driven footer nav (spec §5.1). Back is a ghost button hidden on
@@ -23,10 +26,19 @@ export interface PlayerFooterProps {
 export default function PlayerFooter(props: PlayerFooterProps) {
   const {
     stepIndex, stepCount, canBack, isLast, blocked, blockReason, completing,
-    hideForward = false, onBack, onNext, onComplete,
+    hideForward = false, onBack, onNext, onComplete, onShowBlocker,
   } = props;
 
   const showDots = stepCount <= 12;
+  // A blocked forward button stays TAPPABLE, and is not marked disabled to
+  // assistive tech either: `disabled` looked the same as "nothing happened" —
+  // the operator tapped, nothing moved, and the reason was a 14px line they had
+  // already scrolled past. Tapping now takes them to the field that is holding
+  // the run up, so the button DOES something and must be reachable. It carries
+  // the reason instead. Only the in-flight save actually disables it.
+  const blockedProps = blocked
+    ? { 'data-blocked': 'true', title: blockReason || undefined, style: { opacity: 0.6 } }
+    : {};
 
   return (
     <footer
@@ -74,13 +86,21 @@ export default function PlayerFooter(props: PlayerFooterProps) {
           </div>
         )}
         {blocked && blockReason && (
-          <div
+          <button
+            type="button"
+            onClick={onShowBlocker}
+            disabled={!onShowBlocker}
             className="flex items-center gap-1.5 truncate max-w-full"
-            style={{ fontSize: 14, fontWeight: 550, color: 'var(--p-warn)' }}
+            style={{
+              fontSize: 14, fontWeight: 550, color: 'var(--p-warn)',
+              textDecoration: onShowBlocker ? 'underline' : 'none',
+              textUnderlineOffset: 3, minHeight: 32, padding: '0 4px',
+            }}
+            title={onShowBlocker ? 'Show me what is missing' : undefined}
           >
             <Lock size={13} className="flex-shrink-0" />
             <span className="truncate">{blockReason}</span>
-          </div>
+          </button>
         )}
       </div>
 
@@ -91,7 +111,8 @@ export default function PlayerFooter(props: PlayerFooterProps) {
         <button
           className="p-btn p-btn-good"
           onClick={onComplete}
-          disabled={blocked || completing}
+          {...blockedProps}
+          disabled={completing}
         >
           {completing ? <Loader2 size={22} className="animate-spin" /> : <CheckCircle size={22} />}
           {completing ? 'Saving…' : 'Complete'}
@@ -100,7 +121,7 @@ export default function PlayerFooter(props: PlayerFooterProps) {
         <button
           className="p-btn p-btn-primary"
           onClick={onNext}
-          disabled={blocked}
+          {...blockedProps}
         >
           Next <ChevronRight size={22} />
         </button>

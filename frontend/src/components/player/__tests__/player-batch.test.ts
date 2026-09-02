@@ -5,6 +5,7 @@ import type { Step, Trigger, Widget } from '../../../types';
 import {
   stepHidesFooterNav, taktBarState, runContextRequired, runContextGate,
   relativeLuminance, isLightColor, instructionInk, playerTextColor, stepTaktSeconds,
+  claimSideEffect, sideEffectKey, stepValueSignature,
 } from '../runtime';
 
 function widget(partial: Partial<Widget> & { id: string; type: Widget['type'] }): Widget {
@@ -186,5 +187,60 @@ describe('dark-player text contrast (luminance check)', () => {
     expect(playerTextColor('#f8fafc')).toBe('#f8fafc');   // light configured ink passes through
     expect(playerTextColor(undefined)).toBe('var(--p-ink-2)');
     expect(playerTextColor('var(--custom)')).toBe('var(--custom)'); // unparseable untouched
+  });
+});
+
+// ─── One filing per problem, not one per press ───────────────────────────────
+// A step_exit trigger of [create_ncr, block_with_error] leaves the operator on
+// the step with the forward button still live. Every press re-runs step_exit,
+// and every re-run used to raise ANOTHER quality record for the same failure —
+// so a Fail pressed four times filed four NCRs.
+
+describe('side-effecting step_exit actions fire once per failure', () => {
+  const failStep = step([
+    widget({ id: 'w1', type: 'pass-fail', config: { variableName: 'qc_result' } }),
+    widget({ id: 'w2', type: 'text-input', config: { variableName: 'note' } }),
+  ]);
+  const ncr = { severity: 'major', title: 'Visual inspection failed', description: 'Unit held' };
+  const keyFor = (data: Record<string, unknown>, payload: unknown = ncr) =>
+    sideEffectKey(failStep.id, stepValueSignature(failStep, data), 'create_ncr', payload);
+
+  it('files on the first press and on no press after it', () => {
+    const fired = new Set<string>();
+    const data = { qc_result: 'Fail' };
+    expect(claimSideEffect(fired, keyFor(data))).toBe(true);
+    expect(claimSideEffect(fired, keyFor(data))).toBe(false);
+    expect(claimSideEffect(fired, keyFor(data))).toBe(false);
+    expect(fired.size).toBe(1);
+  });
+
+  it('files again when the answers changed — a different report', () => {
+    const fired = new Set<string>();
+    expect(claimSideEffect(fired, keyFor({ qc_result: 'Fail' }))).toBe(true);
+    // The operator corrects the unit and fails it again for another reason.
+    expect(claimSideEffect(fired, keyFor({ qc_result: 'Fail', note: 'second defect' }))).toBe(true);
+    expect(fired.size).toBe(2);
+  });
+
+  it('keeps different actions and different steps apart', () => {
+    const fired = new Set<string>();
+    const data = { qc_result: 'Fail' };
+    expect(claimSideEffect(fired, keyFor(data))).toBe(true);
+    expect(claimSideEffect(fired, keyFor(data, { ...ncr, severity: 'critical' }))).toBe(true);
+    expect(claimSideEffect(fired, sideEffectKey('other-step', stepValueSignature(failStep, data), 'create_ncr', ncr))).toBe(true);
+    expect(claimSideEffect(fired, sideEffectKey(failStep.id, stepValueSignature(failStep, data), 'save_record', ncr))).toBe(true);
+  });
+
+  it('signs a step by its answers, whatever order the keys arrive in', () => {
+    const a = stepValueSignature(failStep, { qc_result: 'Fail', note: 'x' });
+    const b = stepValueSignature(failStep, { note: 'x', qc_result: 'Fail' });
+    expect(a).toBe(b);
+    expect(stepValueSignature(failStep, { qc_result: 'Pass' })).not.toBe(a);
+    expect(stepValueSignature(undefined, {})).toBe('');
+  });
+
+  it('is stable across payload key order', () => {
+    expect(sideEffectKey('s', 'v', 'create_ncr', { a: 1, b: { c: 2, d: 3 } }))
+      .toBe(sideEffectKey('s', 'v', 'create_ncr', { b: { d: 3, c: 2 }, a: 1 }));
   });
 });

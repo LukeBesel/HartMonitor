@@ -12,6 +12,7 @@ import {
   Hash, Loader2, Lock, MessageSquare, Package, ScanLine, ShieldCheck, Tag, X, Zap,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { useAuth } from '../context/AuthContext';
 import { setRunActive } from '../utils/staleChunk';
 import type { CompletionFlushPayload, CompletionSession, JobInProgress, KitLineUpdate } from '../api/client';
 import type {
@@ -41,9 +42,11 @@ import { targetLabel, targetPayload } from '../config/andonTeams';
 import type { AlertTarget } from '../config/andonTeams';
 import { subscribeRealtime, isAndonEvent } from '../utils/realtime';
 import {
-  collectStepTriggers, evaluateKitScan, formatDur, getStepBlocks, kitProgress,
-  kitWidgetFor, legacyKey, runContextGate, runContextRequired, stepHidesFooterNav,
-  stepShowsKit, stepTaktSeconds as taktOfStep, summarizeBlocks, taktBarState, valueInputFor,
+  claimSideEffect, collectStepTriggers, evaluateKitScan, exitTarget, formatDur,
+  getStepBlocks, kitProgress, kitWidgetFor, legacyKey, operatorAttribution,
+  operatorDisplayName, runContextGate, runContextRequired, sideEffectKey,
+  stepHidesFooterNav, stepShowsKit, stepTaktSeconds as taktOfStep,
+  stepValueSignature, summarizeBlocks, taktBarState, valueInputFor,
 } from '../components/player/runtime';
 import type { BlockItem } from '../components/player/runtime';
 import '../player.css';
@@ -82,6 +85,13 @@ export default function AppPlayer() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const previewMode = searchParams.get('preview') === '1';
+  const { user, canAccessReportPortal } = useAuth();
+  // How this run was entered decides where it lets go. A tablet that came from
+  // the Operator Portal goes back to the Operator Portal — never to /apps,
+  // which is an unlocked manager console with a builder in it.
+  const enteredFromOperator = searchParams.get('from') === 'operator';
+  const exitPath = exitTarget({ fromOperator: enteredFromOperator, role: user?.role });
+  const leavePlayer = useCallback(() => { navigate(exitPath); }, [navigate, exitPath]);
 
   // ── Loading / catalog state ────────────────────────────────────────────────
   const [app, setApp] = useState<App | null>(null);
@@ -131,6 +141,16 @@ export default function AppPlayer() {
   const [bomFallback, setBomFallback] = useState<BOMState | null>(null);
   const [photoGates, setPhotoGates] = useState<Record<string, string>>({});
   const [blockBanner, setBlockBanner] = useState<string | null>(null);
+  /** The widget the last refused forward tap pointed at — scrolled to, ringed
+   *  and named. Cleared as soon as the step is satisfied or changes. */
+  const [blockedWidgetId, setBlockedWidgetId] = useState<string | null>(null);
+  /** The block the banner is currently explaining, so the banner can retire
+   *  itself the moment that block is answered — a red bar still demanding a
+   *  result the operator has already given is the player lying to them. */
+  const [gateBlock, setGateBlock] = useState<BlockItem | null>(null);
+  /** A forward tap has been refused on this step: required fields may now show
+   *  their ring. Before the first tap, an untouched form is not "wrong" yet. */
+  const [navAttempted, setNavAttempted] = useState(false);
   const [toasts, setToasts] = useState<PlayerToast[]>([]);
   const [poppedLineId, setPoppedLineId] = useState<string | null>(null);
   const [showPartsOverlay, setShowPartsOverlay] = useState(false);
@@ -177,6 +197,10 @@ export default function AppPlayer() {
   const statusRef = useRef<RunStatus>('setup'); statusRef.current = status;
   const manualPartNumberRef = useRef(''); manualPartNumberRef.current = manualPartNumber;
   const taktFlashTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Side-effecting step_exit actions already carried out in this run
+   *  (step + answers + action). One failure files one NCR, however many times
+   *  the operator presses the button it was blocked on. */
+  const firedSideEffectsRef = useRef<Set<string>>(new Set());
 
   const selectedWO = workOrders.find(w => w.id === selectedWorkOrderId);
   const selectedPT = productTypes.find(p => p.id === selectedProductTypeId);
@@ -229,8 +253,12 @@ export default function AppPlayer() {
         const woParam = searchParams.get('wo');
         const nameParam = searchParams.get('name');
         const stationParam = searchParams.get('station');
+        // The verified identity the Operator Portal signed in — carried through
+        // so the run is booked to the person, not to their typing.
+        const uidParam = searchParams.get('uid');
         if (woParam) setSelectedWorkOrderId(woParam);
         if (nameParam) setOperatorName(nameParam);
+        if (uidParam) setOperatorUserId(uidParam);
         if (stationParam) setSelectedStationId(stationParam);
         setLoading(false);
       })
@@ -303,7 +331,7 @@ export default function AppPlayer() {
     const st = stations.find(s => s.id === selectedStationId);
     const totalElapsed = Object.values(stepTimesRef.current).reduce((a, b) => a + b, 0) + stepElapsedRef.current;
     return {
-      operator: operatorNameRef.current || 'Operator',
+      operator: operatorDisplayName(operatorNameRef.current),
       work_order_number: wo?.work_order_number ?? '',
       part_number: wo?.part_number ?? manualPartNumberRef.current ?? '',
       quantity: wo?.quantity ?? 0,
@@ -460,6 +488,31 @@ export default function AppPlayer() {
       photoGatesRef.current[step.id] ?? null,
       gated && k ? { gated: true, lines: k.lines, requireScan: kitW?.config.requireScan ?? false } : null,
     );
+  }, []);
+
+  /**
+   * A refused forward tap has to say why and show where. Scrolls the first
+   * blocking widget into view, moves focus to its CONTAINER (never to the input
+   * itself — focusing a text field opens the phone keyboard over the very thing
+   * we just scrolled to) and names it in the banner. Widgets without a place on
+   * screen (kit, photo gate) still get their line.
+   */
+  const explainBlocks = useCallback((blocks: BlockItem[]) => {
+    if (blocks.length === 0) return;
+    setNavAttempted(true);
+    const first = blocks.find(b => b.widgetId) ?? blocks[0];
+    setBlockBanner(first.message);
+    setBlockedWidgetId(first.widgetId ?? null);
+    setGateBlock(first);
+    if (!first.widgetId) return;
+    const target = first.widgetId;
+    // After paint, so a widget that only just gained its ring is measurable.
+    requestAnimationFrame(() => {
+      const el = document.getElementById(`pw-${target}`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.focus({ preventScroll: true });
+    });
   }, []);
 
   /** An authored kit_has_short trigger may route around the standing kit gate
@@ -634,6 +687,9 @@ export default function AppPlayer() {
     stepElapsedRef.current = 0;
     setStepElapsed(0);
     setBlockBanner(null);
+    setBlockedWidgetId(null);
+    setGateBlock(null);
+    setNavAttempted(false);
     setShowPartsOverlay(false);
 
     // step_enter triggers of the target (may chain-navigate)
@@ -659,17 +715,24 @@ export default function AppPlayer() {
     const step = a.steps[stepIdxRef.current];
     const forward = intent.to !== 'prev';
 
-    // 1. Standing validation gate (forward only)
+    // 1. Standing validation gate (forward only). A refused tap is never
+    //    silent: it says what is missing and takes the operator to it.
     if (forward && step) {
       const blocks = computeBlocks();
       if (blocks.length > 0) {
         const onlyKit = blocks.every(b => b.kind === 'kit');
-        if (!(onlyKit && hasShortRouting(step))) return; // footer already shows the reason
+        if (!(onlyKit && hasShortRouting(step))) { explainBlocks(blocks); return; }
       }
     }
 
     // 2. step_exit triggers — may block or redirect
     const effects = runTriggers(collectStepTriggers(step), 'step_exit', buildState());
+    // A step_exit trigger that blocks leaves the operator on the step with the
+    // forward button still live, so they press again — and an authored
+    // create_ncr used to file a fresh quality record on every single press.
+    // The record belongs to the FAILURE, not to the press: an action already
+    // carried out for this step with these answers is not carried out twice.
+    const valueSig = stepValueSignature(step, formDataRef.current);
     let finalIntent = intent;
     let blocked = false;
     for (const eff of effects) {
@@ -679,6 +742,13 @@ export default function AppPlayer() {
         blocked = true;
         setBlockBanner(eff.text);
       } else {
+        if (eff.kind === 'enqueue') {
+          const key = sideEffectKey(step?.id ?? '', valueSig, eff.op, eff.payload);
+          if (!claimSideEffect(firedSideEffectsRef.current, key)) {
+            debug(`${eff.op} skipped — already done for this step and these answers`);
+            continue;
+          }
+        }
         applyNonNavEffect(eff);
       }
     }
@@ -686,7 +756,7 @@ export default function AppPlayer() {
 
     // 3–4. commit + step_enter of target
     commitNavigate(finalIntent);
-  }, [computeBlocks, hasShortRouting, buildState, applyNonNavEffect, commitNavigate]);
+  }, [computeBlocks, hasShortRouting, explainBlocks, buildState, applyNonNavEffect, commitNavigate, debug]);
 
   const applyEffects = useCallback((effects: TriggerEffect[]) => {
     let nav: NavIntent | null = null;
@@ -766,7 +836,9 @@ export default function AppPlayer() {
       debug(`kit line ${lineId.slice(0, 8)} → ${data.status} (suppressed)`);
       return;
     }
-    const payload: KitLineUpdate = { ...data, actor: operatorNameRef.current || 'Operator' };
+    // No name yet? The server falls back to the signed-in user rather than
+    // stamping a phantom called "Operator" on the kit line.
+    const payload: KitLineUpdate = { ...data, actor: operatorNameRef.current };
     api.updateKitLine(k.id, lineId, payload)
       .then(res => {
         const cur = kitRef.current;
@@ -962,10 +1034,14 @@ export default function AppPlayer() {
     valuesBufferRef.current = new Map();
     dirtyRef.current = false;
     capturedRef.current = new Set();
+    firedSideEffectsRef.current = new Set();
     timerElapsedRef.current = {};
     setPhotoGates({});
     photoGatesRef.current = {};
     setBlockBanner(null);
+    setBlockedWidgetId(null);
+    setGateBlock(null);
+    setNavAttempted(false);
     setPaused(false);
     pausedAtRef.current = null;
     setSavedLocally(false);
@@ -1006,22 +1082,25 @@ export default function AppPlayer() {
     setActionError(null);
     try {
       if (!previewMode) {
+        // Whoever actually ran it, or nobody — never an invented "Operator".
+        const who = operatorAttribution(operatorName, operatorUserId);
         const c = await api.createCompletion({
           app_id: id,
-          operator_name: operatorName || 'Operator',
+          ...who,
           work_order_id: selectedWorkOrderId || undefined,
           product_type_id: selectedProductTypeId || undefined,
           station_id: selectedStationId || undefined,
-          operator_user_id: operatorUserId || undefined,
         });
         setCompletionId(c.id);
         completionIdRef.current = c.id;
-        // Open this operator's session stint (best-effort — an offline start
-        // still runs; the roster is also dual-written client-side below).
-        api.openCompletionSession(c.id, {
-          operator_name: operatorName || 'Operator',
-          operator_user_id: operatorUserId || undefined,
-        }).catch(() => undefined);
+        // Open this operator's session stint (best-effort). A stint belongs to
+        // a named person, so an unnamed run simply has none.
+        if (who.operator_name) {
+          api.openCompletionSession(c.id, {
+            operator_name: who.operator_name,
+            operator_user_id: who.operator_user_id,
+          }).catch(() => undefined);
+        }
       } else {
         setCompletionId(null);
         completionIdRef.current = null;
@@ -1031,7 +1110,9 @@ export default function AppPlayer() {
       // Seed run context + operator roster into the data blob. A manual part
       // number is stored in data._part_number AND as a completion_values row
       // (widget_id '_part_number', labeled 'Part number').
-      const seeded: Record<string, unknown> = { _operators: [operatorName || 'Operator'] };
+      const seeded: Record<string, unknown> = {
+        _operators: operatorName.trim() ? [operatorName.trim()] : [],
+      };
       const pn = manualPartNumber.trim();
       if (!selectedWorkOrderId && pn) {
         seeded._part_number = pn;
@@ -1053,7 +1134,13 @@ export default function AppPlayer() {
         applyEffects(runTriggers(collectStepTriggers(a.steps[0]), 'step_enter', buildState()));
       }
     } catch (err) {
-      setActionError(err instanceof Error ? err.message : 'Failed to start process');
+      // Starting a run is a server round trip (it books the completion row), so
+      // it is one of the few things offline genuinely cannot do. Say that,
+      // instead of a bare network error.
+      const networkDown = !navigator.onLine || typeof (err as { status?: number }).status !== 'number';
+      setActionError(networkDown
+        ? "You're offline — a new run can't be started until you reconnect. A run already going keeps working."
+        : err instanceof Error ? err.message : 'Failed to start process');
     } finally {
       setStarting(false);
     }
@@ -1100,7 +1187,8 @@ export default function AppPlayer() {
         // department alert already carries the department it is aimed at.
         ...(target.kind === 'team' ? { department_id: station?.department_id || null } : {}),
         step_name: appRef.current?.steps[stepIdxRef.current]?.name ?? '',
-        operator_name: operatorName || 'Operator',
+        // Omitted when unknown: the server falls back to the signed-in user.
+        ...operatorAttribution(operatorName, null),
       });
       callRaisedAtRef.current[call.id] = Date.now() - (call.age_seconds ?? 0) * 1000;
       setActiveCalls(prev => [...prev.filter(c => c.id !== call.id), call]);
@@ -1346,10 +1434,33 @@ export default function AppPlayer() {
   const invalidByWidget = useMemo(() => {
     const m: Record<string, string> = {};
     for (const b of blocks) {
-      if (b.widgetId && (b.kind === 'range' || b.kind === 'pattern')) m[b.widgetId] = b.message;
+      if (!b.widgetId) continue;
+      // A value that is WRONG is called out on sight; a value that is merely
+      // still missing waits until the operator tries to move on, so an
+      // untouched step does not open covered in red.
+      if (b.kind === 'range' || b.kind === 'pattern') m[b.widgetId] = b.message;
+      else if (b.kind === 'required' && navAttempted) m[b.widgetId] = b.message;
     }
     return m;
-  }, [blocks]);
+  }, [blocks, navAttempted]);
+
+  // The gate's banner is only true while its block is: answering the field
+  // retires the red bar on its own. A banner raised by an authored
+  // block_with_error trigger is left alone — that one is the author's message
+  // and only a tap dismisses it.
+  useEffect(() => {
+    if (!gateBlock) return;
+    const stillBlocked = blocks.some(b => b.kind === gateBlock.kind && b.widgetId === gateBlock.widgetId);
+    if (stillBlocked) return;
+    setGateBlock(null);
+    setBlockedWidgetId(null);
+    setBlockBanner(prev => (prev === gateBlock.message ? null : prev));
+  }, [blocks, gateBlock]);
+
+  /** Re-run the explanation for the current step — the footer reason line and
+   *  the banner's "Show me" both land here. */
+  const showBlockers = useCallback(() => { explainBlocks(computeBlocks()); },
+    [explainBlocks, computeBlocks]);
 
   const kitW = kitWidgetFor(currentStep);
   const showKitChrome = stepShowsKit(currentStep);
@@ -1391,7 +1502,7 @@ export default function AppPlayer() {
           {loadError && <p style={{ fontSize: 14, color: 'var(--p-muted)', marginTop: 4 }}>{loadError}</p>}
           <div className="flex items-center justify-center gap-3 mt-5">
             {loadError && <button className="p-btn p-btn-ghost" onClick={loadAll}>Retry</button>}
-            <button className="p-btn p-btn-ghost" onClick={() => navigate('/apps')}>Back to Library</button>
+            <button className="p-btn p-btn-ghost" onClick={leavePlayer}>{exitPath === '/operator' ? 'Back to jobs' : 'Back to Library'}</button>
           </div>
         </div>
       </div>
@@ -1608,8 +1719,8 @@ export default function AppPlayer() {
 
             <button
               className="w-full py-2 text-sm" style={{ color: 'var(--p-muted)' }}
-              onClick={() => navigate('/apps')}
-            >← Back to Library</button>
+              onClick={leavePlayer}
+            >← {exitPath === '/operator' ? 'Back to jobs' : 'Back to Library'}</button>
           </div>
         </div>
       </div>
@@ -1643,19 +1754,15 @@ export default function AppPlayer() {
         nextUnitDisabledReason={summaryGate.ok ? undefined : summaryGate.reason}
         onChangeContext={changeContext}
         onNextUnit={() => void nextUnit()}
-        onDone={() => navigate('/apps')}
-        onReview={() => {
-          // Scope the report to where this run happened: the work order's
-          // department first (that is where the work was booked), else the
-          // station's. The dashboard reads these from the URL and pre-selects.
-          const dept = selectedWO?.department_id
-            || stations.find(st => st.id === selectedStationId)?.department_id
-            || null;
-          const q = new URLSearchParams();
-          if (dept) q.set('department_id', dept);
-          q.set('app_id', id!);
-          navigate(`/dashboard?${q.toString()}`);
-        }}
+        onDone={leavePlayer}
+        // The run that just finished, on its own page: its steps, its times,
+        // its captured values. A department report filtered by app cannot show
+        // an individual run, which is the one thing the person who just ran it
+        // wants to see. Offered only when there IS a run to open and this
+        // account can reach the report side at all.
+        onReview={completionId && !previewMode && canAccessReportPortal
+          ? () => navigate(`/completions/${completionId}`)
+          : undefined}
       />
     );
   }
@@ -1674,7 +1781,7 @@ export default function AppPlayer() {
               className="p-btn p-btn-primary flex-1" style={{ minWidth: 0 }}
               onClick={() => { setStatus('setup'); statusRef.current = 'setup'; setCompletionId(null); completionIdRef.current = null; resetRunState(); }}
             >Start Over</button>
-            <button className="p-btn p-btn-ghost flex-1" onClick={() => navigate('/apps')}>Exit</button>
+            <button className="p-btn p-btn-ghost flex-1" onClick={leavePlayer}>Exit</button>
           </div>
         </div>
       </div>
@@ -1700,7 +1807,7 @@ export default function AppPlayer() {
             workOrderNumber={selectedWO?.work_order_number}
             partName={selectedWO?.part_name}
             productTypeName={selectedPT?.name}
-            operatorName={operatorName || 'Operator'}
+            operatorName={operatorDisplayName(operatorName)}
             operatorVerified={operatorUserId !== null}
             stepIndex={currentStepIdx}
             stepCount={app.steps.length}
@@ -1771,7 +1878,13 @@ export default function AppPlayer() {
                 <Zap size={15} className="flex-shrink-0" />
               </div>
             )}
-            {blockBanner && <BlockBanner text={blockBanner} onDismiss={() => setBlockBanner(null)} />}
+            {blockBanner && (
+              <BlockBanner
+                text={blockBanner}
+                onDismiss={() => setBlockBanner(null)}
+                onLocate={blockedWidgetId ? showBlockers : undefined}
+              />
+            )}
           </>
         }
         summaryBar={showKitChrome && kit ? (
@@ -1787,6 +1900,7 @@ export default function AppPlayer() {
             blockReason={blockReason}
             completing={completing}
             hideForward={hideForwardNav}
+            onShowBlocker={navBlocked ? showBlockers : undefined}
             onBack={() => requestNavigate({ to: 'prev' })}
             onNext={() => requestNavigate({ to: 'next' })}
             onComplete={() => requestNavigate({ to: 'complete' })}
@@ -1857,25 +1971,45 @@ export default function AppPlayer() {
               onComplete={() => requestNavigate({ to: 'complete' })}
             />
           ) : (
-            currentStep?.widgets.map(widget => (
-              <PlayerWidget
-                key={widget.id}
-                widget={widget}
-                step={currentStep}
-                value={formData[legacyKey(widget)]}
-                invalidMessage={invalidByWidget[widget.id]}
-                variables={variables}
-                appInfo={buildAppInfo()}
-                preview={previewMode}
-                onChange={(w, v) => setField(w, v)}
-                onButtonPress={onButtonPress}
-                onTimerDone={onTimerDone}
-                onTimerTick={onTimerTick}
-                onScanCode={onWidgetScan}
-                onRequestCameraScan={w => setScannerTarget({ widget: w })}
-                renderKit={w => renderKitPanel(w)}
-              />
-            ))
+            currentStep?.widgets.map(widget => {
+              const invalidMessage = invalidByWidget[widget.id];
+              return (
+                // The wrapper is what a refused forward tap scrolls to and
+                // focuses: a container, so the phone keyboard never opens by
+                // itself. It also carries the invalid ring, which is why every
+                // widget type gets one without the renderer knowing.
+                <div
+                  key={widget.id}
+                  id={`pw-${widget.id}`}
+                  data-widget-id={widget.id}
+                  tabIndex={-1}
+                  style={{
+                    scrollMarginTop: 96,
+                    scrollMarginBottom: 96,
+                    outline: invalidMessage ? '2px solid var(--p-bad)' : 'none',
+                    outlineOffset: 6,
+                    borderRadius: 14,
+                  }}
+                >
+                  <PlayerWidget
+                    widget={widget}
+                    step={currentStep}
+                    value={formData[legacyKey(widget)]}
+                    invalidMessage={invalidMessage}
+                    variables={variables}
+                    appInfo={buildAppInfo()}
+                    preview={previewMode}
+                    onChange={(w, v) => setField(w, v)}
+                    onButtonPress={onButtonPress}
+                    onTimerDone={onTimerDone}
+                    onTimerTick={onTimerTick}
+                    onScanCode={onWidgetScan}
+                    onRequestCameraScan={w => setScannerTarget({ widget: w })}
+                    renderKit={w => renderKitPanel(w)}
+                  />
+                </div>
+              );
+            })
           )}
 
           {/* Implicit kit chrome for kit steps without a kit-checklist widget */}
