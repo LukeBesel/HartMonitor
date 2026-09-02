@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import DepartmentTeam from '../components/departments/DepartmentTeam';
+import { fmtDuration, elapsedSeconds } from '../components/apps/appModel';
 
 interface Department {
   id: string;
@@ -41,18 +42,6 @@ function isToday(iso?: string): boolean {
   return d.getFullYear() === now.getFullYear()
     && d.getMonth() === now.getMonth()
     && d.getDate() === now.getDate();
-}
-
-function formatElapsed(startedAt?: string): string {
-  if (!startedAt) return '—';
-  const started = new Date(startedAt).getTime();
-  if (isNaN(started)) return '—';
-  const diff = Math.max(0, Date.now() - started);
-  const mins = Math.floor(diff / 60000);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  const rem = mins % 60;
-  return `${hours}h ${rem}m`;
 }
 
 function formatDate(iso?: string): string {
@@ -321,7 +310,7 @@ export default function Departments() {
                       {wo.started_at ? (
                         <span className="flex items-center gap-1">
                           <Clock size={11} />
-                          {formatElapsed(wo.started_at)}
+                          {fmtDuration(elapsedSeconds(wo.started_at))}
                         </span>
                       ) : <span />}
                       {wo.operator_name && <span>{wo.operator_name}</span>}

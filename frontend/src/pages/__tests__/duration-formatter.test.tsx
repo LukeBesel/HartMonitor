@@ -128,11 +128,16 @@ const WIDENED_DECLARATION_RE = /(?:function|const|let)\s+((?:fmt|format)\w*(?:Du
  * — it renders "07:31", never "7m 31s". It belongs to another workstream this
  * wave and is named here rather than edited out of place.
  *
- * The remaining entries were discovered only by actually running this wider
- * scan against the real tree, in files this workstream does not own (its
- * remit is appModel.ts, DepartmentTV/ManagerView/DashboardView/Leaderboard,
- * not the whole frontend) — so each is documented and named, never silently
- * dropped, exactly like `formatDur` above:
+ * The remaining two were discovered only by actually running this wider scan
+ * against the real tree, in files this workstream does not own (its remit is
+ * appModel.ts, DepartmentTV/ManagerView/DashboardView/Leaderboard, not the
+ * whole frontend) — so each is documented and named, never silently dropped,
+ * exactly like `formatDur` above. (Two siblings this same scan found —
+ * pages/Departments.tsx's `formatElapsed` and pages/Routings.tsx's
+ * `formatCycleTime` — WERE genuine local duration-string reimplementations;
+ * once the file-ownership conflict on those pages cleared, both were deleted
+ * in favor of the shared formatter, so they no longer appear here.)
+ *
  *   - `pages/ReceivingPortal.tsx fmtTime` renders a wall-clock reading
  *     ("2:45 PM" via toLocaleTimeString), the same shape as appModel's own
  *     `fmtDateTime` — not a duration. A false positive of the name heuristic,
@@ -140,21 +145,16 @@ const WIDENED_DECLARATION_RE = /(?:function|const|let)\s+((?:fmt|format)\w*(?:Du
  *   - `utils/time.ts fmtMinutes` rounds a raw minutes value to one decimal
  *     place ("6.1") with no unit-string conversion — not a duration-string
  *     formatter. It name-collides with the new canonical `fmtMinutes` added
- *     in this change, but predates it, is consumed by pages/OperatorPortal.tsx
- *     (outside this workstream), and is not a 60x-shaped hazard: rounding a
- *     number is not confusing units. Documented rather than silently renamed.
- *   - `pages/Departments.tsx formatElapsed` and `pages/Routings.tsx
- *     formatCycleTime` ARE genuine local duration-string reimplementations —
- *     the same class of hazard `fmtDuration`'s own doc comment describes —
- *     in files outside this workstream's remit. Named here, not fixed here,
- *     so the day either file's owner reaches for a `_seconds` field the
- *     shadowing is exactly as visible as DepartmentTV.tsx's used to be.
+ *     in this change, but predates it, and is not a 60x-shaped hazard:
+ *     rounding a number is not confusing units. Left alone rather than
+ *     renamed because its only consumer, pages/OperatorPortal.tsx, is being
+ *     edited by another workstream right now — rename it to
+ *     `roundOneDecimal` once OperatorPortal.tsx is free (coordinator
+ *     follow-up), updating that one call site to match.
  */
 const KNOWN_WIDENED_DECLARATIONS = [
   'components/player/runtime.ts -> formatDur',
-  'pages/Departments.tsx -> formatElapsed',
   'pages/ReceivingPortal.tsx -> fmtTime',
-  'pages/Routings.tsx -> formatCycleTime',
   'utils/time.ts -> fmtMinutes',
 ].sort();
 
