@@ -6,7 +6,7 @@
 const express = require('express');
 const db = require('../db');
 const { runSecondsSQL } = require('../cycleTime');
-const { validateAndUpsertRows, readImportBody } = require('./workorders');
+const { validateAndUpsertRows, readImportBody, checkImportHeaders } = require('./workorders');
 
 const router = express.Router();
 
@@ -69,6 +69,12 @@ router.patch('/work-orders/:external_id', (req, res) => {
     return res.status(404).json({ error: 'not_found', message: `No work order with external_id "${externalId}"` });
   }
   const body = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : {};
+  // Same ambiguity guard the batch doors use: a body carrying both `qty` and
+  // `quantity` has no safe reading.
+  const headerError = checkImportHeaders([body]);
+  if (headerError && headerError.body.error === 'ambiguous_columns') {
+    return res.status(headerError.status).json(headerError.body);
+  }
   const out = validateAndUpsertRows(req.companyId, [{ ...body, external_id: externalId }], {
     dryRun: false,
     actor: `API key: ${req.apiKey?.name || 'unnamed'}`,

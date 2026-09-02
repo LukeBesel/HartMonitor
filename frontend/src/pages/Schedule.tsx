@@ -1258,6 +1258,13 @@ function ImportPanel({ onClose, onImported }: {
   const shown = applied ?? preview;
   const importable = preview ? preview.summary.created + preview.summary.updated : 0;
   const rejected = shown ? shown.results.filter(r => r.result === 'rejected') : [];
+  // Rows that went in WITHOUT an external_id have no key to match on, so the
+  // same file pasted again creates them a second time. Saying "paste again, it
+  // will update" over those rows is how a planner ends up with 16 jobs from an
+  // 8-row file.
+  const appliedWithoutKey = applied
+    ? applied.results.filter(r => r.result !== 'rejected' && !r.external_id).length
+    : 0;
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
@@ -1355,30 +1362,48 @@ function ImportPanel({ onClose, onImported }: {
               <table className="w-full text-sm">
                 <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
                   <tr>
-                    {['Row', 'Result', 'WO #', 'External ID', 'Reason'].map(h => (
+                    {['Row', 'Result', 'WO #'].map(h => (
                       <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide px-3 py-2 whitespace-nowrap">{h}</th>
+                    ))}
+                    {/* On a phone the id and the reason move UNDER their row.
+                        Kept as columns they sit off the right edge of a 390px
+                        screen, and a reason you have to scroll sideways to read
+                        is a reason nobody reads. */}
+                    {['External ID', 'Reason'].map(h => (
+                      <th key={h} className="hidden sm:table-cell text-left text-xs font-medium text-gray-500 uppercase tracking-wide px-3 py-2 whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
                   {shown.results.map((r: ImportRowVerdict) => (
-                    <tr key={r.row} className={r.result === 'rejected' ? 'bg-red-50/40' : ''}>
-                      <td className="px-3 py-2 text-xs text-gray-500 [font-variant-numeric:tabular-nums]">{r.row}</td>
-                      <td className="px-3 py-2">
-                        <span className={`text-xs px-2 py-0.5 rounded-full font-semibold whitespace-nowrap ${VERDICT_CLASSES[r.result] ?? 'bg-gray-100 text-gray-600'}`}>
-                          {verdictLabel(r.result, Boolean(applied))}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2 font-mono text-xs text-gray-700 whitespace-nowrap">
-                        {r.work_order_number
-                          ? r.work_order_number
-                          : r.result === 'rejected'
-                            ? <span className="text-gray-400">—</span>
-                            : <span className="text-gray-400">assigned on import</span>}
-                      </td>
-                      <td className="px-3 py-2 font-mono text-xs text-gray-500 whitespace-nowrap">{r.external_id ?? '—'}</td>
-                      <td className="px-3 py-2 text-xs text-gray-700">{r.reason ?? ''}</td>
-                    </tr>
+                    <Fragment key={r.row}>
+                      <tr className={r.result === 'rejected' ? 'bg-red-50/40' : ''}>
+                        <td className="px-3 py-2 text-xs text-gray-500 [font-variant-numeric:tabular-nums]">{r.row}</td>
+                        <td className="px-3 py-2">
+                          <span className={`text-xs px-2 py-0.5 rounded-full font-semibold whitespace-nowrap ${VERDICT_CLASSES[r.result] ?? 'bg-gray-100 text-gray-600'}`}>
+                            {verdictLabel(r.result, Boolean(applied))}
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 font-mono text-xs text-gray-700 sm:whitespace-nowrap break-words">
+                          {r.work_order_number
+                            ? r.work_order_number
+                            : r.result === 'rejected'
+                              ? <span className="text-gray-400">—</span>
+                              : <span className="text-gray-400">assigned on import</span>}
+                        </td>
+                        <td className="hidden sm:table-cell px-3 py-2 font-mono text-xs text-gray-500 whitespace-nowrap">{r.external_id ?? '—'}</td>
+                        <td className="hidden sm:table-cell px-3 py-2 text-xs text-gray-700">{r.reason ?? ''}</td>
+                      </tr>
+                      {(r.reason || r.external_id) && (
+                        <tr className={`sm:hidden ${r.result === 'rejected' ? 'bg-red-50/40' : ''}`}>
+                          <td colSpan={3} className="px-3 pb-2 text-xs text-gray-700 break-words">
+                            {r.external_id && <span className="font-mono text-gray-500">{r.external_id}</span>}
+                            {r.external_id && r.reason ? ' — ' : ''}
+                            {r.reason}
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
                   ))}
                 </tbody>
               </table>
@@ -1386,7 +1411,13 @@ function ImportPanel({ onClose, onImported }: {
           </div>
         )}
 
-        {applied && rejected.length > 0 && (
+        {applied && appliedWithoutKey > 0 && (
+          <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
+            {appliedWithoutKey} of these rows carry no external_id — pasting them again will create them
+            a second time. Add an external_id column to make re-imports safe.
+          </p>
+        )}
+        {applied && appliedWithoutKey === 0 && rejected.length > 0 && (
           <p className="text-xs text-gray-500">
             Fix the rows above in your file, then paste again — the ones that already went in will be
             recognised by their external_id and updated rather than duplicated.

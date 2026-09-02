@@ -2,7 +2,7 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { requireRole } = require('../middleware/auth');
-const { parseCSV, toCSVRow } = require('../csv');
+const { parseCSV, toCSVRow, sniffDelimiter } = require('../csv');
 const { logActivity } = require('../activity');
 const { notify } = require('../notifications');
 const { deliverWebhooks } = require('../webhooks');
@@ -53,7 +53,17 @@ function enrichWorkOrder(wo) {
 
 // ─── Generate next work order number (per-company sequence) ───────────────────
 
-function nextWorkOrderNumber(companyId) {
+/**
+ * The next `count` numbers this company's sequence will hand out, in order.
+ *
+ * An import has to know these BEFORE it writes anything: the preview promises a
+ * verdict per row, and a row that supplies "WO-2026-004" by hand must be told it
+ * collides with the number a numberless sibling is about to be given — not
+ * discover it as a unique-index failure that takes the whole batch down.
+ *
+ * One MAX() read for the whole batch, then counted forward in memory.
+ */
+function allocateWorkOrderNumbers(companyId, count) {
   const year   = new Date().getFullYear();
   const prefix = `WO-${year}-`;
   // Take the numeric max of the trailing sequence, not a lexical ORDER BY —
@@ -61,8 +71,14 @@ function nextWorkOrderNumber(companyId) {
   const row = db.prepare(
     `SELECT MAX(CAST(substr(work_order_number, ?) AS INTEGER)) AS max_seq FROM work_orders WHERE company_id = ? AND work_order_number LIKE ?`
   ).get(prefix.length + 1, companyId, prefix + '%');
-  const seq = row && row.max_seq ? row.max_seq : 0;
-  return `${prefix}${String(seq + 1).padStart(3, '0')}`;
+  let seq = row && row.max_seq ? row.max_seq : 0;
+  const out = [];
+  for (let i = 0; i < count; i++) out.push(`${prefix}${String(++seq).padStart(3, '0')}`);
+  return out;
+}
+
+function nextWorkOrderNumber(companyId) {
+  return allocateWorkOrderNumbers(companyId, 1)[0];
 }
 
 // Returns the id if the row exists in this company, else null. Keeps foreign
@@ -163,12 +179,15 @@ function importTemplateCSV() {
 /**
  * CSV text → row objects keyed by their own header names. Header mapping and
  * validation happen later, in the one validator, so a pasted file and a JSON
- * body take the same path.
- * @returns {{ rows: object[], headers: string[] }}
+ * body take the same path. The separator is sniffed (comma, tab, semicolon, or
+ * whatever an Excel `sep=` line declares) because half the files a shop has are
+ * not comma-separated.
+ * @returns {{ rows: object[], headers: string[], delimiter: string }}
  */
 function rowsFromCSV(text) {
-  const table = parseCSV(text);
-  if (table.length === 0) return { rows: [], headers: [] };
+  const { delimiter, body } = sniffDelimiter(text);
+  const table = parseCSV(body, delimiter);
+  if (table.length === 0) return { rows: [], headers: [], delimiter };
   const headers = table[0].map(h => String(h || '').trim());
   const rows = [];
   for (let i = 1; i < table.length; i++) {
@@ -182,7 +201,69 @@ function rowsFromCSV(text) {
     }
     rows.push(obj);
   }
-  return { rows, headers };
+  return { rows, headers, delimiter };
+}
+
+/**
+ * Refuse a file whose columns are ambiguous or unreadable, before any row is
+ * judged. Two failures worth one clear message instead of N confusing ones:
+ *
+ *   * TWO COLUMNS, ONE FIELD. "Qty Ordered" and "quantity" both mean quantity.
+ *     Picking one and ignoring the other is how an empty "Qty Ordered" masks a
+ *     filled "quantity" and every row is rejected as missing a quantity — or,
+ *     worse, how "qty 900" quietly wins over "quantity 5" and the shop builds
+ *     900 of something. There is no safe guess; say so and let the planner
+ *     delete a column.
+ *   * NOTHING RESOLVES. A file whose headers we recognise none of produces a
+ *     "required" reason on every field of every row. One message naming the
+ *     headers we actually found is what tells a planner they exported the wrong
+ *     report.
+ *
+ * @param {object[]} rows
+ * @returns {{ status: number, body: object } | null} ready-to-send error, or null
+ */
+function checkImportHeaders(rows) {
+  const sources = new Map();   // canonical field → [source headers, in order seen]
+  const found = [];            // every distinct header, for the "nothing resolved" message
+  const seenRaw = new Set();
+
+  for (const raw of rows) {
+    for (const key of Object.keys(raw || {})) {
+      const header = String(key);
+      if (!seenRaw.has(header)) { seenRaw.add(header); if (header.trim()) found.push(header); }
+      const field = ALIAS_TO_FIELD.get(normalizeHeader(header));
+      if (!field) continue;
+      const list = sources.get(field) || [];
+      if (!list.includes(header)) list.push(header);
+      sources.set(field, list);
+    }
+  }
+
+  for (const [field, headers] of sources) {
+    if (headers.length > 1) {
+      return {
+        status: 400,
+        body: {
+          error: 'ambiguous_columns',
+          field,
+          columns: headers,
+          message: `two columns map to ${field} (${headers.map(h => `"${h}"`).join(', ')}) — remove one`,
+        },
+      };
+    }
+  }
+
+  if (sources.size === 0) {
+    return {
+      status: 400,
+      body: {
+        error: 'unrecognised_columns',
+        columns: found,
+        message: `unrecognised_columns: ${found.length ? found.join(', ') : '(none)'}`,
+      },
+    };
+  }
+  return null;
 }
 
 // ─── Field-level checks ──────────────────────────────────────────────────────
@@ -223,6 +304,22 @@ function nameIndex(table, companyId) {
   return idx;
 }
 
+const MAX_IMPORT_QUANTITY = 1000000;
+
+/** Statuses an import may not touch. Reopen the job on the Schedule first. */
+const CLOSED_STATUSES = Object.freeze(['completed', 'cancelled']);
+
+/**
+ * An external_id has to survive being a URL path segment (PATCH
+ * /api/v1/work-orders/:external_id) and being read back by a human. "." and
+ * ".." are not ids, and a slash cuts the path in half.
+ */
+function externalIdProblem(v) {
+  if (v === '.' || v === '..') return 'external_id cannot be "." or ".."';
+  if (v.includes('/') || v.includes('\\')) return 'external_id cannot contain "/" or "\\"';
+  return null;
+}
+
 /**
  * Validate a batch of import rows and, unless dryRun, apply it.
  *
@@ -234,8 +331,20 @@ function nameIndex(table, companyId) {
  * @returns {{ results: object[], summary: object, dry_run: boolean }}
  *          results[i] = { row, result, reason, work_order_id, work_order_number,
  *                         external_id }
- *          result is one of vocab.IMPORT_ROW_RESULT.
+ *          result is one of vocab.IMPORT_ROW_RESULT. `reason` carries
+ *          'nothing changed' on an update that matched the stored values.
+ *          summary = { total, created, updated, rejected, unchanged }, where
+ *          `unchanged` is the subset of `updated` that wrote nothing.
  */
+// Columns an import may set on an existing work order. work_order_number is NOT
+// here: renumbering is decided per row and applied only to a job nobody has
+// started.
+const UPDATABLE_BY_IMPORT = Object.freeze([
+  'part_number', 'part_name', 'quantity', 'due_date', 'customer_ref',
+  'app_id', 'department_id', 'routing_id', 'priority',
+  'scheduled_start', 'scheduled_end', 'notes',
+]);
+
 function validateAndUpsertRows(companyId, rows, opts = {}) {
   const dryRun = opts.dryRun === true;
   const actor = opts.actor || 'Import';
@@ -251,26 +360,64 @@ function validateAndUpsertRows(companyId, rows, opts = {}) {
     'SELECT id FROM work_orders WHERE company_id = ? AND work_order_number = ?'
   );
 
-  const seenExternal = new Map();  // external_id → row number already claiming it
-  const seenNumber   = new Map();  // work_order_number → row number
-
-  const plans = [];
-
-  rows.forEach((raw, i) => {
-    const rowNo = i + 1;
-    const reasons = [];
+  // Map one raw row's keys onto canonical fields. checkImportHeaders() has
+  // already refused a file where two headers claim the same field, so the first
+  // hit here is the only hit.
+  const mapFields = raw => {
     const f = {};
     for (const [k, v] of Object.entries(raw || {})) {
       const field = ALIAS_TO_FIELD.get(normalizeHeader(k));
       if (!field || f[field] !== undefined) continue;   // unknown column: ignored
       f[field] = v === null || v === undefined ? '' : String(v).trim();
     }
+    return f;
+  };
+  const mapped = rows.map(mapFields);
+
+  // ── Pre-pass: which rows will be handed an automatic number, and which ─────
+  // Without this the preview cannot be honest. A row that says WO-2026-004 is
+  // fine against the database today and collides at commit with the number a
+  // numberless sibling above it gets. Reserving them here turns that into a
+  // per-row rejection both the preview and the commit report identically.
+  //
+  // The pre-pass judges nothing: it only asks "no number supplied, and not an
+  // update?". A reserved number whose row is later rejected for some other
+  // reason simply leaves a gap in the sequence, which is what a shop's numbers
+  // do anyway.
+  const autoRows = [];
+  mapped.forEach((f, i) => {
+    const num = f.work_order_number;
+    if (num) return;
+    const ext = f.external_id;
+    if (ext && findByExternal.get(companyId, ext)) return;   // an update, not a create
+    autoRows.push(i);
+  });
+  const allocated = allocateWorkOrderNumbers(companyId, autoRows.length);
+  const autoNumberFor = new Map();   // row index → the number it will be given
+  const reservedBy    = new Map();   // number → 1-based row that will take it
+  autoRows.forEach((rowIndex, n) => {
+    autoNumberFor.set(rowIndex, allocated[n]);
+    reservedBy.set(allocated[n], rowIndex + 1);
+  });
+
+  const seenExternal = new Map();  // external_id → row number already claiming it
+  const seenNumber   = new Map();  // work_order_number → row number
+
+  const plans = [];
+
+  mapped.forEach((f, i) => {
+    const rowNo = i + 1;
+    const reasons = [];
     const has = name => f[name] !== undefined && f[name] !== '';
 
+    // ── external_id: the match key, so its shape is checked before it is used ──
     const externalId = has('external_id') ? f.external_id : '';
     let existing = null;
     if (externalId) {
-      if (seenExternal.has(externalId)) {
+      const problem = externalIdProblem(externalId);
+      if (problem) {
+        reasons.push(problem);
+      } else if (seenExternal.has(externalId)) {
         reasons.push(`external_id "${externalId}" appears more than once in this file (first on row ${seenExternal.get(externalId)})`);
       } else {
         seenExternal.set(externalId, rowNo);
@@ -279,16 +426,34 @@ function validateAndUpsertRows(companyId, rows, opts = {}) {
     }
     const isUpdate = Boolean(existing);
 
+    // ── A closed job is not something an ERP file may quietly reopen ──────────
+    if (isUpdate && CLOSED_STATUSES.includes(existing.status)) {
+      reasons.push(`work order is ${existing.status} — reopen it before importing changes`);
+    }
+
     // ── Quantity ──
+    // A whole number, no leading zeros ("007" is a part number habit, not the
+    // integer 7), inside a range SQLite will store as an INTEGER. 1e20 was
+    // silently becoming a float in an INTEGER column.
     let quantity = null;
     if (has('quantity')) {
-      if (!/^\d+$/.test(f.quantity) || Number(f.quantity) < 1) {
-        reasons.push('quantity must be a whole number greater than 0');
+      if (/^0\d+$/.test(f.quantity)) {
+        reasons.push('quantity must not have leading zeros');
       } else {
-        quantity = Number(f.quantity);
+        const n = Number(f.quantity);
+        if (!/^\d+$/.test(f.quantity) || !Number.isSafeInteger(n) || n < 1 || n > MAX_IMPORT_QUANTITY) {
+          reasons.push(`quantity must be a whole number between 1 and ${MAX_IMPORT_QUANTITY.toLocaleString('en-US')}`);
+        } else {
+          quantity = n;
+        }
       }
     } else if (!isUpdate) {
-      reasons.push('quantity must be a whole number greater than 0');
+      reasons.push(`quantity must be a whole number between 1 and ${MAX_IMPORT_QUANTITY.toLocaleString('en-US')}`);
+    }
+    // Cutting the order below what the floor has already built prints 60/10 on
+    // the Schedule — 600% complete. The file is wrong; say which number it is.
+    if (quantity !== null && isUpdate && quantity < existing.quantity_completed) {
+      reasons.push(`quantity ${quantity} is below the ${existing.quantity_completed} already completed`);
     }
 
     // ── The two things a brand-new job cannot be created without ──
@@ -309,6 +474,13 @@ function validateAndUpsertRows(companyId, rows, opts = {}) {
       const norm = normalizeDateTime(f[field]);
       if (norm === null) reasons.push(`${field} must be YYYY-MM-DD or YYYY-MM-DD HH:MM`);
       else set(norm);
+    }
+    // Compared against what the work order will actually hold, so an update
+    // that moves only the start cannot leave the window inside out.
+    const effStart = schedStart !== null ? schedStart : (existing ? existing.scheduled_start : null);
+    const effEnd   = schedEnd   !== null ? schedEnd   : (existing ? existing.scheduled_end   : null);
+    if (effStart && effEnd && String(effEnd) < String(effStart)) {
+      reasons.push(`scheduled_end (${effEnd}) is before scheduled_start (${effStart})`);
     }
 
     // ── Priority ──
@@ -334,11 +506,15 @@ function validateAndUpsertRows(companyId, rows, opts = {}) {
       if (!routingId) reasons.push(`routing "${f.routing_name}" not found`);
     }
 
-    // ── Work order number: supplied numbers must be free ──
+    // ── Work order number ──
     const woNumber = has('work_order_number') ? f.work_order_number : '';
+    let renumber = false;
     if (woNumber) {
+      const reservedFor = reservedBy.get(woNumber);
       const takenInFile = seenNumber.get(woNumber);
-      if (takenInFile) {
+      if (reservedFor !== undefined) {
+        reasons.push(`work_order_number "${woNumber}" collides with a number this import will assign`);
+      } else if (takenInFile) {
         reasons.push(`work_order_number "${woNumber}" appears more than once in this file (first on row ${takenInFile})`);
       } else {
         seenNumber.set(woNumber, rowNo);
@@ -347,14 +523,16 @@ function validateAndUpsertRows(companyId, rows, opts = {}) {
           reasons.push(`work_order_number "${woNumber}" already exists`);
         }
       }
+      // Renaming a job the floor is already running breaks every printed
+      // traveller and QR label carrying the old number. Only a job nobody has
+      // started may be renumbered.
+      if (existing && woNumber !== existing.work_order_number) {
+        if (existing.status === 'pending') renumber = true;
+        else reasons.push(`work_order_number cannot be changed — work order is ${existing.status}`);
+      }
     }
 
-    plans.push({
-      rowNo,
-      externalId: externalId || null,
-      existing,
-      reasons,
-      values: {
+    const values = {
         work_order_number: woNumber || null,
         part_number: has('part_number') ? f.part_number : null,
         part_name:   has('part_name')   ? f.part_name   : null,
@@ -366,22 +544,51 @@ function validateAndUpsertRows(companyId, rows, opts = {}) {
         routing_id: routingId,
         priority,
         scheduled_start: schedStart,
-        scheduled_end: schedEnd,
-        notes: has('notes') ? f.notes : null,
-      },
+      scheduled_end: schedEnd,
+      notes: has('notes') ? f.notes : null,
+    };
+
+    // Which stored columns this row would actually move. Worked out here, not
+    // at write time, so the preview can say "nothing changed" about exactly the
+    // rows the commit will leave alone — a row that reads differently before
+    // and after pressing Import is the bug this whole file is about.
+    const changed = [];
+    if (existing && reasons.length === 0) {
+      for (const col of UPDATABLE_BY_IMPORT) {
+        if (values[col] === null) continue;
+        if (existing[col] === values[col]) continue;
+        changed.push(col);
+      }
+      if (renumber) changed.push('work_order_number');
+    }
+
+    plans.push({
+      rowNo,
+      externalId: externalId || null,
+      existing,
+      reasons,
+      renumber,
+      changed,
+      autoNumber: autoNumberFor.get(i) || null,
+      values,
     });
   });
 
   const results = plans.map(p => ({
     row: p.rowNo,
     result: p.reasons.length ? 'rejected' : (p.existing ? 'updated' : 'created'),
-    reason: p.reasons.length ? p.reasons.join('; ') : null,
+    reason: p.reasons.length
+      ? p.reasons.join('; ')
+      : (p.existing && p.changed.length === 0 ? 'nothing changed' : null),
     external_id: p.externalId,
     work_order_id: p.existing ? p.existing.id : null,
-    // A create's number is assigned by the numbering sequence at commit time.
-    // Preview prints nothing rather than a number that may not be the one used.
+    // A create's number is the one reserved for it above — the same number the
+    // commit will actually write, so preview and commit read alike. A REJECTED
+    // row gets none: its reserved number is never spent, and printing one next
+    // to a row that will not exist is the preview promising a job it cannot
+    // deliver.
     work_order_number: p.values.work_order_number
-      || (p.existing ? p.existing.work_order_number : null),
+      || (p.existing ? p.existing.work_order_number : (p.reasons.length ? null : p.autoNumber)),
   }));
 
   if (!dryRun) {
@@ -399,29 +606,25 @@ function validateAndUpsertRows(companyId, rows, opts = {}) {
         if (p.reasons.length) return;
         const v = p.values;
         if (p.existing) {
-          // Partial update: a column the file did not carry keeps its value.
-          const sets = [];
-          const params = [];
-          for (const col of ['work_order_number', 'part_number', 'part_name', 'quantity',
-                             'due_date', 'customer_ref', 'app_id', 'department_id',
-                             'routing_id', 'priority', 'scheduled_start', 'scheduled_end', 'notes']) {
-            if (v[col] === null) continue;
-            sets.push(`${col} = ?`);
-            params.push(v[col]);
-          }
-          if (sets.length) {
+          // Partial update, restricted to the columns the plan phase found had
+          // actually moved. Re-sending yesterday's file must not stamp
+          // updated_at on 200 rows and write 200 activity entries saying
+          // nothing happened.
+          if (p.changed.length) {
+            const sets = p.changed.map(col => `${col} = ?`);
+            const params = p.changed.map(col => v[col]);
             db.prepare(`UPDATE work_orders SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = ?`)
               .run(...params, p.existing.id);
+            logActivity(companyId, 'work_order', p.existing.id, 'Updated by import', actor,
+              { department_id: v.department_id || p.existing.department_id || null });
           }
           results[i].work_order_id = p.existing.id;
-          results[i].work_order_number = v.work_order_number || p.existing.work_order_number;
-          logActivity(companyId, 'work_order', p.existing.id, 'Updated by import', actor,
-            { department_id: v.department_id || p.existing.department_id || null });
+          results[i].work_order_number = p.renumber ? v.work_order_number : p.existing.work_order_number;
         } else {
           const id = uuidv4();
-          // Reuse the one numbering path. Called inside this transaction, so it
-          // sees the rows this batch has already inserted and keeps counting.
-          const number = v.work_order_number || nextWorkOrderNumber(companyId);
+          // The number reserved for this row in the pre-pass, so the number the
+          // preview printed is the number the job gets.
+          const number = v.work_order_number || p.autoNumber || nextWorkOrderNumber(companyId);
           insert.run(
             id, number, v.part_number, v.part_name, v.quantity,
             v.app_id, v.department_id, v.routing_id, v.scheduled_start, v.scheduled_end,
@@ -438,8 +641,15 @@ function validateAndUpsertRows(companyId, rows, opts = {}) {
     apply();
   }
 
-  const summary = { total: results.length, created: 0, updated: 0, rejected: 0 };
-  for (const r of results) summary[r.result]++;
+  // `unchanged` counts rows that matched an existing job and changed nothing.
+  // They are still 'updated' — the vocabulary has three values and the ERP
+  // asked us to make the row look like its file, which it already does — but a
+  // planner reading "200 updated" deserves to know 200 of them were no-ops.
+  const summary = { total: results.length, created: 0, updated: 0, rejected: 0, unchanged: 0 };
+  results.forEach((r, i) => {
+    summary[r.result]++;
+    if (r.result === 'updated' && plans[i].changed.length === 0) summary.unchanged++;
+  });
   return { results, summary, dry_run: dryRun };
 }
 
@@ -468,6 +678,8 @@ function readImportBody(body) {
   if (rows.length > MAX_IMPORT_ROWS) {
     return { rows: null, error: { status: 413, body: { error: 'too_many_rows', message: `This file has ${rows.length.toLocaleString('en-US')} rows. Import at most ${MAX_IMPORT_ROWS.toLocaleString('en-US')} rows at a time.`, limit: MAX_IMPORT_ROWS } } };
   }
+  const headerError = checkImportHeaders(rows);
+  if (headerError) return { rows: null, error: headerError };
   return { rows, error: null };
 }
 
@@ -531,9 +743,14 @@ router.post('/', (req, res) => {
   if (!STATUS_LABELS[status])    return res.status(400).json({ error: `status must be one of: ${Object.keys(STATUS_LABELS).join(', ')}` });
   if (!PRIORITY_LABELS[priority]) return res.status(400).json({ error: `priority must be one of: ${Object.keys(PRIORITY_LABELS).join(', ')}` });
   // The ERP's three fields, checked the same way the importer checks them.
-  if (due_date && !isCalendarDate(String(due_date).trim())) {
+  // Trimmed once, then that trimmed value is what is validated AND what is
+  // stored. " 2026-04-17 " passing validation and landing untrimmed is how the
+  // Due column ends up printing a raw string.
+  const dueDate = due_date === null || due_date === undefined || due_date === '' ? null : String(due_date).trim();
+  if (dueDate && !isCalendarDate(dueDate)) {
     return res.status(400).json({ error: 'due_date must be YYYY-MM-DD' });
   }
+  const customerRef = customer_ref === null || customer_ref === undefined ? null : String(customer_ref).trim();
   const extId = external_id ? String(external_id).trim() : null;
   if (extId && db.prepare('SELECT id FROM work_orders WHERE company_id = ? AND external_id = ?').get(req.companyId, extId)) {
     return res.status(409).json({ error: `external_id "${extId}" is already used by another work order`, code: 'EXTERNAL_ID_TAKEN' });
@@ -558,9 +775,7 @@ router.post('/', (req, res) => {
     safeAppId, safeDeptId,
     scheduled_start || null, scheduled_end || null,
     takt_time_minutes, status, priority, notes, req.companyId, safeSiteId, safeProductTypeId,
-    due_date ? String(due_date).trim() : null,
-    customer_ref === null || customer_ref === undefined ? null : String(customer_ref),
-    extId
+    dueDate, customerRef, extId
   );
 
   const wo = db.prepare(ENRICHED_SELECT + ' WHERE wo.id = ?').get(id);
@@ -646,8 +861,16 @@ router.put('/:id', (req, res) => {
   if (req.body.priority !== undefined && !PRIORITY_LABELS[updates.priority]) {
     return res.status(400).json({ error: `priority must be one of: ${Object.keys(PRIORITY_LABELS).join(', ')}` });
   }
-  if (req.body.due_date !== undefined && updates.due_date && !isCalendarDate(String(updates.due_date).trim())) {
-    return res.status(400).json({ error: 'due_date must be YYYY-MM-DD' });
+  // Same rule as POST: trim first, then validate and store the trimmed value.
+  if (req.body.due_date !== undefined) {
+    updates.due_date = updates.due_date ? String(updates.due_date).trim() : null;
+    if (updates.due_date && !isCalendarDate(updates.due_date)) {
+      return res.status(400).json({ error: 'due_date must be YYYY-MM-DD' });
+    }
+  }
+  if (req.body.customer_ref !== undefined) {
+    updates.customer_ref = updates.customer_ref === null || updates.customer_ref === undefined
+      ? null : String(updates.customer_ref).trim();
   }
   if (req.body.external_id !== undefined) {
     updates.external_id = updates.external_id ? String(updates.external_id).trim() : null;
@@ -827,6 +1050,7 @@ module.exports = {
   // The one import validator, shared with the public API in routes/v1.js.
   validateAndUpsertRows,
   readImportBody,
+  checkImportHeaders,
   rowsFromCSV,
   importTemplateCSV,
   IMPORT_COLUMNS,

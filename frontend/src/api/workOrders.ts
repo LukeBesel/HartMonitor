@@ -31,6 +31,8 @@ export interface ImportSummary {
   created: number;
   updated: number;
   rejected: number;
+  /** Subset of `updated` that matched an existing job and changed nothing. */
+  unchanged: number;
 }
 
 export interface ImportOutcome {
@@ -50,16 +52,23 @@ export const IMPORT_COLUMNS = [
 /** Server URL of the blank template — a real file, not a blob built in the tab. */
 export const IMPORT_TEMPLATE_URL = '/api/work-orders/import/template';
 
-const LABELS: Record<ImportRowResult, string> = {
-  created: 'Created',
+// A preview has written nothing, so its badges are promises, not history.
+// "Created" next to a row that does not exist yet is the panel lying about the
+// database — the one thing a preview must never do.
+const WILL: Record<ImportRowResult, string> = {
+  created: 'Will create',
   updated: 'Will update',
   rejected: 'Rejected',
 };
+const DID: Record<ImportRowResult, string> = {
+  created: 'Created',
+  updated: 'Updated',
+  rejected: 'Rejected',
+};
 
-/** How a verdict reads before the import has run. */
+/** How a verdict reads: a promise before the import, a fact after it. */
 export function verdictLabel(result: ImportRowResult, applied: boolean): string {
-  if (result === 'updated' && applied) return 'Updated';
-  return LABELS[result];
+  return (applied ? DID : WILL)[result];
 }
 
 /** Say what would happen. Writes nothing. */

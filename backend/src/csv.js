@@ -52,13 +52,20 @@ function escapeCSV(val) {
 // data.
 
 /**
- * Parse CSV text into an array of rows, each an array of cell strings.
+ * Parse delimited text into an array of rows, each an array of cell strings.
  * Blank lines are dropped. Returns [] for empty input.
+ *
+ * The delimiter is a parameter because a "CSV" out of a European Excel is
+ * semicolon-separated and a paste out of a spreadsheet is tab-separated. The
+ * quoting rules are identical in all three; only the separator moves.
+ *
  * @param {string} text
+ * @param {string} [delimiter=','] single separator character
  * @returns {string[][]}
  */
-function parseCSV(text) {
+function parseCSV(text, delimiter = ',') {
   if (text === null || text === undefined) return [];
+  const sep = (typeof delimiter === 'string' && delimiter.length === 1) ? delimiter : ',';
   let s = String(text);
   if (s.charCodeAt(0) === 0xfeff) s = s.slice(1); // strip BOM
 
@@ -88,7 +95,7 @@ function parseCSV(text) {
       continue;
     }
     if (ch === '"' && cell === '') { inQuotes = true; continue; }
-    if (ch === ',') { endCell(); continue; }
+    if (ch === sep) { endCell(); continue; }
     if (ch === '\r') { if (s[i + 1] === '\n') i++; endRow(); continue; }
     if (ch === '\n') { endRow(); continue; }
     cell += ch;
@@ -97,9 +104,44 @@ function parseCSV(text) {
   return rows;
 }
 
+/**
+ * What separates this file's cells, and where its data starts.
+ *
+ * Two things real exports do that a plain comma-split gets wrong:
+ *   * Excel writes a `sep=;` line above the header so IT knows the separator.
+ *     Every other reader sees it as a one-cell first row and then reads the
+ *     real header as data.
+ *   * A European Excel and a spreadsheet paste use `;` and TAB. A comma-split
+ *     turns the whole line into one cell whose name matches no column, and the
+ *     importer then reports every field missing on every row — technically true
+ *     and completely useless.
+ *
+ * So: honour an explicit `sep=`, else pick the separator that actually appears
+ * in the header line, preferring the comma when it is there at all.
+ *
+ * @param {string} text
+ * @returns {{ delimiter: string, body: string }} body has any `sep=` line removed
+ */
+function sniffDelimiter(text) {
+  let s = String(text === null || text === undefined ? '' : text);
+  if (s.charCodeAt(0) === 0xfeff) s = s.slice(1);
+
+  const firstBreak = s.search(/\r\n|\r|\n/);
+  const firstLine = firstBreak === -1 ? s : s.slice(0, firstBreak);
+  const rest = firstBreak === -1 ? '' : s.slice(firstBreak).replace(/^(?:\r\n|\r|\n)/, '');
+
+  const declared = firstLine.match(/^sep=(.)\s*$/i);
+  if (declared) return { delimiter: declared[1], body: rest };
+
+  if (firstLine.includes(',')) return { delimiter: ',', body: s };
+  if (firstLine.includes('\t')) return { delimiter: '\t', body: s };
+  if (firstLine.includes(';')) return { delimiter: ';', body: s };
+  return { delimiter: ',', body: s };
+}
+
 /** Join one row of values into a CSV line, each cell escaped. */
 function toCSVRow(values) {
   return values.map(escapeCSV).join(',');
 }
 
-module.exports = { escapeCSV, parseCSV, toCSVRow };
+module.exports = { escapeCSV, parseCSV, toCSVRow, sniffDelimiter };
