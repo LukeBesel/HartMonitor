@@ -9,6 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
 import DepartmentFilter from '../components/shared/DepartmentFilter';
+import { fmtDuration } from '../components/apps/appModel';
 
 interface RoutingStep {
   id: string;
@@ -231,14 +232,6 @@ export default function Routings() {
     } catch {
       showToast('Failed to reorder steps', 'error');
     }
-  };
-
-  const formatCycleTime = (secs: number) => {
-    if (!secs) return null;
-    if (secs < 60) return `${secs}s`;
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return s ? `${m}m ${s}s` : `${m}m`;
   };
 
   if (isFree) {
@@ -549,7 +542,7 @@ export default function Routings() {
                         {step.estimated_cycle_seconds > 0 && (
                           <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
                             <Clock size={10} />
-                            {formatCycleTime(step.estimated_cycle_seconds)}
+                            {fmtDuration(step.estimated_cycle_seconds)}
                           </span>
                         )}
                       </div>

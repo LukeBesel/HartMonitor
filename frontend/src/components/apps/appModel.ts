@@ -166,15 +166,40 @@ export function fmtDuration(seconds: number | null | undefined): string {
     // A whole number stays whole; a fraction keeps its tenth.
     return `${Math.round(value * 10) / 10}s`;
   }
-  if (value < 60) return `${Math.round(value)}s`;
-  if (value < 3600) {
-    const m = Math.floor(value / 60);
-    const s = Math.round(value % 60);
+  // From here the value is rounded to a whole second EXACTLY ONCE, and every
+  // bucket boundary below is decided against that same rounded total, never
+  // against the un-rounded value. Flooring minutes from the raw value and
+  // separately rounding its leftover seconds let 359.5s (which rounds to a
+  // whole 360s = 6m) print floor(359.5/60)=5m plus round(359.5%60)=60s —
+  // "5m 60s", a number with no clock behind it. One rounding, then one split,
+  // can't disagree with itself.
+  const t = Math.round(value);
+  if (t < 60) return `${t}s`;
+  if (t < 3600) {
+    const m = Math.floor(t / 60);
+    const s = t % 60;
     return s > 0 ? `${m}m ${s}s` : `${m}m`;
   }
-  const h = Math.floor(value / 3600);
-  const m = Math.floor((value % 3600) / 60);
+  const h = Math.floor(t / 3600);
+  const m = Math.floor((t % 3600) / 60);
   return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+/**
+ * `fmtDuration`, but for a value that arrives in MINUTES instead of seconds
+ * (takt times, leaderboard averages — several endpoints report minutes
+ * directly). This is the ONLY permitted unit conversion onto the shared
+ * formatter: `fmtDuration(minutes * 60)`, nothing else. It exists so that
+ * "this field is minutes" is declared once, here, instead of a call site
+ * quietly assuming it and multiplying inline — which is exactly how a
+ * seconds field once got treated as minutes and rendered 60x too long. Any
+ * other file that needs a duration in minutes imports this, not `fmtDuration`
+ * with its own `* 60`.
+ */
+export function fmtMinutes(minutes: number | null | undefined): string {
+  if (minutes === null || minutes === undefined || !Number.isFinite(Number(minutes))) return '—';
+  if (Number(minutes) < 0) return '—';
+  return fmtDuration(Number(minutes) * 60);
 }
 
 /**

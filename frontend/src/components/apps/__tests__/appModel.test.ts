@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  durationTicks, elapsedSeconds, measuredSeconds, runDurationSeconds,
+  durationTicks, elapsedSeconds, fmtDuration, fmtMinutes, measuredSeconds, runDurationSeconds,
   stepSecondsByIndex, stepTimesTotal,
 } from '../appModel';
 
@@ -133,5 +133,62 @@ describe('durationTicks', () => {
   it('has nothing to draw without a range', () => {
     expect(durationTicks(0)).toEqual([0]);
     expect(durationTicks(NaN)).toEqual([0]);
+  });
+});
+
+// ─── fmtMinutes: the one permitted unit conversion onto fmtDuration ───────────
+// Some endpoints (takt times, leaderboard averages) hand back minutes
+// directly. fmtMinutes is the ONLY sanctioned adapter for that — literally
+// `fmtDuration(minutes * 60)` — so a call site never multiplies by 60 inline
+// and never grows a second, independently-rounding implementation.
+
+describe('fmtMinutes', () => {
+  it('matches what fmtDuration renders for the equivalent seconds, exactly', () => {
+    // 7.5 minutes = 450s; fmtDuration(450) = '7m 30s'.
+    expect(fmtMinutes(7.5)).toBe('7m 30s');
+    expect(fmtMinutes(7.5)).toBe(fmtDuration(7.5 * 60));
+    // 0.1 minutes = 6s; fmtDuration(6) = '6s'.
+    expect(fmtMinutes(0.1)).toBe('6s');
+    expect(fmtMinutes(0.1)).toBe(fmtDuration(0.1 * 60));
+  });
+
+  it('says nothing rather than zero when there is nothing to say', () => {
+    expect(fmtMinutes(null)).toBe('—');
+    expect(fmtMinutes(undefined)).toBe('—');
+    expect(fmtMinutes(NaN)).toBe('—');
+    expect(fmtMinutes(-1)).toBe('—');
+  });
+
+  it('still reaches hours for a long enough run', () => {
+    // 90 minutes = 5400s -> fmtDuration(5400) = '1h 30m'.
+    expect(fmtMinutes(90)).toBe('1h 30m');
+  });
+});
+
+// ─── fmtDuration: one rounding, then one split ────────────────────────────────
+// fmtDuration used to floor the minutes half of a value and separately round
+// the leftover-seconds half. For a value whose rounded total lands on a whole
+// minute (359.5s rounds to 360s = 6m), that printed floor(359.5/60)=5m plus
+// round(359.5%60)=60s: "5m 60s" — a clock that doesn't exist. The fix rounds
+// the total to a whole second exactly once, then splits THAT number.
+
+describe('fmtDuration rounds once, then splits — never "60s" or "60m"', () => {
+  it('rounds a value that lands on a whole minute instead of splitting it two ways', () => {
+    expect(fmtDuration(359.5)).toBe('6m');
+    expect(fmtDuration(119.6)).toBe('2m');
+  });
+
+  it('carries a whole-minute rounding across the hour boundary too', () => {
+    expect(fmtDuration(3599.6)).toBe('1h');
+  });
+
+  it('never prints an impossible "60s" or "60m" for any value from 0 to two hours', () => {
+    // Steps of a tenth of a second across the full range this function
+    // handles — the exact resolution that produced "5m 60s" in production.
+    for (let v = 0; v <= 7200; v += 0.1) {
+      const s = fmtDuration(v);
+      expect(s, `fmtDuration(${v.toFixed(1)}) = "${s}"`).not.toMatch(/\b60s\b/);
+      expect(s, `fmtDuration(${v.toFixed(1)}) = "${s}"`).not.toMatch(/\b60m\b/);
+    }
   });
 });

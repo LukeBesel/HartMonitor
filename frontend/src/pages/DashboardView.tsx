@@ -16,6 +16,7 @@ import { useAuth } from '../context/AuthContext';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
 import DashboardFilterBar, { FilterOption } from '../components/shared/DashboardFilterBar';
+import { fmtDuration, fmtMinutes } from '../components/apps/appModel';
 
 // ── Card palette config ───────────────────────────────────────────────────────
 
@@ -60,7 +61,9 @@ const CHART_COLORS = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#14b8a6
 
 // ── Card renderer ─────────────────────────────────────────────────────────────
 
-function formatRunTime(iso: string) {
+// Not a duration — a wall-clock reading (e.g. "2:45 PM") for when a run
+// started. Named to stay clear of the fmt*/format* duration-formatter family.
+function clockReading(iso: string) {
   const t = new Date(iso);
   return isNaN(t.getTime()) ? '—' : t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
@@ -82,11 +85,20 @@ function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
           </div>
         );
       }
+      // A 'm' suffix means the metric is minutes (currently only avg_cycle) —
+      // the backend also hands back the exact seconds it averaged, so this
+      // renders through the one duration formatter instead of re-rounding the
+      // already-rounded minutes value. That's what keeps this tile agreeing
+      // with the same run's duration on App Analytics instead of printing its
+      // own, separately-rounded number.
+      const isMinutesMetric = data.suffix === 'm' && typeof data.seconds === 'number';
       return (
         <div className="flex flex-col items-center justify-center py-6 gap-1">
           <div className="text-5xl font-bold" style={{ color }}>
-            {typeof val === 'number' && !Number.isInteger(val) ? val.toFixed(1) : val}
-            {data.suffix && <span className="text-2xl ml-1 font-medium opacity-70">{data.suffix}</span>}
+            {isMinutesMetric
+              ? fmtDuration(data.seconds)
+              : (typeof val === 'number' && !Number.isInteger(val) ? val.toFixed(1) : val)}
+            {data.suffix && !isMinutesMetric && <span className="text-2xl ml-1 font-medium opacity-70">{data.suffix}</span>}
           </div>
           {typeof data.sample_size === 'number' && (
             <div className="text-[11px] text-gray-400">from {data.sample_size} recorded result{data.sample_size === 1 ? '' : 's'}</div>
@@ -145,6 +157,14 @@ function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
 
     case 'leaderboard': {
       const rows = data.rows || [];
+      // "Avg Cycle (min)" is the only leaderboard metric in minutes; it goes
+      // through the shared minutes adapter rather than a bare `.toFixed(1)` so
+      // it never reads differently than the same average shown anywhere else.
+      // \bmin\b, not .includes('min') — a label like "Admin Actions" contains
+      // "min" as a substring but is not a minutes metric. The real fix is a
+      // unit field on the metric payload instead of sniffing the label text
+      // at all; tracked as a wave-5 backend follow-up.
+      const isMinutes = /\bmin\b/i.test(data.label ?? '');
       return (
         <div className="space-y-1.5 py-2">
           {rows.slice(0, 6).map((r: any, i: number) => (
@@ -153,7 +173,11 @@ function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
                 {i + 1}
               </span>
               <span className="flex-1 text-sm text-gray-700 truncate">{r.name}</span>
-              <span className="text-sm font-bold text-gray-900">{typeof r.value === 'number' && !Number.isInteger(r.value) ? r.value.toFixed(1) : r.value}{data.label?.includes('min') ? 'm' : ''}</span>
+              <span className="text-sm font-bold text-gray-900">
+                {isMinutes
+                  ? fmtMinutes(r.value)
+                  : (typeof r.value === 'number' && !Number.isInteger(r.value) ? r.value.toFixed(1) : r.value)}
+              </span>
             </div>
           ))}
           {rows.length === 0 && <div className="text-center py-4 text-gray-400 text-sm">No data</div>}
@@ -205,7 +229,7 @@ function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
                     </span>
                   </td>
                   <td className="py-1.5 px-2 text-right text-gray-500">
-                    {formatRunTime(r.started_at)}
+                    {clockReading(r.started_at)}
                   </td>
                 </tr>
               ))}

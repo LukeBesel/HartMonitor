@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
-import { fmtDuration } from '../components/apps/appModel';
+import { fmtMinutes } from '../components/apps/appModel';
 import type {
   LeaderboardBoard, LeaderboardPeriod, LeaderboardResponse,
   LeaderboardDepartment, LeaderboardDepartmentsResponse,
@@ -20,14 +20,14 @@ const PERIODS: { id: LeaderboardPeriod; label: string }[] = [
 ];
 
 /**
- * The leaderboard payload is in minutes end to end, so this adapts the unit —
- * it is NOT a second formatter. Everything below the unit conversion is the one
- * shared implementation, so a plant record cannot print one way here and
- * another way on the run's own history page.
+ * `LeaderboardTV.tsx` imports this name, so it stays exported — but it is now
+ * a one-line re-export of the shared minutes adapter, not a second
+ * implementation. The leaderboard payload is in minutes end to end; every
+ * duration below is `fmtMinutes` directly, and a plant record cannot print
+ * one way here and another way on the run's own history page.
  */
 export function formatDuration(minutes: number | null | undefined): string {
-  if (minutes === null || minutes === undefined) return '—';
-  return fmtDuration(minutes * 60);
+  return fmtMinutes(minutes);
 }
 
 const RANK_ICON: Record<number, { icon: React.ReactNode; color: string }> = {
@@ -67,7 +67,7 @@ function BoardCard({ board }: { board: LeaderboardBoard }) {
         {board.all_time_best_minutes != null && (
           <div className="text-right flex-shrink-0">
             <div className="text-[10px] text-gray-400 uppercase tracking-wide">Plant record</div>
-            <div className="text-sm font-bold" style={{ color: 'var(--accent-ink)' }}>{formatDuration(board.all_time_best_minutes)}</div>
+            <div className="text-sm font-bold" style={{ color: 'var(--accent-ink)' }}>{fmtMinutes(board.all_time_best_minutes)}</div>
           </div>
         )}
       </div>
@@ -105,8 +105,8 @@ function BoardCard({ board }: { board: LeaderboardBoard }) {
                       </span>
                     )}
                   </td>
-                  <td className="py-1.5 text-right font-semibold tabular-nums text-gray-900">{formatDuration(l.best_minutes)}</td>
-                  <td className="py-1.5 text-right tabular-nums text-gray-500">{formatDuration(l.avg_minutes)}</td>
+                  <td className="py-1.5 text-right font-semibold tabular-nums text-gray-900">{fmtMinutes(l.best_minutes)}</td>
+                  <td className="py-1.5 text-right tabular-nums text-gray-500">{fmtMinutes(l.avg_minutes)}</td>
                   <td className="py-1.5 text-right tabular-nums text-gray-400">{l.completions}</td>
                 </tr>
               );
@@ -137,7 +137,7 @@ function ChampionCard({ board }: { board: LeaderboardBoard }) {
       </div>
       <div className="text-lg font-bold truncate">{champ.operator_name}</div>
       <div className="flex items-center gap-3 mt-1 text-sm text-white/90">
-        <span className="font-semibold">{formatDuration(champ.best_minutes)}</span>
+        <span className="font-semibold">{fmtMinutes(champ.best_minutes)}</span>
         <span className="text-white/60">·</span>
         <span>{champ.completions} run{champ.completions === 1 ? '' : 's'}</span>
         {champ.is_record && (
@@ -188,7 +188,7 @@ function DepartmentCard({ dept, onSelect }: { dept: LeaderboardDepartment; onSel
             instantly rather than one nobody has measured. */}
         <div>
           <div className="text-lg font-bold tabular-nums" style={{ color: 'var(--accent-ink)' }}>
-            {formatDuration(dept.avg_minutes)}
+            {fmtMinutes(dept.avg_minutes)}
           </div>
           <div className="text-[10px] text-gray-400 uppercase tracking-wide">Avg Cycle</div>
         </div>
@@ -200,7 +200,7 @@ function DepartmentCard({ dept, onSelect }: { dept: LeaderboardDepartment; onSel
 
       {dept.best_minutes != null && (
         <div className="flex items-center gap-1.5 text-[11px] text-gray-400 pt-1 border-t border-gray-50">
-          <Gauge size={11} /> Best clean run {formatDuration(dept.best_minutes)}
+          <Gauge size={11} /> Best clean run {fmtMinutes(dept.best_minutes)}
         </div>
       )}
     </button>
