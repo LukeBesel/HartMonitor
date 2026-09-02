@@ -2,8 +2,41 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { TEAM_ROLES, isTeamRole } = require('../andonTeams');
+// One definition of finished-today / running-now / average cycle / pass rate /
+// on-track, shared with the Command Center, the department drill-down, the
+// leaderboard and GET /api/floor. This list used to carry counts of its own that
+// nothing else in the product agreed with.
+const plantTruth = require('../plantTruth');
 
 const router = express.Router();
+
+/**
+ * The canonical figures for one department, in the shape this list adds beside
+ * its existing counts. Nothing renders them yet — wave 2 does — but they are on
+ * the payload now so no screen has to compute them for itself again.
+ */
+function canonicalFields(snap) {
+  return {
+    plant_date:        snap.plant_date,
+    finished_today:    snap.finished_today,
+    running_now:       snap.running_now,
+    avg_cycle_seconds: snap.avg_cycle_seconds,
+    avg_cycle_basis:   snap.avg_cycle_basis,
+    avg_cycle_sample:  snap.avg_cycle_sample,
+    avg_cycle_reason:  snap.avg_cycle_reason,
+    pass_rate:         snap.pass_rate,
+    pass_rate_sample:  snap.pass_rate_sample,
+    pass_rate_reason:  snap.pass_rate_reason,
+    on_track:          snap.on_track,
+    at_risk:           snap.at_risk,
+    behind:            snap.behind,
+    overdue:           snap.overdue,
+    open_work_orders:  snap.open_work_orders,
+    on_track_pct:      snap.on_track_pct,
+    on_track_reason:   snap.on_track_reason,
+    on_track_basis:    'open_work_orders',
+  };
+}
 
 function deptCounts(deptId) {
   const woCount = db.prepare(
@@ -39,7 +72,16 @@ router.get('/', (req, res) => {
   if (req.query.site_id) { sql += ' AND (site_id = ? OR site_id IS NULL)'; params.push(req.query.site_id); }
   sql += ' ORDER BY name';
   const depts = db.prepare(sql).all(...params);
-  res.json(depts.map(dept => ({ ...dept, ...deptCounts(dept.id) })));
+
+  // Every department's live figures in ONE query set, not one set per card.
+  const snapshots = plantTruth.departmentSnapshots(req.companyId, { siteId: req.query.site_id });
+  const byId = Object.fromEntries(snapshots.departments.map(d => [d.department_id, d]));
+
+  res.json(depts.map(dept => ({
+    ...dept,
+    ...deptCounts(dept.id),
+    ...(byId[dept.id] ? canonicalFields(byId[dept.id]) : {}),
+  })));
 });
 
 // ─── POST / - create department ──────────────────────────────────────────────
@@ -64,7 +106,10 @@ router.post('/', (req, res) => {
     .run(id, name, description, manager_name, color, Math.max(0, parseInt(headcount) || 0), site_id || null, req.companyId);
 
   const dept = db.prepare('SELECT * FROM departments WHERE id = ?').get(id);
-  res.status(201).json({ ...dept, work_order_count: 0, completion_count: 0, active_work_orders: 0 });
+  res.status(201).json({
+    ...dept, work_order_count: 0, completion_count: 0, active_work_orders: 0,
+    ...canonicalFields(plantTruth.floorSnapshot(req.companyId, { departmentId: id })),
+  });
 });
 
 // ─── PUT /:id - update department ────────────────────────────────────────────
@@ -91,7 +136,11 @@ router.put('/:id', (req, res) => {
     .run(updates.name, updates.description, updates.manager_name, updates.color, updates.headcount, updates.site_id, req.params.id);
 
   const updated = db.prepare('SELECT * FROM departments WHERE id = ?').get(req.params.id);
-  res.json({ ...updated, ...deptCounts(req.params.id) });
+  res.json({
+    ...updated,
+    ...deptCounts(req.params.id),
+    ...canonicalFields(plantTruth.floorSnapshot(req.companyId, { departmentId: req.params.id })),
+  });
 });
 
 // ─── Department members — who gets this department's Andon alerts ────────────

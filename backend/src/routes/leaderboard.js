@@ -2,6 +2,10 @@ const express = require('express');
 const db = require('../db');
 const { plantDayShift } = require('../plantDay');
 const { runSecondsSQL } = require('../cycleTime');
+// finished-today, running-now and on-track come from the one module that
+// defines them, so the board and the department page it links to cannot report
+// different days for the same shift.
+const plantTruth = require('../plantTruth');
 
 const router = express.Router();
 
@@ -38,6 +42,11 @@ const PERIODS = {
 function periodParams(period, day) {
   return period === 'today' ? [day, day] : [];
 }
+
+// A pile of runs that belongs to no department. Not a place, so never ranked
+// against places, and never called "Unassigned" — a word that reads on the board
+// as the name of a department nobody can find on the floor.
+const NO_DEPARTMENT_LABEL = 'No department';
 
 const PERIOD_LABELS = {
   today: 'Today',
@@ -102,12 +111,21 @@ router.get('/departments', (req, res) => {
   const deptInfo = db.prepare('SELECT id, name, color FROM departments WHERE company_id = ?').all(cid);
   const deptMap = Object.fromEntries(deptInfo.map(d => [d.id, d]));
 
-  const departments = rows.map(r => {
+  // Today's live figures per department, in one query set, from the module that
+  // owns the definition of them. The board's own `completions` counts something
+  // narrower on purpose — runs of a PUBLISHED app with no NCR against them, over
+  // the chosen period — so `finished_today` rides alongside it rather than
+  // replacing it, and the two are labelled rather than confused.
+  const snapshots = plantTruth.departmentSnapshots(cid);
+  const snapshotById = Object.fromEntries(snapshots.departments.map(d => [d.department_id, d]));
+
+  function shape(r) {
     const info = r.department_id ? deptMap[r.department_id] : null;
     const span = periodDays || Math.max(1, r.active_days);
+    const snap = r.department_id ? snapshotById[r.department_id] : null;
     return {
       department_id: r.department_id,
-      department_name: info ? info.name : (r.department_id ? 'Unknown' : 'Unassigned'),
+      department_name: info ? info.name : (r.department_id ? 'Unknown' : NO_DEPARTMENT_LABEL),
       department_color: info ? info.color : '#6b7280',
       completions: r.completions,
       operator_count: r.operator_count,
@@ -115,18 +133,39 @@ router.get('/departments', (req, res) => {
       best_minutes: r.best_minutes,
       last_completed_at: r.last_completed_at,
       throughput_per_day: Math.round((r.completions / Math.max(1, span)) * 10) / 10,
+      // ── The canonical figures. Null on the no-department bucket, which is a
+      // pile of runs rather than a place: it has no work orders, so it has no
+      // on-track share to state and must not print 0.
+      finished_today:   snap ? snap.finished_today : null,
+      running_now:      snap ? snap.running_now : null,
+      on_track:         snap ? snap.on_track : null,
+      open_work_orders: snap ? snap.open_work_orders : null,
+      on_track_pct:     snap ? snap.on_track_pct : null,
+      on_track_basis:   'open_work_orders',
     };
-  });
+  }
 
   // Most productive department first; faster average cycle breaks ties.
+  const departments = rows.filter(r => r.department_id != null).map(shape);
   departments.sort((a, b) =>
     b.completions - a.completions || (a.avg_minutes ?? 1e9) - (b.avg_minutes ?? 1e9));
   departments.forEach((d, i) => { d.rank = i + 1; });
+
+  // Runs that belong to no department are not a department, so they are not
+  // ranked against departments. Sorted by output alone they took #1 on a board
+  // headed by department name and read as a real place called "Unassigned" that
+  // was beating every real one. They come last, with no rank and a name that
+  // says what the row is.
+  for (const r of rows.filter(r => r.department_id == null)) {
+    departments.push({ ...shape(r), rank: null });
+  }
 
   res.json({
     period,
     period_label: PERIOD_LABELS[period],
     generated_at: new Date().toISOString(),
+    /** The day the canonical figures on each row were measured on. */
+    plant_date: snapshots.plant_date,
     departments,
   });
 });
