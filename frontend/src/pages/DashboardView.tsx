@@ -160,7 +160,11 @@ function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
       // "Avg Cycle (min)" is the only leaderboard metric in minutes; it goes
       // through the shared minutes adapter rather than a bare `.toFixed(1)` so
       // it never reads differently than the same average shown anywhere else.
-      const isMinutes = !!data.label?.includes('min');
+      // \bmin\b, not .includes('min') — a label like "Admin Actions" contains
+      // "min" as a substring but is not a minutes metric. The real fix is a
+      // unit field on the metric payload instead of sniffing the label text
+      // at all; tracked as a wave-5 backend follow-up.
+      const isMinutes = /\bmin\b/i.test(data.label ?? '');
       return (
         <div className="space-y-1.5 py-2">
           {rows.slice(0, 6).map((r: any, i: number) => (

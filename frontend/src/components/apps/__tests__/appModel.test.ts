@@ -164,3 +164,31 @@ describe('fmtMinutes', () => {
     expect(fmtMinutes(90)).toBe('1h 30m');
   });
 });
+
+// ─── fmtDuration: one rounding, then one split ────────────────────────────────
+// fmtDuration used to floor the minutes half of a value and separately round
+// the leftover-seconds half. For a value whose rounded total lands on a whole
+// minute (359.5s rounds to 360s = 6m), that printed floor(359.5/60)=5m plus
+// round(359.5%60)=60s: "5m 60s" — a clock that doesn't exist. The fix rounds
+// the total to a whole second exactly once, then splits THAT number.
+
+describe('fmtDuration rounds once, then splits — never "60s" or "60m"', () => {
+  it('rounds a value that lands on a whole minute instead of splitting it two ways', () => {
+    expect(fmtDuration(359.5)).toBe('6m');
+    expect(fmtDuration(119.6)).toBe('2m');
+  });
+
+  it('carries a whole-minute rounding across the hour boundary too', () => {
+    expect(fmtDuration(3599.6)).toBe('1h');
+  });
+
+  it('never prints an impossible "60s" or "60m" for any value from 0 to two hours', () => {
+    // Steps of a tenth of a second across the full range this function
+    // handles — the exact resolution that produced "5m 60s" in production.
+    for (let v = 0; v <= 7200; v += 0.1) {
+      const s = fmtDuration(v);
+      expect(s, `fmtDuration(${v.toFixed(1)}) = "${s}"`).not.toMatch(/\b60s\b/);
+      expect(s, `fmtDuration(${v.toFixed(1)}) = "${s}"`).not.toMatch(/\b60m\b/);
+    }
+  });
+});

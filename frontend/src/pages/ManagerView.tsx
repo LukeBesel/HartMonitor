@@ -11,7 +11,7 @@ import DepartmentFilter from '../components/shared/DepartmentFilter';
 import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
 import { tintedChipStyle } from '../utils/contrast';
 import { useIsDark } from '../utils/useIsDark';
-import { fmtDuration, fmtMinutes } from '../components/apps/appModel';
+import { elapsedSeconds, fmtDuration, fmtMinutes } from '../components/apps/appModel';
 
 // ── Types matching actual API response ────────────────────────────────────────
 
@@ -94,10 +94,12 @@ const PRIORITY: Record<string, { label: string; cls: string }> = {
 function useElapsedSeconds(startedAt: string) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
-    const update = () => {
-      const start = new Date(startedAt).getTime();
-      setElapsed(isNaN(start) ? 0 : Math.max(0, Math.floor((Date.now() - start) / 1000)));
-    };
+    // elapsedSeconds parses SQLite's "YYYY-MM-DD HH:MM:SS" as UTC
+    // (parseServerTime) — `new Date(startedAt)` used to read that same string
+    // as LOCAL time, so a run in a UTC-behind timezone (e.g. America/Chicago)
+    // could show "0s" elapsed while another screen reading the identical run
+    // through the shared helper showed several minutes.
+    const update = () => setElapsed(elapsedSeconds(startedAt) ?? 0);
     update();
     const t = setInterval(update, 1000);
     return () => clearInterval(t);

@@ -114,13 +114,32 @@ describe('a site counts what it actually holds', () => {
     assert.ok(main.counts_basis, 'the card should say what it counted, not just a bare number');
   });
 
-  it('gives a brand-new site the same honest count on creation', async () => {
+  it('never double-counts an unassigned department onto a second site', async () => {
+    // A second, non-primary site must NOT also claim the two unassigned
+    // departments — otherwise "2 departments" reads on both MAIN and this
+    // one, for 2 real departments total: a card that lies by counting the
+    // same row twice under two different names.
     const created = await api('POST', '/api/sites', { token, body: { name: 'Satellite', code: 'SAT' } });
     assert.equal(created.status, 201, JSON.stringify(created.json));
-    // The two unassigned departments belong to the whole company, so a
-    // second site inherits them too — its count must not lie by starting at
-    // zero when GET / would immediately show 2 for the same site.
-    assert.equal(created.json.department_count, 2, `new site's own create response undercounted: ${JSON.stringify(created.json)}`);
+    assert.equal(created.json.is_primary, 0, 'a freshly created site must not be primary');
+    assert.equal(created.json.department_count, 0, `a non-primary site's own create response should start at zero, got ${JSON.stringify(created.json)}`);
+
+    const sites = await api('GET', '/api/sites', { token });
+    assert.equal(sites.status, 200, JSON.stringify(sites.json));
+    const main = sites.json.find(s => s.code === 'MAIN');
+    const satellite = sites.json.find(s => s.code === 'SAT');
+    assert.ok(main && satellite, `both sites missing from GET /api/sites: ${JSON.stringify(sites.json)}`);
+    assert.equal(main.department_count, 2, `MAIN should still count both unassigned departments, got ${JSON.stringify(main)}`);
+    assert.equal(satellite.department_count, 0, `the non-primary site must not also claim the unassigned departments, got ${JSON.stringify(satellite)}`);
+
+    // The sum of every site's own department_count must equal the number of
+    // real departments GET /api/departments actually returns — the proof that
+    // no department is being counted twice (or dropped) across the set of
+    // cards, not just checked one card at a time.
+    const departments = await api('GET', '/api/departments', { token });
+    assert.equal(departments.status, 200, JSON.stringify(departments.json));
+    const summed = sites.json.reduce((sum, s) => sum + s.department_count, 0);
+    assert.equal(summed, departments.json.length, `sum of every site's department_count (${summed}) must equal GET /api/departments length (${departments.json.length})`);
   });
 });
 

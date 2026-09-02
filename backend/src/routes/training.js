@@ -108,9 +108,17 @@ router.get('/summary', (req, res) => {
     const dept_coverage_pct = dept_possible > 0
       ? Math.round((dept_certified / dept_possible) * 100 * 10) / 10
       : null;
+    // Two different reasons produce the same zero denominator, and they are
+    // not the same fact: no operators here yet vs. this department has people
+    // but the plant has nothing published for anyone to certify against.
+    const dept_empty_reason = dept_possible > 0
+      ? null
+      : operator_count === 0
+        ? 'no operators in this department yet'
+        : 'no certifications required yet';
     return {
       id: group.id, name: group.name, operator_count, coverage_pct: dept_coverage_pct,
-      empty_reason: dept_possible > 0 ? null : 'no certifications required yet',
+      empty_reason: dept_empty_reason,
     };
   });
 

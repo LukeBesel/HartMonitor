@@ -36,6 +36,16 @@ interface TVData {
   // board renders the identical string the run's own detail page does,
   // rather than re-expanding an already-rounded minutes figure.
   leaderboard: { operator_name: string; app_name?: string; duration_minutes: number; duration_seconds?: number }[];
+  // takt_minutes/over_by_minutes have no seconds equivalent — sqdc.js
+  // pre-rounds each to a tenth of a minute before it ever reaches this
+  // payload (`Math.round(takt * 10) / 10`), so fmtMinutes(6.1) below prints
+  // "6m 6s" for the same takt ManagerView shows as "6m 5s" (computed from
+  // the un-rounded work order value). This is the honest rendering of the
+  // number the endpoint actually sends — the fix belongs on the backend
+  // (return takt_seconds/over_by_seconds instead of a pre-rounded minutes
+  // figure, the same shape the leaderboard's duration_seconds already took),
+  // which is outside this workstream's files (backend/src/routes/sqdc.js);
+  // reported as a wave-2 follow-up rather than edited here.
   behind_takt?: {
     work_order_number: string; operator_name: string; station: string;
     takt_minutes: number; over_by_minutes: number; live: boolean;
