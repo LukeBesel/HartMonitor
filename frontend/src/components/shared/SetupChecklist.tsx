@@ -8,6 +8,15 @@ import type { App } from '../../types';
 import {
   readTrainingPrefs, trainingGraduated, TRAINING_PREFS_EVENT,
 } from '../apps/useAppTraining';
+import { fetchSetupChecklistDismissed, saveSetupChecklistDismissed } from '../../api/settings';
+
+// Putting the setup checklist away is a decision about this plant's screens,
+// not about this laptop — it used to be a localStorage flag, so the same
+// account met the same dismissed list again on the next tablet. It now lives in
+// org_settings under `setup_checklist_dismissed`, alongside every other company
+// setting. Any flag left on this device is imported once and then forgotten,
+// and it stays as the fallback for a member the server will not let write.
+const deviceKey = (userId?: string) => `setup_dismissed_${userId}`;
 
 interface ChecklistItem {
   id: string;
@@ -45,7 +54,7 @@ const INITIAL_ITEMS: ChecklistItem[] = [
 type LoadState = 'loading' | 'ready' | 'error';
 
 export function SetupChecklist() {
-  const { user, canEdit } = useAuth();
+  const { user, canEdit, isAtLeast } = useAuth();
   const { isEnabled } = useModules();
   const { pathname } = useLocation();
   const [items, setItems] = useState<ChecklistItem[]>(INITIAL_ITEMS);
@@ -57,14 +66,37 @@ export function SetupChecklist() {
   const appsEnabled = isEnabled('apps');
 
   useEffect(() => {
-    // Check localStorage for dismissed state
-    const key = `setup_dismissed_${user?.id}`;
-    if (localStorage.getItem(key)) { setDismissed(true); return; }
-
     let cancelled = false;
 
     // Check which items are actually done
     (async () => {
+      // Has this company already put the list away?
+      const key = deviceKey(user?.id);
+      try {
+        const stored = await fetchSetupChecklistDismissed();
+        if (cancelled) return;
+        if (stored) { setDismissed(true); return; }
+        if (stored === null && localStorage.getItem(key)) {
+          // Never answered company-wide, but this device remembers a dismissal.
+          // Hand it to the company once, then stop carrying it here — but only
+          // if this account may write company settings at all. An operator
+          // firing a PUT that can only ever answer 403, on every single page
+          // load, forever, is not a migration; it is a permanent error.
+          setDismissed(true);
+          if (isAtLeast('manager')) {
+            try {
+              await saveSetupChecklistDismissed(true);
+              localStorage.removeItem(key);
+            } catch { /* keep the device flag until a write succeeds */ }
+          }
+          return;
+        }
+      } catch {
+        // The company's answer is unreachable; fall back to this device's.
+        if (cancelled) return;
+        if (localStorage.getItem(key)) { setDismissed(true); return; }
+      }
+
       try {
         const [apps, stats, users] = await Promise.all([
           api.getApps(),
@@ -124,8 +156,15 @@ export function SetupChecklist() {
   if (dismissed || allDone || coachRunning || loadState !== 'ready') return null;
 
   const dismiss = () => {
-    localStorage.setItem(`setup_dismissed_${user?.id}`, '1');
     setDismissed(true);
+    // Saving for the company needs manager or above. Somebody who may not do
+    // that still gets to put the list away on the screen in front of them —
+    // without a request that was never going to be allowed.
+    const keepOnDevice = () => {
+      try { localStorage.setItem(deviceKey(user?.id), '1'); } catch { /* ignore */ }
+    };
+    if (!isAtLeast('manager')) { keepOnDevice(); return; }
+    saveSetupChecklistDismissed(true).catch(keepOnDevice);
   };
 
   return (
