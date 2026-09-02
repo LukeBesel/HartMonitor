@@ -539,24 +539,74 @@ export function operatorAttribution(
 export interface PlayLinkParams {
   appId: string;
   workOrderId?: string | null;
+  /** Which operation of the job the units book against (?op=). */
+  operationId?: string | null;
   operatorName?: string | null;
   operatorUserId?: string | null;
   stationId?: string | null;
+  /** Resume THIS run rather than starting a new one (?run=). */
+  runId?: string | null;
   fromOperator?: boolean;
+  /** A dispatch-board link: no uid, the follower's session identifies them. */
+  fromDispatch?: boolean;
 }
 
-/** Deep link from the Operator Portal into the player, carrying the VERIFIED
- *  identity (uid) so the run is attributed to the person, not to their typing. */
+/**
+ * Deep link into the player. THE param contract, in one place:
+ *
+ *   wo       the work order
+ *   op       the work order OPERATION the run's units book against
+ *   station  where it runs
+ *   name     who (display only)
+ *   uid      who, VERIFIED — only the Operator Portal, which checked a badge
+ *   run      an in-progress run to resume instead of starting a new one
+ *   from     'operator' (portal) or 'dispatch' (board) — decides where Exit
+ *            goes, and whether the signed-in user is taken as the operator
+ *
+ * A dispatch link deliberately carries no `uid`: a uid in a URL is a claim
+ * anybody can copy, while the portal's is one a badge reader verified. The
+ * dispatch case is covered by the session instead (see setupNeeded's
+ * `selfIdentified`).
+ */
 export function buildPlayLink(p: PlayLinkParams): string {
   const q = new URLSearchParams();
   if (p.workOrderId) q.set('wo', p.workOrderId);
+  if (p.operationId) q.set('op', p.operationId);
   const name = (p.operatorName ?? '').trim();
   if (name) q.set('name', name);
   if (p.operatorUserId) q.set('uid', p.operatorUserId);
   if (p.stationId) q.set('station', p.stationId);
+  if (p.runId) q.set('run', p.runId);
   if (p.fromOperator) q.set('from', 'operator');
+  else if (p.fromDispatch) q.set('from', 'dispatch');
   const qs = q.toString();
   return `/play/${p.appId}${qs ? `?${qs}` : ''}`;
+}
+
+/** What a ?run= link resolved to: a job to pick up, or why it could not. */
+export type ResumeTarget<J> =
+  | { kind: 'resume'; job: J }
+  | { kind: 'none' }
+  | { kind: 'gone'; notice: string };
+
+/**
+ * Resolve a ?run= parameter against the runs the SERVER says are open for this
+ * app and this company.
+ *
+ * That list is the whole security model here: a run id that is finished,
+ * abandoned, from another app or from another tenant is simply not in it, so it
+ * cannot be resumed — it degrades to the normal setup flow with a plain notice
+ * rather than an error nobody can act on.
+ */
+export function resumeTarget<J extends { id: string }>(jobs: J[], runParam: string | null | undefined): ResumeTarget<J> {
+  const wanted = String(runParam ?? '').trim();
+  if (!wanted) return { kind: 'none' };
+  const job = jobs.find(j => j.id === wanted);
+  if (job) return { kind: 'resume', job };
+  return {
+    kind: 'gone',
+    notice: 'That run is no longer open — somebody finished or handed it on. Start it again below.',
+  };
 }
 
 // --- One filing per problem, not one per press ------------------------------
@@ -664,6 +714,18 @@ export interface StartChoices {
   productTypeLocked: boolean;
   /** Preview always shows setup — it is the screen a builder is checking. */
   preview: boolean;
+  /**
+   * The person holding the tablet is already identified WITHOUT a uid in the
+   * link: a signed-in manager who tapped a job on the dispatch board is
+   * starting it for themselves, and their session already says who they are.
+   *
+   * It is a flag rather than a uid smuggled into the URL because a uid in a
+   * link is a claim anybody can copy: the Operator Portal's uid is one the
+   * portal VERIFIED at a badge reader, and a link that could mint one would
+   * make every run's attribution guessable. The session, by contrast, is proof
+   * the server already checked.
+   */
+  selfIdentified?: boolean;
 }
 
 /**
@@ -682,7 +744,7 @@ export interface StartChoices {
  */
 export function setupNeeded(ctx: StartContext, choices: StartChoices): boolean {
   if (choices.preview) return true;
-  if (!ctx.operatorUserId) return true;
+  if (!ctx.operatorUserId && !choices.selfIdentified) return true;
   if (!ctx.stationId) return true;
   // What is being built: a work order, or a part number in its place.
   if (!ctx.workOrderId && !String(ctx.partNumber ?? '').trim()) return true;
@@ -742,4 +804,79 @@ export function concurrentRun<J extends JobLike>(
     // An unreadable stamp is stated as unknown, never rendered as "0s ago".
     ageSeconds: Number.isFinite(parsed) ? Math.max(0, Math.round((now - parsed) / 1000)) : null,
   };
+}
+
+// --- Units this run ---------------------------------------------------------
+
+/**
+ * What the operator entered on the finish step.
+ *
+ * `unitsRun` is how many pieces they say came off the machine — prefilled with
+ * 1, which is what a run has always implicitly been. The three counts have to
+ * account for every one of them.
+ */
+export interface UnitsEntry {
+  unitsRun: number;
+  good: number;
+  scrap: number;
+  rework: number;
+  /** The coded reason. Required the moment scrap is non-zero. */
+  scrapReasonCodeId?: string;
+}
+
+export interface UnitsCheck {
+  ok: boolean;
+  /** Why the run cannot close, naming the mismatch. Empty when it can. */
+  reason: string;
+}
+
+/**
+ * The rule that stops a run closing on numbers that do not add up.
+ *
+ * Good + scrap + rework must equal the units the operator says they ran. It is
+ * the one arithmetic check that catches the mistake nobody notices afterwards:
+ * three pieces made, two counted, one silently gone from the plant's yield
+ * forever. The message NAMES the mismatch — "You entered 3 units but
+ * 2 + 0 + 0 = 2" — because "invalid" tells an operator nothing about which
+ * number to change.
+ *
+ * A run whose control was never touched does not come through here at all: it
+ * sends no counts, and the server stores NULLs.
+ */
+export function unitsBalance(e: UnitsEntry): UnitsCheck {
+  const fields: Array<[number, string]> = [
+    [e.unitsRun, 'Units run'], [e.good, 'Good'], [e.scrap, 'Scrap'], [e.rework, 'Rework'],
+  ];
+  for (const [value, label] of fields) {
+    if (!Number.isInteger(value) || value < 0) {
+      return { ok: false, reason: `${label} has to be a whole number of 0 or more` };
+    }
+  }
+  if (e.unitsRun < 1) return { ok: false, reason: 'A run has to be at least 1 unit' };
+  const sum = e.good + e.scrap + e.rework;
+  if (sum !== e.unitsRun) {
+    return {
+      ok: false,
+      reason: `You entered ${e.unitsRun} units but ${e.good} + ${e.scrap} + ${e.rework} = ${sum}`,
+    };
+  }
+  if (e.scrap > 0 && !(e.scrapReasonCodeId || '').trim()) {
+    return { ok: false, reason: 'Pick what the scrap was — scrap with no reason cannot be reported on' };
+  }
+  return { ok: true, reason: '' };
+}
+
+/** How the summary reads a run back: "1 good · 1 scrap · Weld porosity". */
+export function unitsSummary(
+  counts: { good?: number | null; scrap?: number | null; rework?: number | null },
+  scrapReasonLabel?: string | null,
+): string {
+  const parts: string[] = [];
+  if (counts.good != null) parts.push(`${counts.good} good`);
+  if (counts.scrap != null && counts.scrap > 0) parts.push(`${counts.scrap} scrap`);
+  if (counts.rework != null && counts.rework > 0) parts.push(`${counts.rework} rework`);
+  if (parts.length === 0) return '';
+  const label = (scrapReasonLabel || '').trim();
+  if (label && (counts.scrap ?? 0) > 0) parts.push(label);
+  return parts.join(' · ');
 }

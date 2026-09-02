@@ -4,6 +4,14 @@ const db = require('../db');
 const { logActivity } = require('../activity');
 const { startRunReaper } = require('../runReaper');
 const appRevisions = require('../appRevisions');
+// Booking units against the job's current operation is workOrderOperations'
+// arithmetic, not this router's: what "complete" means for an operation, how
+// many pieces are left on it and which operation becomes ready next are decided
+// in exactly one place. This file only decides HOW MANY units a finished run
+// booked, and hands them over.
+const workOrderOperations = require('../workOrderOperations');
+// Good/scrap/rework arithmetic — one module, so no screen invents its own yield.
+const scrapModel = require('../scrap');
 const {
   roundSeconds, runSecondsSQL, runBasisSQL, avgRunSecondsSQL, avgRunBasisSQL,
   handsOnSecondsSQL, elapsedSecondsSQL, elapsedSoFarSecondsSQL, stepTaktSeconds,
@@ -203,8 +211,50 @@ router.get('/app/:appId/history', (req, res) => {
   });
 });
 
+// ─── Units this run: good, scrap, rework and the operation they book to ──────
+//
+// Migration 012's five columns are NULLABLE ON PURPOSE. `undefined` here means
+// the client did not send the field at all, which leaves whatever the row
+// already had — so a run nobody counted keeps its NULLs and behaves exactly as
+// every run did before this existed. A count is only ever written because
+// somebody typed one; it is never coerced into a zero on the way past.
+function readCount(body, field, errors) {
+  const raw = body[field];
+  if (raw === undefined) return undefined;   // not sent — leave the column alone
+  if (raw === null || raw === '') return null; // explicitly cleared
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 0) {
+    errors.push(`${field} must be a whole number of 0 or more`);
+    return undefined;
+  }
+  return n;
+}
+
+/**
+ * Resolve a work_order_operation_id sent by a client. It must belong to this
+ * company AND to the work order the run is booked against — an operation from
+ * another job would book this run's output onto a routing step nobody is
+ * standing at, and that is invisible once it has happened.
+ *
+ * Returns { ok: true, id } or { ok: false } (the caller answers 400 naming the
+ * field, quoting no row from another tenant).
+ */
+function resolveOperationId(companyId, workOrderId, operationId) {
+  if (!workOrderId) return { ok: false };
+  const op = db.prepare('SELECT id, work_order_id FROM work_order_operations WHERE id = ? AND company_id = ?')
+    .get(operationId, companyId);
+  if (!op || op.work_order_id !== workOrderId) return { ok: false };
+  return { ok: true, id: op.id };
+}
+
+const OPERATION_FIELD_ERROR =
+  'work_order_operation_id must be an operation of this run\'s work order';
+
 router.post('/', (req, res) => {
-  const { app_id, station_id, operator_name = 'Unknown', work_order_id, product_type_id, operator_user_id } = req.body;
+  const {
+    app_id, station_id, operator_name = 'Unknown', work_order_id, product_type_id,
+    operator_user_id, work_order_operation_id,
+  } = req.body;
   if (!app_id) return res.status(400).json({ error: 'app_id required' });
   const app = db.prepare('SELECT name FROM apps WHERE id = ? AND company_id = ?').get(app_id, req.companyId);
   if (!app) return res.status(404).json({ error: 'App not found' });
@@ -221,6 +271,19 @@ router.post('/', (req, res) => {
   const safeProductTypeId = ownedOrNull('product_types', product_type_id);
   // Verified operator identity (badge/PIN login) — must be a user in this company.
   const safeOperatorUserId = ownedOrNull('users', operator_user_id);
+  // Which operation of the job this run's units book against. The dispatch link
+  // carries it as ?op=, the player reads it and sends it here, and the finish
+  // PUT routes the run's counts through workOrderOperations.advance() with it.
+  // Unlike the ids above, a bad one is REFUSED rather than dropped: silently
+  // booking a run to no operation is how output goes missing from a job.
+  let safeOperationId = null;
+  if (work_order_operation_id) {
+    const resolved = resolveOperationId(req.companyId, safeWorkOrderId, work_order_operation_id);
+    if (!resolved.ok) {
+      return res.status(400).json({ error: OPERATION_FIELD_ERROR, field: 'work_order_operation_id' });
+    }
+    safeOperationId = resolved.id;
+  }
   // Auto-attach the work order's kit (if one was generated) for genealogy-lite.
   let kitId = null;
   if (safeWorkOrderId) {
@@ -235,9 +298,9 @@ router.post('/', (req, res) => {
   // never saw. Null when the app has never been published under change control;
   // that run honestly reads "Revision not recorded" rather than a guessed Rev 1.
   const appRevisionId = appRevisions.currentRevisionId(req.companyId, app_id);
-  db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, work_order_id, product_type_id, operator_user_id, kit_id, company_id, app_revision_id, last_activity_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`)
-    .run(id, app_id, app.name, safeStationId, operator_name, safeWorkOrderId, safeProductTypeId, safeOperatorUserId, kitId, req.companyId, appRevisionId);
+  db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, work_order_id, product_type_id, operator_user_id, kit_id, company_id, app_revision_id, work_order_operation_id, last_activity_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`)
+    .run(id, app_id, app.name, safeStationId, operator_name, safeWorkOrderId, safeProductTypeId, safeOperatorUserId, kitId, req.companyId, appRevisionId, safeOperationId);
   const completion = db.prepare('SELECT * FROM completions WHERE id = ?').get(id);
 
   // Production advance: an operator started a job. Logged so the Transaction Log
@@ -333,6 +396,118 @@ router.put('/:id', (req, res) => {
   // partial:true = autosave flush — it must never flip the run's status.
   const effectiveStatus = partial === true ? completion.status : (status ?? completion.status);
 
+  // ── Units this run ─────────────────────────────────────────────────────────
+  // Only ever read off a deliberate save, never off an autosave flush: the
+  // player's background timer does not carry counts, and a flush that arrived
+  // without them must not be read as "the operator counted nothing".
+  let countUpdates = null;   // null = this request touches no count column
+  let advanceWith = null;    // set when a finishing run has an operation to book to
+  if (partial !== true) {
+    const errors = [];
+    const inGood   = readCount(req.body, 'quantity_good', errors);
+    const inScrap  = readCount(req.body, 'quantity_scrap', errors);
+    const inRework = readCount(req.body, 'quantity_rework', errors);
+    if (errors.length) return res.status(400).json({ error: errors[0] });
+
+    // The coded reason. Another company's code, or a code that explains
+    // something other than scrap, is refused — and refused BEFORE anything is
+    // written, so a rejected run stores nothing at all.
+    let reasonId;
+    if (req.body.scrap_reason_code_id !== undefined) {
+      const raw = req.body.scrap_reason_code_id;
+      if (raw === null || raw === '') reasonId = null;
+      else {
+        const rc = db.prepare('SELECT id, kind FROM reason_codes WHERE id = ? AND company_id = ?')
+          .get(raw, req.companyId);
+        if (!rc || rc.kind !== 'scrap') {
+          return res.status(400).json({
+            error: 'scrap_reason_code_id must be one of this company\'s scrap reason codes',
+            field: 'scrap_reason_code_id',
+          });
+        }
+        reasonId = rc.id;
+      }
+    }
+
+    let opId;
+    if (req.body.work_order_operation_id !== undefined) {
+      const raw = req.body.work_order_operation_id;
+      if (raw === null || raw === '') opId = null;
+      else {
+        const resolved = resolveOperationId(req.companyId, completion.work_order_id, raw);
+        if (!resolved.ok) {
+          return res.status(400).json({ error: OPERATION_FIELD_ERROR, field: 'work_order_operation_id' });
+        }
+        opId = resolved.id;
+      }
+    }
+
+    const pick = (sent, stored) => (sent !== undefined ? sent : stored);
+    const effGood   = pick(inGood,   completion.quantity_good);
+    const effScrap  = pick(inScrap,  completion.quantity_scrap);
+    const effRework = pick(inRework, completion.quantity_rework);
+    const effReason = pick(reasonId, completion.scrap_reason_code_id);
+    const effOpId   = pick(opId,     completion.work_order_operation_id);
+
+    // Scrap without a reason is the number that makes every scrap report
+    // useless: it says how much was thrown away and nothing about why, and
+    // nobody goes back to fill it in afterwards.
+    if ((effScrap || 0) > 0 && !effReason) {
+      return res.status(400).json({
+        error: 'scrap_reason_code_id is required when quantity_scrap is more than 0',
+        field: 'scrap_reason_code_id',
+      });
+    }
+
+    if (inGood !== undefined || inScrap !== undefined || inRework !== undefined
+        || reasonId !== undefined || opId !== undefined) {
+      countUpdates = {
+        quantity_good: effGood ?? null,
+        quantity_scrap: effScrap ?? null,
+        quantity_rework: effRework ?? null,
+        scrap_reason_code_id: effReason ?? null,
+        work_order_operation_id: effOpId ?? null,
+      };
+    }
+
+    // ── Booking the units against the operation ──────────────────────────────
+    // Only on the REAL transition into 'completed'. A re-PUT of an already
+    // finished run advances nothing — that is how a retried save used to book
+    // a second piece against a work order that had only made one.
+    if (effectiveStatus === 'completed' && completion.status !== 'completed') {
+      // A run that recorded nothing books one unit, exactly as it always has.
+      // A run that recorded something books what it recorded, INCLUDING zero:
+      // "0 good, 3 scrap" is a real answer and must not become "1 good".
+      const counted = [effGood, effScrap, effRework].some(v => v !== null && v !== undefined);
+      advanceWith = {
+        operation_id: effOpId || null,
+        good:   counted ? (effGood   ?? 0) : 1,
+        scrap:  counted ? (effScrap  ?? 0) : 0,
+        rework: counted ? (effRework ?? 0) : 0,
+      };
+    }
+  }
+
+  // Book the operation BEFORE anything on this row changes, so a refusal —
+  // more pieces than the operation has left, an operation on hold — leaves the
+  // run open and re-finishable rather than closed against a job that never
+  // took the units.
+  if (advanceWith && advanceWith.operation_id) {
+    try {
+      workOrderOperations.advance(req.companyId, advanceWith.operation_id, {
+        good: advanceWith.good, scrap: advanceWith.scrap, rework: advanceWith.rework,
+      });
+    } catch (err) {
+      if (err instanceof workOrderOperations.OperationError) {
+        // 404 here means the operation vanished between start and finish; to
+        // the client that is a bad field, not a missing page.
+        return res.status(err.status === 404 ? 400 : err.status)
+          .json({ error: err.message, code: err.code });
+      }
+      throw err;
+    }
+  }
+
   const updates = {
     status: effectiveStatus,
     data: data !== undefined ? JSON.stringify(data) : completion.data,
@@ -364,6 +539,18 @@ router.put('/:id', (req, res) => {
       .run(updates.status, updates.data, updates.step_times, updates.takt_exceeded_steps,
            updates.completed_at, updates.abandoned_reason, req.params.id);
 
+    // The counts are written by their own statement, and only when this request
+    // actually carried one. Folding them into the UPDATE above would rewrite
+    // five columns on every autosave flush in the product.
+    if (countUpdates) {
+      db.prepare(`UPDATE completions
+                     SET quantity_good=?, quantity_scrap=?, quantity_rework=?,
+                         scrap_reason_code_id=?, work_order_operation_id=?
+                   WHERE id=?`)
+        .run(countUpdates.quantity_good, countUpdates.quantity_scrap, countUpdates.quantity_rework,
+             countUpdates.scrap_reason_code_id, countUpdates.work_order_operation_id, req.params.id);
+    }
+
     if (Array.isArray(values) && values.length > 0) {
       const upsert = upsertValueStmt();
       for (const v of values) {
@@ -389,11 +576,15 @@ router.put('/:id', (req, res) => {
       station_id: completion.station_id || null,
     });
 
-    // Completing a run counts one unit against its work order
-    if (completion.work_order_id) {
+    // Completing a run counts its GOOD units against the work order. A run that
+    // recorded nothing counts one, exactly as it always has; a run that recorded
+    // "0 good, 3 scrap" counts none, because none were made — scrap does not
+    // advance a job toward its quantity, it is the reason the job needs more.
+    const goodUnits = advanceWith ? advanceWith.good : 1;
+    if (completion.work_order_id && goodUnits > 0) {
       const wo = db.prepare('SELECT * FROM work_orders WHERE id = ? AND company_id = ?').get(completion.work_order_id, req.companyId);
       if (wo) {
-        const newQty    = Math.min(wo.quantity_completed + 1, wo.quantity);
+        const newQty    = Math.min(wo.quantity_completed + goodUnits, wo.quantity);
         const newStatus = newQty >= wo.quantity
           ? 'completed'
           : (wo.status === 'pending' ? 'in_progress' : wo.status);
@@ -438,6 +629,20 @@ const listSessionsStmt = () => db.prepare(`
   WHERE completion_id = ? AND company_id = ?
   ORDER BY started_at ASC, rowid ASC
 `);
+
+// ─── GET /scrap — good/scrap/rework and first-pass yield, by part ────────────
+//
+// Registered BEFORE '/:id' (Express matches in registration order, and '/:id'
+// would swallow '/scrap' as a completion id).
+//
+// The same arithmetic is served at GET /api/oee/scrap. It lives here as well
+// because /api/oee sits behind the Pro plan gate and the shift note — where a
+// supervisor has always typed a scrap count by hand — is a screen every plan
+// has. One definition in backend/src/scrap.js, two doors; never two sums.
+router.get('/scrap', (req, res) => {
+  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 365);
+  res.json(scrapModel.scrapByPart({ companyId: req.companyId, days }));
+});
 
 // GET /:id — one completion, with its operator sessions attached.
 router.get('/:id', (req, res) => {

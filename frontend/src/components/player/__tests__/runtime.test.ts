@@ -6,6 +6,7 @@ import {
   getStepBlocks, summarizeBlocks, kitProgress, evaluateKitScan,
   scopedKitLines, valueInputFor, legacyKey, stepShowsKit, collectStepTriggers,
   INPUT_WIDGET_TYPES, REQUIRED_WIDGET_TYPES, requiredMissing, requiredMessage,
+  unitsBalance, unitsSummary,
 } from '../runtime';
 
 function widget(partial: Partial<Widget> & { id: string; type: Widget['type'] }): Widget {
@@ -285,7 +286,7 @@ describe('step helpers', () => {
 
 // ─── Nothing the portal already knows is asked twice ─────────────────────────
 
-import { setupNeeded, concurrentRun } from '../runtime';
+import { setupNeeded, concurrentRun, buildPlayLink, resumeTarget } from '../runtime';
 
 const FULL = {
   operatorUserId: 'u1',
@@ -322,6 +323,24 @@ describe('setupNeeded — the setup screen only appears when something is missin
 
   it('always shows setup in preview — it is the screen a builder is checking', () => {
     expect(setupNeeded(FULL, { ...NO_CHOICE, preview: true })).toBe(true);
+  });
+
+  // A dispatch link carries no uid on purpose: a uid in a URL is a claim
+  // anybody can copy, and the portal's uid is one a badge reader verified. A
+  // signed-in manager tapping a job on the dispatch board is identified by
+  // their SESSION, which the server already checked.
+  it('takes the signed-in user as the operator on a dispatch link', () => {
+    const noUid = { ...FULL, operatorUserId: null };
+    expect(setupNeeded(noUid, NO_CHOICE)).toBe(true);
+    expect(setupNeeded(noUid, { ...NO_CHOICE, selfIdentified: true })).toBe(false);
+  });
+
+  it('still asks for anything else the dispatch link left out', () => {
+    const selfId = { ...NO_CHOICE, selfIdentified: true };
+    expect(setupNeeded({ ...FULL, operatorUserId: null, stationId: '' }, selfId)).toBe(true);
+    expect(setupNeeded({ ...FULL, operatorUserId: null, workOrderId: '', partNumber: '' }, selfId)).toBe(true);
+    expect(setupNeeded({ ...FULL, operatorUserId: null }, { ...selfId, productTypeCount: 2 })).toBe(true);
+    expect(setupNeeded({ ...FULL, operatorUserId: null }, { ...selfId, preview: true })).toBe(true);
   });
 });
 
@@ -368,5 +387,104 @@ describe('concurrentRun — a run already open on the same unit', () => {
   it('states an unreadable timestamp as unknown rather than "0s ago"', () => {
     const found = concurrentRun([job({ started_at: 'not a date' })], 'wo1', '', NOW);
     expect(found?.ageSeconds).toBeNull();
+  });
+});
+
+// ─── Units this run: the counts have to add up ───────────────────────────────
+// The mistake nobody notices afterwards is three pieces made and two counted:
+// the third is gone from the plant's yield forever, and no screen ever says so.
+describe('unitsBalance', () => {
+  const entry = (p: Partial<Parameters<typeof unitsBalance>[0]> = {}) =>
+    ({ unitsRun: 1, good: 1, scrap: 0, rework: 0, ...p });
+
+  it('accepts the happy path — one unit, one good', () => {
+    expect(unitsBalance(entry())).toEqual({ ok: true, reason: '' });
+  });
+
+  it('names the mismatch instead of saying "invalid"', () => {
+    const check = unitsBalance(entry({ unitsRun: 3, good: 2 }));
+    expect(check.ok).toBe(false);
+    expect(check.reason).toBe('You entered 3 units but 2 + 0 + 0 = 2');
+  });
+
+  it('adds good, scrap and rework together', () => {
+    expect(unitsBalance(entry({ unitsRun: 3, good: 1, scrap: 1, rework: 1, scrapReasonCodeId: 'rc1' })).ok).toBe(true);
+    expect(unitsBalance(entry({ unitsRun: 3, good: 1, scrap: 1, rework: 2, scrapReasonCodeId: 'rc1' })).reason)
+      .toBe('You entered 3 units but 1 + 1 + 2 = 4');
+  });
+
+  it('will not close a run that scrapped something for no stated reason', () => {
+    const check = unitsBalance(entry({ unitsRun: 2, good: 1, scrap: 1 }));
+    expect(check.ok).toBe(false);
+    expect(check.reason).toMatch(/reason/i);
+    expect(unitsBalance(entry({ unitsRun: 2, good: 1, scrap: 1, scrapReasonCodeId: 'rc1' })).ok).toBe(true);
+  });
+
+  it('refuses fractions, negatives and a run of nothing', () => {
+    expect(unitsBalance(entry({ good: 1.5, unitsRun: 1.5 })).ok).toBe(false);
+    expect(unitsBalance(entry({ good: -1 })).ok).toBe(false);
+    expect(unitsBalance(entry({ unitsRun: 0, good: 0 })).ok).toBe(false);
+  });
+});
+
+describe('unitsSummary', () => {
+  it('reads a counted run back the way the summary prints it', () => {
+    expect(unitsSummary({ good: 1, scrap: 1, rework: 0 }, 'Weld porosity'))
+      .toBe('1 good · 1 scrap · Weld porosity');
+  });
+
+  it('says nothing at all about a run that counted nothing', () => {
+    expect(unitsSummary({ good: null, scrap: null, rework: null })).toBe('');
+  });
+
+  it('keeps a counted zero — 0 good is a measurement, not a missing one', () => {
+    expect(unitsSummary({ good: 0, scrap: 2, rework: 0 }, 'Setup scrap'))
+      .toBe('0 good · 2 scrap · Setup scrap');
+  });
+});
+
+// ─── The deep-link param contract ────────────────────────────────────────────
+// Three links reach the player, and they are not the same link. The dispatch
+// board's carries no uid on purpose: a uid in a URL is a claim anybody can
+// copy, and the portal's is one a badge reader verified.
+describe('buildPlayLink — the param contract', () => {
+  it('carries the operation the run books its units against', () => {
+    expect(buildPlayLink({ appId: 'a1', workOrderId: 'wo1', operationId: 'op3', stationId: 'st1', fromDispatch: true }))
+      .toBe('/play/a1?wo=wo1&op=op3&station=st1&from=dispatch');
+  });
+
+  it('carries a verified identity only for the portal', () => {
+    expect(buildPlayLink({ appId: 'a1', workOrderId: 'wo1', operationId: 'op3', operatorName: 'Ada', operatorUserId: 'u1', stationId: 'st1', fromOperator: true }))
+      .toBe('/play/a1?wo=wo1&op=op3&name=Ada&uid=u1&station=st1&from=operator');
+  });
+
+  it('names the run to resume, rather than starting another one', () => {
+    expect(buildPlayLink({ appId: 'a1', workOrderId: 'wo1', operatorName: 'Ada', operatorUserId: 'u1', stationId: 'st1', runId: 'c9', fromOperator: true }))
+      .toBe('/play/a1?wo=wo1&name=Ada&uid=u1&station=st1&run=c9&from=operator');
+  });
+
+  it('leaves out everything it was not given', () => {
+    expect(buildPlayLink({ appId: 'a1' })).toBe('/play/a1');
+  });
+});
+
+describe('resumeTarget — a link that names a run', () => {
+  const jobs = [{ id: 'c1' }, { id: 'c2' }];
+
+  it('picks the named run up', () => {
+    expect(resumeTarget(jobs, 'c2')).toEqual({ kind: 'resume', job: { id: 'c2' } });
+  });
+
+  it('is not asked for at all without the parameter', () => {
+    expect(resumeTarget(jobs, null).kind).toBe('none');
+    expect(resumeTarget(jobs, '  ').kind).toBe('none');
+  });
+
+  // The list is the server's own in-progress runs for THIS app and company, so
+  // a finished, abandoned, foreign-app or other-tenant id is simply not in it.
+  it('falls back with a plain notice when the run is gone or not ours', () => {
+    const gone = resumeTarget(jobs, 'c-finished');
+    expect(gone.kind).toBe('gone');
+    expect(gone.kind === 'gone' && gone.notice).toMatch(/no longer open/);
   });
 });

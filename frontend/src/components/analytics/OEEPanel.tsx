@@ -1,10 +1,14 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import {
   Activity, RefreshCw, AlertTriangle, CheckCircle,
   Plus, X, Cpu, TrendingUp,
   Play, Pause, Wrench, Monitor,
 } from 'lucide-react';
 import { api } from '../../api/client';
+import { logStationEvent, needsReasonCode } from '../../api/oee';
+import type { StationEventInput, StationEventType } from '../../api/oee';
+import { getReasonCodes } from '../../api/andon';
+import type { ReasonCode } from '../../api/andon';
 import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import LastRefreshed from '../shared/LastRefreshed';
 
@@ -21,6 +25,11 @@ interface OEEData {
   downtime_minutes: number;
   planned_minutes: number;
   completions_today: number;
+  /** What the quality figure counted: units a run recorded, or pass/fail
+   *  stamps. Printed beside the bar — they are different claims. */
+  quality_basis?: 'quantities' | 'inspection' | null;
+  quality_reason?: string | null;
+  quality_sample?: number;
 }
 
 interface OEEMachine {
@@ -36,7 +45,11 @@ interface OEEMachine {
 }
 
 interface LogEventForm {
-  event_type: 'running' | 'down' | 'maintenance' | 'idle';
+  event_type: StationEventType;
+  /** The coded reason. Required for 'down' and 'maintenance' — a stop with no
+   *  code cannot appear on a Pareto or in the six big losses. */
+  reason_code_id: string;
+  /** The free-text note that used to be the ONLY record. Still optional. */
   reason: string;
 }
 
@@ -104,28 +117,47 @@ function MachineCard({
   machine: OEEMachine;
   isExpanded: boolean;
   onToggleExpand: () => void;
-  onLogEvent: (id: string, data: { event_type: string; reason: string }) => Promise<void>;
+  onLogEvent: (id: string, data: StationEventInput) => Promise<void>;
 }) {
-  const [form, setForm] = useState<LogEventForm>({ event_type: 'running', reason: '' });
+  const [form, setForm] = useState<LogEventForm>({ event_type: 'running', reason_code_id: '', reason: '' });
   const [saving, setSaving] = useState(false);
+  const [codes, setCodes] = useState<ReasonCode[]>([]);
+  const [formError, setFormError] = useState('');
+  const requiresCode = needsReasonCode(form.event_type);
+
+  // The company's coded downtime list, loaded when the form is first opened.
+  useEffect(() => {
+    if (!isExpanded || codes.length > 0) return;
+    getReasonCodes({ kind: 'downtime' }).then(setCodes).catch(() => setCodes([]));
+  }, [isExpanded, codes.length]);
 
   const statusCfg = STATUS_CONFIG[machine.current_status] ?? STATUS_CONFIG.idle;
   const oee: OEEData = machine.oee ?? {
     availability: null, performance: null, quality: null, oee: null,
     measurable: false, missing: [],
     uptime_minutes: 0, downtime_minutes: 0, planned_minutes: 0, completions_today: 0,
+    quality_basis: null, quality_reason: null, quality_sample: 0,
   };
   const missingHint = oee.missing?.length
     ? `Needs ${oee.missing.join(' and ')} to measure OEE`
     : 'Not enough data to measure OEE yet';
 
   const handleSave = async () => {
+    if (requiresCode && !form.reason_code_id) {
+      setFormError('Pick what stopped it — a stop with no reason cannot be reported on.');
+      return;
+    }
     setSaving(true);
+    setFormError('');
     try {
-      await onLogEvent(machine.id, { event_type: form.event_type, reason: form.reason });
+      await onLogEvent(machine.id, {
+        event_type: form.event_type,
+        ...(requiresCode ? { reason_code_id: form.reason_code_id } : {}),
+        ...(form.reason.trim() ? { reason: form.reason.trim() } : {}),
+      });
       onToggleExpand();
     } catch (err: any) {
-      alert(err?.message || 'Failed to log event');
+      setFormError(err?.message || 'Failed to log event');
     } finally {
       setSaving(false);
     }
@@ -173,8 +205,13 @@ function MachineCard({
           <MiniBar label="Availability" value={oee.availability} color="bg-green-500" />
           <MiniBar label="Performance"  value={oee.performance}  color="bg-blue-500"
             hint="Set an ideal cycle time for this station to measure performance" />
-          <MiniBar label="Quality"      value={oee.quality}      color="bg-purple-500"
-            hint="Quality is measured from today's completed runs" />
+          <MiniBar
+            label={oee.quality_basis === 'quantities' ? 'Quality · counted units'
+              : oee.quality_basis === 'inspection' ? 'Quality · pass/fail'
+              : 'Quality'}
+            value={oee.quality}
+            color="bg-purple-500"
+            hint={oee.quality_reason || "Quality is measured from today's completed runs"} />
         </div>
 
         {/* Footer row */}
@@ -211,7 +248,7 @@ function MachineCard({
             <label className="text-[11px] text-gray-500 mb-1 block">New Status</label>
             <select
               value={form.event_type}
-              onChange={e => setForm(f => ({ ...f, event_type: e.target.value as LogEventForm['event_type'] }))}
+              onChange={e => { setFormError(''); setForm(f => ({ ...f, event_type: e.target.value as StationEventType })); }}
               className="w-full px-3 py-2 rounded-lg text-sm bg-white border border-gray-300 text-gray-900 focus:outline-none focus:border-blue-500 transition-colors"
             >
               <option value="running">Running</option>
@@ -221,8 +258,31 @@ function MachineCard({
             </select>
           </div>
 
+          {requiresCode && (
+            <div>
+              <label className="text-[11px] text-gray-500 mb-1 block" htmlFor={`reason-code-${machine.id}`}>
+                Reason <span className="text-red-500">*</span>
+              </label>
+              {codes.length > 0 ? (
+                <select
+                  id={`reason-code-${machine.id}`}
+                  value={form.reason_code_id}
+                  onChange={e => { setFormError(''); setForm(f => ({ ...f, reason_code_id: e.target.value })); }}
+                  className="w-full px-3 py-2 rounded-lg text-sm bg-white border border-gray-300 text-gray-900 focus:outline-none focus:border-blue-500 transition-colors"
+                >
+                  <option value="">Pick a reason…</option>
+                  {codes.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                </select>
+              ) : (
+                <p className="text-[11px] text-amber-600">
+                  No downtime reasons set up yet — a manager adds them on the Andon board.
+                </p>
+              )}
+            </div>
+          )}
+
           <div>
-            <label className="text-[11px] text-gray-500 mb-1 block">Reason (optional)</label>
+            <label className="text-[11px] text-gray-500 mb-1 block">Note (optional)</label>
             <textarea
               value={form.reason}
               onChange={e => setForm(f => ({ ...f, reason: e.target.value }))}
@@ -232,10 +292,12 @@ function MachineCard({
             />
           </div>
 
+          {formError && <p className="text-[11px] text-red-600">{formError}</p>}
+
           <div className="flex gap-2">
             <button
               onClick={handleSave}
-              disabled={saving}
+              disabled={saving || (requiresCode && !form.reason_code_id)}
               className="flex-1 py-2 rounded-lg text-sm font-medium text-white transition-colors disabled:opacity-50 bg-blue-600 hover:bg-blue-500"
             >
               {saving ? 'Saving…' : 'Save Event'}
@@ -285,8 +347,9 @@ export function OEEPanel() {
   // Machine state turns over fast on the floor — poll every 30s while visible.
   const auto = useAutoRefresh(load, 30_000);
 
-  const handleLogEvent = async (id: string, data: { event_type: string; reason: string }) => {
-    const updated = await api.logOEEEvent(id, data);
+  const handleLogEvent = async (id: string, data: StationEventInput) => {
+    // The typed call, because api.logOEEEvent cannot carry a reason code.
+    const updated = await logStationEvent(id, data) as OEEMachine | null;
     setMachines(prev => prev.map(m => (m.id === id && updated ? updated : m)));
   };
 

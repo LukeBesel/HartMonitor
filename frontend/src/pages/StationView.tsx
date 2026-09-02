@@ -1,10 +1,14 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import {
   RefreshCw, ArrowLeft, Monitor, MapPin, User, Play, Clock,
-  Gauge, CheckCircle2, Wrench, AlertTriangle, Activity
+  Gauge, CheckCircle2, Wrench, AlertTriangle, Activity, X
 } from 'lucide-react';
+import { logStationEvent, needsReasonCode } from '../api/oee';
+import type { StationEventType } from '../api/oee';
+import { getReasonCodes } from '../api/andon';
+import type { ReasonCode } from '../api/andon';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
 import { tintedChipStyle } from '../utils/contrast';
@@ -27,6 +31,12 @@ interface StationViewData {
     measurable?: boolean; missing?: string[];
     uptime_minutes: number; downtime_minutes: number; planned_minutes: number;
     completions_today: number;
+    /** 'quantities' | 'inspection' | null — what the quality figure counted.
+     *  Printed beside it: 90% from counted units and 90% from pass/fail stamps
+     *  are different claims. */
+    quality_basis?: 'quantities' | 'inspection' | null;
+    quality_reason?: string | null;
+    quality_sample?: number;
   };
   recent_completions: Array<{
     id: string; app_name: string; operator_name: string; status: string;
@@ -92,6 +102,8 @@ export default function StationView() {
     }
   }, [id]);
 
+  const [statusOpen, setStatusOpen] = useState(false);
+
   // Live machine state — 30s while the tab is visible.
   const auto = useAutoRefresh(load, 30_000);
 
@@ -149,6 +161,9 @@ export default function StationView() {
             {ms.label}
             {st.current_status_since && <span className="font-normal opacity-70 whitespace-nowrap">for {elapsedSince(st.current_status_since)}</span>}
           </span>
+          <button className="btn-secondary text-sm" onClick={() => setStatusOpen(true)}>
+            Change status
+          </button>
           <LastRefreshed
             at={auto.lastRefreshed}
             refreshing={auto.refreshing}
@@ -196,21 +211,43 @@ export default function StationView() {
         </div>
       )}
 
-      {/* OEE KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4">
+      {/* ── OEE: ONE percentage, and the three factors behind it ────────────
+          This block used to print four big percentages side by side — the OEE
+          figure and its own three factors, at the same size, with nothing
+          saying that the first is the product of the other three. Two of them
+          disagreeing (rounding) then looked like two measurements disagreeing.
+          One headline figure, three factors underneath it, and the quality
+          factor NAMES what it counted. */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <OEECard label="OEE" value={oee.oee} highlight
-          hint={oee.missing?.length ? `Needs ${oee.missing.join(' and ')}` : 'Not enough data yet'} />
-        <OEECard label="Availability" value={oee.availability} />
-        <OEECard label="Performance" value={oee.performance}
-          hint="Set an ideal cycle time below" />
-        <OEECard label="Quality" value={oee.quality}
-          hint="Measured from today's runs" />
-        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
-          <div className="w-9 h-9 bg-green-50 rounded-lg flex items-center justify-center mb-3">
-            <CheckCircle2 size={18} className="text-green-600" />
+          hint={oee.missing?.length ? `Needs ${oee.missing.join(' or ')}` : 'Not enough data yet'} />
+
+        <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm p-5">
+          <div className="grid grid-cols-3 gap-4">
+            <Factor label="Availability" value={oee.availability} />
+            <Factor label="Performance" value={oee.performance} note="needs an ideal cycle time" />
+            <Factor
+              label="Quality"
+              value={oee.quality}
+              note={oee.quality_reason || undefined}
+              basis={
+                oee.quality_basis === 'quantities'
+                  ? `counted units${oee.quality_sample ? ` · ${oee.quality_sample} run${oee.quality_sample === 1 ? '' : 's'}` : ''}`
+                  : oee.quality_basis === 'inspection'
+                    ? `pass/fail${oee.quality_sample ? ` · ${oee.quality_sample} inspected` : ''}`
+                    : undefined
+              }
+            />
           </div>
-          <div className="text-2xl font-bold text-gray-900">{oee.completions_today}</div>
-          <div className="text-xs text-gray-500 mt-0.5">Completed Today</div>
+          <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between flex-wrap gap-2 text-xs">
+            <span className="text-gray-500 tabular-nums">
+              {oee.completions_today} completed today · {Math.round(oee.downtime_minutes)}m stopped
+              of {Math.round(oee.planned_minutes)}m
+            </span>
+            <Link to={`/analytics?tab=oee&station_id=${st.id}`} className="text-blue-600 hover:text-blue-700 font-medium">
+              Why it stopped →
+            </Link>
+          </div>
         </div>
       </div>
 
@@ -280,6 +317,161 @@ export default function StationView() {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* Stopping a station means picking from the coded list — a Pareto and a
+          six-big-losses split cannot be built out of free text. */}
+      {statusOpen && (
+        <StationStatusDialog
+          stationId={st.id}
+          stationName={st.name}
+          onClose={() => setStatusOpen(false)}
+          onLogged={() => { setStatusOpen(false); void auto.refresh(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** One OEE factor: smaller than the headline figure, because it is a part of
+ *  it. `basis` says what the number counted when that is a real choice. */
+function Factor({ label, value, note, basis }: {
+  label: string; value: number | null; note?: string; basis?: string;
+}) {
+  const known = value !== null && Number.isFinite(value);
+  return (
+    <div>
+      <div className="text-xs font-medium text-gray-500">{label}</div>
+      <div className={`text-xl font-bold tabular-nums ${known ? 'text-gray-900' : 'text-gray-300'}`}>
+        {known ? `${value}%` : '—'}
+      </div>
+      {known && basis && <div className="text-[11px] text-gray-400 leading-tight mt-0.5">{basis}</div>}
+      {!known && note && <div className="text-[11px] text-gray-400 leading-tight mt-0.5">{note}</div>}
+    </div>
+  );
+}
+
+// ─── The stop dialog ─────────────────────────────────────────────────────────
+// 'down' and 'maintenance' cannot be submitted without a coded reason — the
+// server refuses them, and so does this, so an operator finds out before the
+// round trip rather than after it. 'Running' and 'Idle' need nothing: nobody
+// should have to explain the good news.
+
+function StationStatusDialog({ stationId, stationName, onClose, onLogged }: {
+  stationId: string;
+  stationName: string;
+  onClose: () => void;
+  onLogged: () => void;
+}) {
+  const [eventType, setEventType] = useState<StationEventType>('down');
+  const [reasonCodeId, setReasonCodeId] = useState('');
+  const [note, setNote] = useState('');
+  const [codes, setCodes] = useState<ReasonCode[]>([]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    getReasonCodes({ kind: 'downtime' }).then(setCodes).catch(() => setCodes([]));
+  }, []);
+
+  const requiresCode = needsReasonCode(eventType);
+
+  async function submit() {
+    if (requiresCode && !reasonCodeId) {
+      setError('Pick what stopped it — a stop with no reason cannot be reported on.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await logStationEvent(stationId, {
+        event_type: eventType,
+        ...(requiresCode ? { reason_code_id: reasonCodeId } : {}),
+        ...(note.trim() ? { reason: note.trim() } : {}),
+      });
+      onLogged();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not log the event');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const OPTIONS: Array<{ value: StationEventType; label: string }> = [
+    { value: 'running', label: 'Running' },
+    { value: 'idle', label: 'Idle' },
+    { value: 'down', label: 'Down' },
+    { value: 'maintenance', label: 'Maintenance' },
+  ];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true" aria-label="Change station status">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-md p-5 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold text-gray-900">{stationName}</h2>
+          <button onClick={onClose} aria-label="Close" className="text-gray-400 hover:text-gray-600 p-1">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1" htmlFor="station-event-type">Status</label>
+          <select
+            id="station-event-type"
+            className="input-field"
+            value={eventType}
+            onChange={e => { setEventType(e.target.value as StationEventType); setError(''); }}
+          >
+            {OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+
+        {requiresCode && (
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1" htmlFor="station-reason-code">
+              Reason <span className="text-red-500">*</span>
+            </label>
+            {codes.length > 0 ? (
+              <select
+                id="station-reason-code"
+                className="input-field"
+                value={reasonCodeId}
+                onChange={e => { setReasonCodeId(e.target.value); setError(''); }}
+              >
+                <option value="">Pick a reason…</option>
+                {codes.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+              </select>
+            ) : (
+              <p className="text-xs text-amber-600">
+                No downtime reasons have been set up yet. A manager adds them on the Andon board.
+              </p>
+            )}
+          </div>
+        )}
+
+        <div>
+          <label className="block text-xs font-medium text-gray-500 mb-1" htmlFor="station-note">Note (optional)</label>
+          <input
+            id="station-note"
+            className="input-field"
+            value={note}
+            onChange={e => setNote(e.target.value)}
+            placeholder="Third time this week"
+          />
+        </div>
+
+        {error && <p className="text-sm text-red-600">{error}</p>}
+
+        <div className="flex gap-3">
+          <button
+            className="btn-primary flex-1"
+            onClick={() => { void submit(); }}
+            disabled={saving || (requiresCode && !reasonCodeId)}
+          >
+            {saving ? 'Saving…' : 'Log event'}
+          </button>
+          <button className="btn-secondary flex-1" onClick={onClose} disabled={saving}>Cancel</button>
         </div>
       </div>
     </div>
