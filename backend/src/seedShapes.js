@@ -33,6 +33,7 @@ const workOrderOperations = require('./workOrderOperations');
 const appRevisions = require('./appRevisions');
 const andonEscalation = require('./andonEscalation');
 const qualification = require('./qualification');
+const pmScheduler = require('./pmScheduler');
 const { logActivity } = require('./activity');
 const { REASON_KIND } = require('./vocab');
 const { offsetMinutes, companyTimeZone } = require('./plantDay');
@@ -245,6 +246,11 @@ function stampCompletionValues(companyId, appId, completionId, widgets, data, ag
 //        defaults to the Weld app, reused, since a completion's app_id can
 //        never be null and this seed does not want to invent a THIRD app.
 // @param {string|null} [opts.cutStationId]  defaults to the Weld station.
+// @param {string|null} [opts.runStationId]  the station op 1's finished runs
+//        are BOOKED to. Separate from the routing steps' own station because a
+//        step may deliberately name no station (department-only routing, so the
+//        operation appears on every tablet in that department) while the runs
+//        it already produced still happened somewhere real.
 // @param {string} [opts.cutOperatorName]
 // @param {string|null} [opts.cutOperatorUserId]
 // @param {string|null} opts.siteId
@@ -255,8 +261,15 @@ function seedBracketLineRouting(companyId, opts) {
     tag, deptId, weldAppId = null, inspectAppId = null,
     weldStationId = null, inspectStationId = null, siteId = null,
     cutAppId = weldAppId, cutStationId = weldStationId,
+    runStationId = cutStationId,
     cutOperatorName = 'Operator', cutOperatorUserId = null,
   } = opts;
+
+  // work_order_number is UNIQUE(company_id, …), so a plain 'WO-3001' is safe in
+  // any org that is seeded ONCE — which is every sandbox. loadSampleDataForCompany
+  // can be run twice on the same company, so that caller still passes a tag and
+  // gets its own numbering space; a caller that passes none gets human numbers.
+  const numPrefix = tag ? `${tag}-` : '';
 
   const routingId = uuidv4();
   db.prepare(`
@@ -303,7 +316,7 @@ function seedBracketLineRouting(companyId, opts) {
   // unit), so the job-level quantity_completed synced below is what actually
   // keeps it reading on_track rather than behind the moment it is released.
   const wo1Id = uuidv4();
-  insWO.run(wo1Id, `${tag}-WO-3001`, 50, deptId, 'in_progress', '+7 days', '+0 minutes', '+7 days', 'ACME-4471', 'ERP-1042', companyId, siteId);
+  insWO.run(wo1Id, `${numPrefix}WO-3001`, 50, deptId, 'in_progress', '+7 days', '+0 minutes', '+7 days', 'ACME-4471', 'ERP-1042', companyId, siteId);
   const release1 = workOrderOperations.instantiate(companyId, wo1Id, routingId);
   const op1 = release1.operations[0];   // Cut
 
@@ -322,14 +335,19 @@ function seedBracketLineRouting(companyId, opts) {
         (id, app_id, app_name, station_id, operator_name, operator_user_id, work_order_id,
          work_order_operation_id, started_at, completed_at, status, data, step_times,
          quantity_good, quantity_scrap, quantity_rework, company_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?), datetime('now', ?), 'completed', ?, ?, ?, 0, 0, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?, '-25 minutes'), datetime('now', ?), 'completed', ?, ?, ?, 0, 0, ?)
     `);
     const batches = [10, 10, 10, 10, 10]; // 5 days, 10 a day, 50 total
     batches.forEach((good, i) => {
       const daysAgo = batches.length - i; // 5, 4, 3, 2, 1 — oldest first
       insCut.run(
-        uuidv4(), cutAppId, cutAppRow.name, cutStationId, cutOperatorName, cutOperatorUserId,
-        wo1Id, op1.id, `-${daysAgo} days -25 minutes`, `-${daysAgo} days`,
+        uuidv4(), cutAppId, cutAppRow.name, runStationId, cutOperatorName, cutOperatorUserId,
+        // TWO modifiers, as two arguments. SQLite's datetime() takes each
+        // modifier separately: `datetime('now', '-5 days -25 minutes')` is not
+        // a five-day-and-25-minute offset, it is NULL — which is what these
+        // runs' started_at was, so every Cut batch in the demo read "Started —"
+        // and counted towards no cycle time at all.
+        wo1Id, op1.id, `-${daysAgo} days`, `-${daysAgo} days`,
         JSON.stringify({ batch: i + 1, note: 'Cut to length' }),
         JSON.stringify({ 0: 55 + i * 3 }),
         good, companyId,
@@ -358,7 +376,7 @@ function seedBracketLineRouting(companyId, opts) {
   // "quantity behind schedule" math, which is what a job that has not been
   // handed to anyone yet actually is.
   const wo2Id = uuidv4();
-  insWO.run(wo2Id, `${tag}-WO-3002`, 20, deptId, 'pending', '+14 days', '+2 days', '+14 days', null, null, companyId, siteId);
+  insWO.run(wo2Id, `${numPrefix}WO-3002`, 20, deptId, 'pending', '+14 days', '+2 days', '+14 days', null, null, companyId, siteId);
   const release2 = workOrderOperations.instantiate(companyId, wo2Id, routingId);
 
   return {
@@ -404,9 +422,10 @@ function seedWeldScrapRuns(companyId, opts) {
   // today even if the plant's day just started (layOutAgo — see above).
   const windows = layOutAgo(companyId, [8, 8], 16);
 
+  const serialPrefix = tag ? `${tag}-` : '';
   const runs = [
-    { good: 6, scrap: 1, rework: 0, reason: scrapReasonCodeId, serial: `${tag}-WELD-9001`, torque: 14.7 },
-    { good: 6, scrap: 0, rework: 0, reason: null,              serial: `${tag}-WELD-9002`, torque: 15.1 },
+    { good: 6, scrap: 1, rework: 0, reason: scrapReasonCodeId, serial: `${serialPrefix}WELD-9001`, torque: 14.7 },
+    { good: 6, scrap: 0, rework: 0, reason: null,              serial: `${serialPrefix}WELD-9002`, torque: 15.1 },
   ];
   const ids = runs.map((r, i) => {
     const id = uuidv4();
@@ -626,15 +645,141 @@ function writeEscalationState(companyId, call, { tier, level, recipientUserId, e
 // misreport that its approval was optional when it was not.
 //
 // @returns {{ rev1: {revision, id}, rev2: {revision, id} }}
-function seedTwoRevisions(companyId, { appId, publisherUserId, approverUserId }) {
+function seedTwoRevisions(companyId, { appId, publisherUserId, approverUserId, rev1AgoDays = 10, rev2AgoDays = 2 }) {
   db.prepare(`UPDATE apps SET requires_approval = 1 WHERE id = ? AND company_id = ?`).run(appId, companyId);
-  const rev1 = appRevisions.publish(companyId, appId, {
-    userId: publisherUserId, changeNote: 'First release', approverUserId,
+  const rev1 = publishRevisionAt(companyId, appId, {
+    userId: publisherUserId, changeNote: 'First release', approverUserId, agoDays: rev1AgoDays,
   });
-  const rev2 = appRevisions.publish(companyId, appId, {
-    userId: publisherUserId, changeNote: 'Added torque check', approverUserId,
+  const rev2 = publishRevisionAt(companyId, appId, {
+    userId: publisherUserId, changeNote: 'Added torque check', approverUserId, agoDays: rev2AgoDays,
   });
   return { rev1, rev2 };
+}
+
+// ─── A revision that was already in force when the runs stamped with it ran ──
+//
+// appRevisions.publish() stamps effective_at/created_at with `now`, which is
+// correct for a real publish and a lie in a seed: every seeded run happened in
+// the past, so a demo cut its revisions "now" and then stamped runs from last
+// week onto them. The completions page read that back as "Ran against Rev 1 ·
+// published Sep 2" against a run started Aug 29 — a run measured against
+// instructions that, on the page's own dates, did not exist yet.
+//
+// So publish through the product's own function (nothing about the snapshot,
+// the numbering or the frozen approval policy is re-implemented here) and then
+// move ONLY the two timestamps back. `agoDays` is how long ago the change
+// control board signed it off.
+//
+// @returns {{revision, id, effectiveAt}}  effectiveAt is the ISO stamp written.
+function publishRevisionAt(companyId, appId, { userId = null, changeNote = '', approverUserId = null, agoDays = 0 }) {
+  const cut = appRevisions.publish(companyId, appId, { userId, changeNote, approverUserId });
+  const at = db.prepare(`SELECT datetime('now', ?) AS t`).get(`-${Math.max(0, agoDays)} days`).t;
+  db.prepare(`
+    UPDATE app_revisions SET effective_at = ?, created_at = ? WHERE id = ? AND company_id = ?
+  `).run(at, at, cut.id, companyId);
+  return { ...cut, effectiveAt: at };
+}
+
+// ─── Stamp each run with the revision that was in force when it started ─────
+//
+// The rule a real run follows: the app_revision_id a completion carries is
+// whatever revision was current at the moment it STARTED. Applied here in one
+// statement over every run of an app that has no revision yet, so a seed can
+// never hand a run a revision published after it — which is the whole point of
+// backdating the revisions above.
+//
+// Runs that started before the FIRST revision was cut are left null rather than
+// back-fitted onto Rev 1: "this run predates change control" is the truth, and
+// the run detail page already has a sentence for it.
+//
+// @returns {number} how many runs were stamped.
+function stampRunsWithRevisions(companyId, appId) {
+  const info = db.prepare(`
+    UPDATE completions
+       SET app_revision_id = (
+             SELECT r.id FROM app_revisions r
+              WHERE r.company_id = completions.company_id
+                AND r.app_id     = completions.app_id
+                AND julianday(r.effective_at) <= julianday(completions.started_at)
+              ORDER BY r.effective_at DESC, r.revision DESC
+              LIMIT 1
+           )
+     WHERE company_id = ? AND app_id = ? AND app_revision_id IS NULL
+  `).run(companyId, appId);
+  return info.changes;
+}
+
+// ─── Maintenance: a PM that has already raised its own job ──────────────────
+//
+// The demo showed pm_schedules and maintenance work orders side by side and
+// nothing connecting them: every seeded job had been typed in by a person, so
+// the one behaviour the module exists for — a schedule that comes due and puts
+// a job on somebody's list without being asked — was invisible.
+//
+// So the seed leaves a schedule that fell due YESTERDAY and then runs the
+// sweeper, rather than writing a finished-looking job by hand: the link
+// (pm_schedule_id), the numbering (MWO-<year>-nnn), the priority a late PM
+// gets, the description, raised_by = 'system' and last_raised_at are all the
+// scheduler's own answers, so this seed cannot drift from what the product
+// does at three in the morning.
+//
+// `driveLive` chooses HOW, exactly as seedAndonCalls() does:
+//   true   calls pmScheduler.runOnce() — the real sweep. Its one outbound
+//          side effect is a 'maintenance.pm_raised' webhook, which a throwaway
+//          sandbox org has no subscribers for.
+//   false  writes the same rows WITHOUT the webhook. A real signup clicking
+//          "Load sample data" may already have a live integration configured,
+//          and demo data must never fire it.
+//
+// @returns {{scheduleId: string, workOrderId: string|null, wo_number: string|null}}
+function seedPmRaisedJob(companyId, { assetId = null, assignedTo = '', driveLive = false } = {}) {
+  const scheduleId = uuidv4();
+  const title = 'Quarterly gearbox oil change';
+  db.prepare(`
+    INSERT INTO pm_schedules
+      (id, company_id, asset_id, title, description, frequency_value, frequency_type,
+       last_completed_at, next_due_at, assigned_to, estimated_hours, auto_create_wo, lead_days)
+    VALUES (?, ?, ?, ?, ?, 3, 'months', datetime('now', '-91 days'), datetime('now', '-1 days'), ?, 2, 1, 0)
+  `).run(
+    scheduleId, companyId, assetId, title,
+    'Drain, flush and refill the drive gearbox; record the oil lot on the job.',
+    assignedTo,
+  );
+
+  if (driveLive) {
+    const raised = pmScheduler.runOnce(companyId)
+      .find(w => w && w.pm_schedule_id === scheduleId) || null;
+    return { scheduleId, workOrderId: raised ? raised.id : null, wo_number: raised ? raised.wo_number : null };
+  }
+
+  // The rows pmScheduler.raiseFor() writes, and nothing it additionally sends.
+  // dueSchedules() still decides WHETHER this schedule is due — the calendar
+  // rule is the scheduler's, in the plant's own day, not a second copy here.
+  const due = pmScheduler.dueSchedules(companyId).find(row => row.id === scheduleId);
+  if (!due) return { scheduleId, workOrderId: null, wo_number: null };
+
+  const id = uuidv4();
+  const now = new Date().toISOString();
+  const wo_number = pmScheduler.nextWONumber(companyId);
+  const description = [
+    `Raised automatically from PM schedule: ${title}.`,
+    due.description || '',
+  ].filter(Boolean).join('\n');
+  db.prepare(`
+    INSERT INTO maintenance_work_orders (
+      id, company_id, number, wo_number, asset_id, type, title, description, priority,
+      assigned_to, requested_by, due_date, scheduled_date, estimated_hours,
+      pm_schedule_id, raised_by, created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, 'preventive', ?, ?, ?, ?, 'System', ?, ?, ?, ?, 'system', ?, ?)
+  `).run(
+    id, companyId, wo_number, wo_number, due.asset_id || null, title, description,
+    due.is_overdue ? 'high' : 'medium', due.assigned_to || '',
+    due.next_due_at, due.next_due_at, due.estimated_hours ?? null, scheduleId, now, now,
+  );
+  db.prepare('UPDATE pm_schedules SET last_raised_wo_id = ?, last_raised_at = ? WHERE id = ? AND company_id = ?')
+    .run(id, now, scheduleId, companyId);
+  logActivity(companyId, 'maintenance', id, `WO ${wo_number} raised automatically from PM: ${title}`, 'System');
+  return { scheduleId, workOrderId: id, wo_number };
 }
 
 // ─── Training: one expired record, one supervisor override ───────────────────
@@ -704,6 +849,9 @@ function seedTrainingOverride(companyId, opts) {
 
 module.exports = {
   seedReasonCodes,
+  publishRevisionAt,
+  stampRunsWithRevisions,
+  seedPmRaisedJob,
   seedBracketLineRouting,
   seedWeldScrapRuns,
   seedDowntimePareto,

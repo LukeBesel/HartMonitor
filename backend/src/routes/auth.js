@@ -296,6 +296,30 @@ router.get('/me', requireAuth, (req, res) => {
   // Kiosk lock: when on, operator-role users are confined to the Operator
   // Portal / App Player and never see the management dashboards.
   const kiosk = db.prepare("SELECT value FROM org_settings WHERE company_id = ? AND key = 'operator_kiosk_lock'").get(req.companyId);
+
+  // ── The demo's own PINs, for the demo only ────────────────────────────────
+  // A no-sign-in sandbox seeds badge/PIN identities and turns training
+  // enforcement to 'block', so a visitor meets three keypads: the operator
+  // portal's sign-in, a supervisor sign-off on a blocked run, and a manager
+  // approval. A PIN nobody has been told is a locked door, and the visitor has
+  // no user list to look them up in — so the demo ended at the first keypad.
+  //
+  // These are handed back ONLY for a company flagged is_sandbox — a throwaway
+  // org that is deleted within 24 hours and holds nobody's real data. A real
+  // company (including a sandbox somebody has CLAIMED, which clears the flag)
+  // never sees the field at all, so this can never leak a customer's PINs.
+  // sandbox.js is required lazily, the way POST /auth/demo requires it.
+  const org = db.prepare('SELECT is_sandbox FROM organizations WHERE id = ?').get(req.companyId);
+  const demoHints = org && org.is_sandbox
+    ? (() => {
+      const { DEMO_PINS } = require('../sandbox');
+      return {
+        operator_pin: DEMO_PINS.operator,
+        supervisor_pin: DEMO_PINS.supervisor,
+        manager_pin: DEMO_PINS.manager,
+      };
+    })()
+    : null;
   // is_platform_staff decides whether the operator console is offered at all.
   // Sent as a real boolean so the client never has to guess at 0/1 truthiness.
   //
@@ -310,6 +334,9 @@ router.get('/me', requireAuth, (req, res) => {
     is_platform_staff: user.is_platform_staff === 1,
     company_name: company?.value || 'HartMonitor',
     kiosk_lock: kiosk?.value === 'true',
+    /** Present ONLY on a demo sandbox: the seeded PINs, so the portal can print
+     *  them beside the keypad. Absent (undefined) on every real company. */
+    ...(demoHints ? { demo_hints: demoHints } : {}),
   });
 });
 

@@ -1,5 +1,11 @@
 const crypto = require('crypto');
 const db = require('../db');
+// The ONE name a screen is allowed to print for a stored role. The stored
+// vocabulary is a permission level ('developer' is what every account creator
+// is), and printing it at a customer told a plant manager they were a
+// developer — in a refusal message, which is the one line they will read
+// twice. See src/roles.js.
+const { displayRole } = require('../roles');
 
 // ─── Password helpers ─────────────────────────────────────────────────────────
 
@@ -68,7 +74,7 @@ function requireRole(minRole) {
     const userLevel = ROLE_LEVELS[req.user.role] ?? 0;
     const requiredLevel = ROLE_LEVELS[minRole] ?? 99;
     if (userLevel < requiredLevel) {
-      return res.status(403).json({ error: `Requires ${minRole} role or higher`, code: 'FORBIDDEN' });
+      return res.status(403).json({ error: `Requires ${displayRole(minRole)} role or higher`, code: 'FORBIDDEN' });
     }
     next();
   };
