@@ -759,3 +759,117 @@ describe('an update that changes nothing says so', () => {
     assert.equal(await activityCount(), before + 1);
   });
 });
+
+// ─── A released job's routing is not something a file may move ────────────────
+// Releasing a work order COPIES a routing's steps into its operations. Those
+// operations are the snapshot the floor is running. An ERP re-import that
+// changed routing_id underneath them left the job pointing at a sequence it was
+// not running: the Schedule showed one routing, the operations came from
+// another, and the Routings screen counted the job against a routing nothing on
+// it was doing. Every one of those numbers reads as fact.
+//
+// The row is REJECTED, exactly as a work_order_number change on a started job
+// is — this file already has one rule for "a column an import may not move",
+// and a second, softer rule for the same shape of mistake is how two behaviours
+// drift. Nothing is written, and the planner fixes one line.
+
+describe('an import cannot re-route a released job', () => {
+  let C, routingA, routingB, woId;
+
+  before(async () => {
+    C = await makeCompany({ company: 'Routed Fabrication', email: 'admin@routed.test', appName: 'Routed Assembly' });
+
+    const mk = async (name, steps) => {
+      const r = await api('POST', '/api/routings', { token: C.token, body: { name, steps } });
+      assert.equal(r.status, 201, JSON.stringify(r.json));
+      return r.json.id;
+    };
+    routingA = await mk('Import Line A', [{ name: 'Cut' }, { name: 'Weld' }, { name: 'Pack' }]);
+    routingB = await mk('Import Line B', [{ name: 'Mill' }, { name: 'Ship' }]);
+
+    // A job the file created and released, the way the ERP door does it.
+    const commit = await api('POST', '/api/work-orders/import/commit', {
+      token: C.token,
+      body: { rows: [{ external_id: 'ROUTED-1', part_number: 'PN-R1', part_name: 'Routed Bracket', quantity: 20, routing_name: 'Import Line A' }] },
+    });
+    assert.equal(commit.status, 200, JSON.stringify(commit.json));
+    assert.equal(commit.json.results[0].result, 'created');
+    woId = commit.json.results[0].work_order_id;
+
+    const ops = await api('GET', `/api/work-orders/${woId}/operations`, { token: C.token });
+    assert.equal(ops.json.length, 3, 'the import did not release the job');
+  });
+
+  it('rejects the row, changes nothing, and says which job it is', async () => {
+    const rows = [{ external_id: 'ROUTED-1', quantity: 25, routing_name: 'Import Line B' }];
+
+    const preview = await api('POST', '/api/work-orders/import/preview', { token: C.token, body: { rows } });
+    assert.equal(preview.json.results[0].result, 'rejected', JSON.stringify(preview.json.results[0]));
+    assert.match(preview.json.results[0].reason, /routing cannot be changed/);
+    assert.match(preview.json.results[0].reason, /already released/);
+
+    const commit = await api('POST', '/api/work-orders/import/commit', { token: C.token, body: { rows } });
+    // Preview and commit agree, row for row — the rule this whole file is about.
+    assert.deepStrictEqual(
+      commit.json.results.map(r => [r.result, r.reason]),
+      preview.json.results.map(r => [r.result, r.reason]),
+    );
+
+    // Nothing moved: not the routing, not the operations, not the quantity the
+    // same rejected row also carried.
+    const wo = await api('GET', `/api/work-orders/${woId}`, { token: C.token });
+    assert.equal(wo.json.routing_id, routingA, 'the routing was changed on a released job');
+    assert.equal(wo.json.quantity, 20, 'a rejected row still wrote its other columns');
+
+    const ops = await api('GET', `/api/work-orders/${woId}/operations`, { token: C.token });
+    assert.deepEqual(ops.json.map(o => o.name), ['Cut', 'Weld', 'Pack'], 'the operations were rebuilt');
+
+    // And the Routings screen still counts the job against the routing it runs
+    // on, with nothing against the routing the file tried to move it to.
+    const usageA = await api('GET', `/api/routings/${routingA}/usage`, { token: C.token });
+    assert.equal(usageA.json.open_work_orders, 1);
+    const usageB = await api('GET', `/api/routings/${routingB}/usage`, { token: C.token });
+    assert.equal(usageB.json.open_work_orders, 0, 'the usage count followed a routing change that never happened');
+  });
+
+  it('re-sending the SAME routing on a released job is not a rejection', async () => {
+    // The routing is not changing, so there is nothing to refuse. An ERP
+    // re-sending yesterday's file must not be told off for saying the truth.
+    const rows = [{ external_id: 'ROUTED-1', routing_name: 'Import Line A' }];
+    const commit = await api('POST', '/api/work-orders/import/commit', { token: C.token, body: { rows } });
+    assert.equal(commit.json.results[0].result, 'updated', JSON.stringify(commit.json.results[0]));
+    assert.equal(commit.json.results[0].reason, 'nothing changed');
+  });
+
+  it('an unreleased job that the file gives a routing IS released, and says so', async () => {
+    // The other half of the same rule: a create with a routing is released, so
+    // an update that adds one is too. Otherwise the same file produced released
+    // and unreleased jobs depending only on whether the ERP had sent the row
+    // before.
+    const created = await api('POST', '/api/work-orders/import/commit', {
+      token: C.token,
+      body: { rows: [{ external_id: 'ROUTED-2', part_number: 'PN-R2', part_name: 'Plain Bracket', quantity: 8 }] },
+    });
+    const id = created.json.results[0].work_order_id;
+    const before = await api('GET', `/api/work-orders/${id}/operations`, { token: C.token });
+    assert.deepEqual(before.json, [], 'a row with no routing released something');
+
+    const rows = [{ external_id: 'ROUTED-2', routing_name: 'Import Line B' }];
+
+    // The preview says it and writes nothing.
+    const preview = await api('POST', '/api/work-orders/import/preview', { token: C.token, body: { rows } });
+    assert.equal(preview.json.results[0].result, 'updated');
+    assert.equal(preview.json.results[0].reason, 'released against "Import Line B"');
+    const stillNone = await api('GET', `/api/work-orders/${id}/operations`, { token: C.token });
+    assert.deepEqual(stillNone.json, [], 'the preview released a job');
+
+    const commit = await api('POST', '/api/work-orders/import/commit', { token: C.token, body: { rows } });
+    assert.deepStrictEqual(
+      commit.json.results.map(r => [r.result, r.reason]),
+      preview.json.results.map(r => [r.result, r.reason]),
+    );
+    const after = await api('GET', `/api/work-orders/${id}/operations`, { token: C.token });
+    assert.deepEqual(after.json.map(o => o.name), ['Mill', 'Ship']);
+    assert.ok(after.json.every(o => o.quantity_required === 8));
+  });
+});

@@ -48,6 +48,16 @@ class OperationError extends Error {
 /** Statuses that mean "this operation is finished with". */
 const CLOSED = Object.freeze(['complete', 'skipped']);
 
+/** Operation statuses output may be booked against. A 'queued' operation has
+ *  not been handed to anyone yet and an 'on_hold' one is deliberately stopped;
+ *  booking against either is how a job runs out of order without anybody
+ *  deciding it should. */
+const BOOKABLE = Object.freeze(['ready', 'running']);
+
+/** Work-order statuses that mean "this job is over". Nothing is released onto
+ *  one of these; reopening it on the Schedule comes first. */
+const CLOSED_WORK_ORDER_STATUSES = Object.freeze(['completed', 'cancelled']);
+
 // ─── Reads ────────────────────────────────────────────────────────────────────
 
 const SELECT_OPERATIONS = `
@@ -149,7 +159,10 @@ function positionOf(companyId, wo) {
  */
 function currentOperationSummary(companyId, wo) {
   const op = currentOperationFor(companyId, wo);
-  if (!op) return null;
+  return op ? summarize(op) : null;
+}
+
+function summarize(op) {
   return {
     id: op.id,
     sequence: op.sequence,
@@ -161,6 +174,96 @@ function currentOperationSummary(companyId, wo) {
     standard_seconds: op.standard_seconds,
     status: op.status,
   };
+}
+
+/**
+ * currentOperationSummary() for a whole page of work orders, in AT MOST THREE
+ * statements no matter how many rows there are.
+ *
+ * The row-at-a-time version costs a COUNT and a lookup per work order: a
+ * hundred-job Schedule was three hundred round trips behind one list request,
+ * which is the shape of slowness that only shows up on a customer's database.
+ *
+ *   1. one GROUP BY for "how many operations does each of these jobs have",
+ *   2. one lookup of the pointer rows by id,
+ *   3. one sweep, only for the jobs whose pointer is missing or stale, of their
+ *      operations — the fallback currentOperationFor() applies one at a time.
+ *
+ * @param {string} companyId
+ * @param {Array<{id: string, current_operation_id?: string|null}>} workOrders
+ * @returns {Map<string, object|null>} work_order_id → summary (or null)
+ */
+function currentOperationSummaries(companyId, workOrders) {
+  const out = new Map();
+  const rows = Array.isArray(workOrders) ? workOrders : [];
+  for (const wo of rows) out.set(wo.id, null);
+  if (rows.length === 0) return out;
+
+  const ids = rows.map(w => w.id);
+  const counts = new Map();
+  for (const chunk of chunked(ids)) {
+    const q = `SELECT work_order_id, COUNT(*) AS c FROM work_order_operations
+               WHERE company_id = ? AND work_order_id IN (${placeholders(chunk.length)})
+               GROUP BY work_order_id`;
+    for (const r of db.prepare(q).all(companyId, ...chunk)) counts.set(r.work_order_id, r.c);
+  }
+  if (counts.size === 0) return out;   // nothing released: one statement, done
+
+  // The pointer rows, in one lookup.
+  const withOps = rows.filter(w => counts.has(w.id));
+  const pointerIds = withOps.map(w => w.current_operation_id).filter(Boolean);
+  const byId = new Map();
+  for (const chunk of chunked(pointerIds)) {
+    const q = `${SELECT_OPERATIONS} WHERE o.company_id = ? AND o.id IN (${placeholders(chunk.length)})`;
+    for (const r of db.prepare(q).all(companyId, ...chunk)) byId.set(r.id, r);
+  }
+
+  const resolved = new Set();
+  for (const wo of withOps) {
+    const row = wo.current_operation_id ? byId.get(wo.current_operation_id) : null;
+    // A pointer that resolves to another job's operation is not this job's
+    // pointer, however it got written.
+    if (row && row.work_order_id === wo.id) {
+      out.set(wo.id, summarize({ ...row, of: counts.get(wo.id) }));
+      resolved.add(wo.id);
+    }
+  }
+
+  // Only the stragglers: a job whose pointer was cleared or never set falls
+  // back to its lowest open operation, then to its last one.
+  const missing = withOps.filter(w => !resolved.has(w.id)).map(w => w.id);
+  if (missing.length > 0) {
+    const all = new Map();
+    for (const chunk of chunked(missing)) {
+      const q = `${SELECT_OPERATIONS} WHERE o.company_id = ? AND o.work_order_id IN (${placeholders(chunk.length)})
+                 ORDER BY o.work_order_id, o.sequence ASC`;
+      for (const r of db.prepare(q).all(companyId, ...chunk)) {
+        if (!all.has(r.work_order_id)) all.set(r.work_order_id, []);
+        all.get(r.work_order_id).push(r);
+      }
+    }
+    for (const id of missing) {
+      const list = all.get(id) || [];
+      if (list.length === 0) continue;
+      const open = list.find(o => !CLOSED.includes(o.status));
+      const pick = open || list[list.length - 1];
+      out.set(id, summarize({ ...pick, of: counts.get(id) }));
+    }
+  }
+
+  return out;
+}
+
+/** SQLite caps a statement at 999 bound parameters; one company's page of work
+ *  orders is far below that, but a batch is not a place to find out. */
+function chunked(list, size = 400) {
+  const out = [];
+  for (let i = 0; i < list.length; i += size) out.push(list.slice(i, i + size));
+  return out;
+}
+
+function placeholders(n) {
+  return new Array(n).fill('?').join(',');
 }
 
 // ─── Release ──────────────────────────────────────────────────────────────────
@@ -190,6 +293,15 @@ function routingSteps(companyId, routingId) {
 function instantiate(companyId, workOrderId, routingId) {
   const wo = workOrder(companyId, workOrderId);
   if (!wo) throw new OperationError(404, 'work_order_not_found', 'Work order not found');
+
+  // A finished or cancelled job is not something to start. Release cannot be
+  // undone, so releasing one would leave seven operations nobody will ever run
+  // attached to a job the plant considers closed — and the Routings screen
+  // would count it as live work.
+  if (CLOSED_WORK_ORDER_STATUSES.includes(wo.status)) {
+    throw new OperationError(409, 'work_order_closed',
+      `Work order ${wo.work_order_number} is ${wo.status} — reopen it before releasing.`);
+  }
 
   // Released once, ever. A second release would either duplicate the sequence
   // (the UNIQUE index refuses) or silently discard what the floor has booked.
@@ -252,12 +364,30 @@ function instantiate(companyId, workOrderId, routingId) {
       WHERE id = ? AND company_id = ?
     `).run(routing.id, firstId, wo.id, companyId);
   });
-  release();
+  try {
+    release();
+  } catch (err) {
+    // UNIQUE(work_order_id, sequence) is what two simultaneous releases race
+    // on: one commits its rows, the other collides. That is a conflict, not a
+    // server fault, and it has to read like one.
+    if (isConstraintFailure(err)) {
+      throw new OperationError(409, 'already_released',
+        `Work order ${wo.work_order_number} was already released.`);
+    }
+    throw err;
+  }
 
   return {
     work_order: workOrder(companyId, wo.id),
     operations: listOperations(companyId, wo.id),
   };
+}
+
+/** A SQLite constraint violation, whatever better-sqlite3 chose to call it. */
+function isConstraintFailure(err) {
+  const code = String(err && err.code || '');
+  const message = String(err && err.message || '');
+  return code.startsWith('SQLITE_CONSTRAINT') || message.includes('constraint failed');
 }
 
 /** Does routing_steps carry station_id? Read once — the schema cannot change
@@ -312,15 +442,40 @@ function advance(companyId, operationId, counts = {}) {
   const scrap  = num(counts.scrap, 'scrap');
   const rework = num(counts.rework, 'rework');
 
+  // ── What state may be booked against ──────────────────────────────────────
+  // In order, because each says something different to the person holding the
+  // tablet: this operation is finished; this operation is stopped on purpose;
+  // this operation has not been handed to you yet.
   if (CLOSED.includes(op.status)) {
     throw new OperationError(409, 'operation_closed',
       `Operation ${op.sequence} is ${op.status}; nothing more can be booked against it.`);
+  }
+  if (op.status === 'on_hold') {
+    throw new OperationError(409, 'operation_on_hold',
+      `Operation ${op.sequence} is on hold. Clear the hold before booking against it.`);
+  }
+  if (!BOOKABLE.includes(op.status)) {
+    throw new OperationError(409, 'operation_not_ready',
+      `Operation ${op.sequence} is ${op.status} — operation ${op.sequence - 1} has to finish first.`);
+  }
+
+  const required  = op.quantity_required;
+  const booked    = op.quantity_completed + op.quantity_scrapped;
+  // An operation cannot produce more than the order asked for. Without this,
+  // 6 good twice on a quantity of 10 completes at 12/10 and every downstream
+  // number — yield, scrap rate, OEE — is computed against a total that never
+  // existed. Rework is not counted here: a reworked piece is the same piece.
+  const remaining = Math.max(required - booked, 0);
+  if (good + scrap > remaining) {
+    throw new OperationError(400, 'bad_count',
+      remaining === 0
+        ? `Operation ${op.sequence} already has all ${required} accounted for.`
+        : `only ${remaining} left on this operation`);
   }
 
   const completed = op.quantity_completed + good;
   const scrapped  = op.quantity_scrapped + scrap;
   const reworked  = op.quantity_rework + rework;
-  const required  = op.quantity_required;
   const done      = required > 0 && (completed + scrapped) >= required;
 
   const apply = db.transaction(() => {
@@ -408,11 +563,14 @@ function appendOperation(companyId, workOrderId, input = {}) {
   const sequence = (maxRow.m ?? 0) + 1;
 
   const id = uuidv4();
-  const qty = input.quantity_required === undefined || input.quantity_required === null
+  // Defaults to the job's quantity, and may never be zero: an operation that
+  // requires nothing can never reach 'complete', so it would sit at the head of
+  // the job forever and the sequence would never move past it.
+  const qty = input.quantity_required === undefined || input.quantity_required === null || input.quantity_required === ''
     ? (Number(wo.quantity) || 0)
     : Number(input.quantity_required);
-  if (!Number.isInteger(qty) || qty < 0) {
-    throw new OperationError(400, 'bad_quantity', 'quantity_required must be a whole number of 0 or more');
+  if (!Number.isInteger(qty) || qty < 1) {
+    throw new OperationError(400, 'bad_quantity', 'quantity_required must be a whole number of 1 or more');
   }
 
   db.prepare(`
@@ -423,9 +581,9 @@ function appendOperation(companyId, workOrderId, input = {}) {
     VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0, ?)
   `).run(
     id, companyId, workOrderId, sequence, name,
-    ownedOrNull('apps', input.app_id, companyId),
-    ownedOrNull('departments', input.department_id, companyId),
-    ownedOrNull('stations', input.station_id, companyId),
+    ownedOrFail('apps', input.app_id, companyId, 'app'),
+    ownedOrFail('departments', input.department_id, companyId, 'department'),
+    ownedOrFail('stations', input.station_id, companyId, 'station'),
     Number(input.standard_seconds) || 0,
     qty,
     sequence === 1 ? 'ready' : 'queued',
@@ -465,7 +623,7 @@ function setOperation(companyId, operationId, patch = {}) {
   }
 
   const stationId = patch.station_id !== undefined
-    ? ownedOrNull('stations', patch.station_id, companyId)
+    ? ownedOrFail('stations', patch.station_id, companyId, 'station')
     : op.station_id;
 
   const apply = db.transaction(() => {
@@ -502,6 +660,77 @@ function ownedOrNull(table, id, companyId) {
 }
 
 /**
+ * Like ownedOrNull, but a supplied id that does not resolve is an ERROR rather
+ * than a silent null. Quietly dropping the department off an operation because
+ * the id came from another tenant produces an operation nobody is responsible
+ * for and no message saying why — the caller believes it set a department.
+ *
+ * The message names the FIELD, never the row: "department not found" is all a
+ * caller learns, whether the id is a typo or a competitor's.
+ */
+function ownedOrFail(table, id, companyId, label) {
+  if (id === undefined || id === null || id === '') return null;
+  const row = db.prepare(`SELECT id FROM ${table} WHERE id = ? AND company_id = ?`).get(id, companyId);
+  if (!row) throw new OperationError(400, `${label}_not_found`, `${label} not found`);
+  return id;
+}
+
+/**
+ * Move every unfinished operation to a new order quantity.
+ *
+ * Raising a released job's quantity used to leave its operations requiring the
+ * old number, so a job for 80 completed at 50 and the extra 30 had nowhere to
+ * be booked. Refused outright once any operation is COMPLETE: that operation
+ * ran to a number that is now wrong, and quietly reopening finished work is
+ * worse than making the planner split the order.
+ *
+ * An operation never drops below what has already been booked against it —
+ * 12 good and 3 scrapped cannot become a requirement of 10.
+ *
+ * @param {string} companyId
+ * @param {string} workOrderId
+ * @param {number} quantity  the work order's new quantity
+ * @returns {{ resized: number, floored: Array<{sequence:number, quantity_required:number}> }}
+ * @throws {OperationError} 409 operation_complete
+ */
+function resizeOperations(companyId, workOrderId, quantity) {
+  const rows = db.prepare(
+    'SELECT * FROM work_order_operations WHERE work_order_id = ? AND company_id = ? ORDER BY sequence ASC'
+  ).all(workOrderId, companyId);
+  if (rows.length === 0) return { resized: 0, floored: [] };
+
+  const finished = rows.filter(r => r.status === 'complete');
+  if (finished.length > 0) {
+    throw new OperationError(409, 'operation_complete',
+      `Operation ${finished[0].sequence} (${finished[0].name}) is already complete, so the quantity cannot be changed. Raise a second work order for the extra units.`);
+  }
+
+  const target = Number(quantity);
+  if (!Number.isInteger(target) || target < 1) {
+    throw new OperationError(400, 'bad_quantity', 'quantity must be a whole number of 1 or more');
+  }
+
+  const floored = [];
+  const upd = db.prepare(
+    "UPDATE work_order_operations SET quantity_required = ?, updated_at = datetime('now') WHERE id = ? AND company_id = ?"
+  );
+  let resized = 0;
+  const apply = db.transaction(() => {
+    for (const r of rows) {
+      if (r.status === 'skipped') continue;          // nobody will run it
+      const booked = r.quantity_completed + r.quantity_scrapped;
+      const next = Math.max(target, booked);
+      if (next === r.quantity_required) continue;
+      upd.run(next, r.id, companyId);
+      resized++;
+      if (next !== target) floored.push({ sequence: r.sequence, quantity_required: next });
+    }
+  });
+  apply();
+  return { resized, floored };
+}
+
+/**
  * Open work orders running on a routing, each with where it currently stands.
  * This is what makes the Routings screen true: "used by 3 open work orders",
  * with the operation each one is on.
@@ -520,9 +749,12 @@ function openWorkOrdersOnRouting(companyId, routingId) {
     ORDER BY wo.created_at DESC
   `).all(companyId, routingId);
 
+  // Batched, for the same reason the work-order list is: a routing with fifty
+  // open jobs was fifty COUNTs and fifty lookups behind one screen.
+  const summaries = currentOperationSummaries(companyId, rows);
   return rows.map(wo => ({
     ...wo,
-    current_operation: currentOperationSummary(companyId, wo),
+    current_operation: summaries.get(wo.id) ?? null,
   }));
 }
 
@@ -542,15 +774,18 @@ function openCountsByRouting(companyId) {
 
 module.exports = {
   OperationError,
+  ownedOrFail,
   instantiate,
   advance,
   currentOperation,
   currentOperationFor,
   currentOperationSummary,
+  currentOperationSummaries,
   positionOf,
   listOperations,
   appendOperation,
   setOperation,
+  resizeOperations,
   openWorkOrdersOnRouting,
   openCountsByRouting,
 };

@@ -29,10 +29,15 @@
 -- Nothing here backfills. A work order that existed before this migration has
 -- released_at NULL and zero operation rows, and behaves exactly as it did.
 
+-- The two REFERENCES clauses are load-bearing and cannot be added later: SQLite
+-- has no ALTER TABLE ADD CONSTRAINT, so a foreign key missing on first ship is
+-- missing until somebody rebuilds the table on live customer data. ON DELETE
+-- CASCADE matches wo_comments and kits — deleting a work order must take its
+-- operations with it, not leave rows pointing at a job that no longer exists.
 CREATE TABLE IF NOT EXISTS work_order_operations (
   id                 TEXT PRIMARY KEY,
-  company_id         TEXT NOT NULL,
-  work_order_id      TEXT NOT NULL,
+  company_id         TEXT NOT NULL REFERENCES organizations(id),
+  work_order_id      TEXT NOT NULL REFERENCES work_orders(id) ON DELETE CASCADE,
   routing_step_id    TEXT,
   sequence           INTEGER NOT NULL,
   name               TEXT NOT NULL DEFAULT '',

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import {
   GitBranch, Plus, Trash2, Edit2, ChevronUp, ChevronDown, X,
   Check, AlertCircle, AppWindow, Users, Clock, ArrowRight, Star, ChevronLeft,
-  Play, Package,
+  Play, Package, MonitorSmartphone,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { usePlan } from '../context/PlanContext';
@@ -66,6 +66,7 @@ export default function Routings() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [apps, setApps] = useState<any[]>([]);
+  const [stations, setStations] = useState<{ id: string; name: string }[]>([]);
   const [usage, setUsage] = useState<RoutingUsage | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
@@ -84,7 +85,7 @@ export default function Routings() {
 
   // Add step modal
   const [showAddStep, setShowAddStep] = useState(false);
-  const [stepForm, setStepForm] = useState({ name: '', description: '', app_id: '', department_id: '', estimated_cycle_seconds: 0 });
+  const [stepForm, setStepForm] = useState({ name: '', description: '', app_id: '', department_id: '', station_id: '', estimated_cycle_seconds: 0 });
   const [editingStepId, setEditingStepId] = useState<string | null>(null);
   const [savingStep, setSavingStep] = useState(false);
 
@@ -102,9 +103,13 @@ export default function Routings() {
     Promise.all([
       api.getRoutings(deptId ? { department_id: deptId } : undefined),
       api.getApps(),
-    ]).then(([r, a]) => {
+      // A step may name the machine it runs on, so a released operation arrives
+      // already pointed at one. Optional, and an empty list is not an error.
+      api.getStations().catch(() => []),
+    ]).then(([r, a, st]) => {
       setRoutings(Array.isArray(r) ? r : []);
       setApps(Array.isArray(a) ? a : []);
+      setStations(Array.isArray(st) ? st : []);
     }).catch((err: any) => {
       setLoadError(err?.message || 'Failed to load routings');
     }).finally(() => setLoading(false));
@@ -191,11 +196,12 @@ export default function Routings() {
         description: step.description,
         app_id: step.app_id ?? '',
         department_id: step.department_id ?? '',
+        station_id: step.station_id ?? '',
         estimated_cycle_seconds: step.estimated_cycle_seconds,
       });
     } else {
       setEditingStepId(null);
-      setStepForm({ name: '', description: '', app_id: '', department_id: '', estimated_cycle_seconds: 0 });
+      setStepForm({ name: '', description: '', app_id: '', department_id: '', station_id: '', estimated_cycle_seconds: 0 });
     }
     setShowAddStep(true);
   };
@@ -208,6 +214,7 @@ export default function Routings() {
       description: stepForm.description.trim(),
       app_id: stepForm.app_id || null,
       department_id: stepForm.department_id || null,
+      station_id: stepForm.station_id || null,
       estimated_cycle_seconds: Number(stepForm.estimated_cycle_seconds) || 0,
     };
     try {
@@ -633,6 +640,12 @@ export default function Routings() {
                             {step.department_name}
                           </span>
                         )}
+                        {step.station_name && (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-sky-100 text-sky-700">
+                            <MonitorSmartphone size={10} />
+                            {step.station_name}
+                          </span>
+                        )}
                         {step.estimated_cycle_seconds > 0 && (
                           <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
                             <Clock size={10} />
@@ -747,6 +760,19 @@ export default function Routings() {
                   <option value="">No department</option>
                   {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                 </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 mb-1.5">Station <span className="font-normal text-gray-400">(optional)</span></label>
+                <select
+                  value={stepForm.station_id}
+                  onChange={e => setStepForm(f => ({ ...f, station_id: e.target.value }))}
+                  aria-label="Station"
+                  className="w-full text-sm border border-gray-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 bg-white"
+                >
+                  <option value="">{stations.length === 0 ? 'No stations yet' : 'No station'}</option>
+                  {stations.map(st => <option key={st.id} value={st.id}>{st.name}</option>)}
+                </select>
+                <p className="text-[11px] text-gray-400 mt-1">The operation released from this step arrives pointed at this station.</p>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-gray-700 mb-1.5">Estimated Cycle Time (seconds)</label>

@@ -48,13 +48,27 @@ function calcScheduleStatus(wo) {
 // released. `current_operation` is null for a job with no operations — the one
 // honest answer for "which of its operations is running" when it has none. It
 // is NOT a zeroed object: "op 0 of 0" is a number nobody measured.
-function enrichWorkOrder(wo) {
+function enrichWorkOrder(wo, currentOperation) {
   return {
     ...wo,
     schedule_status: calcScheduleStatus(wo),
     completion_pct: wo.quantity > 0 ? Math.round((wo.quantity_completed / wo.quantity) * 100) : 0,
-    current_operation: wo.company_id ? ops.currentOperationSummary(wo.company_id, wo) : null,
+    current_operation: currentOperation !== undefined
+      ? currentOperation
+      : (wo.company_id ? ops.currentOperationSummary(wo.company_id, wo) : null),
   };
+}
+
+/**
+ * The same enrichment for a whole page of work orders, in a FIXED number of
+ * statements. Asking each row where it stands cost a COUNT and a lookup per
+ * row: a hundred-job Schedule was three hundred queries behind one request,
+ * and it grew with the customer. Exported so the guard in
+ * backend/test/wo-operations.test.js can count the statements it issues.
+ */
+function enrichWorkOrders(companyId, rows) {
+  const summaries = ops.currentOperationSummaries(companyId, rows);
+  return rows.map(wo => enrichWorkOrder(wo, summaries.get(wo.id) ?? null));
 }
 
 // ─── Generate next work order number (per-company sequence) ───────────────────
@@ -358,6 +372,17 @@ function validateAndUpsertRows(companyId, rows, opts = {}) {
   const apps        = nameIndex('apps', companyId);
   const departments = nameIndex('departments', companyId);
   const routings    = nameIndex('product_routings', companyId);
+  // id → name and id → step count, so the plan phase can say what a release
+  // will do WITHOUT writing anything. A preview that promises "released against
+  // Bracket Line" for a routing with no steps is the preview lying.
+  const routingNames = new Map();
+  for (const r of db.prepare('SELECT id, name FROM product_routings WHERE company_id = ?').all(companyId)) {
+    routingNames.set(r.id, r.name);
+  }
+  const routingStepCounts = new Map();
+  for (const r of db.prepare('SELECT routing_id, COUNT(*) AS c FROM routing_steps WHERE company_id = ? GROUP BY routing_id').all(companyId)) {
+    routingStepCounts.set(r.routing_id, r.c);
+  }
 
   const findByExternal = db.prepare(
     'SELECT * FROM work_orders WHERE company_id = ? AND external_id = ?'
@@ -538,6 +563,25 @@ function validateAndUpsertRows(companyId, rows, opts = {}) {
       }
     }
 
+    // ── A released job's routing is fixed ─────────────────────────────────────
+    // Its operations are a SNAPSHOT of the routing as it was at release. Moving
+    // routing_id underneath them leaves the job pointing at a sequence it is
+    // not running, and the Routings screen counts it against the wrong routing
+    // — a number that reads as fact and is not.
+    //
+    // The row is REJECTED, exactly as a work_order_number change on a started
+    // job is. That is the rule this file already has for "a column an import
+    // may not move", and one rule beats two: a half-applied row (other columns
+    // in, the routing quietly dropped) is the thing the whole validator exists
+    // to prevent, and the file is wrong either way. Nothing is written, the
+    // reason names the job, and the planner fixes one line.
+    //
+    // Note a re-import of the SAME routing never lands here: routingId then
+    // equals existing.routing_id and there is nothing to change.
+    if (existing && existing.released_at && routingId && routingId !== existing.routing_id) {
+      reasons.push(`routing cannot be changed — work order ${existing.work_order_number} is already released`);
+    }
+
     const values = {
         work_order_number: woNumber || null,
         part_number: has('part_number') ? f.part_number : null,
@@ -563,16 +607,34 @@ function validateAndUpsertRows(companyId, rows, opts = {}) {
       for (const col of UPDATABLE_BY_IMPORT) {
         if (values[col] === null) continue;
         if (existing[col] === values[col]) continue;
+        // Belt and braces behind the rejection above: even if that reason is
+        // ever downgraded, a released job's routing does not move.
+        if (col === 'routing_id' && existing.released_at) continue;
         changed.push(col);
       }
       if (renumber) changed.push('work_order_number');
     }
+
+    // ── An unreleased job that this file gives a routing gets released ────────
+    // A create with a routing is released; an update that adds one used to set
+    // routing_id and stop, so the same file produced released jobs and
+    // unreleased ones depending only on whether the ERP had sent the row
+    // before. One rule: if the row names a routing with steps and the job has
+    // not been released, releasing it is what "this job runs on this routing"
+    // means. Decided HERE, in the plan phase, so the preview says it and writes
+    // nothing.
+    const willRelease = Boolean(
+      existing && !existing.released_at && reasons.length === 0 &&
+      values.routing_id && (routingStepCounts.get(values.routing_id) || 0) > 0
+    );
 
     plans.push({
       rowNo,
       externalId: externalId || null,
       existing,
       reasons,
+      willRelease,
+      releaseRoutingName: willRelease ? (routingNames.get(values.routing_id) || null) : null,
       renumber,
       changed,
       autoNumber: autoNumberFor.get(i) || null,
@@ -585,7 +647,9 @@ function validateAndUpsertRows(companyId, rows, opts = {}) {
     result: p.reasons.length ? 'rejected' : (p.existing ? 'updated' : 'created'),
     reason: p.reasons.length
       ? p.reasons.join('; ')
-      : (p.existing && p.changed.length === 0 ? 'nothing changed' : null),
+      : p.willRelease
+        ? `released against "${p.releaseRoutingName}"`
+        : (p.existing && p.changed.length === 0 ? 'nothing changed' : null),
     external_id: p.externalId,
     work_order_id: p.existing ? p.existing.id : null,
     // A create's number is the one reserved for it above — the same number the
@@ -627,6 +691,7 @@ function validateAndUpsertRows(companyId, rows, opts = {}) {
           }
           results[i].work_order_id = p.existing.id;
           results[i].work_order_number = p.renumber ? v.work_order_number : p.existing.work_order_number;
+          if (p.willRelease) created.push({ id: p.existing.id, routingId: v.routing_id });
         } else {
           const id = uuidv4();
           // The number reserved for this row in the pre-pass, so the number the
@@ -648,9 +713,10 @@ function validateAndUpsertRows(companyId, rows, opts = {}) {
     });
     apply();
 
-    // A row that named a routing arrives already released, so an ERP file is a
-    // job list rather than a list of things somebody still has to press Release
-    // on. This runs AFTER the commit and changes no row's verdict: the per-row
+    // A row that named a routing arrives already released — whether the row
+    // CREATED the job or added the routing to one that was already here — so an
+    // ERP file is a job list rather than a list of things somebody still has to
+    // press Release on. This runs AFTER the commit and changes no row's verdict: the per-row
     // contract (result, reason, work_order_id, work_order_number) is exactly
     // what it was, and a routing with no steps leaves a created — unreleased —
     // work order rather than failing the row that already landed.
@@ -664,7 +730,8 @@ function validateAndUpsertRows(companyId, rows, opts = {}) {
   const summary = { total: results.length, created: 0, updated: 0, rejected: 0, unchanged: 0 };
   results.forEach((r, i) => {
     summary[r.result]++;
-    if (r.result === 'updated' && plans[i].changed.length === 0) summary.unchanged++;
+    // A row that released a job is not "unchanged", however few columns moved.
+    if (r.result === 'updated' && plans[i].changed.length === 0 && !plans[i].willRelease) summary.unchanged++;
   });
   return { results, summary, dry_run: dryRun };
 }
@@ -712,7 +779,7 @@ const ENRICHED_SELECT = `
   FROM work_orders wo
   LEFT JOIN departments d ON d.id = wo.department_id
   LEFT JOIN apps        a ON a.id = wo.app_id
-  LEFT JOIN product_routings r ON r.id = wo.routing_id
+  LEFT JOIN product_routings r ON r.id = wo.routing_id AND r.company_id = wo.company_id
 `;
 
 // ─── GET / - list all work orders ────────────────────────────────────────────
@@ -734,7 +801,7 @@ router.get('/', (req, res) => {
   query += ' ORDER BY wo.created_at DESC';
 
   const rows = db.prepare(query).all(...params);
-  res.json(rows.map(enrichWorkOrder));
+  res.json(enrichWorkOrders(req.companyId, rows));
 });
 
 // ─── POST / - create work order ──────────────────────────────────────────────
@@ -787,6 +854,14 @@ router.post('/', (req, res) => {
   const safeDeptId = ownedOrNull('departments', department_id, req.companyId);
   const safeSiteId = ownedOrNull('sites', site_id, req.companyId);
   const safeProductTypeId = ownedProductTypeOrNull(product_type_id, safeAppId, req.companyId);
+  // A routing id this company does not own is an ERROR, not a silent null. The
+  // planner asked for a seven-operation job; creating a one-app job instead and
+  // saying nothing is the drawer lying about what it made. The message names
+  // the field only — never the row, which is how a 400 leaks a competitor's
+  // routing name.
+  if (routing_id && !ownedOrNull('product_routings', routing_id, req.companyId)) {
+    return res.status(400).json({ error: 'routing not found', code: 'ROUTING_NOT_FOUND' });
+  }
   const safeRoutingId = ownedOrNull('product_routings', routing_id, req.companyId);
   const holdReason = hold_reason === null || hold_reason === undefined ? null : String(hold_reason).trim() || null;
 
@@ -882,7 +957,7 @@ router.get('/:id', (req, res) => {
     FROM work_orders wo
     LEFT JOIN departments d ON d.id = wo.department_id
     LEFT JOIN apps        a ON a.id = wo.app_id
-    LEFT JOIN product_routings r ON r.id = wo.routing_id
+    LEFT JOIN product_routings r ON r.id = wo.routing_id AND r.company_id = wo.company_id
     LEFT JOIN product_types pt ON pt.id = wo.product_type_id
     LEFT JOIN kits        k ON k.work_order_id = wo.id AND k.status != 'cancelled'
     WHERE wo.id = ? AND wo.company_id = ?
@@ -956,11 +1031,37 @@ router.put('/:id', (req, res) => {
   // running, and quietly rebuilding them under a planner who picked a different
   // routing would throw away booked quantity. Release is a button, once.
   if (req.body.routing_id !== undefined) {
-    updates.routing_id = wo.released_at ? wo.routing_id : ownedOrNull('product_routings', updates.routing_id, req.companyId);
+    if (wo.released_at) {
+      updates.routing_id = wo.routing_id;
+    } else {
+      if (updates.routing_id && !ownedOrNull('product_routings', updates.routing_id, req.companyId)) {
+        return res.status(400).json({ error: 'routing not found', code: 'ROUTING_NOT_FOUND' });
+      }
+      updates.routing_id = ownedOrNull('product_routings', updates.routing_id, req.companyId);
+    }
   }
   if (req.body.hold_reason !== undefined) {
     updates.hold_reason = updates.hold_reason === null || updates.hold_reason === undefined
       ? null : String(updates.hold_reason).trim() || null;
+  }
+
+  // ── The order quantity and the operations are one number ──────────────────
+  // Raising a released job from 50 to 80 used to leave every operation still
+  // requiring 50, so the last 30 units had nowhere to be booked and the job
+  // read 50/80 forever. The operations move with it — never below what has
+  // already been booked against them — and once any operation is COMPLETE the
+  // change is refused outright: that operation ran to a number that would now
+  // be wrong, and quietly reopening finished work is worse than saying no.
+  let resizeReport = null;
+  if (wo.released_at && Number(updates.quantity) !== Number(wo.quantity)) {
+    try {
+      resizeReport = ops.resizeOperations(req.companyId, req.params.id, Number(updates.quantity));
+    } catch (err) {
+      if (err instanceof ops.OperationError) {
+        return res.status(err.status).json({ error: err.code, message: err.message });
+      }
+      throw err;
+    }
   }
 
   db.prepare(`
@@ -1004,6 +1105,17 @@ router.put('/:id', (req, res) => {
 
   const updated = db.prepare(ENRICHED_SELECT + ' WHERE wo.id = ?').get(req.params.id);
   const enriched = enrichWorkOrder(updated);
+  // Say what moved underneath. A quantity change that silently rewrote seven
+  // operations is a change the planner should be able to see they made.
+  if (resizeReport) {
+    enriched.operations_resized = resizeReport.resized;
+    enriched.operations_floored = resizeReport.floored;
+    if (resizeReport.resized > 0) {
+      logActivity(req.companyId, 'work_order', req.params.id,
+        `Quantity changed to ${updates.quantity} — ${resizeReport.resized} operation${resizeReport.resized === 1 ? '' : 's'} updated`,
+        req.user?.display_name, { department_id: updates.department_id || null });
+    }
+  }
 
   if (updates.scheduled_start !== wo.scheduled_start || updates.scheduled_end !== wo.scheduled_end) {
     notify(req.companyId, 'workorder.schedule_changed', {
@@ -1168,7 +1280,16 @@ router.put('/:id/operations/:opId', (req, res) => {
 router.delete('/:id', (req, res) => {
   const wo = db.prepare('SELECT id FROM work_orders WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!wo) return res.status(404).json({ error: 'Work order not found' });
-  db.prepare('DELETE FROM work_orders WHERE id = ?').run(req.params.id);
+  // work_order_operations CASCADEs from work_orders, but only while
+  // `PRAGMA foreign_keys` is ON — db.js sets it, and a database restored,
+  // repaired or opened by any other tool does not. Belt and braces: orphan
+  // operation rows would be counted by every "what is running" query forever.
+  const removeAll = db.transaction(() => {
+    db.prepare('DELETE FROM work_order_operations WHERE work_order_id = ? AND company_id = ?')
+      .run(req.params.id, req.companyId);
+    db.prepare('DELETE FROM work_orders WHERE id = ? AND company_id = ?').run(req.params.id, req.companyId);
+  });
+  removeAll();
   res.json({ success: true });
 });
 
@@ -1218,6 +1339,9 @@ module.exports = {
   router,
   // plantTruth.js imports this — the one definition of on-track. Unchanged.
   calcScheduleStatus,
+  // Exported for the statement-count guard in test/wo-operations.test.js: the
+  // cost of enriching a page of work orders must not grow with the page.
+  enrichWorkOrders,
   // The one import validator, shared with the public API in routes/v1.js.
   validateAndUpsertRows,
   readImportBody,

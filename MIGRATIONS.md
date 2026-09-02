@@ -163,6 +163,14 @@ and carries `work_orders.hold_reason`, because a status word cannot say *why* �
 and `work_orders.status` has its own frozen CHECK that could not have taken a
 new word in any case.
 
+Both foreign keys — `work_order_id REFERENCES work_orders(id) ON DELETE
+CASCADE` and `company_id REFERENCES organizations(id)` — are in the CREATE
+TABLE and had to be: SQLite has no `ALTER TABLE ADD CONSTRAINT`, so a foreign
+key missing on first ship stays missing until somebody rebuilds the table on
+live data. `DELETE /api/work-orders/:id` also deletes the operations by hand,
+because the cascade only fires while `PRAGMA foreign_keys` is ON and a database
+opened by another tool has it OFF.
+
 The file also adds `quantity_rework` alongside `quantity_scrapped`.
 `workOrderOperations.advance()` accepts `{ good, scrap, rework }` today and
 stores all three; wave 4's coded scrap/rework screens write them. A count with

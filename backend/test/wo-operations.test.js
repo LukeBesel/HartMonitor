@@ -609,6 +609,338 @@ describe('a work order carries operations from a routing', () => {
   });
 });
 
+// ─── What the adversarial review found ────────────────────────────────────────
+// Each of these is a bug that shipped in the first cut of this workstream, and
+// each one is here so it cannot ship twice.
+
+describe('the state machine refuses what it should', () => {
+  let token, tokenB, routingId, routingIdB, deptIdB, companyId, db, ops;
+
+  before(async () => {
+    const signup = await api('POST', '/api/auth/signup', {
+      body: { company_name: 'Guard Co', email: 'admin@guard.test', password: 'SecretPass1', display_name: 'Guard' },
+    });
+    assert.equal(signup.status, 201, JSON.stringify(signup.json));
+    token = signup.json.token;
+
+    const r = await api('POST', '/api/routings', {
+      token, body: { name: 'Guard Line', steps: [{ name: 'Cut' }, { name: 'Pack' }] },
+    });
+    assert.equal(r.status, 201);
+    routingId = r.json.id;
+
+    const signupB = await api('POST', '/api/auth/signup', {
+      body: { company_name: 'Neighbour Co', email: 'admin@neighbour.test', password: 'SecretPass1', display_name: 'Neighbour' },
+    });
+    tokenB = signupB.json.token;
+    const rb = await api('POST', '/api/routings', { token: tokenB, body: { name: 'NEIGHBOUR ONLY LINE', steps: [{ name: 'Mill' }] } });
+    routingIdB = rb.json.id;
+    const db2 = await api('POST', '/api/departments', { token: tokenB, body: { name: 'NEIGHBOUR ONLY DEPT' } });
+    deptIdB = db2.json.id;
+
+    process.env.DATABASE_PATH = DB_PRO;
+    process.env.SEED_DEMO_DATA = 'false';
+    db = require('../src/db');
+    ops = require('../src/workOrderOperations');
+    companyId = db.prepare("SELECT company_id FROM users WHERE email = 'admin@guard.test'").get().company_id;
+  });
+
+  const newJob = async (quantity = 10, release = true) => {
+    const created = await api('POST', '/api/work-orders', {
+      token, body: { part_number: 'PN-G', part_name: 'Guard Part', quantity },
+    });
+    assert.equal(created.status, 201, JSON.stringify(created.json));
+    if (release) {
+      const rel = await api('POST', `/api/work-orders/${created.json.id}/release`, { token, body: { routing_id: routingId } });
+      assert.equal(rel.status, 201, JSON.stringify(rel.json));
+    }
+    const listed = await api('GET', `/api/work-orders/${created.json.id}/operations`, { token });
+    return { id: created.json.id, number: created.json.work_order_number, operations: listed.json };
+  };
+
+  // ── M3 ──
+  it('a completed or cancelled work order cannot be released', async () => {
+    for (const status of ['completed', 'cancelled']) {
+      const created = await api('POST', '/api/work-orders', {
+        token, body: { part_number: 'PN-C', part_name: 'Closed Job', quantity: 4 },
+      });
+      const closed = await api('PUT', `/api/work-orders/${created.json.id}`, { token, body: { status } });
+      assert.equal(closed.status, 200, JSON.stringify(closed.json));
+
+      const rel = await api('POST', `/api/work-orders/${created.json.id}/release`, { token, body: { routing_id: routingId } });
+      assert.equal(rel.status, 409, `${status}: ${JSON.stringify(rel.json)}`);
+      assert.equal(rel.json.error, 'work_order_closed');
+
+      const listed = await api('GET', `/api/work-orders/${created.json.id}/operations`, { token });
+      assert.deepEqual(listed.json, [], `a ${status} job was released anyway`);
+    }
+  });
+
+  // ── m1 ──
+  it('an operation cannot be booked past what it requires', async () => {
+    const job = await newJob(10);
+    const op1 = job.operations[0].id;
+
+    assert.throws(() => ops.advance(companyId, op1, { good: 1000 }),
+      err => err.status === 400 && err.code === 'bad_count' && /only 10 left/.test(err.message),
+      'a booking of 1000 against a requirement of 10 was accepted');
+
+    // 6 then 6 used to complete the operation at 12 of 10.
+    ops.advance(companyId, op1, { good: 6 });
+    assert.throws(() => ops.advance(companyId, op1, { good: 6 }),
+      err => err.status === 400 && /only 4 left/.test(err.message));
+
+    // Exactly what is left is fine, and closes it.
+    const done = ops.advance(companyId, op1, { good: 4 });
+    assert.equal(done.operation.quantity_completed, 10);
+    assert.equal(done.operation.status, 'complete');
+
+    // Nothing more, not even zero-sum rework, once it is closed.
+    assert.throws(() => ops.advance(companyId, op1, { good: 1 }),
+      err => err.status === 409 && err.code === 'operation_closed');
+  });
+
+  it('good and scrap together cannot exceed the requirement', async () => {
+    const job = await newJob(10);
+    const op1 = job.operations[0].id;
+    ops.advance(companyId, op1, { good: 4, scrap: 3 });
+    assert.throws(() => ops.advance(companyId, op1, { good: 2, scrap: 2 }),
+      err => err.status === 400 && /only 3 left/.test(err.message));
+  });
+
+  // ── m2 ──
+  it('a queued operation cannot be booked against', async () => {
+    const job = await newJob(10);
+    const op2 = job.operations[1].id;
+    assert.equal(job.operations[1].status, 'queued');
+    assert.throws(() => ops.advance(companyId, op2, { good: 1 }),
+      err => err.status === 409 && err.code === 'operation_not_ready',
+      'output was booked against an operation nobody has been handed');
+
+    const listed = await api('GET', `/api/work-orders/${job.id}/operations`, { token });
+    assert.equal(listed.json[1].quantity_completed, 0, 'the queued operation took the booking anyway');
+  });
+
+  // ── m3 ──
+  it('an operation on hold stays on hold until somebody clears it', async () => {
+    const job = await newJob(10);
+    const op1 = job.operations[0].id;
+    const held = await api('PUT', `/api/work-orders/${job.id}/operations/${op1}`, {
+      token, body: { status: 'on_hold', hold_reason: 'Fixture missing' },
+    });
+    assert.equal(held.status, 200);
+
+    assert.throws(() => ops.advance(companyId, op1, { good: 1 }),
+      err => err.status === 409 && err.code === 'operation_on_hold',
+      'booking silently took an operation off hold');
+
+    const still = await api('GET', `/api/work-orders/${job.id}/operations`, { token });
+    assert.equal(still.json[0].status, 'on_hold', 'the hold was cleared by a booking');
+
+    // Clearing it is an explicit act.
+    const cleared = await api('PUT', `/api/work-orders/${job.id}/operations/${op1}`, { token, body: { status: 'ready' } });
+    assert.equal(cleared.json.status, 'ready');
+    assert.equal(ops.advance(companyId, op1, { good: 1 }).operation.quantity_completed, 1);
+  });
+
+  // ── m4 ──
+  it("another company's ids are refused by name, not silently dropped", async () => {
+    const job = await newJob(10);
+
+    const badDept = await api('POST', `/api/work-orders/${job.id}/operations`, {
+      token, body: { name: 'Extra', department_id: deptIdB },
+    });
+    assert.equal(badDept.status, 400, JSON.stringify(badDept.json));
+    assert.equal(badDept.json.message, 'department not found');
+    assert.ok(!JSON.stringify(badDept.json).includes('NEIGHBOUR ONLY DEPT'), 'the other tenant name leaked');
+
+    const listed = await api('GET', `/api/work-orders/${job.id}/operations`, { token });
+    assert.equal(listed.json.length, 2, 'an operation with a refused department was created anyway');
+
+    const badRouting = await api('POST', '/api/work-orders', {
+      token, body: { part_number: 'PN-XT', part_name: 'Cross', quantity: 3, routing_id: routingIdB },
+    });
+    assert.equal(badRouting.status, 400, JSON.stringify(badRouting.json));
+    assert.equal(badRouting.json.error, 'routing not found');
+    assert.ok(!JSON.stringify(badRouting.json).includes('NEIGHBOUR ONLY LINE'));
+  });
+
+  // ── m7 ──
+  it('an ad-hoc operation cannot require nothing', async () => {
+    const job = await newJob(10);
+    const zero = await api('POST', `/api/work-orders/${job.id}/operations`, {
+      token, body: { name: 'Impossible', quantity_required: 0 },
+    });
+    assert.equal(zero.status, 400, JSON.stringify(zero.json));
+    assert.equal(zero.json.error, 'bad_quantity');
+
+    // Omitting it takes the job's quantity, which is the useful default.
+    const ok = await api('POST', `/api/work-orders/${job.id}/operations`, { token, body: { name: 'Rework loop' } });
+    assert.equal(ok.status, 201, JSON.stringify(ok.json));
+    assert.equal(ok.json.quantity_required, 10);
+  });
+
+  // ── m6 ──
+  it("raising a released job's quantity moves its operations with it", async () => {
+    const job = await newJob(10);
+    const bumped = await api('PUT', `/api/work-orders/${job.id}`, { token, body: { quantity: 20 } });
+    assert.equal(bumped.status, 200, JSON.stringify(bumped.json));
+    assert.equal(bumped.json.operations_resized, 2);
+
+    const listed = await api('GET', `/api/work-orders/${job.id}/operations`, { token });
+    assert.deepEqual(listed.json.map(o => o.quantity_required), [20, 20],
+      'the operations still required the old quantity');
+  });
+
+  it('an operation never drops below what has been booked against it', async () => {
+    const job = await newJob(20);
+    ops.advance(companyId, job.operations[0].id, { good: 12, scrap: 3 });
+
+    const cut = await api('PUT', `/api/work-orders/${job.id}`, { token, body: { quantity: 5 } });
+    assert.equal(cut.status, 200, JSON.stringify(cut.json));
+    const listed = await api('GET', `/api/work-orders/${job.id}/operations`, { token });
+    assert.equal(listed.json[0].quantity_required, 15, 'a requirement was cut below its booked quantity');
+    assert.equal(listed.json[1].quantity_required, 5);
+    assert.deepEqual(cut.json.operations_floored, [{ sequence: 1, quantity_required: 15 }]);
+  });
+
+  it('a quantity change is refused once an operation is complete', async () => {
+    const job = await newJob(10);
+    ops.advance(companyId, job.operations[0].id, { good: 10 });
+
+    const bumped = await api('PUT', `/api/work-orders/${job.id}`, { token, body: { quantity: 30 } });
+    assert.equal(bumped.status, 409, JSON.stringify(bumped.json));
+    assert.equal(bumped.json.error, 'operation_complete');
+
+    const wo = await api('GET', `/api/work-orders/${job.id}`, { token });
+    assert.equal(wo.json.quantity, 10, 'the refused quantity was written anyway');
+    const listed = await api('GET', `/api/work-orders/${job.id}/operations`, { token });
+    assert.deepEqual(listed.json.map(o => o.quantity_required), [10, 10]);
+  });
+
+  // ── M1 ──
+  it('deleting a work order takes its operations with it', async () => {
+    const job = await newJob(10);
+    assert.equal(job.operations.length, 2);
+
+    const del = await api('DELETE', `/api/work-orders/${job.id}`, { token });
+    assert.equal(del.status, 200, JSON.stringify(del.json));
+
+    const orphans = db.prepare('SELECT COUNT(*) AS c FROM work_order_operations WHERE work_order_id = ?').get(job.id).c;
+    assert.equal(orphans, 0, 'deleting a work order left its operations behind');
+
+    const anyOrphan = db.prepare(`
+      SELECT COUNT(*) AS c FROM work_order_operations o
+      LEFT JOIN work_orders wo ON wo.id = o.work_order_id
+      WHERE wo.id IS NULL
+    `).get().c;
+    assert.equal(anyOrphan, 0, 'the table holds operations whose work order no longer exists');
+  });
+
+  it('009 declares the foreign key that makes that true', () => {
+    const sql = fs.readFileSync(MIGRATION_FILE, 'utf8');
+    assert.match(sql, /work_order_id\s+TEXT NOT NULL REFERENCES work_orders\(id\) ON DELETE CASCADE/,
+      'work_order_id has no cascading foreign key — SQLite cannot add one later');
+    assert.match(sql, /company_id\s+TEXT NOT NULL REFERENCES organizations\(id\)/,
+      'company_id has no foreign key');
+  });
+
+  // ── m8 ──
+  it('a sequence collision is a 409, never a 500', async () => {
+    const created = await api('POST', '/api/work-orders', {
+      token, body: { part_number: 'PN-RACE', part_name: 'Race', quantity: 5 },
+    });
+    const id = created.json.id;
+    // What a second, concurrent release looks like from inside: sequence 1 is
+    // already there, but released_at has not been written yet.
+    db.prepare(`
+      INSERT INTO work_order_operations
+        (id, company_id, work_order_id, sequence, name, quantity_required, status)
+      VALUES ('race-op-1', ?, ?, 1, 'Cut', 5, 'ready')
+    `).run(companyId, id);
+
+    assert.throws(() => ops.instantiate(companyId, id, routingId),
+      err => err instanceof ops.OperationError && err.status === 409,
+      'a UNIQUE collision surfaced as something other than a 409');
+  });
+
+  // ── m10 ──
+  it("a routing id belonging to another company is not named on the work order", async () => {
+    const created = await api('POST', '/api/work-orders', {
+      token, body: { part_number: 'PN-JOIN', part_name: 'Join Probe', quantity: 2 },
+    });
+    // The route refuses this now, so the only way in is a direct write — which
+    // is exactly the state a database restored from an older build can be in.
+    db.prepare('UPDATE work_orders SET routing_id = ? WHERE id = ?').run(routingIdB, created.json.id);
+
+    const wo = await api('GET', `/api/work-orders/${created.json.id}`, { token });
+    assert.equal(wo.json.routing_name, null,
+      "the join printed another company's routing name onto this company's work order");
+    const list = await api('GET', '/api/work-orders', { token });
+    const row = list.json.find(w => w.id === created.json.id);
+    assert.equal(row.routing_name, null);
+  });
+
+  // ── M2 ──
+  it('a list of work orders costs a fixed number of statements, whatever N is', async () => {
+    // Enrichment used to ask every row where it stood: a COUNT and a lookup
+    // each, so a hundred-job Schedule was three hundred queries behind one
+    // request — and it grew with the customer.
+    const woRoutes = require('../src/routes/workorders');
+    const raw = db.prepare.bind(db);
+
+    for (let i = 0; i < 12; i++) {
+      const created = await api('POST', '/api/work-orders', {
+        token, body: { part_number: `PN-N${i}`, part_name: `Batch ${i}`, quantity: 5, routing_id: routingId },
+      });
+      assert.equal(created.status, 201, JSON.stringify(created.json));
+    }
+
+    const countFor = n => {
+      const rows = raw('SELECT * FROM work_orders WHERE company_id = ? ORDER BY created_at DESC LIMIT ?')
+        .all(companyId, n);
+      assert.equal(rows.length, n, 'not enough work orders to measure with');
+      let prepares = 0;
+      db.prepare = sql => { prepares++; return raw(sql); };
+      try {
+        const enriched = woRoutes.enrichWorkOrders(companyId, rows);
+        assert.equal(enriched.length, n);
+        assert.ok(enriched.some(w => w.current_operation), 'nothing in the page was released, so nothing was measured');
+      } finally {
+        db.prepare = raw;
+      }
+      return prepares;
+    };
+
+    const few  = countFor(4);
+    const many = countFor(16);
+    console.log(`      # statements: 4 rows -> ${few}, 16 rows -> ${many}`);
+    // Three is the ceiling: counts, pointer rows, and — only when some job's
+    // pointer is missing or stale — one sweep of the stragglers. Four times the
+    // rows must not buy a single extra statement.
+    assert.ok(few  <= 3, `enriching 4 work orders took ${few} statements`);
+    assert.ok(many <= 3, `enriching 16 work orders took ${many} statements`);
+    assert.ok(many < 16, `the statement count is still growing with the page (${many} for 16 rows)`);
+  });
+
+  it('the batch and the one-at-a-time answer agree', async () => {
+    const job = await newJob(10);
+    ops.advance(companyId, job.operations[0].id, { good: 3 });
+    const wo = db.prepare('SELECT * FROM work_orders WHERE id = ?').get(job.id);
+    const one = ops.currentOperationSummary(companyId, wo);
+    const many = ops.currentOperationSummaries(companyId, [wo]).get(job.id);
+    assert.deepEqual(many, one, 'the batched summary differs from the single lookup');
+    assert.equal(one.qty_good, 3);
+    assert.equal(one.of, 2);
+  });
+
+  it('a work order with no operations is null in the batch, not a zeroed object', async () => {
+    const job = await newJob(10, false);
+    const wo = db.prepare('SELECT * FROM work_orders WHERE id = ?').get(job.id);
+    assert.equal(ops.currentOperationSummaries(companyId, [wo]).get(job.id), null);
+  });
+});
+
 // ─── The Free tier can run a job ──────────────────────────────────────────────
 // /api/routings is plan-gated ('pro'); /api/work-orders is not, and release
 // lives there on purpose. A Free account that cannot release a job has not seen

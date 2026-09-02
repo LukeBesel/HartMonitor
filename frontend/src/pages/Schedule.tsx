@@ -491,6 +491,13 @@ function WOModal({
   // picking a routing in the drawer does not release anything until Release is
   // pressed, and a released job must never offer the button again.
   const released = Boolean(workOrder?.released_at);
+  // A finished or cancelled job is not something to start. Release cannot be
+  // undone, so the server refuses it (409 work_order_closed) and the button
+  // does not sit there inviting the press.
+  // Compared as a plain string: the server's work-order vocabulary also has
+  // 'cancelled', which this file's narrower union never learned about.
+  const jobStatus = String(workOrder?.status ?? '');
+  const jobClosed = jobStatus === 'completed' || jobStatus === 'cancelled';
   const opList = operations ?? [];
   // How many operations Release will actually create — the routing's step
   // count, straight off the list the server sent. A routing with no steps
@@ -712,7 +719,12 @@ function WOModal({
                   <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
                 </div>
 
-                {entityId && onRelease && (
+                {entityId && onRelease && jobClosed && (
+                  <p className="text-[11px] text-gray-500">
+                    This work order is {STATUS_LABELS[jobStatus] ?? jobStatus}. Reopen it before releasing a routing onto it.
+                  </p>
+                )}
+                {entityId && onRelease && !jobClosed && (
                   <div className="flex flex-wrap items-center gap-2">
                     <button
                       onClick={onRelease}
