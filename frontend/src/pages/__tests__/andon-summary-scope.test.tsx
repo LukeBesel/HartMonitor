@@ -108,3 +108,44 @@ describe('Andon summary department scoping', () => {
     await waitFor(() => expect(stat('stat-avg-response')).toBe('Nothing answered yet'));
   });
 });
+
+
+// ─── One word for one thing: a call ───────────────────────────────────────────
+// The sidebar says "Call for help", the player's button says "Call for help",
+// the operator says "I called Quality" — and this board said "help requests",
+// "OPEN REQUESTS" and "No open help requests". Two words for one thing on the
+// one screen a supervisor watches all shift.
+
+describe('the Andon board calls a call a call', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.clearAllMocks();
+    getDepartments.mockResolvedValue([WELDING, PAINT]);
+    getAndonCalls.mockResolvedValue([]);
+    getAndonSummary.mockResolvedValue(PLANT_SUMMARY);
+  });
+
+  it('never says "request" where it means a call', async () => {
+    const { container } = renderPage();
+    await screen.findByTestId('stat-open');
+
+    expect(screen.getByText('Open calls')).toBeInTheDocument();
+    expect(screen.getByText(/Every call from the floor/)).toBeInTheDocument();
+    expect(container.textContent?.toLowerCase()).not.toContain('help request');
+    expect(container.textContent).not.toContain('OPEN REQUESTS');
+    expect(container.textContent?.toLowerCase()).not.toContain('open requests');
+  });
+
+  it('says "no open calls" on an empty board', async () => {
+    getAndonSummary.mockResolvedValue({ ...PLANT_SUMMARY, open: 0, acknowledged: 0 });
+    getAndonCalls.mockResolvedValue([]);
+    renderPage();
+    expect(await screen.findByText('No open calls')).toBeInTheDocument();
+  });
+
+  it('counts one answered call as one, not "1 requests"', async () => {
+    getAndonSummary.mockResolvedValue({ ...PLANT_SUMMARY, avg_response_seconds_today: 90, responded_today: 1 });
+    renderPage();
+    expect(await screen.findByText(/over 1 call$/)).toBeInTheDocument();
+  });
+});

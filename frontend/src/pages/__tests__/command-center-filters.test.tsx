@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 // ─── The Command Center is the floor, and the filter is a filter ──────────────
 // This page used to ask a question before it answered one: every number, list
@@ -715,5 +715,94 @@ describe('the hand-off from a finished run', () => {
     await waitFor(() => expect(getDailyBrief).toHaveBeenLastCalledWith({}));
     expect((await deptSelect()).value).toBe('');
     expect(screen.getByRole('heading', { name: 'The whole plant' })).toBeInTheDocument();
+  });
+});
+
+
+// ─── A brand-new company opens on the Command Center ─────────────────────────
+// /dashboard used to ask the server "has this company ever finished a run?" the
+// first time a browsing session reached it, and send a new account to /apps if
+// the answer was no. The owner clicked "Command Center", watched a spinner and
+// landed on a different screen, with nothing on either page saying why. That is
+// a dead end with a redirect in front of it.
+//
+// The screen a person asked for is the screen they get. The hand-off the
+// redirect was performing — "you have no apps yet, build one" — is on the page
+// itself, where they chose to be.
+
+import FirstRunLanding from '../../components/apps/FirstRunLanding';
+
+const NEW_COMPANY_SNAPSHOT = snapshot({
+  finished_today: 0, running_now: 0,
+  avg_cycle_seconds: null, avg_cycle_sample: 0, avg_cycle_reason: 'no run has finished yet',
+  pass_rate: null, pass_rate_sample: 0, pass_rate_reason: 'no pass/fail result recorded yet',
+  open_work_orders: 0, on_track: 0, at_risk: 0, behind: 0, overdue: 0,
+  completed_work_orders: 0, total_work_orders: 0,
+  on_track_pct: null, on_track_reason: 'no open work order to be on track with',
+});
+
+const NEW_COMPANY_BRIEF = {
+  scope: { department_id: null, app_id: null },
+  attention: [], attention_plant_wide_hidden: 0, attention_plant_wide_kinds: [],
+  kpis: { completed_today: 0, vs_7day_avg_pct: null, active_now: 0, work_orders_total: 0 },
+  due_soon: [], throughput_7d: [], week_avg_per_day: 0, is_pro: true,
+};
+
+function renderFirstVisit() {
+  return render(
+    <MemoryRouter initialEntries={['/dashboard']}>
+      <Routes>
+        <Route path="/dashboard" element={<FirstRunLanding><Dashboard /></FirstRunLanding>} />
+        <Route path="/apps" element={<div>the App Library</div>} />
+      </Routes>
+    </MemoryRouter>,
+  );
+}
+
+describe('a brand-new company on its first visit to /dashboard', () => {
+  beforeEach(() => {
+    sessionStorage.clear();
+    getFloorSnapshot.mockResolvedValue(NEW_COMPANY_SNAPSHOT);
+    getDailyBrief.mockResolvedValue(NEW_COMPANY_BRIEF);
+    getPlantView.mockResolvedValue({
+      scope: { site_id: null, department_id: null, app_id: null },
+      hourly_throughput: [], active_alerts: [], recent_completions: [],
+    });
+    getFloorDepartments.mockResolvedValue({ plant_date: '2026-09-02', timezone: 'UTC', departments: [], scope: { site_id: null, valid: true } });
+    getDepartments.mockResolvedValue([]);
+    getApps.mockResolvedValue([]);
+  });
+
+  it('renders the Command Center rather than redirecting to Apps', async () => {
+    renderFirstVisit();
+
+    expect(await screen.findByRole('heading', { name: 'The whole plant' })).toBeInTheDocument();
+    expect(screen.queryByText('the App Library')).toBeNull();
+  });
+
+  it('leads with "Build your first app" instead of a grid of zeroes', async () => {
+    renderFirstVisit();
+
+    expect(await screen.findByRole('heading', { name: /build your first app/i })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Build your first app/ })).toHaveAttribute('href', '/apps?new=1');
+  });
+
+  it('says why each empty measure is empty, and never prints a zero for one', async () => {
+    renderFirstVisit();
+
+    expect(await screen.findByTestId('kpi-avg-cycle')).toHaveTextContent('no run has finished yet');
+    expect(screen.getByTestId('kpi-pass-rate')).toHaveTextContent('no pass/fail result recorded yet');
+    expect(screen.getByTestId('kpi-on-track')).toHaveTextContent('no open work order to be on track with');
+    expect(screen.getByTestId('kpi-avg-cycle')).toHaveTextContent('—');
+  });
+
+  it('does the same on every later visit — the redirect is gone, not deferred', async () => {
+    renderFirstVisit();
+    await screen.findByRole('heading', { name: 'The whole plant' });
+    // The old rule fired once per browsing session, off a sessionStorage flag.
+    // Nothing about a second visit is different, because nothing decides.
+    const { unmount } = renderFirstVisit();
+    expect(await screen.findAllByRole('heading', { name: 'The whole plant' })).toHaveLength(2);
+    unmount();
   });
 });

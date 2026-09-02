@@ -88,12 +88,12 @@ export default function Layout() {
   // Sections filtered to this company's enabled modules, then to the user's
   // Settings toggles for the sidebar list.
   const moduleSections = useVisibleSections();
-  // Which workspaces this company shows is the company's answer, fetched once
+  // Which sections this company shows is the company's answer, fetched once
   // a session exists (and remembered on this device between visits). On a
-  // device that has never had it, paint no workspace list rather than painting
+  // device that has never had it, paint no section list rather than painting
   // the ones this plant has switched off and snatching them away a moment later.
   const enabledSections = sectionsLoading ? [] : moduleSections.filter(s => !isSectionHidden(s.id));
-  // Five workspaces up front, the rest under "More". Nine top-level choices is
+  // Five sections up front, the rest under "More". Nine top-level choices is
   // more than anyone scans; these four are the ones a plant manager reaches for
   // occasionally rather than daily, and Settings → Modules can remove them
   // entirely. "More" springs open on its own when you are inside one of them,
@@ -111,24 +111,24 @@ export default function Layout() {
   };
 
   // LEVEL 1/2 focus is derived from the CURRENT ROUTE — never manual state —
-  // so deep links always highlight the right workspace and screen tab.
+  // so deep links always highlight the right section and screen tab.
   // Derived from moduleSections (not enabledSections) so a deep link into a
-  // workspace the user hid from the sidebar still gets its screen tabs.
+  // section the user hid from the sidebar still gets its screen tabs.
   const activeSection = findSectionForPath(location.pathname, moduleSections);
 
-  // Land on a secondary workspace by deep link and "More" is already open, so
+  // Land on a secondary section by deep link and "More" is already open, so
   // the sidebar never looks like it is missing the page you are standing on.
   useEffect(() => {
     if (activeSection?.secondary) setMoreOpen(true);
   }, [activeSection?.id, activeSection?.secondary]);
 
-  // The focused workspace's visible screens — rendered as the level-2 tab bar.
+  // The focused section's visible screens — rendered as the level-2 tab bar.
   const sectionScreens = (section: NavSection): NavItem[] =>
     orderItems(section.id, section.items).filter(canShow);
 
   const tabItems = activeSection ? sectionScreens(activeSection) : [];
 
-  // Clicking a workspace in the sidebar navigates to its first visible screen.
+  // Clicking a section in the sidebar navigates to its first visible screen.
   // Prefer a screen that isn't Pro-locked and doesn't leave the shell
   // (standalone kiosk); fall back gracefully, else open the upgrade modal.
   const openSection = (section: NavSection) => {
@@ -142,7 +142,7 @@ export default function Layout() {
   };
 
   // A level-1 sidebar entry: icon + label with the accent bar when the current
-  // route lives inside this workspace.
+  // route lives inside this section.
   const renderSection = (section: NavSection) => {
     const items = sectionScreens(section);
     if (items.length === 0) return null;
@@ -163,7 +163,7 @@ export default function Layout() {
             : 'text-gray-400 hover:text-white hover:bg-white/8'
         }`}
       >
-        {/* Left accent bar marks the active workspace */}
+        {/* Left accent bar marks the active section */}
         {isActive && (
           <span
             aria-hidden
@@ -182,7 +182,7 @@ export default function Layout() {
     );
   };
 
-  // A level-2 tab: underline-style NavLink for the focused workspace's screens.
+  // A level-2 tab: underline-style NavLink for the focused section's screens.
   // Pro-locked screens open the upgrade modal for Free users, exactly like the
   // sidebar used to.
   const renderTab = (item: NavItem) => {
@@ -304,14 +304,15 @@ export default function Layout() {
           )}
         </Link>
 
-        {/* LEVEL 1 — workspace sections only. Screens live in the content
-            header's tab bar (level 2). */}
-        <nav className="flex-1 p-2 overflow-y-auto mt-1">
-          {!effectiveCollapsed && (
-            <div className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-gray-400 select-none">
-              Workspaces
-            </div>
-          )}
+        {/* LEVEL 1 — the sidebar's sections. Screens live in the content
+            header's tab bar (level 2).
+
+            No heading above them. The sidebar is the only list on the screen
+            and every row in it is a section, so a label over the top named a
+            concept the reader did not need and had never met — and the word it
+            used ("Workspaces") was a word this product invented. A grouping
+            that is obvious does not need announcing. */}
+        <nav className="flex-1 p-2 overflow-y-auto mt-2">
           <div className="space-y-0.5">
             {primarySections.map(renderSection)}
 
@@ -319,7 +320,7 @@ export default function Layout() {
               <>
                 <button
                   onClick={() => setMoreOpen(o => !o)}
-                  title={effectiveCollapsed ? 'More workspaces' : undefined}
+                  title={effectiveCollapsed ? 'More sections' : undefined}
                   aria-expanded={moreOpen}
                   className={`w-full flex items-center rounded-xl text-sm font-medium text-gray-400 hover:text-white hover:bg-white/8 transition-all ${
                     effectiveCollapsed ? 'justify-center p-2.5' : 'gap-2.5 px-3 py-2.5'
@@ -338,9 +339,9 @@ export default function Layout() {
             )}
           </div>
 
-          {/* The setup checklist scrolls WITH the workspaces rather than sitting
+          {/* The setup checklist scrolls WITH the sections rather than sitting
               below them. As a sibling it claimed ~270px of fixed height, which
-              pushed three or four workspaces off a 900px screen on a new
+              pushed three or four sections off a 900px screen on a new
               account — the one session where the product most needs to look
               complete. Inside the scroller, navigation always comes first. */}
           {!effectiveCollapsed && <SetupChecklist />}
@@ -467,8 +468,8 @@ export default function Layout() {
 
         <BillingBanner />
 
-        {/* LEVEL 2 — the focused workspace's screens as underline tabs. Hidden
-            on routes that don't belong to any workspace (e.g. /settings). */}
+        {/* LEVEL 2 — the focused section's screens as underline tabs. Hidden
+            on routes that don't belong to any section (e.g. /settings). */}
         {activeSection && tabItems.length > 0 && (
           <div className="bg-white border-b border-gray-200 flex-shrink-0 overflow-x-auto">
             <nav

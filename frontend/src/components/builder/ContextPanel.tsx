@@ -239,7 +239,7 @@ export default function ContextPanel(props: {
   };
 
   const TABS: { id: ContextTab; label: string; icon: LucideIcon }[] = [
-    { id: 'widget', label: 'Widget', icon: MousePointerClick },
+    { id: 'widget', label: 'Field', icon: MousePointerClick },
     { id: 'step', label: 'Step', icon: Rows3 },
     { id: 'app', label: 'App', icon: Settings },
     { id: 'triggers', label: 'Triggers', icon: Zap },
@@ -308,7 +308,7 @@ export default function ContextPanel(props: {
           : (
             <div className="text-center py-10 text-muted">
               <MousePointerClick size={22} className="mx-auto mb-2 opacity-50" />
-              <p style={{ fontSize: 12.5 }}>Select a widget on the canvas to edit it</p>
+              <p style={{ fontSize: 12.5 }}>Select a field on the page to edit it</p>
             </div>
           ))}
         {tab === 'step' && step && <StepTab {...props} step={step} />}
@@ -428,7 +428,7 @@ function WidgetTab({ app, widget, activeStepIdx, canEdit, onTab, onUpdateWidget,
           )}
         </div>
         {canEdit && (
-          <button onClick={() => onRemoveWidget(widget.id)} title="Delete widget" className="wb-btn-ghost !min-h-0 p-1 hover:!text-bad">
+          <button onClick={() => onRemoveWidget(widget.id)} title="Delete field" className="wb-btn-ghost !min-h-0 p-1 hover:!text-bad">
             <Trash2 size={13} />
           </button>
         )}
@@ -503,7 +503,7 @@ function WidgetTab({ app, widget, activeStepIdx, canEdit, onTab, onUpdateWidget,
           </Field>
           <Toggle checked={config.fontStyle === 'italic'} onChange={v => setConfig({ fontStyle: v ? 'italic' : 'normal' })} label="Italic" />
           {isCanvas && (
-            <p className="text-muted" style={{ fontSize: 11 }}>Tip: use the rotation handle on the canvas (or the Rotation field above) for diagonal text.</p>
+            <p className="text-muted" style={{ fontSize: 11 }}>Tip: use the rotation handle on the page (or the Rotation field above) for diagonal text.</p>
           )}
         </>
       )}
@@ -635,7 +635,7 @@ function WidgetTab({ app, widget, activeStepIdx, canEdit, onTab, onUpdateWidget,
             checked={config.fullWidth !== false}
             onChange={v => setConfig({ fullWidth: v })}
             label="Full width"
-            hint="Only affects stacked-flow steps — on the canvas the button fills its box."
+            hint="Only affects stacked steps — on a free-form step the button fills its box."
           />
         </>
       )}
@@ -672,7 +672,7 @@ function WidgetTab({ app, widget, activeStepIdx, canEdit, onTab, onUpdateWidget,
             </div>
           )}
           <p className="wb-well px-2.5 py-2 text-muted" style={{ fontSize: 11 }}>
-            Decoration only — shapes capture no data and never appear in completion values. Rotate on the canvas for diagonal lines and arrows.
+            Decoration only — shapes capture no data and never appear in completion values. Rotate on the page for diagonal lines and arrows.
           </p>
         </>
       )}
@@ -1083,7 +1083,7 @@ function StepTab({ app, step, canEdit, onUpdateStep, onSetMode }: {
         <input className="wb-input" value={step.name} onChange={e => onUpdateStep(s => ({ ...s, name: e.target.value }))} />
       </Field>
 
-      <Field label="Layout" hint={isCanvas ? 'Drag, resize, and rotate widgets anywhere — like a slide.' : 'Widgets stack top-to-bottom automatically.'}>
+      <Field label="Layout" hint={isCanvas ? 'Drag, resize, and rotate fields anywhere — like a slide.' : 'Fields stack top-to-bottom automatically.'}>
         <div className="seg w-full">
           <button onClick={() => onSetMode('flow')} className={`flex-1 ${!isCanvas ? 'is-active' : ''}`}>
             <Rows3 size={13} /> Stacked
@@ -1096,7 +1096,7 @@ function StepTab({ app, step, canEdit, onUpdateStep, onSetMode }: {
 
       {isCanvas && (
         <>
-          <Field label="Canvas Height (px)">
+          <Field label="Step Height (px)">
             <input type="number" className="wb-input tnum" min={200} step={20}
               value={step.canvasHeight ?? 560}
               onChange={e => onUpdateStep(s => ({ ...s, canvasHeight: Math.max(200, parseInt(e.target.value) || 560) }))} />
@@ -1332,7 +1332,7 @@ function AppTab({ app, canEdit, departments, stations, productTypes, onUpdateApp
       </Section>
 
       <div className="wb-well px-2.5 py-2 text-muted" style={{ fontSize: 11 }}>
-        Canvas resolution is a fixed 720px logical width — steps scale uniformly to any screen.
+        A step is a fixed 720px logical width — it scales uniformly to any screen.
       </div>
     </fieldset>
   );
@@ -1503,7 +1503,7 @@ function TriggersTab({ app, step, selectedWidget, canEdit, onEditTrigger }: {
       <div>
         <div className="wb-label">Triggers</div>
         <p className="text-muted mt-0.5" style={{ fontSize: 11.5 }}>
-          {selectedWidget ? 'For the selected widget' : 'For the current step'} · <span className="font-mono">{targetLabel}</span>
+          {selectedWidget ? 'For the selected field' : 'For the current step'} · <span className="font-mono">{targetLabel}</span>
         </p>
       </div>
 
@@ -1513,7 +1513,7 @@ function TriggersTab({ app, step, selectedWidget, canEdit, onEditTrigger }: {
           <p className="text-muted" style={{ fontSize: 12 }}>
             {canAttach
               ? 'No triggers yet. Triggers run logic when things happen — navigate, set variables, save records, raise NCRs.'
-              : 'This widget type can’t fire events. Select the step (click empty canvas) or an interactive widget.'}
+              : 'This kind of field can’t fire events. Select the step (click an empty area) or an interactive field.'}
           </p>
         </div>
       )}

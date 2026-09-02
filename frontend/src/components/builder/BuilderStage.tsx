@@ -225,7 +225,7 @@ export default function BuilderStage({
             This step is empty
           </p>
           <p style={{ fontSize: 13, marginTop: 4 }}>
-            Add widgets from the toolbar above — they appear here exactly as an operator will see them.
+            Add fields from the toolbar above — they appear here exactly as an operator will see them.
           </p>
         </div>
       )}

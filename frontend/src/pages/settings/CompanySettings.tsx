@@ -42,7 +42,7 @@ export default function CompanySettings() {
       <SettingsSection
         id="sidebar"
         title="Navigation"
-        description="Which workspaces this company's sidebar shows. Saved for everyone here."
+        description="Which sections this company's sidebar shows. Saved for everyone here."
       >
         <NavigationTab />
       </SettingsSection>

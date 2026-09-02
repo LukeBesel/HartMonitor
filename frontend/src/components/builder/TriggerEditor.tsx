@@ -52,8 +52,8 @@ const APP_INFO_KEYS: { key: NonNullable<ValueRef['key']>; label: string }[] = [
   { key: 'operator', label: 'Operator' },
   { key: 'work_order_number', label: 'Work order #' },
   { key: 'part_number', label: 'Part number' },
-  { key: 'quantity', label: 'WO quantity' },
-  { key: 'quantity_completed', label: 'WO qty completed' },
+  { key: 'quantity', label: 'Work order quantity' },
+  { key: 'quantity_completed', label: 'Work order qty completed' },
   { key: 'product_type', label: 'Product type' },
   { key: 'station', label: 'Station' },
   { key: 'elapsed_seconds', label: 'Elapsed (s)' },
@@ -177,7 +177,7 @@ function ValueRefEditor({ value, onChange, app, widgets, allowWidget = true }: {
       >
         <option value="static">Value</option>
         <option value="variable">Variable</option>
-        {allowWidget && <option value="widget">Input widget</option>}
+        {allowWidget && <option value="widget">Input field</option>}
         <option value="app_info">App info</option>
       </select>
       {kind === 'static' && (
@@ -197,7 +197,7 @@ function ValueRefEditor({ value, onChange, app, widgets, allowWidget = true }: {
       )}
       {kind === 'widget' && (
         <select className={sel} style={{ fontSize: 12.5 }} value={value?.name ?? ''} onChange={e => onChange({ kind: 'widget', name: e.target.value })}>
-          <option value="">— widget —</option>
+          <option value="">— field —</option>
           {widgets.map(w => <option key={w.id} value={w.id}>{w.label}</option>)}
         </select>
       )}
@@ -350,7 +350,7 @@ export default function TriggerEditor({ app, attachment, initial, onSave, onDele
             </span>
             <div>
               <h2 className="text-ink" style={{ fontSize: 15, fontWeight: 750 }}>{initial ? 'Edit trigger' : 'New trigger'}</h2>
-              <p className="text-muted" style={{ fontSize: 11.5 }}>on {attachment.kind === 'widget' ? 'widget' : 'step'} · <span className="font-mono">{attLabel}</span></p>
+              <p className="text-muted" style={{ fontSize: 11.5 }}>on {attachment.kind === 'widget' ? 'field' : 'step'} · <span className="font-mono">{attLabel}</span></p>
             </div>
           </div>
           <button onClick={onClose} className="wb-btn-ghost !min-h-0 p-1.5" aria-label="Close"><X size={16} /></button>
@@ -400,7 +400,7 @@ export default function TriggerEditor({ app, attachment, initial, onSave, onDele
                     {i > 0 && <span className="tnum text-muted uppercase" style={{ fontSize: 10.5, fontWeight: 650, width: 26 }}>{draft.match === 'any' ? 'or' : 'and'}</span>}
                     <select className={sel} style={{ fontSize: 12.5 }} value={src} onChange={e => changeSource(i, e.target.value as ConditionSource)}>
                       <option value="variable">Variable</option>
-                      <option value="widget">Input widget</option>
+                      <option value="widget">Input field</option>
                       <option value="app_info">App info</option>
                       <option value="kit">Kit</option>
                     </select>
@@ -412,7 +412,7 @@ export default function TriggerEditor({ app, attachment, initial, onSave, onDele
                     )}
                     {src === 'widget' && (
                       <select className={sel} style={{ fontSize: 12.5 }} value={c.left?.name ?? ''} onChange={e => setCondition(i, { ...c, left: { kind: 'widget', name: e.target.value } })}>
-                        <option value="">— widget —</option>
+                        <option value="">— field —</option>
                         {widgets.map(w => <option key={w.id} value={w.id}>{w.label}</option>)}
                       </select>
                     )}

@@ -223,3 +223,75 @@ describe('the Report Builder list', () => {
     expect(body).toContain('No reports yet');
   });
 });
+
+
+// ─── A number with no window is a number nobody can read ─────────────────────
+// /reports/production put "Today's Completions" and "Total Completions" side by
+// side, both bare figures, and the only way to tell one from the other was to
+// know the report's configuration. A tile says what it counted and over what.
+
+describe('a report tile says what window it measured', () => {
+  const WINDOW_REPORT = {
+    ...REPORT,
+    cards: [
+      { id: 'c-today', type: 'metric', title: "Today's Completions", metric_key: 'today_completions', size: 'sm' },
+      { id: 'c-all',   type: 'metric', title: 'Total Completions',   metric_key: 'total_completions', size: 'sm' },
+      { id: 'c-cycle', type: 'metric', title: 'Avg Cycle Time',      metric_key: 'avg_cycle', size: 'sm' },
+      { id: 'c-period', type: 'metric', title: 'Completions in Period', metric_key: 'period_completions', period_days: 7, size: 'sm' },
+      { id: 'c-pass',  type: 'metric', title: 'Pass Rate',           metric_key: 'pass_rate', size: 'sm' },
+    ],
+  };
+
+  const WINDOW_DATA = {
+    cards: [
+      { card_id: 'c-today', data: { unit: 'count', value: 12 } },
+      { card_id: 'c-all', data: { unit: 'count', value: 323 } },
+      { card_id: 'c-cycle', data: { unit: 'duration', value: 0.5, seconds: 30, avg_cycle_seconds: 30, avg_cycle_basis: 'hands_on', sample_size: 323, suffix: 'm' } },
+      { card_id: 'c-period', data: { unit: 'count', value: 40 } },
+      { card_id: 'c-pass', data: { unit: 'percent', value: null, empty_reason: 'No pass/fail results recorded yet' } },
+    ],
+  };
+
+  beforeEach(() => {
+    getCategoryDashboard.mockResolvedValue(WINDOW_REPORT);
+    getDashboard.mockResolvedValue(WINDOW_REPORT);
+    getDashboardData.mockResolvedValue(WINDOW_DATA);
+  });
+
+  it('labels today as today and all time as all time, with its sample', async () => {
+    renderAt('/reports/production');
+    await screen.findByText("Today's Completions");
+    const windows = screen.getAllByTestId('card-window').map(el => el.textContent);
+    expect(windows).toContain('today');
+    expect(windows).toContain('all time');
+    // A measured average carries the sample it was taken over.
+    expect(windows).toContain('all time · 323 runs');
+  });
+
+  it("takes a period card's window from the card's own configuration", async () => {
+    renderAt('/reports/production');
+    await screen.findByText('Completions in Period');
+    expect(screen.getAllByTestId('card-window').map(el => el.textContent)).toContain('last 7 days');
+  });
+
+  it('prefers a window the server names over the one the card implies', async () => {
+    getDashboardData.mockResolvedValue({
+      cards: [
+        ...WINDOW_DATA.cards.slice(1),
+        { card_id: 'c-today', data: { unit: 'count', value: 12, window_label: 'this shift' } },
+      ],
+    });
+    renderAt('/reports/production');
+    await screen.findByText("Today's Completions");
+    expect(screen.getAllByTestId('card-window').map(el => el.textContent)).toContain('this shift');
+  });
+
+  it('still says the window on a tile that has nothing to report', async () => {
+    renderAt('/reports/production');
+    await screen.findByText('Pass Rate');
+    // The dash and its reason are the point; the window says which slice of
+    // the plant produced no pass/fail at all.
+    expect(screen.getByText('No pass/fail results recorded yet')).toBeInTheDocument();
+    expect(screen.getAllByTestId('card-window').map(el => el.textContent)).toContain('all time');
+  });
+});

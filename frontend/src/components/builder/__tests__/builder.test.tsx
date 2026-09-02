@@ -108,7 +108,7 @@ describe('AppBuilder remodel', () => {
     expect(screen.getByText('Actions')).toBeInTheDocument();
     expect(screen.getByText('Production')).toBeInTheDocument();
     // Context panel tabs
-    expect(screen.getByRole('button', { name: 'Widget' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Field' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Triggers' })).toBeInTheDocument();
   });
 

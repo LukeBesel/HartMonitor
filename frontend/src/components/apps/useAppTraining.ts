@@ -47,9 +47,9 @@ export const TRAINING_STEPS: TrainingStepDef[] = [
   },
   {
     id: 'widgets',
-    title: 'Add widgets to a step',
-    body: 'Widgets are what an operator sees and fills in — instructions, photos, pass/fail checks, numbers, scans. Drop a couple onto the canvas from the palette above it.',
-    cta: 'Add widgets',
+    title: 'Add fields to a step',
+    body: 'Fields are what an operator sees and fills in — instructions, photos, pass/fail checks, numbers, scans. Drop a couple onto the step from the palette above it.',
+    cta: 'Add fields',
   },
   {
     id: 'publish',

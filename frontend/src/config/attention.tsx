@@ -11,7 +11,7 @@ const ICONS: Record<AttentionType, React.ReactNode> = {
   ncr_critical: <ShieldCheck size={15} />,
   stock_low:    <Package size={15} />,
   po_late:      <ShoppingCart size={15} />,
-  // A help request notifies people — it does not dial anyone, so no phone imagery.
+  // A call notifies people — it does not dial anyone, so no phone imagery.
   andon_call:   <BellRing size={15} />,
   more:         <MoreHorizontal size={15} />,
 };
@@ -23,7 +23,7 @@ const TYPE_LABELS: Record<AttentionType, string> = {
   ncr_critical: 'Critical NCR',
   stock_low:    'Low stock',
   po_late:      'Late delivery',
-  andon_call:   'Help requested',
+  andon_call:   'Open call',
   more:         'And more',
 };
 

@@ -23,6 +23,11 @@ const getCycleTimes = vi.fn();
 const getOperatorPerformance = vi.fn();
 const getAppPerformance = vi.fn();
 const getQualityData = vi.fn();
+const getLeaderboard = vi.fn();
+const getMaintenanceSummary = vi.fn();
+const getAssets = vi.fn();
+const getPMSchedules = vi.fn();
+const getMaintenanceWorkOrders = vi.fn();
 
 vi.mock('../../api/client', () => ({
   api: {
@@ -35,7 +40,21 @@ vi.mock('../../api/client', () => ({
     get getOperatorPerformance() { return getOperatorPerformance; },
     get getAppPerformance() { return getAppPerformance; },
     get getQualityData() { return getQualityData; },
+    get getLeaderboard() { return getLeaderboard; },
+    get getMaintenanceSummary() { return getMaintenanceSummary; },
+    get getAssets() { return getAssets; },
+    getLeaderboardDepartments: vi.fn(() => Promise.resolve({ departments: [], period_label: 'This Week' })),
   },
+}));
+
+vi.mock('../../api/maintenance', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../api/maintenance')>()),
+  getPMSchedules: (...args: unknown[]) => getPMSchedules(...args),
+  getMaintenanceWorkOrders: (...args: unknown[]) => getMaintenanceWorkOrders(...args),
+}));
+
+vi.mock('../../context/BrandingContext', () => ({
+  useBranding: () => ({ companyName: 'Hart Tooling' }),
 }));
 
 vi.mock('../../components/shared/ModuleOnboarding', () => ({ default: () => null }));
@@ -200,5 +219,189 @@ describe('the shared duration formatter is the only one', () => {
     // The import may carry other appModel helpers alongside it — what matters
     // is that fmtDuration comes from the one shared module.
     expect(src).toMatch(/import \{[^}]*\bfmtDuration\b[^}]*\} from '\.\.\/components\/apps\/appModel'/);
+  });
+});
+
+
+// ─── The leaderboard says which board you are looking at ─────────────────────
+// The wall board rotates one board per app × product type, and the server sends
+// a board for the runs that named no product type at all. Titled with the bare
+// app name, that board and the busy one under it read as the same board with
+// two different sets of numbers, ten seconds apart. Worse, it came FIRST: the
+// panel in the break room opened on "1 operators · 5 runs".
+
+import Leaderboard from '../Leaderboard';
+
+const LB_BUSY = {
+  app_id: 'a1', app_name: 'Torque Check',
+  product_type_id: 'p1', product_type_name: 'Rotor',
+  qualifying_count: 311, operator_count: 12, excluded_quality_count: 0,
+  all_time_best_minutes: 4,
+  leaders: [{ rank: 1, operator_name: 'Ana Diaz', best_minutes: 4, avg_minutes: 5, completions: 30, is_record: true }],
+};
+const LB_UNTYPED = {
+  app_id: 'a1', app_name: 'Torque Check',
+  product_type_id: null, product_type_name: null,
+  qualifying_count: 5, operator_count: 1, excluded_quality_count: 0,
+  all_time_best_minutes: 6,
+  leaders: [{ rank: 1, operator_name: 'Bo Chen', best_minutes: 6, avg_minutes: 7, completions: 1, is_record: false }],
+};
+const LB_EMPTY = {
+  app_id: 'a2', app_name: 'Final Test',
+  product_type_id: null, product_type_name: null,
+  qualifying_count: 0, operator_count: 0, excluded_quality_count: 0,
+  all_time_best_minutes: null, leaders: [],
+};
+
+function renderWallBoard() {
+  return render(
+    <MemoryRouter initialEntries={['/leaderboard?tv=1']}>
+      <Leaderboard />
+    </MemoryRouter>,
+  );
+}
+
+describe('the leaderboard wall board', () => {
+  beforeEach(() => {
+    getLeaderboard.mockResolvedValue({
+      period: 'week', period_label: 'This Week', generated_at: '', boards: [LB_UNTYPED, LB_BUSY, LB_EMPTY],
+    });
+  });
+
+  it('opens on the board with the most runs, whatever order the payload came in', async () => {
+    renderWallBoard();
+    expect(await screen.findByText('Torque Check — Rotor')).toBeInTheDocument();
+    expect(screen.getByTestId('tv-board-counts')).toHaveTextContent('12 operators · 311 runs');
+  });
+
+  it('never rotates onto a board with nothing on it', async () => {
+    const { container } = renderWallBoard();
+    await screen.findByText('Torque Check — Rotor');
+    // Two boards have runs; the third is not in the rotation at all.
+    expect(container.querySelectorAll('.rounded-full.transition-all')).toHaveLength(2);
+  });
+
+  it("puts each board's scope in its own title", async () => {
+    getLeaderboard.mockResolvedValue({
+      period: 'week', period_label: 'This Week', generated_at: '', boards: [LB_UNTYPED],
+    });
+    renderWallBoard();
+    // The board of runs that named no product type is a board OF something,
+    // and its title says so instead of borrowing the app's bare name.
+    expect(await screen.findByText('Torque Check — All products')).toBeInTheDocument();
+  });
+
+  it('never prints "1 operators"', async () => {
+    getLeaderboard.mockResolvedValue({
+      period: 'week', period_label: 'This Week', generated_at: '', boards: [LB_UNTYPED],
+    });
+    renderWallBoard();
+    expect(await screen.findByTestId('tv-board-counts')).toHaveTextContent('1 operator · 5 runs');
+  });
+
+  it('counts the same way on the desk as on the wall', async () => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const src = await fs.readFile(path.join(here, '..', 'Leaderboard.tsx'), 'utf8');
+    // One helper, read by both renderings, off the same board object — so the
+    // office page and the panel on the wall cannot word or scope them apart.
+    expect(src).toMatch(/function boardCounts\(/);
+    expect(src).not.toMatch(/\{board\.operator_count\} operators/);
+    expect(src).not.toMatch(/\{board\.qualifying_count\} runs/);
+  });
+});
+
+// ─── A count and its noun ────────────────────────────────────────────────────
+// "1 operators", "1 completions today", "1 stations". Every one of these was a
+// hard-coded plural next to a number that can be one.
+
+describe('no screen hard-codes a plural next to a count', () => {
+  it('has no "{count} nouns" left on the management screens', async () => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const files = [
+      ['..', 'Leaderboard.tsx'], ['..', 'DepartmentView.tsx'], ['..', 'DepartmentTV.tsx'],
+      ['..', 'Dashboard.tsx'], ['..', 'Andon.tsx'], ['..', 'Maintenance.tsx'],
+      ['..', '..', 'components', 'analytics', 'OEEPanel.tsx'],
+    ];
+    // JSX expressions only — `{n} runs`. A `${…}` inside a template literal is
+    // frequently a WORD rather than a count ("No ${statusFilter} calls") or a
+    // denominator ("3 of 12 stations"), and flagging those is how a rule like
+    // this gets deleted instead of followed.
+    const NOUNS = 'operators|runs|completions|calls|stations|entries|jobs|requests|widgets';
+    const bad: string[] = [];
+    for (const rel of files) {
+      const full = path.join(here, ...rel);
+      const src = await fs.readFile(full, 'utf8');
+      src.split('\n').forEach((line, i) => {
+        if (new RegExp(`(^|[^$])\\{[^{}]*\\}\\s+(${NOUNS})\\b`).test(line)) {
+          bad.push(`${rel[rel.length - 1]}:${i + 1} ${line.trim().slice(0, 80)}`);
+        }
+      });
+    }
+    expect(bad).toEqual([]);
+  });
+});
+
+
+// ─── Maintenance raises JOBS, and says what its switches do ──────────────────
+// The button read "New WO" on a screen whose tab is called Maintenance Jobs,
+// and the PM table's "Auto" column rendered a checkbox beside a bare "0 d" —
+// two controls, no words, and nothing saying what either one decided.
+
+import Maintenance from '../Maintenance';
+
+const PM = {
+  id: 'pm-1', asset_id: 'as-1', asset_name: 'Press 2', title: 'Grease slides',
+  frequency_type: 'days', frequency_value: 30,
+  last_completed_at: null, next_due_at: '2026-09-10T08:00:00Z', next_due_reason: null,
+  is_overdue: false, assigned_to: 'Bo Chen', estimated_hours: 1,
+  auto_create_wo: true, lead_days: 3, open_wo_number: null,
+};
+
+describe('the maintenance screen', () => {
+  beforeEach(() => {
+    getDepartments.mockResolvedValue([]);
+    getMaintenanceSummary.mockResolvedValue({
+      open_wos: 0, overdue_pms: 0, assets_count: 1, critical_wos: 0, completed_today: 0,
+    });
+    getAssets.mockResolvedValue([]);
+    getMaintenanceWorkOrders.mockResolvedValue([]);
+    getPMSchedules.mockResolvedValue([PM]);
+  });
+
+  it('calls the thing it raises a job, not a WO', async () => {
+    render(<MemoryRouter><Maintenance /></MemoryRouter>);
+    await screen.findByRole('button', { name: /Maintenance Jobs/ });
+    (await screen.findByRole('button', { name: /Maintenance Jobs/ })).click();
+    expect(await screen.findByRole('button', { name: /New job/ })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /New WO/ })).toBeNull();
+  });
+
+  it('says what the PM auto-raise switch does, in words', async () => {
+    render(<MemoryRouter><Maintenance /></MemoryRouter>);
+    (await screen.findByRole('button', { name: /PM Schedules/ })).click();
+
+    // The column names the behaviour instead of abbreviating it to "Auto"…
+    expect(await screen.findByRole('columnheader', { name: /Raises its own job/ })).toBeInTheDocument();
+    // …and the number in the cell says what it counts.
+    const row = await screen.findByTestId('pm-row-pm-1');
+    expect(row).toHaveTextContent('lead');
+    expect(row).toHaveTextContent('days');
+  });
+
+  it('shows no lead time at all on a schedule nobody raises automatically', async () => {
+    getPMSchedules.mockResolvedValue([{ ...PM, auto_create_wo: false, lead_days: 0 }]);
+    render(<MemoryRouter><Maintenance /></MemoryRouter>);
+    (await screen.findByRole('button', { name: /PM Schedules/ })).click();
+
+    const row = await screen.findByTestId('pm-row-pm-1');
+    // A greyed-out "0 d" reads as a setting; this schedule has none.
+    expect(row).toHaveTextContent('raised by hand');
+    expect(row).not.toHaveTextContent('lead');
   });
 });

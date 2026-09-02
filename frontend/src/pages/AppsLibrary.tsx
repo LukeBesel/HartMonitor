@@ -2,7 +2,7 @@
 //
 // Apps are the product's hero: a supervisor builds a guided procedure here,
 // publishes it, and operators run it on the floor. So this page is a showcase,
-// not a list — it shows what each app IS (steps, widgets, where it runs) and
+// not a list — it shows what each app IS (steps, fields, where it runs) and
 // what it has DONE (runs this week, last run), and it puts starting points in
 // front of anyone who has not built one yet.
 
@@ -339,7 +339,7 @@ function FirstAppHero({ canEdit, canLoadSample, loadingSample, onLoadSample, onP
           </span>
           <h2 className="text-2xl sm:text-3xl font-bold mt-4 leading-tight">Build your first app</h2>
           <p className="text-blue-100/80 text-sm sm:text-[15px] mt-2.5 leading-relaxed">
-            Drag steps and widgets onto a canvas, add When / If / Then logic without writing code,
+            Drag steps and fields onto the page, add When / If / Then logic without writing code,
             and publish. Operators run it on a tablet at the station — every value they enter comes
             back as data you can chart, export and act on.
           </p>
@@ -360,7 +360,7 @@ function FirstAppHero({ canEdit, canLoadSample, loadingSample, onLoadSample, onP
           </div>
           <div className="flex flex-wrap gap-x-6 gap-y-2 mt-7 text-[13px] text-blue-100/70">
             <span className="flex items-center gap-1.5"><Layers size={13} /> Steps operators walk through</span>
-            <span className="flex items-center gap-1.5"><MousePointerClick size={13} /> Widgets that capture data</span>
+            <span className="flex items-center gap-1.5"><MousePointerClick size={13} /> Fields that capture data</span>
             <span className="flex items-center gap-1.5"><Zap size={13} /> Triggers instead of code</span>
           </div>
         </div>
@@ -481,7 +481,7 @@ function AppCard({ app, runStats, canEdit, onDelete, onPublish, onSaveTemplate, 
         {/* What it is */}
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-3 text-[11px] text-gray-500">
           <span className="flex items-center gap-1"><Layers size={11} /> {pluralize(shape.stepCount, 'step')}</span>
-          <span className="flex items-center gap-1"><MousePointerClick size={11} /> {pluralize(shape.widgetCount, 'widget')}</span>
+          <span className="flex items-center gap-1"><MousePointerClick size={11} /> {pluralize(shape.widgetCount, 'field')}</span>
           {shape.triggerCount > 0 && (
             <span className="flex items-center gap-1"><Zap size={11} /> {pluralize(shape.triggerCount, 'trigger')}</span>
           )}

@@ -63,7 +63,7 @@ export const WALKTHROUGHS: Record<string, WalkthroughStep[]> = {
   dashboard: [
     {
       title: 'Everything that needs you, first',
-      body: 'The top of the page is the only block that can change your plan today: work orders behind or overdue, stations down, low stock, and help requests raised from the floor. Answer a help request right here, or click a row to open the screen where you fix it.',
+      body: 'The top of the page is the only block that can change your plan today: work orders behind or overdue, stations down, low stock, and calls raised from the floor. Answer a call right here, or click a row to open the screen where you fix it.',
       icon: AlertTriangle,
       target: '[data-tour="attention"]',
     },

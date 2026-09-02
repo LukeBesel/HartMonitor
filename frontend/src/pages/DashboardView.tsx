@@ -25,7 +25,7 @@ const CARD_TYPES = [
   { type: 'time_series',  icon: TrendingUp, label: 'Time Series',     desc: 'Trend chart over days — throughput, cycle time, quality' },
   { type: 'distribution', icon: PieIcon,    label: 'Distribution',    desc: 'Pie/bar breakdown — by operator, app, quality, dept' },
   { type: 'leaderboard',  icon: Award,      label: 'Leaderboard',     desc: 'Top operators by completions or cycle time' },
-  { type: 'wo_status',    icon: Clipboard,  label: 'Work Order Status',desc: 'Summary of WO pipeline statuses' },
+  { type: 'wo_status',    icon: Clipboard,  label: 'Work Order Status',desc: 'Summary of work order statuses' },
   { type: 'table',        icon: Table,      label: 'Recent Runs',     desc: 'Latest completions table' },
 ];
 
@@ -82,6 +82,56 @@ export function seriesValueText(unit: string | undefined, value: number): string
   return unit === 'minutes' ? fmtMinutes(value) : String(value);
 }
 
+/** "1 run" / "5 runs". */
+function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/**
+ * The window a card's number was measured over — "today", "all time",
+ * "last 30 days".
+ *
+ * Two tiles side by side, one counting today and one counting every run ever
+ * recorded, with nothing on either saying so, is not a report: it is two
+ * numbers a reader has to guess the meaning of, and the guess is usually that
+ * the smaller one is broken. The server names the window when it can
+ * (`window_label`); when it does not, the card's own configuration already
+ * knows — the metric it asked for, and the period it asked over.
+ */
+function metricWindow(card: DashboardCard, data: any): string {
+  if (typeof data?.window_label === 'string' && data.window_label) return data.window_label;
+  switch (card.metric_key) {
+    case 'today_completions':     return 'today';
+    case 'period_completions':    return `last ${plural(card.period_days ?? 30, 'day')}`;
+    case 'active_runs':           return 'right now';
+    case 'low_stock_items':       return 'right now';
+    case 'open_ncrs':             return 'open now';
+    case 'open_maintenance_wos':  return 'open now';
+    case 'pm_due':                return 'next 7 days';
+    case 'total_completions':
+    case 'pass_rate':
+    case 'avg_cycle':
+    case 'training_coverage':     return 'all time';
+    default:                      return '';
+  }
+}
+
+/** What a metric's `sample_size` counted, so "323" is never a bare number. */
+function sampleNoun(card: DashboardCard): string {
+  if (card.metric_key === 'pass_rate') return 'inspected run';
+  if (card.metric_key === 'avg_cycle') return 'run';
+  if (card.metric_key === 'training_coverage') return 'training record';
+  return 'recorded result';
+}
+
+/** "today" · "all time · 323 runs" — the window, and the sample when there is
+ *  one. Empty string when neither is known: never an invented window. */
+function metricBasis(card: DashboardCard, data: any): string {
+  const parts = [metricWindow(card, data)];
+  if (typeof data?.sample_size === 'number') parts.push(plural(data.sample_size, sampleNoun(card)));
+  return parts.filter(Boolean).join(' · ');
+}
+
 function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
   if (!data) return <div className="flex items-center justify-center h-24 text-gray-400 text-sm">No data</div>;
 
@@ -96,6 +146,9 @@ function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
           <div className="flex flex-col items-center justify-center py-6 gap-1.5">
             <div className="text-5xl font-bold text-gray-300">—</div>
             <div className="text-xs text-gray-400 text-center px-2">{data.empty_reason || 'No data yet'}</div>
+            {metricWindow(card, data) && (
+              <div className="text-[11px] text-gray-400" data-testid="card-window">{metricWindow(card, data)}</div>
+            )}
           </div>
         );
       }
@@ -115,8 +168,8 @@ function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
               : (typeof val === 'number' && !Number.isInteger(val) ? val.toFixed(1) : val)}
             {data.suffix && !isDuration && <span className="text-2xl ml-1 font-medium opacity-70">{data.suffix}</span>}
           </div>
-          {typeof data.sample_size === 'number' && (
-            <div className="text-[11px] text-gray-400">from {data.sample_size} recorded result{data.sample_size === 1 ? '' : 's'}</div>
+          {metricBasis(card, data) && (
+            <div className="text-[11px] text-gray-400" data-testid="card-window">{metricBasis(card, data)}</div>
           )}
         </div>
       );

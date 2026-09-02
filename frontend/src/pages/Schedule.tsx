@@ -564,7 +564,7 @@ function WOModal({
         <div className="p-5 space-y-4">
           <div className="field-row gap-4">
             <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">WO Number</label>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Work order number</label>
               <input
                 className="input-field"
                 value={form.work_order_number}
@@ -1418,7 +1418,7 @@ export default function Schedule() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
           <input
             className="input-field pl-9"
-            placeholder="Search WO#, part name…"
+            placeholder="Search work order #, part name…"
             value={search}
             onChange={e => setSearch(e.target.value)}
           />
@@ -2268,7 +2268,7 @@ function GanttView({
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       {/* Timeline header */}
       <div className="flex border-b border-gray-200 bg-gray-50">
-        <div className="w-48 flex-shrink-0 px-4 py-2 text-xs font-medium text-gray-500 border-r border-gray-200">Department / WO</div>
+        <div className="w-48 flex-shrink-0 px-4 py-2 text-xs font-medium text-gray-500 border-r border-gray-200">Department / work order</div>
         <div className="flex-1 relative overflow-hidden">
           <div className="flex" style={{ minWidth: '100%' }}>
             {dayLabels.map((d, i) => (
