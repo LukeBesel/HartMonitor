@@ -104,6 +104,33 @@ describe('who ran this job', () => {
     expect(q.get('from')).toBe('operator');
   });
 
+  it('names the OPERATION the queue sent the operator to, not just the job', () => {
+    // "Op 3 of 7" is what the dispatch list showed and what the operator
+    // pressed. Sending only `wo` makes the player infer which operation that
+    // was from the job's pointer, which is a different answer the moment a
+    // colleague advances the job in the next minute.
+    const link = buildPlayLink({
+      appId: 'app-1', workOrderId: 'wo-2', operationId: 'op-9',
+      operatorName: 'Maria Lopez', operatorUserId: 'user-7', stationId: 'st-3', fromOperator: true,
+    });
+    const q = new URLSearchParams(link.split('?')[1]);
+    expect(q.get('op')).toBe('op-9');
+    expect(q.get('wo')).toBe('wo-2');
+    // Nothing to say about an operation ⇒ nothing on the link.
+    expect(buildPlayLink({ appId: 'app-1', workOrderId: 'wo-2' })).toBe('/play/app-1?wo=wo-2');
+  });
+
+  it('says where a run was started from when it was not the portal', () => {
+    // The Schedule's Dispatch queue is a MANAGER pressing Start: their own
+    // identity applies, so the link carries no uid — and `from=dispatch` is
+    // what tells the player it did not come from a tablet with an exit.
+    const link = buildPlayLink({
+      appId: 'app-1', workOrderId: 'wo-2', operationId: 'op-9', stationId: 'st-3', from: 'dispatch',
+    });
+    expect(link).toBe('/play/app-1?wo=wo-2&op=op-9&station=st-3&from=dispatch');
+    expect(new URLSearchParams(link.split('?')[1]).get('uid')).toBeNull();
+  });
+
   it('comes back to the portal as the person who left it', () => {
     // Without this the portal asks "Who's working?" and demands the PIN again
     // after every single unit.

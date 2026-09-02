@@ -74,6 +74,11 @@ const { companyTimeZone, offsetMinutes } = require('./plantDay');
 const {
   avgRunSecondsSQL, avgRunBasisSQL, runSecondsSQL, roundSeconds,
 } = require('./cycleTime');
+// Where a released job STANDS is workOrderOperations' answer and nobody else's.
+// Required at the top, not lazily: that module reads db.js and vocab.js only, so
+// there is no cycle to break — unlike routes/workorders.js below, which requires
+// this file back.
+const woOps = require('./workOrderOperations');
 
 // ─── Reasons ──────────────────────────────────────────────────────────────────
 // What a screen prints where a number would be. "—" with no explanation is how
@@ -83,6 +88,7 @@ const REASONS = {
   avg_cycle: 'no run has finished yet',
   pass_rate: 'no pass/fail result recorded yet',
   on_track: 'no open work order to be on track with',
+  no_operator: 'no operator on this request',
 };
 
 /** The measurement windows a caller may ask for. Named on every payload. */
@@ -552,7 +558,9 @@ function workOrderStates(ctxOrCompanyId, scope) {
  */
 function floorSnapshot(ctxOrCompanyId, opts = {}) {
   const ctx = asContext(ctxOrCompanyId);
-  return snapshotOf(ctx, resolveScope(ctx, opts));
+  // `operator` is not a scope — it does not narrow the plant's numbers, it adds
+  // one more beside them ("…and 4 of those are yours").
+  return snapshotOf(ctx, resolveScope(ctx, opts), { operator: opts.operator });
 }
 
 /**
@@ -569,6 +577,10 @@ function snapshotOf(ctxOrCompanyId, scope, opts = {}) {
   const cycle = avgCycle(ctx, scope, 'today');
   const quality = passRate(ctx, scope, 'today');
   const wos = opts.workOrderStates || workOrderStates(ctx, scope);
+  // One operator's own share of the day, when the caller said who is asking.
+  // The SAME plant day as every other figure here — the portal's TODAY tile
+  // reads this instead of counting the tablet's own midnight.
+  const mine = finishedTodayForOperator(ctx, scope, opts.operator || {});
 
   return {
     /** The calendar date at the plant right now — what "today" means here. */
@@ -578,6 +590,11 @@ function snapshotOf(ctxOrCompanyId, scope, opts = {}) {
 
     finished_today: finishedToday(ctx, scope),
     running_now: runningNow(ctx, scope),
+
+    /** What ONE operator finished on this same plant day, when the request
+     *  named one. Null with a reason when it did not — never 0. */
+    finished_today_for_operator: mine.count,
+    finished_today_for_operator_reason: mine.reason,
 
     avg_cycle_seconds: cycle.seconds,
     avg_cycle_basis: cycle.basis,
@@ -635,6 +652,8 @@ function emptySnapshot(ctxOrCompanyId, scope = null) {
     timezone: ctx.timezone,
     finished_today: 0,
     running_now: 0,
+    finished_today_for_operator: null,
+    finished_today_for_operator_reason: REASONS.no_operator,
     avg_cycle_seconds: null,
     avg_cycle_basis: null,
     avg_cycle_sample: 0,
@@ -823,6 +842,606 @@ function departmentSnapshots(ctxOrCompanyId, opts = {}) {
   };
 }
 
+// ─── Dispatch: what should run next, here ─────────────────────────────────────
+//
+// The keystone put the data in place — a released work order carries ordered
+// operations, each with its own app, department, station and quantities — and
+// no screen read it. "Where is WO-1042?" was answered by opening the Schedule,
+// finding the row, opening the drawer and counting the operations list.
+//
+// The three reads below are that question, answered by the server, under the
+// same rules as every other number in this module: the plant's own day, a scope
+// that is valid or empty (never widened), and null-with-a-reason wherever
+// nothing was measured.
+
+/**
+ * Work-order priority as an ORDER BY key, written out rather than left to
+ * SQLite's alphabet — which sorts 'critical' after 'behind' and 'low' before
+ * 'medium', i.e. exactly backwards. Anything unrecognised sorts last, so a bad
+ * value cannot jump the queue.
+ */
+const PRIORITY_RANK = `CASE wo.priority
+  WHEN 'critical' THEN 0
+  WHEN 'high'     THEN 1
+  WHEN 'medium'   THEN 2
+  WHEN 'low'      THEN 3
+  ELSE 4 END`;
+
+/**
+ * A due date sorts ascending with NULLS LAST. SQLite sorts NULL first, which
+ * puts every job nobody promised a date for ahead of the one due tomorrow.
+ */
+const DUE_DATE_RANK = `CASE WHEN wo.due_date IS NULL OR wo.due_date = '' THEN 1 ELSE 0 END`;
+
+/**
+ * An operation's department: its OWN, falling back to its work order's. A
+ * routing step may name no department (a small shop routes by station, or by
+ * nothing at all), and such an operation belongs where the job belongs rather
+ * than nowhere.
+ */
+const OP_DEPARTMENT = 'COALESCE(o.department_id, wo.department_id)';
+
+/** The two statuses a dispatch list may offer. 'queued' is ordered but not yet
+ *  startable; 'complete'/'skipped' are over; 'on_hold' is stopped on purpose. */
+const DISPATCHABLE_STATUSES = Object.freeze(['ready', 'running']);
+
+/** Work-order statuses that mean the job is over — nothing on one is dispatched. */
+const CLOSED_WORK_ORDERS = Object.freeze(['completed', 'cancelled']);
+
+const DISPATCH_REASONS = {
+  no_app: 'no app on this operation',
+  no_work_order: 'this app needs no work order',
+  not_counted: 'not counted yet',
+  // Stated once, in REASONS, so the snapshot's key and this one cannot drift.
+  no_operator: REASONS.no_operator,
+  unknown_operator: 'that operator is not on this company\'s roster',
+};
+
+/**
+ * Does this app need a work order to run?
+ *
+ * The SERVER side of components/player/runtime.ts `runContextRequired`, and
+ * deliberately the same rule rather than a new one: the app's own
+ * `require_run_context` setting when the author has made a choice, and
+ * otherwise the schema version — v2 apps require run context, v1 apps (and the
+ * seeded demo apps) do not. An app that needs no work order is exactly what the
+ * portal was unable to list: 'Final QC Inspection' is published, runnable and
+ * attached to no job, and the old jobs tab could not see it at all.
+ */
+function requiresWorkOrder(app) {
+  const v = app && app.require_run_context;
+  if (v === null || v === undefined) return Number(app && app.schema_version || 1) >= 2;
+  return Number(v) !== 0;
+}
+
+/** The station a caller scoped to, with the department it sits in. */
+function scopedStation(companyId, stationId) {
+  if (!stationId) return null;
+  return db.prepare('SELECT id, name, department_id FROM stations WHERE id = ? AND company_id = ?')
+    .get(stationId, companyId) || null;
+}
+
+/**
+ * THE STATION RULE, stated once and applied to both halves of the dispatch
+ * list: a row belongs to a station when it names that station, OR when it names
+ * no station at all and belongs to that station's department. A routing step
+ * that says "Weld" without saying which welder still has to appear on the
+ * welder's tablet, or filtering by station empties the screen for every shop
+ * that routes by department — which is most of them.
+ *
+ * A station in no department can only match rows that name it explicitly:
+ * borrowing the whole plant's queue under one station's name would be a lie,
+ * the same call resolveScope() already makes for work orders.
+ */
+function stationClause(station, column, departmentExpr) {
+  if (station.department_id) {
+    return {
+      sql: `(${column} = ? OR (${column} IS NULL AND ${departmentExpr} = ?))`,
+      params: [station.id, station.department_id],
+    };
+  }
+  return { sql: `${column} = ?`, params: [station.id] };
+}
+
+/**
+ * What to run next in this department / at this station: every operation that
+ * is READY or RUNNING, in the order a supervisor would call them — priority,
+ * then due date, then the job's own sequence — UNIONed with the published apps
+ * that need no work order at all.
+ *
+ * opts: { siteId, departmentId, stationId, appId } (or a resolved `scope`).
+ *
+ * Every row carries `kind` ('operation' | 'app') and `no_work_order`, so a
+ * screen never has to guess which of the two it is drawing. An operation whose
+ * routing step named no app is listed WITH `app_id: null` and a reason — it is
+ * still the next thing to happen on that job, and hiding it is how a routing
+ * mistake becomes an invisible stall.
+ */
+function dispatchQueue(ctxOrCompanyId, opts = {}) {
+  const ctx = asContext(ctxOrCompanyId);
+  const companyId = ctx.company_id;
+  const scope = opts.scope || resolveScope(ctx, opts);
+
+  const answer = (rows) => ({
+    plant_date: ctx.plant_date,
+    timezone: ctx.timezone,
+    /** The statuses this list is built from. Named so a reader never has to
+     *  guess whether 'queued' was included. */
+    statuses: [...DISPATCHABLE_STATUSES],
+    /** The order the rows are in, in words. */
+    order: 'priority, due date (nulls last), operation sequence',
+    rows,
+    scope: {
+      site_id: scope.site_id,
+      department_id: scope.department_id,
+      app_id: scope.app_id,
+      station_id: scope.station_id,
+      valid: scope.valid,
+    },
+  });
+
+  // An id from another company narrows to nothing — no rows, and no name from
+  // the other tenant read, let alone returned.
+  if (!scope.valid) return answer([]);
+
+  const station = scopedStation(companyId, scope.station_id);
+
+  // ── The operations ─────────────────────────────────────────────────────────
+  const clauses = [
+    'o.company_id = ?',
+    `o.status IN (${DISPATCHABLE_STATUSES.map(() => '?').join(',')})`,
+    `wo.status NOT IN (${CLOSED_WORK_ORDERS.map(() => '?').join(',')})`,
+  ];
+  const params = [companyId, ...DISPATCHABLE_STATUSES, ...CLOSED_WORK_ORDERS];
+
+  if (scope.department_id) { clauses.push(`${OP_DEPARTMENT} = ?`); params.push(scope.department_id); }
+  if (station) {
+    const st = stationClause(station, 'o.station_id', OP_DEPARTMENT);
+    clauses.push(st.sql); params.push(...st.params);
+  }
+  // A job with no site predates sites and stays visible under every one.
+  if (scope.site_id) { clauses.push('(wo.site_id = ? OR wo.site_id IS NULL)'); params.push(scope.site_id); }
+  if (scope.app_id)  { clauses.push('o.app_id = ?'); params.push(scope.app_id); }
+
+  const operations = db.prepare(`
+    SELECT o.id                AS work_order_operation_id,
+           o.work_order_id     AS work_order_id,
+           o.sequence          AS operation_sequence,
+           o.name              AS operation_name,
+           o.status            AS status,
+           o.app_id            AS app_id,
+           o.station_id        AS station_id,
+           o.quantity_required AS quantity_required,
+           o.quantity_completed AS quantity_completed,
+           o.standard_seconds  AS standard_seconds,
+           o.started_at        AS started_at,
+           ${OP_DEPARTMENT}    AS department_id,
+           d.name              AS department_name,
+           d.color             AS department_color,
+           s.name              AS station_name,
+           a.name              AS app_name,
+           wo.work_order_number AS work_order_number,
+           wo.part_number      AS part_number,
+           wo.part_name        AS part_name,
+           wo.priority         AS priority,
+           wo.due_date         AS due_date,
+           (SELECT COUNT(*) FROM work_order_operations x
+             WHERE x.work_order_id = o.work_order_id AND x.company_id = o.company_id) AS operation_count
+    FROM work_order_operations o
+    JOIN work_orders wo ON wo.id = o.work_order_id AND wo.company_id = o.company_id
+    LEFT JOIN departments d ON d.id = ${OP_DEPARTMENT}
+    LEFT JOIN stations    s ON s.id = o.station_id
+    LEFT JOIN apps        a ON a.id = o.app_id
+    WHERE ${clauses.join(' AND ')}
+    ORDER BY ${PRIORITY_RANK} ASC,
+             ${DUE_DATE_RANK} ASC,
+             wo.due_date ASC,
+             o.sequence ASC,
+             wo.work_order_number ASC
+  `).all(...params).map(row => ({
+    kind: 'operation',
+    no_work_order: false,
+    ...row,
+    /** Null app is a routing gap, not an empty row: say so where the app name
+     *  would be, rather than dropping the operation off the list. */
+    app_reason: row.app_id ? null : DISPATCH_REASONS.no_app,
+  }));
+
+  // ── The apps that need no work order ───────────────────────────────────────
+  // Scoped the same way the operations are, and de-duplicated against them: an
+  // app already offered as somebody's operation is started from that job, not
+  // twice.
+  const onAnOperation = new Set(operations.map(r => r.app_id).filter(Boolean));
+
+  const appClauses = ['ap.company_id = ?', "ap.status = 'published'"];
+  const appParams = [companyId];
+  if (scope.department_id) { appClauses.push('ap.department_id = ?'); appParams.push(scope.department_id); }
+  if (station) {
+    const st = stationClause(station, 'ap.station_id', 'ap.department_id');
+    appClauses.push(st.sql); appParams.push(...st.params);
+  }
+  if (scope.site_id) { appClauses.push('(ap.site_id = ? OR ap.site_id IS NULL)'); appParams.push(scope.site_id); }
+  if (scope.app_id)  { appClauses.push('ap.id = ?'); appParams.push(scope.app_id); }
+
+  const appRows = db.prepare(`
+    SELECT ap.id, ap.name, ap.department_id, ap.station_id,
+           ap.require_run_context, ap.schema_version,
+           d.name AS department_name, d.color AS department_color, s.name AS station_name
+    FROM apps ap
+    LEFT JOIN departments d ON d.id = ap.department_id
+    LEFT JOIN stations    s ON s.id = ap.station_id
+    WHERE ${appClauses.join(' AND ')}
+    ORDER BY ap.name COLLATE NOCASE ASC
+  `).all(...appParams)
+    .filter(app => !requiresWorkOrder(app) && !onAnOperation.has(app.id))
+    .map(app => ({
+      kind: 'app',
+      no_work_order: true,
+      work_order_operation_id: null,
+      work_order_id: null,
+      work_order_number: null,
+      part_number: null,
+      part_name: null,
+      priority: null,
+      due_date: null,
+      operation_sequence: null,
+      operation_count: null,
+      operation_name: null,
+      /** Nothing has been started, so nothing is running. */
+      status: 'ready',
+      started_at: null,
+      /** No job means no ordered quantity — null, never a 0 that reads as
+       *  "none of them are done". */
+      quantity_required: null,
+      quantity_completed: null,
+      standard_seconds: null,
+      department_id: app.department_id,
+      department_name: app.department_name ?? null,
+      department_color: app.department_color ?? null,
+      station_id: app.station_id,
+      station_name: app.station_name ?? null,
+      app_id: app.id,
+      app_name: app.name,
+      app_reason: null,
+      reason: DISPATCH_REASONS.no_work_order,
+    }));
+
+  // Jobs first — they are what the plant promised somebody — then the
+  // standing apps, alphabetically.
+  return answer([...operations, ...appRows]);
+}
+
+// ─── "Where is WO-1042?" ──────────────────────────────────────────────────────
+
+/**
+ * The candidate spellings of a work-order number. A floor asks for "1042", the
+ * traveller says "WO-2026-042" and the barcode scanner hands over whatever is
+ * printed: matching only the exact string is how a search box answers "not
+ * found" about a job that is on the screen behind it.
+ */
+function workOrderNumberCandidates(query) {
+  const q = query.trim();
+  const stripped = q.replace(/^wo[-\s]*/i, '');
+  return [...new Set([q, `WO-${stripped}`, stripped].map(s => s.toUpperCase()).filter(Boolean))];
+}
+
+/**
+ * Where ONE job stands, in the shape the search box prints.
+ *
+ * Where it stands is workOrderOperations.currentOperationFor's answer, imported
+ * rather than re-derived — the drawer on the Schedule, the work-order API and
+ * this search box must not be able to disagree about which operation a job is
+ * on.
+ */
+function wipRow(ctx, wo) {
+  const op = woOps.currentOperationFor(ctx.company_id, wo);
+  const released = !!wo.released_at && !!op;
+
+  if (!released) {
+    return {
+      work_order_id: wo.id,
+      work_order_number: wo.work_order_number,
+      part_number: wo.part_number,
+      part_name: wo.part_name,
+      operation_sequence: null,
+      /** A count: this job has no operations, which is a measurement. */
+      operation_count: 0,
+      operation_name: null,
+      department_name: wo.department_name ?? null,
+      quantity_completed: wo.quantity_completed,
+      quantity_required: wo.quantity,
+      status: wo.status,
+      started_at: null,
+      released: false,
+      answer: `${wo.work_order_number} is not released: at ${wo.status}`,
+    };
+  }
+
+  const where = op.department_name ? ` (${op.department_name})` : '';
+  return {
+    work_order_id: wo.id,
+    work_order_number: wo.work_order_number,
+    part_number: wo.part_number,
+    part_name: wo.part_name,
+    operation_sequence: op.sequence,
+    operation_count: op.of,
+    operation_name: op.name,
+    department_name: op.department_name ?? null,
+    quantity_completed: op.quantity_completed,
+    quantity_required: op.quantity_required,
+    status: op.status,
+    started_at: op.started_at ?? null,
+    released: true,
+    answer: `${wo.work_order_number} is at operation ${op.sequence} of ${op.of}`
+      + `${where}, ${op.quantity_completed} of ${op.quantity_required} done`,
+  };
+}
+
+/**
+ * Answer "where is WO-1042?" in one sentence.
+ *
+ * A work-order number wins over a part number — somebody typing a job number is
+ * asking about that job. A part number can match several open jobs, and then
+ * the answer is the list rather than a guess at which one they meant.
+ *
+ * Company-scoped at the SELECT: another tenant's work order is not "found and
+ * hidden", it is simply not found, and no name of theirs is ever read.
+ */
+function wipSearch(ctxOrCompanyId, rawQuery) {
+  const ctx = asContext(ctxOrCompanyId);
+  const companyId = ctx.company_id;
+  const query = (one(rawQuery) || '').trim();
+
+  const base = {
+    plant_date: ctx.plant_date,
+    timezone: ctx.timezone,
+    query,
+    match: 'none',
+    result: null,
+    results: [],
+    answer: null,
+    reason: null,
+  };
+
+  if (!query) return { ...base, reason: 'type a work order or part number' };
+
+  const SELECT = `
+    SELECT wo.*, d.name AS department_name
+    FROM work_orders wo
+    LEFT JOIN departments d ON d.id = wo.department_id
+  `;
+
+  const candidates = workOrderNumberCandidates(query);
+  const byNumber = db.prepare(`
+    ${SELECT}
+    WHERE wo.company_id = ?
+      AND UPPER(wo.work_order_number) IN (${candidates.map(() => '?').join(',')})
+    ORDER BY wo.created_at DESC
+  `).all(companyId, ...candidates);
+
+  if (byNumber.length > 0) {
+    const results = byNumber.map(wo => wipRow(ctx, wo));
+    return {
+      ...base,
+      match: 'work_order',
+      result: results[0],
+      results,
+      answer: results[0].answer,
+    };
+  }
+
+  const byPart = db.prepare(`
+    ${SELECT}
+    WHERE wo.company_id = ?
+      AND UPPER(wo.part_number) = ?
+      AND wo.status != 'cancelled'
+    ORDER BY wo.due_date IS NULL, wo.due_date ASC, wo.work_order_number ASC
+  `).all(companyId, query.toUpperCase());
+
+  if (byPart.length === 1) {
+    const results = byPart.map(wo => wipRow(ctx, wo));
+    return { ...base, match: 'part_number', result: results[0], results, answer: results[0].answer };
+  }
+  if (byPart.length > 1) {
+    const results = byPart.map(wo => wipRow(ctx, wo));
+    return {
+      ...base,
+      match: 'part_number',
+      result: null,
+      results,
+      answer: `${results.length} work orders carry part ${byPart[0].part_number}`,
+    };
+  }
+
+  return { ...base, reason: `no work order or part number matches "${query}"` };
+}
+
+// ─── WIP by operation, per department ─────────────────────────────────────────
+
+/**
+ * Do the completions rows carry per-unit good/scrap counts yet?
+ *
+ * They arrive with the scrap/rework workstream. Until they do, this reads the
+ * PRAGMA rather than the column, because SELECTing a column SQLite does not
+ * have is not a null — it is a 500 on the busiest screen in the product. Read
+ * once: the schema cannot change under a running process.
+ */
+let _countColumns = null;
+function completionCountColumns() {
+  if (_countColumns === null) {
+    const cols = db.prepare('PRAGMA table_info(completions)').all().map(c => c.name);
+    _countColumns = {
+      good: cols.includes('quantity_good'),
+      scrap: cols.includes('quantity_scrap'),
+    };
+  }
+  return _countColumns;
+}
+
+/**
+ * WIP by operation: how much work is running and how much is waiting in each
+ * department, plus today's good and scrap where anybody counted them.
+ *
+ * "queued" is READY + QUEUED — everything ordered and not yet running. The
+ * basis is named on the payload rather than left to a reader who would
+ * otherwise have to guess whether 12 waiting jobs means 12 startable ones.
+ *
+ * good/scrap are null WITH A REASON until the counts exist. A plant that has
+ * never recorded a scrap count has not made zero scrap.
+ */
+function wipSummary(ctxOrCompanyId, opts = {}) {
+  const ctx = asContext(ctxOrCompanyId);
+  const companyId = ctx.company_id;
+  const scope = opts.scope || resolveScope(ctx, opts);
+  const counts = completionCountColumns();
+
+  const departments = scope.valid
+    ? db.prepare(
+      'SELECT id, name, color FROM departments WHERE company_id = ?'
+      + (scope.site_id ? ' AND (site_id = ? OR site_id IS NULL)' : '')
+      + (scope.department_id ? ' AND id = ?' : '')
+      + ' ORDER BY name'
+    ).all(
+      companyId,
+      ...(scope.site_id ? [scope.site_id] : []),
+      ...(scope.department_id ? [scope.department_id] : []),
+    )
+    : [];
+
+  // 1 — operations on the floor, by department and status.
+  const opClauses = [
+    'o.company_id = ?',
+    `wo.status NOT IN (${CLOSED_WORK_ORDERS.map(() => '?').join(',')})`,
+    "o.status IN ('running','ready','queued')",
+  ];
+  const opParams = [companyId, ...CLOSED_WORK_ORDERS];
+  if (scope.department_id) { opClauses.push(`${OP_DEPARTMENT} = ?`); opParams.push(scope.department_id); }
+  if (scope.site_id)       { opClauses.push('(wo.site_id = ? OR wo.site_id IS NULL)'); opParams.push(scope.site_id); }
+
+  const byDept = {};
+  if (scope.valid) {
+    for (const row of db.prepare(`
+      SELECT ${OP_DEPARTMENT} AS dept_id, o.status AS status, COUNT(*) AS n
+      FROM work_order_operations o
+      JOIN work_orders wo ON wo.id = o.work_order_id AND wo.company_id = o.company_id
+      WHERE ${opClauses.join(' AND ')}
+      GROUP BY dept_id, o.status
+    `).all(...opParams)) {
+      const bucket = (byDept[row.dept_id] ??= { running: 0, queued: 0 });
+      if (row.status === 'running') bucket.running += row.n;
+      else bucket.queued += row.n;
+    }
+  }
+
+  // 2 — today's counted units, by department, when the columns exist.
+  const quantities = {};
+  if (scope.valid && (counts.good || counts.scrap)) {
+    const w = completionWhere(companyId, scope);
+    const DEPT = 'COALESCE(wo.department_id, st.department_id)';
+    const goodSum   = counts.good  ? 'SUM(COALESCE(c.quantity_good, 0))'  : 'NULL';
+    const scrapSum  = counts.scrap ? 'SUM(COALESCE(c.quantity_scrap, 0))' : 'NULL';
+    const goodSeen  = counts.good  ? 'SUM(CASE WHEN c.quantity_good  IS NOT NULL THEN 1 ELSE 0 END)' : '0';
+    const scrapSeen = counts.scrap ? 'SUM(CASE WHEN c.quantity_scrap IS NOT NULL THEN 1 ELSE 0 END)' : '0';
+    for (const row of db.prepare(`
+      SELECT ${DEPT} AS dept_id,
+             ${goodSum} AS good, ${scrapSum} AS scrap,
+             ${goodSeen} AS good_sample, ${scrapSeen} AS scrap_sample
+      ${COMPLETIONS_FROM}
+      WHERE ${w.sql} AND c.status = 'completed' AND date(c.completed_at, ?) = date('now', ?)
+      GROUP BY ${DEPT}
+    `).all(...w.params, ctx.day, ctx.day)) {
+      quantities[row.dept_id] = row;
+    }
+  }
+
+  const rows = departments.map(dept => {
+    const ops = byDept[dept.id] || { running: 0, queued: 0 };
+    const q = quantities[dept.id];
+    const goodSample  = counts.good  ? (q?.good_sample  || 0) : 0;
+    const scrapSample = counts.scrap ? (q?.scrap_sample || 0) : 0;
+    return {
+      department_id: dept.id,
+      department_name: dept.name,
+      department_color: dept.color,
+      running: ops.running,
+      queued: ops.queued,
+      /** What "queued" counted. Named, so it cannot quietly change meaning. */
+      queued_basis: 'ready + queued operations',
+      good_today: goodSample > 0 ? (q.good || 0) : null,
+      good_today_sample: goodSample,
+      good_today_reason: goodSample > 0 ? null : DISPATCH_REASONS.not_counted,
+      scrap_today: scrapSample > 0 ? (q.scrap || 0) : null,
+      scrap_today_sample: scrapSample,
+      scrap_today_reason: scrapSample > 0 ? null : DISPATCH_REASONS.not_counted,
+    };
+  });
+
+  const sum = (key) => rows.reduce((n, r) => n + (r[key] || 0), 0);
+  const goodSampleTotal  = rows.reduce((n, r) => n + r.good_today_sample, 0);
+  const scrapSampleTotal = rows.reduce((n, r) => n + r.scrap_today_sample, 0);
+
+  return {
+    plant_date: ctx.plant_date,
+    timezone: ctx.timezone,
+    departments: rows,
+    totals: {
+      running: sum('running'),
+      queued: sum('queued'),
+      queued_basis: 'ready + queued operations',
+      good_today: goodSampleTotal > 0 ? sum('good_today') : null,
+      good_today_sample: goodSampleTotal,
+      good_today_reason: goodSampleTotal > 0 ? null : DISPATCH_REASONS.not_counted,
+      scrap_today: scrapSampleTotal > 0 ? sum('scrap_today') : null,
+      scrap_today_sample: scrapSampleTotal,
+      scrap_today_reason: scrapSampleTotal > 0 ? null : DISPATCH_REASONS.not_counted,
+    },
+    scope: { site_id: scope.site_id, department_id: scope.department_id, valid: scope.valid },
+  };
+}
+
+// ─── One operator's own day ───────────────────────────────────────────────────
+
+/**
+ * How many runs THIS operator finished on the plant's day.
+ *
+ * The portal's TODAY tile used to count this in the browser, off the tablet's
+ * own clock, which is the exact bug rule 1 of this module exists to prevent: a
+ * second-shift tablet in Detroit reset the operator's counter at 8pm while
+ * every management screen carried on with the plant's day.
+ *
+ * Returns null WITH A REASON when nobody said who is asking — the tile then
+ * prints the reason rather than a 0 that reads as "you have finished nothing".
+ */
+function finishedTodayForOperator(ctxOrCompanyId, scope, operator = {}) {
+  const ctx = asContext(ctxOrCompanyId);
+  const userId = one(operator.userId);
+  const name = one(operator.name);
+  if (!userId && !name) return { count: null, reason: DISPATCH_REASONS.no_operator };
+
+  let clause, value;
+  if (userId) {
+    // Another company's user id identifies nobody here, and no name of theirs
+    // is read to say so.
+    const owned = ownedId('users', userId, ctx.company_id);
+    if (!owned) return { count: null, reason: DISPATCH_REASONS.unknown_operator };
+    clause = 'c.operator_user_id = ?';
+    value = owned;
+  } else {
+    clause = 'c.operator_name = ?';
+    value = name.trim();
+  }
+
+  const w = completionWhere(ctx.company_id, scope);
+  const count = db.prepare(`
+    SELECT COUNT(*) AS n ${COMPLETIONS_FROM}
+    WHERE ${w.sql} AND c.status = 'completed'
+      AND date(c.completed_at, ?) = date('now', ?)
+      AND ${clause}
+  `).get(...w.params, ctx.day, ctx.day, value).n;
+
+  return { count, reason: null };
+}
+
 module.exports = {
   REASONS,
   WINDOWS,
@@ -845,4 +1464,12 @@ module.exports = {
   snapshotOf,
   emptySnapshot,
   departmentSnapshots,
+  // ── Dispatch, WIP and one operator's day ──
+  DISPATCHABLE_STATUSES,
+  DISPATCH_REASONS,
+  requiresWorkOrder,
+  dispatchQueue,
+  wipSearch,
+  wipSummary,
+  finishedTodayForOperator,
 };
