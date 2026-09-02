@@ -121,6 +121,17 @@ const config = {
   microsoft:{ configured: !!(process.env.MICROSOFT_CLIENT_ID && process.env.MICROSOFT_CLIENT_SECRET) },
 };
 
+// ─── The one fail-open default, said out loud ─────────────────────────────────
+// `earlyAccess` defaults to TRUE and production depends on that default: nothing
+// is set in the deploy environment, and flipping it would start charging gates
+// at customers who were promised everything. So the default stays — but a gate
+// that is open because nobody set a variable must never be a silent condition.
+// Printed at require time, before the banner, so it is the first thing in the
+// log. The gate itself lives in backend/src/middleware/plan.js.
+if (config.earlyAccess && IS_PROD) {
+  console.warn('[plan] EARLY_ACCESS is on — every tier gate is open (no plan is enforced for any company). Set EARLY_ACCESS=false to enforce paid tiers.');
+}
+
 // ─── Boot-time validation ─────────────────────────────────────────────────────
 // Returns { warnings, errors }. Errors are fatal in production.
 
