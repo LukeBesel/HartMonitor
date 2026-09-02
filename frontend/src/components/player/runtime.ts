@@ -543,38 +543,42 @@ export interface PlayLinkParams {
    * The work_order_operation the run books against — "op 3 of 7", not just
    * "somewhere on WO-1042". A dispatch list knows exactly which operation it
    * sent the operator to start, and the player carries the id through to the
-   * completion so the booking lands on that operation rather than being
-   * inferred from the job's pointer a shift later.
+   * completion so the booking lands on that operation (?op=).
    */
   operationId?: string | null;
   /**
-   * An in-progress completion to CARRY ON, rather than a new run to start.
-   *
-   * A tablet that reloads mid-run leaves its completion open, and the operator
-   * coming back is resuming that unit — not starting a second one against the
-   * same job. The portal knows exactly which run it is offering, so it names
-   * it; the player resumes that id at its saved step instead of inferring
-   * which of several open runs was meant.
+   * An in-progress completion to CARRY ON, rather than a new run to start
+   * (?run=). The portal names the exact run it is offering; the player resumes
+   * that id at its saved step instead of inferring which open run was meant.
    */
   runId?: string | null;
   operatorName?: string | null;
   operatorUserId?: string | null;
   stationId?: string | null;
   fromOperator?: boolean;
-  /** Where the run was started from, when it was not the Operator Portal.
-   *  'dispatch' is the Schedule's queue: the manager's own identity applies, so
-   *  such a link carries no uid. */
+  /** A dispatch-board link: no uid, the signed-in session identifies them. */
+  fromDispatch?: boolean;
+  /** Where the run was started from, when neither shorthand applies. */
   from?: string | null;
 }
 
 /**
- * Deep link into the player, carrying the VERIFIED identity (uid) so the run is
- * attributed to the person, not to their typing — and, since the queue knows
- * them, the exact operation the job is standing on and the open run being
- * picked back up.
+ * Deep link into the player. THE param contract, in one place:
  *
- * Parameter order is fixed — wo, op, run, name, uid, station, from — so the
- * links are comparable by eye in a log, a screenshot or a test.
+ *   wo       the work order
+ *   op       the work order OPERATION the run's units book against
+ *   run      an in-progress run to resume instead of starting a new one
+ *   name     who (display only)
+ *   uid      who, VERIFIED — only the Operator Portal, which checked a badge
+ *   station  where it runs
+ *   from     'operator' (portal) or 'dispatch' (board) — decides where Exit
+ *            goes, and whether the signed-in user is taken as the operator
+ *
+ * Parameter order is fixed — wo, op, run, name, uid, station, from — so links
+ * are comparable by eye in a log, a screenshot or a test. A dispatch link
+ * deliberately carries no `uid`: a uid in a URL is a claim anybody can copy,
+ * while the portal's is one a badge reader verified (see setupNeeded's
+ * `selfIdentified`).
  */
 export function buildPlayLink(p: PlayLinkParams): string {
   const q = new URLSearchParams();
@@ -585,13 +589,94 @@ export function buildPlayLink(p: PlayLinkParams): string {
   if (name) q.set('name', name);
   if (p.operatorUserId) q.set('uid', p.operatorUserId);
   if (p.stationId) q.set('station', p.stationId);
-  // `fromOperator` is the Operator Portal's shorthand for the way back it
-  // needs; anything else names itself. The portal wins if both are given,
-  // because it is the one with an exit to return to.
-  const from = p.fromOperator ? 'operator' : (p.from ?? '').trim();
+  // The portal wins if several are given: it is the one with an exit to return to.
+  const from = p.fromOperator ? 'operator' : p.fromDispatch ? 'dispatch' : (p.from ?? '').trim();
   if (from) q.set('from', from);
   const qs = q.toString();
   return `/play/${p.appId}${qs ? `?${qs}` : ''}`;
+}
+
+/** Who is holding the tablet, as far as the link and the session know. */
+export interface RunIdentity {
+  operatorUserId?: string | null;
+  operatorName?: string | null;
+}
+
+/** A run in progress, as the jobs list reports it. */
+export interface ResumableJob {
+  id: string;
+  operator_name?: string | null;
+  operator_user_id?: string | null;
+  last_session?: { operator_name?: string | null; operator_user_id?: string | null } | null;
+}
+
+/**
+ * What a ?run= link resolved to.
+ *
+ *   resume — the operator's OWN run: pick it straight up.
+ *   theirs — somebody else has it. Not resumed silently; the setup screen
+ *            shows the concurrent-run card so the choice is made on purpose.
+ *   gone   — finished, handed on, or not this app's / this company's.
+ *   none   — no ?run= at all.
+ */
+export type ResumeTarget<J> =
+  | { kind: 'resume'; job: J }
+  | { kind: 'theirs'; job: J; notice: string }
+  | { kind: 'none' }
+  | { kind: 'gone'; notice: string };
+
+/**
+ * Is this run the current operator's own?
+ *
+ * The verified user id decides it whenever both sides have one — a name is
+ * typed and two people on a shift can share one. The most recent stint wins
+ * over whoever started the job, because that is who is holding it now.
+ */
+export function isOwnRun(job: ResumableJob, me: RunIdentity): boolean {
+  const holderId = job.last_session?.operator_user_id ?? job.operator_user_id ?? null;
+  const myId = me.operatorUserId ?? null;
+  if (holderId && myId) return holderId === myId;
+  const holderName = String(job.last_session?.operator_name ?? job.operator_name ?? '').trim().toLowerCase();
+  const myName = String(me.operatorName ?? '').trim().toLowerCase();
+  // No id on either side and no name to compare: not provably yours, so it is
+  // treated as somebody else's and the choice goes to the operator.
+  if (!holderName || !myName) return false;
+  return holderName === myName;
+}
+
+/**
+ * Resolve a ?run= parameter against the runs the SERVER says are open for this
+ * app and this company.
+ *
+ * That list is the whole security model here: a run id that is finished,
+ * abandoned, from another app or from another tenant is simply not in it, so it
+ * cannot be resumed — it degrades to the normal setup flow with a plain notice
+ * rather than an error nobody can act on.
+ */
+export function resumeTarget<J extends ResumableJob>(
+  jobs: J[],
+  runParam: string | null | undefined,
+  me: RunIdentity = {},
+): ResumeTarget<J> {
+  const wanted = String(runParam ?? '').trim();
+  if (!wanted) return { kind: 'none' };
+  const job = jobs.find(j => j.id === wanted);
+  if (!job) {
+    return {
+      kind: 'gone',
+      notice: 'That run is no longer open — somebody finished or handed it on. Start it again below.',
+    };
+  }
+  if (isOwnRun(job, me)) return { kind: 'resume', job };
+  // Somebody else's job. Joining it is a real choice — the two of them will be
+  // recording one unit together — and a link is not a place to make it
+  // silently. The setup screen already has the card that asks.
+  const holder = String(job.last_session?.operator_name ?? job.operator_name ?? '').trim();
+  return {
+    kind: 'theirs',
+    job,
+    notice: `${holder || 'Somebody else'} has this run open. Resume theirs to carry on together, or start a separate run.`,
+  };
 }
 
 // --- One filing per problem, not one per press ------------------------------
@@ -699,6 +784,18 @@ export interface StartChoices {
   productTypeLocked: boolean;
   /** Preview always shows setup — it is the screen a builder is checking. */
   preview: boolean;
+  /**
+   * The person holding the tablet is already identified WITHOUT a uid in the
+   * link: a signed-in manager who tapped a job on the dispatch board is
+   * starting it for themselves, and their session already says who they are.
+   *
+   * It is a flag rather than a uid smuggled into the URL because a uid in a
+   * link is a claim anybody can copy: the Operator Portal's uid is one the
+   * portal VERIFIED at a badge reader, and a link that could mint one would
+   * make every run's attribution guessable. The session, by contrast, is proof
+   * the server already checked.
+   */
+  selfIdentified?: boolean;
 }
 
 /**
@@ -717,7 +814,7 @@ export interface StartChoices {
  */
 export function setupNeeded(ctx: StartContext, choices: StartChoices): boolean {
   if (choices.preview) return true;
-  if (!ctx.operatorUserId) return true;
+  if (!ctx.operatorUserId && !choices.selfIdentified) return true;
   if (!ctx.stationId) return true;
   // What is being built: a work order, or a part number in its place.
   if (!ctx.workOrderId && !String(ctx.partNumber ?? '').trim()) return true;
@@ -777,4 +874,94 @@ export function concurrentRun<J extends JobLike>(
     // An unreadable stamp is stated as unknown, never rendered as "0s ago".
     ageSeconds: Number.isFinite(parsed) ? Math.max(0, Math.round((now - parsed) / 1000)) : null,
   };
+}
+
+// --- Units this run ---------------------------------------------------------
+
+/**
+ * What the operator entered on the finish step.
+ *
+ * `unitsRun` is how many pieces they say came off the machine — prefilled with
+ * 1, which is what a run has always implicitly been. The three counts have to
+ * account for every one of them.
+ */
+export interface UnitsEntry {
+  unitsRun: number;
+  good: number;
+  scrap: number;
+  rework: number;
+  /** The coded reason. Required the moment scrap is non-zero — unless the
+   *  company has no scrap reasons to pick from (see `scrapCodesOffered`). */
+  scrapReasonCodeId?: string;
+  /**
+   * How many active scrap reasons this company offers.
+   *
+   * Zero means a manager has not set the list up yet, and there is nothing for
+   * the operator to pick. Demanding a reason there does not produce a better
+   * number — it produces an operator who cannot close a run, and a plant that
+   * goes back to not counting scrap at all. Undefined is treated as "some",
+   * which keeps the rule on wherever the count is unknown.
+   */
+  scrapCodesOffered?: number;
+}
+
+export interface UnitsCheck {
+  ok: boolean;
+  /** Why the run cannot close, naming the mismatch. Empty when it can. */
+  reason: string;
+}
+
+/**
+ * The rule that stops a run closing on numbers that do not add up.
+ *
+ * Good + scrap + rework must equal the units the operator says they ran. It is
+ * the one arithmetic check that catches the mistake nobody notices afterwards:
+ * three pieces made, two counted, one silently gone from the plant's yield
+ * forever. The message NAMES the mismatch — "You entered 3 units but
+ * 2 + 0 + 0 = 2" — because "invalid" tells an operator nothing about which
+ * number to change.
+ *
+ * A run whose control was never touched does not come through here at all: it
+ * sends no counts, and the server stores NULLs.
+ */
+export function unitsBalance(e: UnitsEntry): UnitsCheck {
+  const fields: Array<[number, string]> = [
+    [e.unitsRun, 'Units run'], [e.good, 'Good'], [e.scrap, 'Scrap'], [e.rework, 'Rework'],
+  ];
+  for (const [value, label] of fields) {
+    if (!Number.isInteger(value) || value < 0) {
+      return { ok: false, reason: `${label} has to be a whole number of 0 or more` };
+    }
+  }
+  if (e.unitsRun < 1) return { ok: false, reason: 'A run has to be at least 1 unit' };
+  const sum = e.good + e.scrap + e.rework;
+  if (sum !== e.unitsRun) {
+    return {
+      ok: false,
+      // "1 units" is the kind of detail that makes an operator distrust the
+      // number the sentence is about.
+      reason: `You entered ${e.unitsRun} ${e.unitsRun === 1 ? 'unit' : 'units'}`
+        + ` but ${e.good} + ${e.scrap} + ${e.rework} = ${sum}`,
+    };
+  }
+  const offered = e.scrapCodesOffered ?? 1;
+  if (e.scrap > 0 && offered > 0 && !(e.scrapReasonCodeId || '').trim()) {
+    return { ok: false, reason: 'Pick what the scrap was — scrap with no reason cannot be reported on' };
+  }
+  return { ok: true, reason: '' };
+}
+
+/** How the summary reads a run back: "1 good · 1 scrap · Weld porosity". */
+export function unitsSummary(
+  counts: { good?: number | null; scrap?: number | null; rework?: number | null },
+  scrapReasonLabel?: string | null,
+): string {
+  const parts: string[] = [];
+  if (counts.good != null) parts.push(`${counts.good} good`);
+  if (counts.scrap != null && counts.scrap > 0) parts.push(`${counts.scrap} scrap`);
+  if (counts.rework != null && counts.rework > 0) parts.push(`${counts.rework} rework`);
+  if (parts.length === 0) return '';
+  const label = (scrapReasonLabel || '').trim();
+  if (label && (counts.scrap ?? 0) > 0) parts.push(label);
+  return parts.join(' · ');
 }

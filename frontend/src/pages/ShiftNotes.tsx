@@ -5,6 +5,8 @@ import {
   BookOpen,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { getScrapByPart } from '../api/scrap';
+import type { ScrapByPart } from '../api/scrap';
 import { currentShiftFor, formatShiftRange, toMinutes } from '../utils/shifts';
 import type { SiteShift } from '../utils/shifts';
 
@@ -300,6 +302,23 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
   const [savingNotes, setSavingNotes] = useState(false);
   const [error, setError] = useState('');
   const notesTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // What the runs themselves recorded today. Shown BESIDE the typed count and
+  // never written into it: the hand-entered number is what the supervisor
+  // believes and the derived one is what the floor recorded, and a screen that
+  // silently overwrites one with the other destroys the only evidence that they
+  // ever disagreed. Best-effort — a plan or permission that cannot read it just
+  // sees the typed count on its own, exactly as before.
+  const [derivedScrap, setDerivedScrap] = useState<ScrapByPart | null>(null);
+  useEffect(() => {
+    let live = true;
+    getScrapByPart(1).then(d => { if (live) setDerivedScrap(d); }).catch(() => undefined);
+    return () => { live = false; };
+  }, []);
+  // Only for the note's OWN day: yesterday's shift cannot be checked against
+  // today's runs, and saying nothing is better than saying something wrong.
+  const derivedForThisShift = derivedScrap && derivedScrap.plant_date === note.shift_date
+    ? derivedScrap.totals
+    : null;
 
   // Sync local state when note changes (e.g. after refresh)
   useEffect(() => {
@@ -443,11 +462,12 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
               />
             </div>
 
-            {/* Scrap Count */}
+            {/* Scrap Count — typed, beside what the runs recorded */}
             <div className="bg-gray-50 rounded-lg p-3">
               <div className="flex items-center gap-1.5 mb-2">
                 <Trash2 size={14} className="text-red-700" />
                 <label className="text-xs font-medium text-gray-500">Scrap Count</label>
+                <span className="text-[10px] uppercase tracking-wide text-gray-400 font-semibold">hand-entered</span>
               </div>
               <input
                 type="number"
@@ -457,6 +477,19 @@ function ActiveNoteEditor({ note, onRefresh }: ActiveNoteEditorProps) {
                 onBlur={saveNumericFields}
                 className="w-full bg-white border border-gray-300 rounded-lg px-3 py-2 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
               />
+              <div className="text-[11px] mt-1.5 leading-snug">
+                {derivedForThisShift === null ? (
+                  <span className="text-gray-400">Runs recorded: only shown for today’s shift</span>
+                ) : derivedForThisShift.sample === 0 ? (
+                  <span className="text-gray-400">Runs recorded: — no run counted units today</span>
+                ) : (
+                  <span className="text-gray-600 tabular-nums">
+                    Runs recorded: <strong>{derivedForThisShift.scrap}</strong> scrap
+                    {' · '}{derivedForThisShift.good} good
+                    {derivedForThisShift.fpy_pct !== null && ` · ${derivedForThisShift.fpy_pct}% first pass`}
+                  </span>
+                )}
+              </div>
             </div>
 
             {/* Downtime */}
