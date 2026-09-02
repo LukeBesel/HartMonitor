@@ -108,7 +108,7 @@ const MODULE_GUIDES: ModuleGuide[] = [
       'Assign a Department and takt time target so the system can track pace vs. plan.',
       'Set priority (Critical / High / Medium / Low) -- overdue high-priority WOs show red in the dashboard.',
       'As operators complete jobs in the portal, quantity_completed updates automatically.',
-      'Manager View gives a drag-and-drop calendar view of all open work orders by department.',
+      'The Command Center shows every open work order by department; pick a department to narrow it.',
     ],
     tips: [
       'Takt time is the "goal" cycle time per unit. Set it accurately for meaningful OEE data.',
