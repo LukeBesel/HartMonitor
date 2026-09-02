@@ -24,10 +24,22 @@ export interface AppDashboardFilters {
   operator: string;
   workOrderId: string;
   productTypeId: string;
+  /** Applied to the runs on screen, not sent to the server: the analytics
+   *  endpoint has no result dimension, and pretending it did would filter a
+   *  slice the totals above the table were not taken over. */
+  result: ResultFilter;
+  /** Same deal — narrows the rows, never the totals. */
+  status: StatusFilter;
+  /** Free text over operator, work order and run id, over the loaded rows. */
+  query: string;
 }
+
+export type ResultFilter = 'all' | 'pass' | 'fail' | 'unchecked';
+export type StatusFilter = 'all' | 'completed' | 'in_progress' | 'abandoned';
 
 export const DEFAULT_FILTERS: AppDashboardFilters = {
   days: 30, operator: '', workOrderId: '', productTypeId: '',
+  result: 'all', status: 'all', query: '',
 };
 
 /** Day windows offered by the picker. The server clamps `days` to 1..365. */
@@ -35,17 +47,13 @@ export const DAY_PRESETS = [7, 30, 90, 365] as const;
 
 /** True when something narrower than the plain day window is applied. */
 export function hasNarrowingFilters(filters: AppDashboardFilters): boolean {
-  return !!(filters.operator || filters.workOrderId || filters.productTypeId);
+  return !!(filters.operator || filters.workOrderId || filters.productTypeId
+    || filters.result !== 'all' || filters.status !== 'all' || filters.query.trim());
 }
 
-/** Query-string form for deep-linking the full analytics page at the same slice. */
-export function filtersToQuery(filters: AppDashboardFilters): string {
-  const qs = new URLSearchParams();
-  qs.set('days', String(filters.days));
-  if (filters.operator) qs.set('operator', filters.operator);
-  if (filters.workOrderId) qs.set('work_order_id', filters.workOrderId);
-  if (filters.productTypeId) qs.set('product_type_id', filters.productTypeId);
-  return `?${qs.toString()}`;
+/** True for the three the SERVER honours — the ones the totals move with. */
+export function hasServerFilters(filters: AppDashboardFilters): boolean {
+  return !!(filters.operator || filters.workOrderId || filters.productTypeId);
 }
 
 /**
@@ -61,22 +69,46 @@ export function filtersToQuery(filters: AppDashboardFilters): string {
  */
 export function filtersFromQuery(params: URLSearchParams): AppDashboardFilters {
   const days = Number.parseInt(params.get('days') ?? '', 10);
+  const result = params.get('result');
+  const status = params.get('status');
   return {
     days: (DAY_PRESETS as readonly number[]).includes(days) ? days : DEFAULT_FILTERS.days,
     operator: params.get('operator') ?? '',
     workOrderId: params.get('work_order_id') ?? '',
     productTypeId: params.get('product_type_id') ?? '',
+    result: (['pass', 'fail', 'unchecked'] as const).includes(result as never)
+      ? (result as ResultFilter) : 'all',
+    status: (['completed', 'in_progress', 'abandoned'] as const).includes(status as never)
+      ? (status as StatusFilter) : 'all',
+    query: params.get('q') ?? '',
   };
+}
+
+/**
+ * True when the URL asked for a day window this screen does not offer.
+ *
+ * `?days=14` was silently rounded to 30 and then reported as "the last 30
+ * days": a window nobody asked for, under a label nobody could question. The
+ * screen normalises the URL to the window it actually used instead, and says
+ * it did.
+ */
+export function unofferedDays(params: URLSearchParams): number | null {
+  const raw = params.get('days');
+  if (raw === null || raw === '') return null;
+  const days = Number.parseInt(raw, 10);
+  if (Number.isNaN(days)) return null;
+  return (DAY_PRESETS as readonly number[]).includes(days) ? null : days;
 }
 
 // ─── Headline metrics ────────────────────────────────────────────────────────
 
 export interface HeadlineMetric {
-  key: 'runs' | 'completed' | 'avg_cycle' | 'first_pass_yield';
+  key: 'runs' | 'completed' | 'avg_cycle' | 'best_cycle' | 'first_pass_yield';
   label: string;
   /** Formatted value, or null when the data cannot support the metric. */
   value: string | null;
-  /** Why it reads "—", or what a real value was measured over. */
+  /** Why it reads "—", or what a real value was measured over, and the window
+   *  it was taken over — every tile names its own window. */
   note: string;
 }
 
@@ -89,8 +121,20 @@ export interface HeadlineMetric {
 export function buildHeadlineMetrics(
   totals: AppAnalyticsResponse['totals'],
   days: number,
+  /** Summed per-step takt for this app, when it has one. A cycle time only
+   *  means something against the time the job was planned to take. */
+  taktSeconds: number | null = null,
 ): HeadlineMetric[] {
   const noRuns = totals.runs === 0;
+  // Every tile names the window it was taken over. Four numbers in a row with
+  // no window on them is how the same tile got read as "today" on one screen
+  // and "all time" on the next.
+  const window = `last ${days} days`;
+  const avg = measuredSeconds(totals.avg_duration_s);
+  const takt = measuredSeconds(taktSeconds);
+  const best = measuredSeconds(totals.best_duration_s);
+  const qcSample = totals.qc_sample_size ?? 0;
+  const vsTakt = avg !== null && takt !== null ? avg - takt : null;
 
   return [
     {
@@ -107,22 +151,36 @@ export function buildHeadlineMetrics(
       // it", which is exactly what Run History reports as "—". Treat it the
       // same here rather than letting one screen print 0s for what another
       // screen calls unknown.
-      value: measuredSeconds(totals.avg_duration_s) === null
-        ? null
-        : fmtDuration(measuredSeconds(totals.avg_duration_s)),
-      note: measuredSeconds(totals.avg_duration_s) === null
-        ? (noRuns ? 'no runs in this window'
-          : totals.completed === 0 ? 'no run has finished yet'
-            : 'no finished run was timed')
-        : `over ${pluralize(totals.completed, 'completed run')}`,
+      value: avg === null ? null : fmtDuration(avg),
+      note: avg === null
+        ? (noRuns ? `no runs in the ${window}`
+          : totals.completed === 0 ? `no run has finished in the ${window}`
+            : `no finished run was timed · ${window}`)
+        // Against takt when the app has one: a cycle time on its own is a
+        // number, and a number against the planned time is an answer.
+        : vsTakt !== null
+          ? `${vsTakt > 0 ? '+' : '−'}${fmtDuration(Math.abs(vsTakt))} vs takt ${fmtDuration(takt)} · ${window}`
+          // The sign carries the direction: "+31s vs takt 6m 5s" is over,
+          // "−31s" is under. No colour is doing work the words are not.
+          : `over ${pluralize(totals.completed, 'completed run')} · ${window}`,
+    },
+    {
+      key: 'best_cycle',
+      label: 'Best cycle time',
+      value: best === null ? null : fmtDuration(best),
+      note: best === null
+        ? (noRuns ? `no runs in the ${window}` : `no finished run was timed · ${window}`)
+        : `fastest completed run · ${window}`,
     },
     {
       key: 'first_pass_yield',
       label: 'First-pass yield',
       value: totals.first_pass_yield === null ? null : `${Math.round(totals.first_pass_yield)}%`,
       note: totals.first_pass_yield === null
-        ? (noRuns ? 'no runs in this window' : 'no pass/fail check recorded')
-        : 'runs whose checks all passed',
+        ? (noRuns ? `no runs in the ${window}` : `no pass/fail check recorded · ${window}`)
+        // The sample is the point: 100% of two inspected runs and 100% of two
+        // hundred are the same number and not the same claim.
+        : `from ${pluralize(qcSample, 'inspected run')} · ${window}`,
     },
     {
       key: 'completed',
@@ -130,16 +188,16 @@ export function buildHeadlineMetrics(
       value: String(totals.completed),
       // A completion rate over zero runs is a made-up percentage, not a zero.
       note: noRuns
-        ? 'no runs to complete'
-        : `${Math.round((totals.completed / totals.runs) * 100)}% of runs started`,
+        ? `no runs to complete · ${window}`
+        : `${Math.round((totals.completed / totals.runs) * 100)}% of runs started · ${window}`,
     },
     {
       key: 'runs',
       label: 'Runs started',
       value: String(totals.runs),
       note: noRuns
-        ? `nothing started in the last ${days} days`
-        : `${totals.abandoned} abandoned`,
+        ? `nothing started in the ${window}`
+        : `${totals.abandoned} abandoned · ${window}`,
     },
   ];
 }
@@ -268,4 +326,77 @@ export function buildOperatorRollup(
           : `average cycle time over ${pluralize(row.runs, 'run')}`,
       };
     });
+}
+
+// ─── Getting faster or slower ────────────────────────────────────────────────
+
+export interface CycleTrend {
+  /** Recent mean minus earlier mean, in seconds. Negative is faster. */
+  deltaSeconds: number;
+  /** How many runs are on EACH side of the comparison. */
+  sample: number;
+  /** True when the gap is too small to call a direction. */
+  flat: boolean;
+}
+
+/**
+ * Faster or slower: the most recent timed runs against the same number of timed
+ * runs before them. Null until there are enough of both to compare — a "trend"
+ * drawn from two runs is noise wearing a verdict's clothes — and `flat` when
+ * the gap is inside the noise, because the same job done twice is not a
+ * direction.
+ *
+ * Runs arrive newest-first (the API orders by started_at DESC); only finished,
+ * timed runs count, since an untimed run has no length to trend.
+ */
+export function buildCycleTrend(
+  runs: { status: string; duration_s: number | null }[],
+): CycleTrend | null {
+  const MIN_PER_SIDE = 3;
+  const timed = runs
+    .filter(r => r.status === 'completed' && measuredSeconds(r.duration_s) !== null)
+    .map(r => measuredSeconds(r.duration_s) as number);
+  if (timed.length < MIN_PER_SIDE * 2) return null;
+  const half = Math.min(Math.floor(timed.length / 2), 20);
+  const mean = (values: number[]) => values.reduce((s, v) => s + v, 0) / values.length;
+  const recent = mean(timed.slice(0, half));
+  const earlier = mean(timed.slice(half, half * 2));
+  const deltaSeconds = recent - earlier;
+  return {
+    deltaSeconds,
+    sample: half,
+    flat: Math.abs(deltaSeconds) < Math.max(2, earlier * 0.02),
+  };
+}
+
+// ─── Narrowing the rows on screen ────────────────────────────────────────────
+
+/**
+ * The result / status / free-text filters, applied to the runs the server sent.
+ *
+ * These three are deliberately client-side: GET /apps/:id/analytics has no
+ * result, status or text dimension, so sending them would look like it worked
+ * and quietly change nothing. They narrow the ROWS; the tiles above the table
+ * keep reporting the server's slice, and the table says which is which.
+ */
+export function filterRuns<T extends {
+  status: string;
+  operator_name: string;
+  work_order_number: string | null;
+  id: string;
+  pass_fail?: 'pass' | 'fail' | null;
+}>(runs: T[], filters: AppDashboardFilters): T[] {
+  const needle = filters.query.trim().toLowerCase();
+  return runs.filter(run => {
+    if (filters.status !== 'all' && run.status !== filters.status) return false;
+    if (filters.result === 'pass' && run.pass_fail !== 'pass') return false;
+    if (filters.result === 'fail' && run.pass_fail !== 'fail') return false;
+    // "No check recorded" means exactly that: null, not a falsy 'pass'.
+    if (filters.result === 'unchecked' && (run.pass_fail ?? null) !== null) return false;
+    if (needle) {
+      const hay = `${run.operator_name ?? ''} ${run.work_order_number ?? ''} ${run.id}`.toLowerCase();
+      if (!hay.includes(needle)) return false;
+    }
+    return true;
+  });
 }

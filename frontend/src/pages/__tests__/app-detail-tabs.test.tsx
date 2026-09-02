@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, RouterProvider, createMemoryRouter } from 'react-router-dom';
 import type { AppAnalyticsResponse, AppDetailResponse } from '../../api/client';
 import { fmtDuration } from '../../components/apps/appModel';
 
@@ -75,10 +75,17 @@ vi.mock('../../api/floor', () => ({
   getFloorDepartments: (...args: unknown[]) => getFloorDepartments(...args),
 }));
 
+// The three things the OEE tab is gated on, switchable per test.
+let planIsFree = false;
+let moduleEnabled: (key: string) => boolean = () => true;
+let userRole: 'manager' | 'operator' = 'manager';
+const ROLE_RANK = { viewer: 1, operator: 2, supervisor: 3, manager: 4, developer: 5 } as const;
+
 vi.mock('../../context/AuthContext', () => ({
   useAuth: () => ({
-    user: { id: 'u-1', email: 'a@b.c', display_name: 'Ana Diaz', role: 'manager' },
-    canEdit: true, isAtLeast: () => true, loading: false,
+    user: { id: 'u-1', email: 'a@b.c', display_name: 'Ana Diaz', role: userRole },
+    canEdit: true, loading: false,
+    isAtLeast: (role: keyof typeof ROLE_RANK) => ROLE_RANK[userRole] >= ROLE_RANK[role],
   }),
 }));
 
@@ -89,7 +96,16 @@ vi.mock('../../context/SiteContext', () => ({
 }));
 
 vi.mock('../../context/ToastContext', () => ({ useToast: () => ({ addToast: () => {} }) }));
-vi.mock('../../context/PlanContext', () => ({ usePlan: () => ({ refresh: () => {} }) }));
+vi.mock('../../context/PlanContext', () => ({
+  usePlan: () => ({ refresh: () => {}, isFree: planIsFree, isPro: !planIsFree, plan: null }),
+}));
+vi.mock('../../context/ModulesContext', () => ({
+  useModules: () => ({ isEnabled: (key: string) => moduleEnabled(key), loading: false }),
+}));
+vi.mock('../../components/shared/UpgradeModal', () => ({
+  default: ({ lockedFeature }: { lockedFeature?: string }) =>
+    <div data-testid="upgrade-modal">{lockedFeature}</div>,
+}));
 vi.mock('../../components/apps/AppTrainingCoach', () => ({
   default: () => null,
   useCoachDocked: () => false,
@@ -118,8 +134,10 @@ function detail(over: Partial<AppDetailResponse> = {}): AppDetailResponse {
     app: {
       id: 'a-weld', name: 'Weld Inspection', description: 'Inspect the weld',
       status: 'published', steps: [
-        { id: 's1', name: 'Clean', order: 0, widgets: [{ id: 'w1', type: 'text-input', label: 'Notes', order: 0, config: {} }] },
-        { id: 's2', name: 'Inspect', order: 1, widgets: [{ id: 'w2', type: 'pass-fail', label: 'Weld OK', order: 0, config: {} }] },
+        { id: 's1', name: 'Clean', order: 0, takt_time_seconds: 65,
+          widgets: [{ id: 'w1', type: 'text-input', label: 'Notes', order: 0, config: {} }] },
+        { id: 's2', name: 'Inspect', order: 1, takt_time_seconds: 300,
+          widgets: [{ id: 'w2', type: 'pass-fail', label: 'Weld OK', order: 0, config: {} }] },
       ],
       variables: [], created_at: '2026-01-01 00:00:00', updated_at: '2026-01-01 00:00:00',
     } as AppDetailResponse['app'],
@@ -147,27 +165,49 @@ function analytics(over: Partial<AppAnalyticsResponse> = {}): AppAnalyticsRespon
     totals: {
       runs: 10, completed: 8, abandoned: 2,
       avg_duration_s: CYCLE_SECONDS, avg_duration_basis: 'hands_on', first_pass_yield: 96,
+      best_duration_s: 381, qc_sample_size: 25,
     },
     series: [{ date: '2026-08-20', completed: 3, avg_duration_s: CYCLE_SECONDS }],
     by_operator: [
       { operator_name: 'Sam', runs: 6, avg_duration_s: CYCLE_SECONDS },
       { operator_name: 'Kim', runs: 2, avg_duration_s: null },
     ],
-    fields: [{
-      widget_id: 'w-torque', label: 'Torque reading', type: 'number-input', step_name: 'Fasten',
-      kind: 'number', stats: { avg: 12.5, min: 10, max: 15, count: 8 },
-    }],
+    fields: [
+      {
+        widget_id: 'w-torque', label: 'Torque reading', type: 'number-input', step_name: 'Fasten',
+        kind: 'number', stats: { avg: 12.5, min: 10, max: 15, count: 8 },
+        trend: [{ date: '2026-08-19', avg: 12 }, { date: '2026-08-20', avg: 13 }],
+      },
+      {
+        widget_id: 'w-weld', label: 'Weld OK', type: 'pass-fail', step_name: 'Inspect',
+        kind: 'boolean', stats: { pass: 22, fail: 3, yield_pct: 88 },
+      },
+    ],
     filter_options: {
       operators: ['Sam', 'Kim'],
       work_orders: [{ id: 'wo-1', work_order_number: 'WO-1' }],
       product_types: [{ id: 'pt-1', name: 'Bracket' }],
     },
-    recent_runs: [{
-      id: 'c-1', started_at: '2026-08-20 16:00:00', completed_at: '2026-08-20 16:07:31',
-      status: 'completed', operator_name: 'Sam',
-      duration_s: CYCLE_SECONDS, duration_basis: 'hands_on',
-      work_order_number: 'WO-1', product_type_name: 'Bracket',
-    }],
+    recent_runs: [
+      {
+        id: 'c-1', started_at: '2026-08-20 16:00:00', completed_at: '2026-08-20 16:07:31',
+        status: 'completed', operator_name: 'Sam',
+        duration_s: CYCLE_SECONDS, duration_basis: 'hands_on',
+        work_order_number: 'WO-1', product_type_name: 'Bracket', pass_fail: 'pass',
+      },
+      {
+        id: 'c-2', started_at: '2026-08-20 15:00:00', completed_at: '2026-08-20 15:08:00',
+        status: 'completed', operator_name: 'Kim',
+        duration_s: 480, duration_basis: 'hands_on',
+        work_order_number: 'WO-2', product_type_name: 'Bracket', pass_fail: 'fail',
+      },
+      {
+        id: 'c-3', started_at: '2026-08-20 14:00:00', completed_at: null,
+        status: 'abandoned', operator_name: 'Ana',
+        duration_s: null, duration_basis: null,
+        work_order_number: null, product_type_name: null, pass_fail: null,
+      },
+    ],
     ...over,
   };
 }
@@ -221,6 +261,9 @@ function renderDetail(url = '/apps/a-weld') {
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  planIsFree = false;
+  moduleEnabled = () => true;
+  userRole = 'manager';
   getAppDetail.mockResolvedValue(detail());
   getAppAnalytics.mockResolvedValue(analytics());
   getStepMetrics.mockResolvedValue(STEP_METRICS);
@@ -254,7 +297,7 @@ beforeEach(() => {
 describe('/apps/:id has one filter bar and one vocabulary', () => {
   it.each([
     ['overview', 'app-metrics'],
-    ['runs', 'app-run-row'],
+    ['runs', 'runs-count'],
     ['who', 'who-ran-it'],
     ['steps', 'step-times'],
   ])('renders the %s tab from ?tab= behind exactly one filter bar', async (tab, marker) => {
@@ -339,7 +382,7 @@ describe('the one filter bar is read by every tab', () => {
     // /apps/:id/analytics?days=7&operator=Sam redirects here with its query
     // string intact, and the screen has to honour it rather than reset.
     renderDetail('/apps/a-weld?tab=runs&days=7&operator=Sam');
-    await screen.findByTestId('app-run-row');
+    await screen.findByTestId('runs-count');
     await waitFor(() => expect(getAppAnalytics).toHaveBeenCalledWith('a-weld', {
       days: 7, operator: 'Sam', work_order_id: undefined, product_type_id: undefined,
     }));
@@ -391,7 +434,8 @@ describe('/apps/:id refuses to invent numbers', () => {
     expect(row.querySelector('[title="this run was never timed"]')).not.toBeNull();
     expect(row).not.toHaveTextContent('0s');
     expect(screen.getByTestId('metric-avg_cycle')).toHaveTextContent('—');
-    expect(screen.getByText('no finished run was timed')).toBeInTheDocument();
+    // Both the average and the best time say it, and both are honest.
+    expect(screen.getAllByText('no finished run was timed · last 30 days').length).toBeGreaterThan(0);
   });
 
   it('shows a run still on the bench counting up rather than calling it zero', async () => {
@@ -451,7 +495,7 @@ describe('the app-level actions are reachable from the header', () => {
     expect(screen.getByRole('button', { name: /Duplicate/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Save as template/ })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: /Export runs \(CSV\)/ }));
+    fireEvent.click(screen.getAllByRole('button', { name: /Export this slice \(CSV\)/ })[0]);
     await waitFor(() => expect(downloadAppAnalyticsCsv).toHaveBeenCalledWith('a-weld', {
       days: 30, operator: undefined, work_order_id: undefined, product_type_id: undefined,
     }));
@@ -482,9 +526,298 @@ describe('the app-level actions are reachable from the header', () => {
 
     // Revision 0 is not revision one — it is an app that has never been
     // published under change control, and the header says that in words.
+    // Revision 0 is not revision one — but it must not read as "unpublished"
+    // beside a Published badge either.
+    getAppDetail.mockResolvedValue(detail({
+      app: { ...detail().app, current_revision: 0 } as AppDetailResponse['app'],
+    }));
+    const zero = renderDetail();
+    expect(await screen.findByText('Revision not tracked yet')).toBeInTheDocument();
+    expect(screen.queryByText('Rev 0 live')).toBeNull();
+    zero.unmount();
+
+    // A payload that carries no revisions at all says nothing rather than
+    // guessing which of the two it is.
     getAppDetail.mockResolvedValue(detail());
     renderDetail();
-    expect(await screen.findByText('Not yet published under change control')).toBeInTheDocument();
-    expect(screen.queryByText('Rev 0 live')).toBeNull();
+    await screen.findByTestId('app-metrics');
+    expect(screen.queryByText(/Revision/)).toBeNull();
+    expect(screen.queryByText(/Rev \d+ live/)).toBeNull();
+  });
+});
+
+// ── M1: from a count of failures to the runs that failed ─────────────────────
+
+describe('every failure count is a door, not a dead end', () => {
+  it('shows each run\'s result, and lets the filter bar narrow to the failures', async () => {
+    renderDetail('/apps/a-weld?tab=runs');
+    const rows = await screen.findAllByTestId('app-run-row');
+    expect(rows).toHaveLength(3);
+    expect(rows[0]).toHaveTextContent('Pass');
+    expect(rows[1]).toHaveTextContent('Fail');
+    // A run nobody inspected is not a run that passed.
+    expect(rows[2]).not.toHaveTextContent('Pass');
+    expect(rows[2]).not.toHaveTextContent('Fail');
+
+    fireEvent.change(screen.getByLabelText('Result'), { target: { value: 'fail' } });
+    await waitFor(() => expect(screen.getAllByTestId('app-run-row')).toHaveLength(1));
+    expect(screen.getByTestId('app-run-row')).toHaveTextContent('Kim');
+    // The rows narrowed; the server was not asked a question it cannot answer.
+    for (const call of getAppAnalytics.mock.calls) {
+      expect(Object.keys(call[1] as object)).toEqual(['days', 'operator', 'work_order_id', 'product_type_id']);
+    }
+  });
+
+  it('links "N failed of M" to those runs, and abandoned runs to theirs', async () => {
+    renderDetail();
+    const failed = await screen.findByTestId('failed-check');
+    expect(failed).toHaveTextContent('3 failed of 25');
+    expect(failed.getAttribute('href')).toContain('tab=runs');
+    expect(failed.getAttribute('href')).toContain('result=fail');
+
+    const abandoned = screen.getByTestId('abandoned-runs');
+    expect(abandoned.getAttribute('href')).toContain('status=abandoned');
+  });
+
+  it('names the runs that went wrong, each one click from its record', async () => {
+    renderDetail();
+    const trouble = await screen.findAllByTestId('trouble-run');
+    expect(trouble.length).toBe(2);
+    expect(trouble[0]).toHaveAttribute('href', '/completions/c-2');
+    expect(trouble[0]).toHaveTextContent('Failed a check');
+    expect(trouble[1]).toHaveAttribute('href', '/completions/c-3');
+    expect(trouble[1]).toHaveTextContent('Never finished');
+  });
+
+  it('following the failure link lands on the Runs tab already narrowed', async () => {
+    renderDetail('/apps/a-weld?tab=runs&result=fail');
+    await waitFor(() => expect(screen.getAllByTestId('app-run-row')).toHaveLength(1));
+    expect(screen.getByLabelText('Result')).toHaveValue('fail');
+  });
+});
+
+// ── M2: Back is a way back ───────────────────────────────────────────────────
+
+describe('the browser Back button returns to the last tab and filter', () => {
+  /** A router with real history semantics, so Back is Back and not a re-render. */
+  function renderRouted(url = '/apps/a-weld') {
+    const router = createMemoryRouter(
+      [{ path: '/apps/:id', element: <AppDetail /> }],
+      { initialEntries: [url] },
+    );
+    render(<RouterProvider router={router} />);
+    return router;
+  }
+
+  it('restores the previous tab', async () => {
+    const router = renderRouted();
+    await screen.findByTestId('app-metrics');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Who ran it' }));
+    expect(await screen.findByTestId('who-ran-it')).toBeInTheDocument();
+
+    // Back returns to the Overview instead of throwing the reader off the app.
+    await act(async () => { await router.navigate(-1); });
+    expect(await screen.findByTestId('app-metrics')).toBeInTheDocument();
+    expect(screen.queryByTestId('who-ran-it')).toBeNull();
+  });
+
+  it('restores the previous filter', async () => {
+    const router = renderRouted();
+    await screen.findByTestId('app-metrics');
+    fireEvent.click(screen.getByRole('button', { name: '7d' }));
+    await waitFor(() => expect(getAppAnalytics).toHaveBeenLastCalledWith('a-weld', expect.objectContaining({ days: 7 })));
+
+    await act(async () => { await router.navigate(-1); });
+    await waitFor(() => expect(getAppAnalytics).toHaveBeenLastCalledWith('a-weld', expect.objectContaining({ days: 30 })));
+  });
+
+  it('does not put a redirect landing or a normalised window in the way of Back', async () => {
+    // Arriving with ?days=14 rewrites the URL to the window actually used; that
+    // rewrite must REPLACE, or Back would bounce between 14 and 30 forever.
+    const router = renderRouted('/apps/a-weld?days=14');
+    await screen.findByTestId('window-normalised');
+    await waitFor(() => expect(new URLSearchParams(router.state.location.search).get('days')).toBe('30'));
+    expect(router.state.historyAction).toBe('REPLACE');
+  });
+});
+
+// ── M5: the numbers a supervisor asks for next ───────────────────────────────
+
+describe('the headline row answers more than "how long on average"', () => {
+  it('carries the best time, the trend, the takt comparison and the yield sample', async () => {
+    renderDetail();
+    await screen.findByTestId('app-metrics');
+
+    // Best time, straight from the payload.
+    expect(screen.getByTestId('metric-best_cycle')).toHaveTextContent(fmtDuration(381));
+    // Against takt: the fixture app has 5s + 300s of takt on two steps.
+    expect(screen.getByText(/vs takt/)).toBeInTheDocument();
+    // The yield says how many inspected runs are behind it.
+    expect(screen.getByText('from 25 inspected runs · last 30 days')).toBeInTheDocument();
+    // And the trend is present — here as an honest "not enough to compare".
+    expect(screen.getByTestId('metric-trend')).toBeInTheDocument();
+  });
+
+  it('calls a real direction when there are enough timed runs on both sides', async () => {
+    const fast = Array.from({ length: 6 }, (_, i) => ({
+      id: `r${i}`, started_at: '2026-08-20 16:00:00', completed_at: '2026-08-20 16:02:00',
+      status: 'completed', operator_name: 'Sam',
+      duration_s: i < 3 ? 100 : 200, duration_basis: 'hands_on' as const,
+      work_order_number: null, product_type_name: null, pass_fail: 'pass' as const,
+    }));
+    getAppAnalytics.mockResolvedValue(analytics({ recent_runs: fast }));
+    renderDetail();
+
+    await waitFor(() => expect(screen.getByTestId('metric-trend')).toHaveTextContent(fmtDuration(100)));
+    expect(screen.getByText('Trend · getting faster')).toBeInTheDocument();
+    expect(screen.getByText('last 3 runs vs the 3 before')).toBeInTheDocument();
+  });
+
+  it('gives every tile the window it was measured over', async () => {
+    renderDetail();
+    await screen.findByTestId('app-metrics');
+    expect(screen.getAllByText(/last 30 days/).length).toBeGreaterThanOrEqual(4);
+  });
+});
+
+// ── M6: what a field actually said ───────────────────────────────────────────
+
+describe('field details are still reachable', () => {
+  it('opens the full cards — the pass/fail split and the number spread', async () => {
+    renderDetail();
+    await screen.findByTestId('app-metrics');
+    expect(screen.queryByTestId('field-cards')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /Show field details/ }));
+    const cards = await screen.findByTestId('field-cards');
+    expect(within(cards).getAllByTestId('field-card')).toHaveLength(2);
+    // The number field's spread, and the pass/fail field's yield.
+    expect(within(cards).getByText('12.5')).toBeInTheDocument();
+    expect(within(cards).getByText('88%')).toBeInTheDocument();
+    expect(within(cards).getByText('25 checks')).toBeInTheDocument();
+  });
+});
+
+// ── M8 / M9: a filter that was not honoured, and one that outlived its target ─
+
+describe('no filter is applied in silence', () => {
+  it('names a day window it could not offer, and normalises the URL to the one it used', async () => {
+    renderDetail('/apps/a-weld?days=14');
+    expect(await screen.findByTestId('window-normalised')).toHaveTextContent(/14-day window in the link was read as 30 days/);
+    await waitFor(() => expect(getAppAnalytics).toHaveBeenCalledWith('a-weld', expect.objectContaining({ days: 30 })));
+  });
+
+  it('says when a filter points at something that no longer exists', async () => {
+    renderDetail('/apps/a-weld?product_type_id=pt-deleted');
+    const stale = await screen.findByTestId('stale-filter');
+    expect(stale).toHaveTextContent('a product type that no longer exists');
+    // The numbers ARE narrowed by it, which is exactly why it has to be said.
+    await waitFor(() => expect(getAppAnalytics).toHaveBeenCalledWith('a-weld', expect.objectContaining({
+      product_type_id: 'pt-deleted',
+    })));
+
+    fireEvent.click(within(stale).getByRole('button', { name: /Remove this filter/ }));
+    await waitFor(() => expect(getAppAnalytics).toHaveBeenLastCalledWith('a-weld', expect.objectContaining({
+      product_type_id: undefined,
+    })));
+  });
+});
+
+// ── M10 / M12: how far the table's own controls reach ────────────────────────
+
+describe('the Runs tab says how far its controls reach', () => {
+  it('states that sorting covers the loaded slice', async () => {
+    getAppAnalytics.mockResolvedValue(analytics({
+      totals: { runs: 101, completed: 98, abandoned: 3, avg_duration_s: CYCLE_SECONDS, avg_duration_basis: 'hands_on', first_pass_yield: 96, best_duration_s: 381, qc_sample_size: 25 },
+    }));
+    renderDetail('/apps/a-weld?tab=runs');
+    expect(await screen.findByTestId('runs-footer'))
+      .toHaveTextContent('Sorted within the latest 3 of 101 runs in this window.');
+  });
+
+  it('narrows by status, and counts what it listed', async () => {
+    renderDetail('/apps/a-weld?tab=runs&status=abandoned');
+    await waitFor(() => expect(screen.getAllByTestId('app-run-row')).toHaveLength(1));
+    expect(screen.getByTestId('runs-count')).toHaveTextContent('1 of the latest 3 match');
+    expect(screen.getByTestId('app-run-row')).toHaveTextContent('Ana');
+  });
+
+  it('narrows by free text over operator, work order and run id', async () => {
+    renderDetail('/apps/a-weld?tab=runs&q=WO-2');
+    await waitFor(() => expect(screen.getAllByTestId('app-run-row')).toHaveLength(1));
+    expect(screen.getByTestId('app-run-row')).toHaveTextContent('Kim');
+    expect(screen.getByLabelText('Search runs')).toHaveValue('WO-2');
+  });
+
+  it('blames the row filters, not the window, when they empty the table', async () => {
+    renderDetail('/apps/a-weld?tab=runs&q=nobody-by-that-name');
+    expect(await screen.findByText('No runs match these filters')).toBeInTheDocument();
+    // The tiles still report the server's slice — 10 runs, not zero.
+    expect(screen.getByTestId('metric-runs')).toHaveTextContent('10');
+  });
+});
+
+// ── M11: who has ever run it, joiners included ───────────────────────────────
+
+describe('"Who ran it" answers the window question and the all-time one', () => {
+  it('keeps the two lists apart and says which is which', async () => {
+    getAppDetail.mockResolvedValue(detail({
+      operators: [
+        { operator_name: 'Sam', runs: 40, completed: 38, joined_runs: 0, last_run_at: '2026-08-20 16:00:00', avg_duration_s: CYCLE_SECONDS },
+        { operator_name: 'Jo', runs: 4, completed: 2, joined_runs: 3, last_run_at: '2026-05-02 09:00:00', avg_duration_s: null },
+      ],
+    }));
+    renderDetail('/apps/a-weld?tab=who');
+
+    // The window rollup counts who STARTED a run here.
+    expect(await screen.findByText(/Operators who started a run in this window/)).toBeInTheDocument();
+    // The all-time panel counts the joiners, and says it ignores the filters.
+    const allTime = screen.getByTestId('who-all-time');
+    expect(allTime).toHaveTextContent('not narrowed by the filters above');
+    const rows = within(allTime).getAllByTestId('who-all-time-row');
+    expect(rows[1]).toHaveTextContent('3 joined');
+    expect(rows[1]).toHaveTextContent('—');
+  });
+});
+
+// ── M4: the gate that came with OEE ──────────────────────────────────────────
+
+describe('the OEE tab carries the gate the OEE nav item had', () => {
+  const renderAnalytics = (url = '/analytics') =>
+    render(<MemoryRouter initialEntries={[url]}><Analytics /></MemoryRouter>);
+
+  it('shows the cards to a supervisor on Pro', async () => {
+    userRole = 'manager';
+    renderAnalytics('/analytics?tab=oee');
+    expect(await screen.findByTestId('oee-panel')).toBeInTheDocument();
+    expect(screen.queryByTestId('oee-locked')).toBeNull();
+  });
+
+  it('locks the tab on Free and offers the upgrade', async () => {
+    planIsFree = true;
+    renderAnalytics('/analytics?tab=oee');
+    expect(await screen.findByTestId('oee-locked')).toBeInTheDocument();
+    expect(screen.queryByTestId('oee-panel')).toBeNull();
+    expect(getOEE).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: /Upgrade to Pro/ }));
+    expect(await screen.findByTestId('upgrade-modal')).toHaveTextContent('OEE');
+  });
+
+  it('hides the tab below supervisor, and lands a deep link on Compare', async () => {
+    userRole = 'operator';
+    renderAnalytics('/analytics?tab=oee');
+    await screen.findByText('App comparison');
+    expect(screen.queryByRole('button', { name: /OEE/ })).toBeNull();
+    expect(screen.queryByTestId('oee-panel')).toBeNull();
+    expect(screen.queryByTestId('oee-locked')).toBeNull();
+  });
+
+  it('hides the tab when the production module is switched off', async () => {
+    moduleEnabled = key => key !== 'production';
+    renderAnalytics();
+    await screen.findByText('App comparison');
+    expect(screen.queryByRole('button', { name: /OEE/ })).toBeNull();
   });
 });

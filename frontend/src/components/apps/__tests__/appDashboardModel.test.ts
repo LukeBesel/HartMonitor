@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import type { AppAnalyticsResponse } from '../../../api/client';
 import {
-  buildHeadlineMetrics, buildOperatorRollup, emptyReasonFor, fieldSampleSize,
-  filtersFromQuery, filtersToQuery, hasNarrowingFilters, summariseField, DEFAULT_FILTERS,
+  buildCycleTrend, buildHeadlineMetrics, buildOperatorRollup, emptyReasonFor, fieldSampleSize,
+  filterRuns, filtersFromQuery, hasNarrowingFilters, hasServerFilters, summariseField,
+  unofferedDays, DEFAULT_FILTERS,
 } from '../appDashboardModel';
 import type { EmptyStateApp } from '../appDashboardModel';
 
@@ -19,6 +20,7 @@ function totals(over: Partial<AppAnalyticsResponse['totals']> = {}): AppAnalytic
   return {
     runs: 0, completed: 0, abandoned: 0,
     avg_duration_s: null, avg_duration_basis: null, first_pass_yield: null,
+    best_duration_s: null, qc_sample_size: 0,
     ...over,
   };
 }
@@ -39,7 +41,7 @@ describe('buildHeadlineMetrics', () => {
     expect(byKey.runs.note).toBe('nothing started in the last 30 days');
     // Counts stay counts; rates and averages go blank with a reason.
     expect(byKey.completed.value).toBe('0');
-    expect(byKey.completed.note).toBe('no runs to complete');
+    expect(byKey.completed.note).toBe('no runs to complete · last 30 days');
     expect(byKey.avg_cycle.value).toBeNull();
     expect(byKey.first_pass_yield.value).toBeNull();
     // And no fabricated percentage anywhere in the row.
@@ -53,12 +55,12 @@ describe('buildHeadlineMetrics', () => {
     const open = buildHeadlineMetrics(totals({ runs: 4, completed: 0, avg_duration_s: null }), 7);
     const avgOpen = open.find(m => m.key === 'avg_cycle');
     expect(avgOpen?.value).toBeNull();
-    expect(avgOpen?.note).toBe('no run has finished yet');
+    expect(avgOpen?.note).toBe('no run has finished in the last 7 days');
 
     const untimed = buildHeadlineMetrics(totals({ runs: 4, completed: 4, avg_duration_s: null }), 7);
     const avgUntimed = untimed.find(m => m.key === 'avg_cycle');
     expect(avgUntimed?.value).toBeNull();
-    expect(avgUntimed?.note).toBe('no finished run was timed');
+    expect(avgUntimed?.note).toBe('no finished run was timed · last 7 days');
   });
 
   it('names the measurement behind a real average', () => {
@@ -84,7 +86,7 @@ describe('buildHeadlineMetrics', () => {
     const unmeasured = buildHeadlineMetrics(totals({ runs: 3, completed: 3, first_pass_yield: null }), 30)
       .find(m => m.key === 'first_pass_yield');
     expect(unmeasured?.value).toBeNull();
-    expect(unmeasured?.note).toBe('no pass/fail check recorded');
+    expect(unmeasured?.note).toBe('no pass/fail check recorded · last 30 days');
 
     // Everything failing IS a measurement, and must render as 0%.
     const allFailed = buildHeadlineMetrics(totals({ runs: 3, completed: 3, first_pass_yield: 0 }), 30)
@@ -98,11 +100,62 @@ describe('buildHeadlineMetrics', () => {
       30,
     );
     const byKey = Object.fromEntries(metrics.map(m => [m.key, m]));
-    expect(byKey.runs.note).toBe('2 abandoned');
-    expect(byKey.completed.note).toBe('80% of runs started');
+    expect(byKey.runs.note).toBe('2 abandoned · last 30 days');
+    expect(byKey.completed.note).toBe('80% of runs started · last 30 days');
     expect(byKey.avg_cycle.value).toBe('2m 5s');
-    expect(byKey.avg_cycle.note).toBe('over 8 completed runs');
+    expect(byKey.avg_cycle.note).toBe('over 8 completed runs · last 30 days');
     expect(byKey.first_pass_yield.value).toBe('88%');
+  });
+});
+
+describe('buildHeadlineMetrics — the numbers a supervisor asks for next', () => {
+  it('reports the fastest run in the slice, and says when nothing was timed', () => {
+    const best = buildHeadlineMetrics(
+      totals({ runs: 10, completed: 8, avg_duration_s: 420, best_duration_s: 381 }), 30,
+    ).find(m => m.key === 'best_cycle');
+    expect(best?.value).toBe('6m 21s');
+    expect(best?.note).toBe('fastest completed run · last 30 days');
+
+    const untimed = buildHeadlineMetrics(
+      totals({ runs: 4, completed: 4, best_duration_s: null }), 30,
+    ).find(m => m.key === 'best_cycle');
+    expect(untimed?.value).toBeNull();
+    expect(untimed?.note).toBe('no finished run was timed · last 30 days');
+  });
+
+  it('names the cycle time against the takt it was planned to hit', () => {
+    // A cycle time on its own is a number; against takt it is an answer.
+    const over = buildHeadlineMetrics(
+      totals({ runs: 4, completed: 4, avg_duration_s: 396 }), 30, 365,
+    ).find(m => m.key === 'avg_cycle');
+    expect(over?.note).toBe('+31s vs takt 6m 5s · last 30 days');
+
+    const under = buildHeadlineMetrics(
+      totals({ runs: 4, completed: 4, avg_duration_s: 334 }), 30, 365,
+    ).find(m => m.key === 'avg_cycle');
+    expect(under?.note).toBe('−31s vs takt 6m 5s · last 30 days');
+
+    // No takt configured is not a takt of zero.
+    const noTakt = buildHeadlineMetrics(
+      totals({ runs: 4, completed: 4, avg_duration_s: 396 }), 30, 0,
+    ).find(m => m.key === 'avg_cycle');
+    expect(noTakt?.note).toBe('over 4 completed runs · last 30 days');
+  });
+
+  it('carries the sample behind the yield — 100% of two is not 100% of two hundred', () => {
+    const metric = buildHeadlineMetrics(
+      totals({ runs: 40, completed: 40, first_pass_yield: 96, qc_sample_size: 270 }), 30,
+    ).find(m => m.key === 'first_pass_yield');
+    expect(metric?.value).toBe('96%');
+    expect(metric?.note).toBe('from 270 inspected runs · last 30 days');
+  });
+
+  it('gives every tile the window it was measured over', () => {
+    const notes = buildHeadlineMetrics(
+      totals({ runs: 10, completed: 8, avg_duration_s: 120, best_duration_s: 90, first_pass_yield: 90, qc_sample_size: 8 }),
+      7,
+    ).map(m => m.note);
+    for (const note of notes) expect(note).toContain('last 7 days');
   });
 });
 
@@ -148,18 +201,17 @@ describe('emptyReasonFor', () => {
 });
 
 describe('filters', () => {
-  it('only carries the parameters the analytics API honours', () => {
-    const query = filtersToQuery({ days: 7, operator: 'Sam', workOrderId: '', productTypeId: 'pt-1' });
-    const parsed = new URLSearchParams(query);
-    expect([...parsed.keys()].sort()).toEqual(['days', 'operator', 'product_type_id']);
-    expect(parsed.get('days')).toBe('7');
-    expect(parsed.get('operator')).toBe('Sam');
-    expect(parsed.get('product_type_id')).toBe('pt-1');
-  });
-
   it('does not count the day window as a narrowing filter', () => {
     expect(hasNarrowingFilters({ ...DEFAULT_FILTERS, days: 365 })).toBe(false);
     expect(hasNarrowingFilters({ ...DEFAULT_FILTERS, operator: 'Sam' })).toBe(true);
+  });
+
+  it('separates the filters the SERVER honours from the ones that narrow rows', () => {
+    // The tiles move with the first three; the table moves with all of them,
+    // and the screen must never blame the wrong one for an empty payload.
+    expect(hasServerFilters({ ...DEFAULT_FILTERS, result: 'fail' })).toBe(false);
+    expect(hasNarrowingFilters({ ...DEFAULT_FILTERS, result: 'fail' })).toBe(true);
+    expect(hasServerFilters({ ...DEFAULT_FILTERS, operator: 'Sam' })).toBe(true);
   });
 
   it('reads back the slice a retired deep link was carrying', () => {
@@ -167,12 +219,88 @@ describe('filters', () => {
     // old Apps Dashboard handed out; the one per-app screen has to land on that
     // same slice rather than on a default.
     const round = filtersFromQuery(new URLSearchParams('days=7&operator=Sam&work_order_id=wo-1'));
-    expect(round).toEqual({ days: 7, operator: 'Sam', workOrderId: 'wo-1', productTypeId: '' });
+    expect(round).toEqual({
+      days: 7, operator: 'Sam', workOrderId: 'wo-1', productTypeId: '',
+      result: 'all', status: 'all', query: '',
+    });
   });
 
   it('falls back to the default window rather than honouring one nothing offers', () => {
     expect(filtersFromQuery(new URLSearchParams('days=13')).days).toBe(DEFAULT_FILTERS.days);
     expect(filtersFromQuery(new URLSearchParams('')).days).toBe(DEFAULT_FILTERS.days);
+  });
+
+  it('names a window it could not honour instead of silently rounding it', () => {
+    // ?days=14 became "the last 30 days" in silence: a window nobody asked for
+    // under a label nobody could question.
+    expect(unofferedDays(new URLSearchParams('days=14'))).toBe(14);
+    expect(unofferedDays(new URLSearchParams('days=30'))).toBeNull();
+    expect(unofferedDays(new URLSearchParams(''))).toBeNull();
+    expect(unofferedDays(new URLSearchParams('days=abc'))).toBeNull();
+  });
+
+  it('reads the row filters back off the URL, and only the ones it offers', () => {
+    const parsed = filtersFromQuery(new URLSearchParams('result=fail&status=abandoned&q=WO-1'));
+    expect(parsed.result).toBe('fail');
+    expect(parsed.status).toBe('abandoned');
+    expect(parsed.query).toBe('WO-1');
+    expect(filtersFromQuery(new URLSearchParams('result=maybe')).result).toBe('all');
+  });
+});
+
+describe('filterRuns', () => {
+  const rows = [
+    { id: 'r1', status: 'completed', operator_name: 'Sam', work_order_number: 'WO-1', pass_fail: 'pass' as const },
+    { id: 'r2', status: 'completed', operator_name: 'Kim', work_order_number: 'WO-2', pass_fail: 'fail' as const },
+    { id: 'r3', status: 'abandoned', operator_name: 'Sam', work_order_number: null, pass_fail: null },
+    { id: 'r4', status: 'in_progress', operator_name: 'Ana', work_order_number: 'WO-1', pass_fail: null },
+  ];
+
+  it('narrows to the runs that failed — the ones "1 failed of 2" is about', () => {
+    expect(filterRuns(rows, { ...DEFAULT_FILTERS, result: 'fail' }).map(r => r.id)).toEqual(['r2']);
+  });
+
+  it('keeps "never inspected" apart from "passed"', () => {
+    expect(filterRuns(rows, { ...DEFAULT_FILTERS, result: 'unchecked' }).map(r => r.id)).toEqual(['r3', 'r4']);
+    expect(filterRuns(rows, { ...DEFAULT_FILTERS, result: 'pass' }).map(r => r.id)).toEqual(['r1']);
+  });
+
+  it('narrows by status and by free text over operator, work order and id', () => {
+    expect(filterRuns(rows, { ...DEFAULT_FILTERS, status: 'abandoned' }).map(r => r.id)).toEqual(['r3']);
+    expect(filterRuns(rows, { ...DEFAULT_FILTERS, query: 'wo-1' }).map(r => r.id)).toEqual(['r1', 'r4']);
+    expect(filterRuns(rows, { ...DEFAULT_FILTERS, query: 'sam' }).map(r => r.id)).toEqual(['r1', 'r3']);
+    expect(filterRuns(rows, { ...DEFAULT_FILTERS, query: 'r2' }).map(r => r.id)).toEqual(['r2']);
+  });
+
+  it('leaves the rows alone when nothing is applied', () => {
+    expect(filterRuns(rows, DEFAULT_FILTERS)).toHaveLength(4);
+  });
+});
+
+describe('buildCycleTrend', () => {
+  const run = (seconds: number | null, status = 'completed') => ({ status, duration_s: seconds });
+
+  it('says nothing until there is enough on both sides to compare', () => {
+    expect(buildCycleTrend([run(100), run(100), run(100)])).toBeNull();
+    expect(buildCycleTrend([])).toBeNull();
+  });
+
+  it('measures the recent runs against the same number before them', () => {
+    // Newest first: three at 100s, then three at 200s — 100s faster.
+    const trend = buildCycleTrend([run(100), run(100), run(100), run(200), run(200), run(200)]);
+    expect(trend).toEqual({ deltaSeconds: -100, sample: 3, flat: false });
+  });
+
+  it('calls a couple of seconds either way what it is: not a direction', () => {
+    const trend = buildCycleTrend([run(101), run(100), run(100), run(100), run(100), run(100)]);
+    expect(trend?.flat).toBe(true);
+  });
+
+  it('ignores runs nobody timed rather than trending them as zero', () => {
+    const untimed = [run(null), run(null), run(null), run(null), run(null), run(null)];
+    expect(buildCycleTrend(untimed)).toBeNull();
+    // An unfinished run has no length yet either.
+    expect(buildCycleTrend([...untimed.map(() => run(100, 'in_progress'))])).toBeNull();
   });
 });
 

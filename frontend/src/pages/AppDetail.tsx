@@ -26,9 +26,9 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import {
   Activity, AlertTriangle, ArrowLeft, BarChart2, Boxes, Building2, CheckCircle2,
   ChevronDown, ChevronRight, ChevronUp, ClipboardList, Clock, Copy, Download,
-  Edit3, Gauge, GitBranch, Globe, Info, Layers, ListChecks, Lock, MapPin,
-  MousePointerClick, Package, Play, RefreshCw, SlidersHorizontal, TrendingUp,
-  User, Users, XCircle, Zap,
+  Edit3, Gauge, GitBranch, Globe, Info, Layers, ListChecks, Lock, MapPin, Minus,
+  MousePointerClick, Package, Play, RefreshCw, Search, SlidersHorizontal,
+  TrendingDown, TrendingUp, User, Users, XCircle, Zap,
 } from 'lucide-react';
 import {
   Bar, BarChart, CartesianGrid, Cell, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
@@ -52,10 +52,14 @@ import {
   orderedSteps, parseServerTime, pluralize, widgetTypeLabel, widgetsOf,
 } from '../components/apps/appModel';
 import {
-  DAY_PRESETS, buildHeadlineMetrics, buildOperatorRollup, emptyReasonFor,
-  fieldSampleSize, filtersFromQuery, hasNarrowingFilters, summariseField,
+  DAY_PRESETS, buildCycleTrend, buildHeadlineMetrics, buildOperatorRollup, emptyReasonFor,
+  fieldSampleSize, filterRuns, filtersFromQuery, hasNarrowingFilters, hasServerFilters,
+  summariseField, unofferedDays,
 } from '../components/apps/appDashboardModel';
-import type { AppDashboardFilters, HeadlineMetric } from '../components/apps/appDashboardModel';
+import type {
+  AppDashboardFilters, CycleTrend, HeadlineMetric, ResultFilter, StatusFilter,
+} from '../components/apps/appDashboardModel';
+import { stepTaktSeconds } from '../components/player/runtime';
 import useAutoRefresh from '../hooks/useAutoRefresh';
 
 const REFRESH_MS = 60_000;
@@ -75,6 +79,7 @@ function isTab(value: string | null): value is TabKey {
 
 const METRIC_CHROME: Record<HeadlineMetric['key'], { icon: React.ReactNode; iconBg: string; iconColor: string }> = {
   avg_cycle:        { icon: <Clock size={18} />,        iconBg: 'bg-purple-50', iconColor: 'text-purple-600' },
+  best_cycle:       { icon: <TrendingDown size={18} />, iconBg: 'bg-green-50',  iconColor: 'text-green-600' },
   first_pass_yield: { icon: <TrendingUp size={18} />,   iconBg: 'bg-amber-50',  iconColor: 'text-amber-600' },
   completed:        { icon: <CheckCircle2 size={18} />, iconBg: 'bg-green-50',  iconColor: 'text-green-600' },
   runs:             { icon: <Activity size={18} />,     iconBg: 'bg-blue-50',   iconColor: 'text-blue-600' },
@@ -156,7 +161,14 @@ export default function AppDetail() {
   const tab: TabKey = isTab(searchParams.get('tab')) ? (searchParams.get('tab') as TabKey) : 'overview';
   const filters = useMemo(() => filtersFromQuery(searchParams), [searchParams]);
 
-  const setQuery = useCallback((patch: Record<string, string>) => {
+  /**
+   * Every tab and every filter is a place in the history, because a person who
+   * moved to one and pressed Back means "put the last one back", not "throw me
+   * off this app". Only two things replace instead of pushing: landing from a
+   * retired URL, and this screen normalising a window it cannot offer — neither
+   * is a place anybody chose to be, and neither should be somewhere Back goes.
+   */
+  const setQuery = useCallback((patch: Record<string, string>, replace = false) => {
     setSearchParams(prev => {
       const next = new URLSearchParams(prev);
       for (const [key, value] of Object.entries(patch)) {
@@ -164,17 +176,32 @@ export default function AppDetail() {
         else next.delete(key);
       }
       return next;
-    }, { replace: true });
+    }, { replace });
   }, [setSearchParams]);
 
   const setTab = (key: TabKey) => setQuery({ tab: key });
-  const setFilter = <K extends keyof AppDashboardFilters>(key: K, value: AppDashboardFilters[K]) => {
-    const param = key === 'days' ? 'days'
-      : key === 'operator' ? 'operator'
-        : key === 'workOrderId' ? 'work_order_id' : 'product_type_id';
-    setQuery({ [param]: String(value ?? '') });
+
+  const FILTER_PARAM: Record<keyof AppDashboardFilters, string> = {
+    days: 'days', operator: 'operator', workOrderId: 'work_order_id',
+    productTypeId: 'product_type_id', result: 'result', status: 'status', query: 'q',
   };
-  const clearFilters = () => setQuery({ operator: '', work_order_id: '', product_type_id: '' });
+  const setFilter = <K extends keyof AppDashboardFilters>(key: K, value: AppDashboardFilters[K]) => {
+    const raw = String(value ?? '');
+    // 'all' is the absence of a filter, not a filter set to a value — keeping
+    // it out of the URL is what makes a shared link read as what it narrows.
+    setQuery({ [FILTER_PARAM[key]]: raw === 'all' ? '' : raw });
+  };
+  const clearFilters = () => setQuery({
+    operator: '', work_order_id: '', product_type_id: '', result: '', status: '', q: '',
+  });
+
+  // Exactly the four parameters GET /apps/:id/analytics honours — and the only
+  // thing a refetch depends on, so narrowing the table by result or typing in
+  // the search box does not re-ask the server the same question.
+  const serverParams: AppAnalyticsParams & { days: number } = useMemo(
+    () => ({ ...toParams(filters), days: filters.days }),
+    [filters.days, filters.operator, filters.workOrderId, filters.productTypeId],
+  );
 
   const [detail, setDetail] = useState<AppDetailResponse | null>(null);
   const [analytics, setAnalytics] = useState<AppAnalyticsResponse | null>(null);
@@ -184,6 +211,17 @@ export default function AppDetail() {
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [sort, setSort] = useState<{ key: 'date' | 'operator' | 'duration'; desc: boolean }>({ key: 'date', desc: true });
+  // Typing is not navigating: the box holds its own text and lands it in the
+  // URL after a pause, as a replace. A push per keystroke would turn Back into
+  // a walk back through the alphabet. A pasted ?q= link still fills the box.
+  const [fieldDetails, setFieldDetails] = useState(false);
+  const [queryText, setQueryText] = useState(filters.query);
+  useEffect(() => { setQueryText(filters.query); }, [filters.query]);
+  useEffect(() => {
+    if (queryText === filters.query) return;
+    const timer = setTimeout(() => setQuery({ q: queryText }, true), 300);
+    return () => clearTimeout(timer);
+  }, [queryText, filters.query, setQuery]);
 
   // Three reads, one screen. The detail payload describes the app itself
   // (what it is, where it runs) and never moves with the filters; the analytics
@@ -195,8 +233,8 @@ export default function AppDetail() {
     try {
       const [detailRes, analyticsRes, stepsRes] = await Promise.all([
         api.getAppDetail(id),
-        api.getAppAnalytics(id, toParams(filters)),
-        api.getStepMetrics(id, filters.days).catch(() => null) as Promise<StepMetricsPayload | null>,
+        api.getAppAnalytics(id, serverParams),
+        api.getStepMetrics(id, serverParams.days).catch(() => null) as Promise<StepMetricsPayload | null>,
       ]);
       setDetail(detailRes);
       setAnalytics(analyticsRes);
@@ -208,9 +246,21 @@ export default function AppDetail() {
     } finally {
       setLoading(false);
     }
-  }, [id, filters]);
+  }, [id, serverParams]);
 
   const { lastRefreshed, refreshing, refresh } = useAutoRefresh(load, REFRESH_MS);
+
+  // A URL asking for ?days=14 used to be rounded to 30 in silence and then
+  // labelled "the last 30 days" — a window nobody asked for under a label
+  // nobody could question. Rewrite the URL to the window actually used (a
+  // replace: this is not a place anybody chose to be) and say so out loud.
+  const [normalisedFrom, setNormalisedFrom] = useState<number | null>(null);
+  const askedFor = unofferedDays(searchParams);
+  useEffect(() => {
+    if (askedFor === null) return;
+    setNormalisedFrom(askedFor);
+    setQuery({ days: String(filters.days) }, true);
+  }, [askedFor, filters.days, setQuery]);
 
   // Runs still on the bench report how long they have been open, so the clock
   // has to move between polls or a live row reads as frozen.
@@ -259,7 +309,7 @@ export default function AppDetail() {
     setExporting(true);
     try {
       await api.downloadAppAnalyticsCsv(id, toParams(filters));
-      addToast('Runs CSV downloaded', 'success');
+      addToast('Runs CSV downloaded — the slice on screen', 'success');
     } catch (err: unknown) {
       addToast(err instanceof Error ? err.message : 'Export failed', 'error');
     } finally {
@@ -307,18 +357,37 @@ export default function AppDetail() {
   const { app, bindings, stats } = detail;
   const shape = appShape(app);
   const published = app.status === 'published';
-  // `current_revision` rides the app row from GET /api/apps/:id(/detail). A
-  // payload without it is not revision 1 — it is an app nobody has published
-  // under change control, which the header says in words.
-  const revision = Number((app as { current_revision?: number }).current_revision ?? 0);
+  // `current_revision` rides the app row from GET /api/apps/:id(/detail).
+  //
+  // Three different facts, three different lines — and a published app must
+  // never be labelled unpublished:
+  //   absent  the payload does not carry revisions at all → say nothing
+  //   0       revisions exist but this app has none yet   → "Revision not tracked yet"
+  //   N > 0   the revision the floor is running           → "Rev N live"
+  const rawRevision = (app as { current_revision?: number | null }).current_revision;
+  const revision = rawRevision === undefined || rawRevision === null
+    ? null
+    : Number(rawRevision);
   const authoredSteps = orderedSteps(app);
-  const options = analytics?.filter_options;
   const filtersActive = hasNarrowingFilters(filters);
 
-  const metrics = analytics ? buildHeadlineMetrics(analytics.totals, analytics.days) : [];
+  // App takt is the sum of its per-step takts, read from the blob the builder
+  // saved. stepTaktSeconds also reads the legacy `takt_time` key: apps built
+  // before the v2 builder (the demo sandbox's included) store it that way, and
+  // reading only `takt_time_seconds` reported a takt of zero for all of them —
+  // which hid the comparison on every legacy app.
+  const taktTotalSeconds = (app.steps ?? []).reduce(
+    (total: number, step) => total + stepTaktSeconds(step), 0,
+  );
+  const metrics = analytics
+    ? buildHeadlineMetrics(analytics.totals, analytics.days, taktTotalSeconds)
+    : [];
   const runs = analytics?.recent_runs ?? [];
   const runningNow = runs.filter(r => r.status === 'in_progress');
   const operatorRows = analytics ? buildOperatorRollup(analytics.by_operator) : [];
+  // Getting faster or slower, over the runs on screen. Null until there are
+  // enough timed runs on both sides to make the claim.
+  const trend = buildCycleTrend(runs);
 
   // The four different nothings, told apart: no runs ever, none in this window,
   // none matching these filters — each with its own way out.
@@ -328,7 +397,9 @@ export default function AppDetail() {
       app: { name: app.name, runsTotal: stats.runs_total, lastRunAt: stats.last_run_at },
       runsInWindow: analytics.totals.runs,
       days: filters.days,
-      filtersActive,
+      // Only the server-side three can empty the payload; the row filters
+      // empty the table, which the table says for itself.
+      filtersActive: hasServerFilters(filters),
     })
     : null;
 
@@ -351,7 +422,12 @@ export default function AppDetail() {
     0, ...timedSteps.map(s => Math.max(s.avg_seconds, s.takt_seconds || 0)),
   ));
 
-  const sortedRuns = runs.slice().sort((a, b) => {
+  // The server narrowed by window / operator / product type / work order; the
+  // result, status and text filters narrow the ROWS it sent. The table says
+  // which is which rather than letting a reader take the tiles as the same set.
+  const rowFiltersActive = filters.result !== 'all' || filters.status !== 'all' || !!filters.query.trim();
+  const visibleRuns = filterRuns(runs, filters);
+  const sortedRuns = visibleRuns.slice().sort((a, b) => {
     const dir = sort.desc ? -1 : 1;
     if (sort.key === 'operator') {
       return String(a.operator_name ?? '').localeCompare(String(b.operator_name ?? '')) * dir;
@@ -376,6 +452,37 @@ export default function AppDetail() {
     ? `${pluralize(analytics.totals.runs, 'run')} in the last ${analytics.days} days`
     : 'reading this window…';
 
+  /** A link to the Runs tab, this slice, narrowed the way the caller says. */
+  const runsHref = (patch: Partial<Record<'result' | 'status', string>>) => {
+    const next = new URLSearchParams(searchParams);
+    next.set('tab', 'runs');
+    for (const [key, value] of Object.entries(patch)) {
+      if (value && value !== 'all') next.set(key, value);
+      else next.delete(key);
+    }
+    return `?${next.toString()}`;
+  };
+
+  // The runs behind "what went wrong": a failed check, or a run nobody
+  // finished. Up to six, each one click from its own record.
+  const troubleRuns = runs
+    .filter(r => r.pass_fail === 'fail' || r.status === 'abandoned')
+    .slice(0, 6);
+
+  // A filter can outlive the thing it names — a bookmark to a product type
+  // somebody deleted, or an operator who left. The select then shows "All
+  // product types" while the numbers stay narrowed by it: a filter obeyed
+  // invisibly, which is the worst of both. Say it, and offer the way out.
+  const options = analytics?.filter_options;
+  const staleFilters = !options ? [] : ([
+    filters.productTypeId && !options.product_types.some(pt => pt.id === filters.productTypeId)
+      ? { key: 'productTypeId' as const, label: 'a product type that no longer exists' } : null,
+    filters.workOrderId && !options.work_orders.some(wo => wo.id === filters.workOrderId)
+      ? { key: 'workOrderId' as const, label: 'a work order that no longer exists' } : null,
+    filters.operator && !options.operators.includes(filters.operator)
+      ? { key: 'operator' as const, label: `an operator with no runs of this app (${filters.operator})` } : null,
+  ].filter(Boolean) as { key: keyof AppDashboardFilters; label: string }[]);
+
   return (
     <div className={`p-4 sm:p-6 space-y-5 transition-[padding] ${coachDocked ? 'lg:pr-[392px]' : ''}`}>
       <Link to="/apps" className="inline-flex items-center gap-1.5 text-sm text-gray-500 hover:text-gray-800">
@@ -392,15 +499,20 @@ export default function AppDetail() {
               {published ? <Globe size={10} /> : <Lock size={10} />}
               {published ? 'Published' : 'Draft'}
             </span>
-            {/* Which revision the floor is actually running. Revision 0 is not
-                revision one — it means this app predates change control, or has
-                never been published under it, and saying "Rev 0 live" would
-                claim a revision that does not exist. */}
-            <span className="text-[11px] font-medium text-gray-400 align-middle" title={revision > 0
-              ? 'The revision operators are running right now'
-              : 'This app has never been published through the builder’s change-controlled publish flow'}>
-              {revision > 0 ? `Rev ${revision} live` : 'Not yet published under change control'}
-            </span>
+            {/* Which revision the floor is running. Nothing at all when the
+                payload does not carry revisions; a neutral "not tracked yet"
+                when it does and this app has none — never a line that reads as
+                "unpublished" beside a Published badge. */}
+            {revision !== null && (
+              <span
+                className="text-[11px] font-medium text-gray-400 align-middle"
+                title={revision > 0
+                  ? 'The revision operators are running right now'
+                  : 'Revisions are recorded from the next publish onwards'}
+              >
+                {revision > 0 ? `Rev ${revision} live` : 'Revision not tracked yet'}
+              </span>
+            )}
           </span>
         }
         subtitle={app.description || 'No description yet — add one in the builder so your team knows when to use this app.'}
@@ -412,9 +524,12 @@ export default function AppDetail() {
                 <Edit3 size={14} /> Edit in builder
               </Link>
             )}
+            {/* The same export the Runs tab offers, under the same name: it
+                carries the filters on screen, so what downloads is the slice
+                being read — not "all runs" as the old label implied. */}
             <button onClick={handleExport} disabled={exporting} className="btn-secondary disabled:opacity-50">
               {exporting ? <RefreshCw size={14} className="animate-spin" /> : <Download size={14} />}
-              Export runs (CSV)
+              Export this slice (CSV)
             </button>
             {canEdit && (
               <button onClick={handleDuplicate} disabled={busy} className="btn-secondary">
@@ -498,6 +613,44 @@ export default function AppDetail() {
             ))}
           </select>
 
+          {/* Result and status narrow the runs the server sent; they are the
+              Runs tab's own two, kept in this one bar so there is still only
+              one place filters live. */}
+          <select
+            aria-label="Result"
+            className="input-field w-auto min-w-[9rem] py-1.5 text-xs"
+            value={filters.result}
+            onChange={e => setFilter('result', e.target.value as ResultFilter)}
+          >
+            <option value="all">Any result</option>
+            <option value="pass">Passed</option>
+            <option value="fail">Failed</option>
+            <option value="unchecked">No check recorded</option>
+          </select>
+
+          <select
+            aria-label="Status"
+            className="input-field w-auto min-w-[9rem] py-1.5 text-xs"
+            value={filters.status}
+            onChange={e => setFilter('status', e.target.value as StatusFilter)}
+          >
+            <option value="all">Any status</option>
+            <option value="completed">Completed</option>
+            <option value="in_progress">Running now</option>
+            <option value="abandoned">Abandoned</option>
+          </select>
+
+          <label className="relative">
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              value={queryText}
+              onChange={e => setQueryText(e.target.value)}
+              placeholder="Operator, work order, run id"
+              aria-label="Search runs"
+              className="input-field w-auto min-w-[13rem] py-1.5 pl-7 text-xs"
+            />
+          </label>
+
           {filtersActive && (
             <button type="button" onClick={clearFilters} className="text-xs font-medium text-indigo-600 hover:text-indigo-800">
               Clear filters
@@ -508,6 +661,47 @@ export default function AppDetail() {
             {runCountLine}
           </span>
         </div>
+
+        {/* A window this screen does not offer was silently rounded before. */}
+        {normalisedFrom !== null && (
+          <p className="text-[11px] text-amber-600 flex items-center gap-1.5" data-testid="window-normalised">
+            <AlertTriangle size={12} className="flex-shrink-0" />
+            This screen offers {DAY_PRESETS.join(', ')} day windows, so the {normalisedFrom}-day window in
+            the link was read as {filters.days} days. Every number below is the last {filters.days} days.
+            <button
+              type="button"
+              onClick={() => setNormalisedFrom(null)}
+              className="font-medium text-indigo-600 hover:text-indigo-800"
+            >
+              Got it
+            </button>
+          </p>
+        )}
+
+        {/* A filter can outlive what it names. Obeying it in silence, while the
+            select reads "All product types", is the failure this line ends. */}
+        {staleFilters.map(stale => (
+          <p key={stale.key} className="text-[11px] text-amber-600 flex items-center gap-1.5" data-testid="stale-filter">
+            <AlertTriangle size={12} className="flex-shrink-0" />
+            Filtered by {stale.label} — every number below is narrowed by it.
+            <button
+              type="button"
+              onClick={() => setFilter(stale.key, (stale.key === 'result' || stale.key === 'status' ? 'all' : '') as never)}
+              className="font-medium text-indigo-600 hover:text-indigo-800"
+            >
+              Remove this filter
+            </button>
+          </p>
+        ))}
+
+        {/* The row filters narrow the table, not the tiles. Never let the two
+            be read as one set. */}
+        {(filters.result !== 'all' || filters.status !== 'all' || filters.query.trim()) && (
+          <p className="text-[11px] text-gray-400">
+            Result, status and search narrow the runs listed on the Runs tab. The tiles above them
+            report the whole {filters.days}-day slice, which is what the server measured.
+          </p>
+        )}
       </section>
 
       <TabBar
@@ -526,17 +720,7 @@ export default function AppDetail() {
       {/* ── Overview ──────────────────────────────────────────────────────── */}
       {tab === 'overview' && (
         <div className="space-y-5">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="app-metrics">
-            {metrics.map(metric => (
-              <StatCard
-                key={metric.key}
-                label={metric.label}
-                value={<span data-testid={`metric-${metric.key}`}>{metric.value ?? '—'}</span>}
-                deltaLabel={metric.note}
-                {...METRIC_CHROME[metric.key]}
-              />
-            ))}
-          </div>
+          <MetricRow metrics={metrics} trend={trend} />
 
           {emptyReason ? (
             <div className="card">
@@ -622,26 +806,73 @@ export default function AppDetail() {
                       : 'Every run finished. This app records no pass/fail check, so there is no yield to report.'}
                   </p>
                 ) : (
-                  <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {failedChecks.map(f => (
-                      <li key={f.label} className="flex items-center gap-3 rounded-xl border border-red-100 bg-red-50/50 px-3 py-2">
-                        <XCircle size={14} className="text-red-500 flex-shrink-0" />
-                        <span className="text-[13px] text-gray-900 min-w-0 flex-1 truncate" title={f.label}>{f.label}</span>
-                        <span className="text-xs font-semibold text-red-600 tabular-nums flex-shrink-0">
-                          {f.fail} failed of {f.of}
-                        </span>
-                      </li>
-                    ))}
-                    {(analytics?.totals.abandoned ?? 0) > 0 && (
-                      <li className="flex items-center gap-3 rounded-xl border border-amber-100 bg-amber-50/50 px-3 py-2">
-                        <Activity size={14} className="text-amber-500 flex-shrink-0" />
-                        <span className="text-[13px] text-gray-900 min-w-0 flex-1">Runs nobody finished</span>
-                        <span className="text-xs font-semibold text-amber-700 tabular-nums flex-shrink-0">
-                          {analytics?.totals.abandoned} abandoned
-                        </span>
-                      </li>
+                  <>
+                    {/* Every count here is a door, not a full stop: "3 failed"
+                        with no way to the three runs is a dead end, and finding
+                        them by hand is what the old five screens made people
+                        do. */}
+                    <ul className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                      {failedChecks.map(f => (
+                        <li key={f.label}>
+                          <Link
+                            to={runsHref({ result: 'fail' })}
+                            data-testid="failed-check"
+                            className="flex items-center gap-3 rounded-xl border border-red-100 bg-red-50/50 px-3 py-2 hover:border-red-200 transition-colors"
+                          >
+                            <XCircle size={14} className="text-red-500 flex-shrink-0" />
+                            <span className="text-[13px] text-gray-900 min-w-0 flex-1 truncate" title={f.label}>{f.label}</span>
+                            <span className="text-xs font-semibold text-red-600 tabular-nums flex-shrink-0">
+                              {f.fail} failed of {f.of}
+                            </span>
+                            <ChevronRight size={13} className="text-red-400 flex-shrink-0" />
+                          </Link>
+                        </li>
+                      ))}
+                      {(analytics?.totals.abandoned ?? 0) > 0 && (
+                        <li>
+                          <Link
+                            to={runsHref({ status: 'abandoned' })}
+                            data-testid="abandoned-runs"
+                            className="flex items-center gap-3 rounded-xl border border-amber-100 bg-amber-50/50 px-3 py-2 hover:border-amber-200 transition-colors"
+                          >
+                            <Activity size={14} className="text-amber-500 flex-shrink-0" />
+                            <span className="text-[13px] text-gray-900 min-w-0 flex-1">Runs nobody finished</span>
+                            <span className="text-xs font-semibold text-amber-700 tabular-nums flex-shrink-0">
+                              {analytics?.totals.abandoned} abandoned
+                            </span>
+                            <ChevronRight size={13} className="text-amber-400 flex-shrink-0" />
+                          </Link>
+                        </li>
+                      )}
+                    </ul>
+
+                    {/* And the runs themselves, named, straight to the record. */}
+                    {troubleRuns.length > 0 && (
+                      <ul className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {troubleRuns.map(run => (
+                          <li key={run.id}>
+                            <Link
+                              to={`/completions/${run.id}`}
+                              data-testid="trouble-run"
+                              className="flex items-center gap-3 rounded-xl border border-gray-100 bg-white px-3 py-2 hover:border-gray-300 transition-colors"
+                            >
+                              <XCircle size={14} className="text-red-400 flex-shrink-0" />
+                              <span className="min-w-0 flex-1">
+                                <span className="block text-[13px] font-medium text-gray-900 truncate">
+                                  {run.pass_fail === 'fail' ? 'Failed a check' : 'Never finished'}
+                                  {run.work_order_number ? ` · ${run.work_order_number}` : ''}
+                                </span>
+                                <span className="block text-[11px] text-gray-500 truncate">
+                                  {run.operator_name || 'Unknown operator'} · {fmtRelative(run.completed_at ?? run.started_at)}
+                                </span>
+                              </span>
+                              <span className="text-[11px] text-indigo-600 font-medium flex-shrink-0">Open</span>
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
                     )}
-                  </ul>
+                  </>
                 )}
               </section>
 
@@ -655,6 +886,28 @@ export default function AppDetail() {
                   <p className="text-[11px] text-gray-400 mb-3">
                     Summarised across the runs in this window. Open a run on the Runs tab for the values it recorded one by one.
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => setFieldDetails(open => !open)}
+                    aria-expanded={fieldDetails}
+                    className="mb-3 inline-flex items-center gap-1 text-xs font-medium text-indigo-600 hover:text-indigo-800"
+                  >
+                    {fieldDetails ? 'Hide' : 'Show'} field details
+                    <ChevronDown size={13} className={`transition-transform ${fieldDetails ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {/* One line per field answers "what got recorded"; the cards
+                      answer "what did it say" — the pass/fail split, the
+                      number's spread and its daily trend, the option counts.
+                      Collapsing the second question into the first is what
+                      lost it. */}
+                  {fieldDetails ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-testid="field-cards">
+                      {(analytics?.fields ?? []).map(field => (
+                        <FieldCard key={field.widget_id} field={field} />
+                      ))}
+                    </div>
+                  ) : (
                   <ul className="divide-y divide-gray-100">
                     {(analytics?.fields ?? []).map(field => (
                       <li key={field.widget_id} className="py-2 flex items-baseline justify-between gap-4">
@@ -671,6 +924,7 @@ export default function AppDetail() {
                       </li>
                     ))}
                   </ul>
+                  )}
                 </section>
               )}
             </>
@@ -883,17 +1137,7 @@ export default function AppDetail() {
       {/* ── Runs ──────────────────────────────────────────────────────────── */}
       {tab === 'runs' && (
         <div className="space-y-5">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            {metrics.map(metric => (
-              <StatCard
-                key={metric.key}
-                label={metric.label}
-                value={<span data-testid={`metric-${metric.key}`}>{metric.value ?? '—'}</span>}
-                deltaLabel={metric.note}
-                {...METRIC_CHROME[metric.key]}
-              />
-            ))}
-          </div>
+          <MetricRow metrics={metrics} trend={trend} />
 
           <LiveBand runs={runningNow} now={now} />
 
@@ -911,8 +1155,10 @@ export default function AppDetail() {
               <div className="flex items-center gap-2 px-5 py-4 border-b border-gray-100 flex-wrap">
                 <Activity size={15} className="text-gray-400" />
                 <h2 className="font-semibold text-gray-900">Runs</h2>
-                <span className="text-xs text-gray-400">
-                  latest {runs.length} of {pluralize(analytics?.totals.runs ?? 0, 'run')} in this window
+                <span className="text-xs text-gray-400" data-testid="runs-count">
+                  {rowFiltersActive
+                    ? `${sortedRuns.length} of the latest ${runs.length} match`
+                    : `latest ${runs.length} of ${pluralize(analytics?.totals.runs ?? 0, 'run')} in this window`}
                 </span>
                 <button onClick={handleExport} disabled={exporting} className="ml-auto btn-secondary text-xs disabled:opacity-50">
                   <Download size={13} /> Export this slice (CSV)
@@ -925,7 +1171,7 @@ export default function AppDetail() {
                       <SortHeader label="Started" sortKey="date" sort={sort} onSort={toggleSort} />
                       <SortHeader label="Operator" sortKey="operator" sort={sort} onSort={toggleSort} />
                       <SortHeader label="Cycle time" sortKey="duration" sort={sort} onSort={toggleSort} />
-                      {['Work order', 'Product type', 'Status', ''].map(h => (
+                      {['Result', 'Work order', 'Product type', 'Status', ''].map(h => (
                         <th key={h} className="text-left text-[11px] font-semibold text-gray-500 uppercase tracking-wide px-4 py-3">{h}</th>
                       ))}
                     </tr>
@@ -961,6 +1207,22 @@ export default function AppDetail() {
                             </span>
                           )}
                         </td>
+                        <td className="px-4 py-3">
+                          {/* Passed, failed, or never inspected — three facts,
+                              three renderings. A run nobody checked is not a
+                              run that passed. */}
+                          {run.pass_fail === 'pass' ? (
+                            <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
+                              <CheckCircle2 size={12} /> Pass
+                            </span>
+                          ) : run.pass_fail === 'fail' ? (
+                            <span className="flex items-center gap-1 text-xs text-red-600 font-medium">
+                              <XCircle size={12} /> Fail
+                            </span>
+                          ) : (
+                            <span className="text-xs text-gray-400" title="no pass/fail check recorded on this run">—</span>
+                          )}
+                        </td>
                         <td className="px-4 py-3 text-xs text-gray-600">
                           {run.work_order_number || <span className="text-gray-400">—</span>}
                         </td>
@@ -985,12 +1247,24 @@ export default function AppDetail() {
                   </tbody>
                 </table>
               </div>
-              {(analytics?.totals.runs ?? 0) > runs.length && (
-                <p className="px-5 py-3 border-t border-gray-100 bg-gray-50 text-[11px] text-gray-500">
-                  The newest {runs.length} runs of this slice are listed. Export the CSV above for all
-                  {' '}{pluralize(analytics?.totals.runs ?? 0, 'run')}, or narrow the window.
-                </p>
+              {sortedRuns.length === 0 && (
+                <EmptyState
+                  icon={SlidersHorizontal}
+                  title="No runs match these filters"
+                  description={`${pluralize(runs.length, 'run')} listed for this window, none of them matching the result, status or search you picked.`}
+                  action={<button type="button" onClick={clearFilters} className="btn-secondary">Show all runs</button>}
+                />
               )}
+              {/* A control that quietly reaches less far than the number
+                  beside it is worse than no control at all. Say how far. */}
+              <p className="px-5 py-3 border-t border-gray-100 bg-gray-50 text-[11px] text-gray-500" data-testid="runs-footer">
+                {rowFiltersActive
+                  ? `Showing ${sortedRuns.length}, sorted within the latest ${runs.length} of ${pluralize(analytics?.totals.runs ?? 0, 'run')} in this window.`
+                  : `Sorted within the latest ${runs.length} of ${pluralize(analytics?.totals.runs ?? 0, 'run')} in this window.`}
+                {(analytics?.totals.runs ?? 0) > runs.length && (
+                  <> Export the CSV above for all {pluralize(analytics?.totals.runs ?? 0, 'run')}, or narrow the window.</>
+                )}
+              </p>
             </section>
           )}
         </div>
@@ -998,13 +1272,19 @@ export default function AppDetail() {
 
       {/* ── Who ran it ────────────────────────────────────────────────────── */}
       {tab === 'who' && (
+        <div className="space-y-5">
         <section className="card p-5" data-testid="who-ran-it">
           <div className="flex items-center gap-2 mb-1">
             <User size={16} className="text-gray-400" />
             <h2 className="font-semibold text-gray-900">Who ran it</h2>
+            <span className="text-[11px] text-gray-400">last {filters.days} days</span>
           </div>
+          {/* This rollup counts the person who STARTED each run — it is grouped
+              by the run's operator_name, so somebody who picked a job up
+              mid-shift is not in it. The all-time panel below counts them, and
+              says so. Two different questions, two different lists. */}
           <p className="text-[11px] text-gray-400 mb-4">
-            Everyone who worked a run in this window, busiest first, with their own average cycle time beside it.
+            Operators who started a run in this window, busiest first, with their own average cycle time beside it.
           </p>
           {operatorRows.length === 0 ? (
             <EmptyState
@@ -1032,6 +1312,55 @@ export default function AppDetail() {
             </ul>
           )}
         </section>
+
+        {/* ── All time: who has EVER worked this app ──────────────────────
+            The window rollup above is grouped by the run's own operator, so a
+            person who joined a job mid-shift never appears in it. This one is
+            the detail endpoint's, which counts them — and names how many of
+            their runs they joined rather than started. It is all-time on
+            purpose: the filter bar does not reach it, and it says so. */}
+        <section className="card p-5" data-testid="who-all-time">
+          <div className="flex items-center gap-2 mb-1">
+            <Users size={16} className="text-gray-400" />
+            <h2 className="font-semibold text-gray-900">All time</h2>
+            <span className="text-[11px] text-gray-400">not narrowed by the filters above</span>
+          </div>
+          <p className="text-[11px] text-gray-400 mb-4">
+            Everyone who has ever worked a run of this app, including anyone who picked one up mid-job.
+          </p>
+          {detail.operators.length === 0 ? (
+            <EmptyState icon={Users} compact title="No operators yet" description="Nobody has opened this app on the floor." />
+          ) : (
+            <ul className="space-y-2">
+              {detail.operators.map(op => (
+                <li key={op.operator_name} className="flex items-center gap-2.5" data-testid="who-all-time-row">
+                  <span className="w-7 h-7 rounded-full bg-gray-100 text-gray-500 text-[11px] font-semibold flex items-center justify-center flex-shrink-0">
+                    {initials(op.operator_name)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-[13px] text-gray-800 truncate">{op.operator_name}</span>
+                    <span className="block text-[11px] text-gray-400">
+                      {pluralize(op.runs, 'run')}
+                      {op.joined_runs > 0 && ` (${op.joined_runs} joined)`}
+                      {' · last '}{fmtRelative(op.last_run_at)}
+                    </span>
+                  </span>
+                  <span
+                    className={`text-[12px] tabular-nums flex-shrink-0 ${
+                      measuredSeconds(op.avg_duration_s) === null ? 'text-gray-400' : 'text-gray-500'
+                    }`}
+                    title={measuredSeconds(op.avg_duration_s) === null
+                      ? 'none of their runs was timed'
+                      : 'average cycle time, all time'}
+                  >
+                    {fmtDuration(measuredSeconds(op.avg_duration_s))}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+        </div>
       )}
 
       {/* ── Steps ─────────────────────────────────────────────────────────── */}
@@ -1145,6 +1474,69 @@ export default function AppDetail() {
 }
 
 // ── Pieces ───────────────────────────────────────────────────────────────────
+
+/**
+ * The headline row every tab shows: the five measured tiles plus the trend.
+ *
+ * The trend is a claim about DIRECTION, so it only appears once there is
+ * something on both sides of the comparison to make it with — and a couple of
+ * seconds either way is the same job done twice, not a direction.
+ */
+function MetricRow({ metrics, trend }: { metrics: HeadlineMetric[]; trend: CycleTrend | null }) {
+  return (
+    <div className="grid grid-cols-2 lg:grid-cols-3 gap-3" data-testid="app-metrics">
+      {metrics.map(metric => (
+        <StatCard
+          key={metric.key}
+          label={metric.label}
+          value={<span data-testid={`metric-${metric.key}`}>{metric.value ?? '—'}</span>}
+          deltaLabel={metric.note}
+          {...METRIC_CHROME[metric.key]}
+        />
+      ))}
+      <TrendCard trend={trend} />
+    </div>
+  );
+}
+
+function TrendCard({ trend }: { trend: CycleTrend | null }) {
+  if (!trend) {
+    return (
+      <StatCard
+        label="Trend"
+        value={<span data-testid="metric-trend" className="text-gray-400">—</span>}
+        deltaLabel="not enough timed runs to compare"
+        icon={<Minus size={18} />} iconBg="bg-gray-100" iconColor="text-gray-500"
+      />
+    );
+  }
+  const sample = `last ${trend.sample} runs vs the ${trend.sample} before`;
+  if (trend.flat) {
+    return (
+      <StatCard
+        label="Trend"
+        value={<span data-testid="metric-trend">Holding steady</span>}
+        deltaLabel={sample}
+        icon={<Minus size={18} />} iconBg="bg-gray-100" iconColor="text-gray-500"
+      />
+    );
+  }
+  const faster = trend.deltaSeconds < 0;
+  return (
+    <StatCard
+      label={faster ? 'Trend · getting faster' : 'Trend · getting slower'}
+      value={(
+        <span data-testid="metric-trend" className={faster ? 'text-green-600' : 'text-red-600'}>
+          {faster ? '−' : '+'}{fmtDuration(Math.abs(trend.deltaSeconds))}
+        </span>
+      )}
+      deltaLabel={sample}
+      icon={faster ? <TrendingDown size={18} /> : <TrendingUp size={18} />}
+      iconBg={faster ? 'bg-green-50' : 'bg-red-50'}
+      iconColor={faster ? 'text-green-600' : 'text-red-600'}
+    />
+  );
+}
 
 function LiveBand({ runs, now }: {
   runs: AppAnalyticsResponse['recent_runs']; now: number;
@@ -1321,4 +1713,145 @@ function BindingRow({ icon: Icon, label, children }: {
 
 function Unset({ children }: { children: React.ReactNode }) {
   return <span className="text-gray-400">{children}</span>;
+}
+
+// ── Field cards ──────────────────────────────────────────────────────────────
+// What each capture widget actually recorded, in the shape the value has: a
+// pass/fail split with its yield, a number's spread and daily trend, an
+// option's top values. One line per field says a field was recorded; these say
+// what it said.
+
+const FIELD_KIND: Record<string, { icon: React.ElementType; label: string }> = {
+  number: { icon: Activity, label: 'Number' },
+  boolean: { icon: CheckCircle2, label: 'Pass / Fail' },
+  option: { icon: ListChecks, label: 'Options' },
+  text: { icon: Info, label: 'Text' },
+};
+
+function yieldColor(pct: number | null | undefined): string {
+  if (pct === null || pct === undefined) return 'text-gray-400';
+  return pct >= 95 ? 'text-green-600' : pct >= 80 ? 'text-amber-600' : 'text-red-600';
+}
+
+/** A captured number, printed as recorded — never through a duration formatter,
+ *  because a torque reading is not a length of time. */
+function fmtValue(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(Number(n))) return '—';
+  const value = Number(n);
+  return Number.isInteger(value) ? String(value) : String(Math.round(value * 1000) / 1000);
+}
+
+function FieldCard({ field }: { field: AppAnalyticsResponse['fields'][number] }) {
+  const meta = FIELD_KIND[field.kind] ?? FIELD_KIND.text;
+  const Icon = meta.icon;
+  const trend = (field.trend ?? []).map(t => ({ ...t, day: dayLabel(t.date) }));
+  const pass = field.stats.pass ?? 0;
+  const fail = field.stats.fail ?? 0;
+  const options = field.stats.options ?? [];
+  const busiest = Math.max(1, ...options.map(o => o.count));
+
+  return (
+    <div className="card p-4" data-testid="field-card">
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-gray-900 truncate" title={field.label}>{field.label}</h3>
+          {field.step_name && <p className="text-[11px] text-gray-400 truncate">{field.step_name}</p>}
+        </div>
+        <span className="flex items-center gap-1 text-[11px] text-gray-500 bg-gray-50 border border-gray-100 rounded-full px-2 py-0.5 flex-shrink-0">
+          <Icon size={11} /> {meta.label}
+        </span>
+      </div>
+
+      {field.kind === 'boolean' && (
+        <div className="flex items-center gap-4">
+          <div className={`text-2xl font-bold tabular-nums ${yieldColor(field.stats.yield_pct)}`}>
+            {field.stats.yield_pct === null || field.stats.yield_pct === undefined
+              ? '—'
+              : `${Math.round(field.stats.yield_pct)}%`}
+            <span className="block text-[10px] font-medium uppercase tracking-wide text-gray-400">yield</span>
+          </div>
+          <div className="space-y-1 text-xs">
+            <div className="flex items-center gap-1.5 text-gray-700">
+              <CheckCircle2 size={13} className="text-green-600" />
+              Pass <span className="font-semibold text-gray-900 tabular-nums">{pass}</span>
+            </div>
+            <div className="flex items-center gap-1.5 text-gray-700">
+              <XCircle size={13} className="text-red-600" />
+              Fail <span className="font-semibold text-gray-900 tabular-nums">{fail}</span>
+            </div>
+            <div className="text-gray-400">{pluralize(pass + fail, 'check')}</div>
+          </div>
+        </div>
+      )}
+
+      {field.kind === 'number' && (
+        <div>
+          <div className="grid grid-cols-4 gap-2 mb-3">
+            {[
+              ['Avg', fmtValue(field.stats.avg)], ['Min', fmtValue(field.stats.min)],
+              ['Max', fmtValue(field.stats.max)], ['Count', String(field.stats.count ?? 0)],
+            ].map(([label, value]) => (
+              <div key={label} className="bg-gray-50 rounded-lg px-2 py-1.5 text-center">
+                <div className="text-sm font-bold text-gray-900 tabular-nums">{value}</div>
+                <div className="text-[10px] text-gray-400 uppercase tracking-wide">{label}</div>
+              </div>
+            ))}
+          </div>
+          {trend.length > 1 ? (
+            <ResponsiveContainer width="100%" height={110}>
+              <LineChart data={trend} margin={{ left: 0, right: 8, top: 4, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--grid-line)" />
+                <XAxis dataKey="day" tick={{ fontSize: 9, fill: 'var(--muted)' }} minTickGap={14} />
+                <YAxis
+                  tick={{ fontSize: 10, fill: 'var(--muted)' }}
+                  width={46}
+                  tickCount={4}
+                  tickFormatter={(v: number) => fmtValue(v)}
+                  domain={['auto', 'auto']}
+                />
+                <Tooltip content={<ChartTip format={(v: number) => fmtValue(v)} />} />
+                <Line type="monotone" dataKey="avg" stroke={ACCENT} strokeWidth={2}
+                  dot={{ r: 2.5, fill: ACCENT }} activeDot={{ r: 4 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <p className="text-[11px] text-gray-400 text-center py-2">A daily trend appears once more than one day has data</p>
+          )}
+        </div>
+      )}
+
+      {field.kind === 'option' && (
+        <div className="space-y-2">
+          {options.slice(0, 8).map(option => (
+            <div key={option.value} className="flex items-center gap-3">
+              <span className="text-xs text-gray-700 w-24 truncate flex-shrink-0" title={option.value}>{option.value}</span>
+              <div className="flex-1 h-4 bg-gray-100 rounded overflow-hidden min-w-[2rem]">
+                <div className="h-full rounded" style={{ width: `${(option.count / busiest) * 100}%`, background: ACCENT }} />
+              </div>
+              <span className="text-xs font-semibold text-gray-900 tabular-nums w-8 text-right">{option.count}</span>
+            </div>
+          ))}
+          {options.length > 8 && (
+            <p className="text-[11px] text-gray-400">+{options.length - 8} more values</p>
+          )}
+          <p className="text-[11px] text-gray-400">{pluralize(field.stats.count ?? 0, 'selection')}</p>
+        </div>
+      )}
+
+      {field.kind === 'text' && (
+        <p className="text-sm text-gray-500 py-3">
+          <span className="text-xl font-bold text-gray-900 tabular-nums mr-1.5">{field.stats.count ?? 0}</span>
+          entries captured
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** "Maria Lopez" → "ML". Two letters is what fits an avatar chip. */
+function initials(name: string): string {
+  const parts = (name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
 }

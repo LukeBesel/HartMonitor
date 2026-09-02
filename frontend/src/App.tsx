@@ -192,7 +192,7 @@ function AppRoutes() {
         <Route path="/departments" element={<Navigate to="/dashboard" replace />} />
         <Route path="/manager" element={<Navigate to="/dashboard" replace />} />
         <Route path="/departments/:id" element={<DepartmentView />} />
-        {/* Step metrics live inside Operation Analytics — the old
+        {/* Step metrics live inside App comparison — the old
             standalone page had no link into it from anywhere. */}
         <Route path="/step-metrics" element={<Navigate to="/analytics" replace />} />
         <Route path="/capacity" element={<CapacityPlanning />} />

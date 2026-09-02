@@ -39,6 +39,21 @@ vi.mock('../../api/client', () => ({
 }));
 
 vi.mock('../../components/shared/ModuleOnboarding', () => ({ default: () => null }));
+// App comparison gates its OEE tab on role, plan and the production module —
+// the same three the /oee nav item carried. This file is about the Compare
+// tab's numbers, so the gate is simply satisfied.
+vi.mock('../../context/AuthContext', () => ({
+  useAuth: () => ({
+    user: { id: 'u-1', email: 'a@b.c', display_name: 'Ana', role: 'manager' },
+    canEdit: true, loading: false, isAtLeast: () => true,
+  }),
+}));
+vi.mock('../../context/PlanContext', () => ({
+  usePlan: () => ({ isFree: false, isPro: true, refresh: () => {}, plan: null }),
+}));
+vi.mock('../../context/ModulesContext', () => ({
+  useModules: () => ({ isEnabled: () => true, loading: false }),
+}));
 vi.mock('../../components/analytics/StepMetricsPanel', () => ({ StepMetricsPanel: () => null }));
 
 import Analytics from '../Analytics';

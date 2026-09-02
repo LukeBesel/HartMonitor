@@ -20,12 +20,16 @@ import {
   AreaChart, Area, BarChart, Bar, LineChart, Line, XAxis, YAxis,
   Tooltip, ResponsiveContainer, CartesianGrid, Legend, PieChart, Pie, Cell
 } from 'recharts';
-import { TrendingUp, CheckCircle, Clock, Users, Activity, BarChart2, Filter, X, Timer, ChevronDown, AlertTriangle, RefreshCw, Cpu } from 'lucide-react';
+import { TrendingUp, CheckCircle, Clock, Users, Activity, BarChart2, Filter, X, Timer, ChevronDown, AlertTriangle, RefreshCw, Cpu, Lock } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import TabBar from '../components/shared/TabBar';
+import UpgradeModal from '../components/shared/UpgradeModal';
 import { StepMetricsPanel } from '../components/analytics/StepMetricsPanel';
 import { OEEPanel } from '../components/analytics/OEEPanel';
 import { fmtDuration } from '../components/apps/appModel';
+import { useAuth } from '../context/AuthContext';
+import { usePlan } from '../context/PlanContext';
+import { useModules } from '../context/ModulesContext';
 
 const DAYS_OPTIONS = [7, 14, 30, 90];
 
@@ -36,16 +40,39 @@ function Skeleton({ className }: { className?: string }) {
 type Tab = 'compare' | 'oee';
 
 export default function Analytics() {
+  // OEE was a nav item with a gate on it: supervisor and up, Pro, and only
+  // while the production module is on. Moving it to a tab must not drop the
+  // gate — the same three rules ride the tab instead.
+  const { isAtLeast } = useAuth();
+  const { isFree } = usePlan();
+  const { isEnabled } = useModules();
+  const oeeAllowed = isAtLeast('supervisor') && isEnabled('production');
+  const oeeLocked = oeeAllowed && isFree;
+  const [showUpgrade, setShowUpgrade] = useState(false);
+
   // The tab is in the URL, so /analytics?tab=oee is a link somebody can send —
-  // and the retired /oee bookmark lands straight on it.
+  // and the retired /oee bookmark lands straight on it. Choosing a tab is a
+  // navigation: it PUSHES, so Back returns to the tab you were reading.
   const [searchParams, setSearchParams] = useSearchParams();
-  const tab: Tab = searchParams.get('tab') === 'oee' ? 'oee' : 'compare';
+  const askedForOee = searchParams.get('tab') === 'oee';
+  const tab: Tab = askedForOee && oeeAllowed ? 'oee' : 'compare';
   const setTab = (next: Tab) => setSearchParams(prev => {
     const params = new URLSearchParams(prev);
     if (next === 'compare') params.delete('tab');
     else params.set('tab', next);
     return params;
-  }, { replace: true });
+  });
+
+  // A link to a tab this account cannot see lands on Compare, and the URL is
+  // rewritten to say so (a replace — nobody chose to be sent here).
+  useEffect(() => {
+    if (!askedForOee || oeeAllowed) return;
+    setSearchParams(prev => {
+      const params = new URLSearchParams(prev);
+      params.delete('tab');
+      return params;
+    }, { replace: true });
+  }, [askedForOee, oeeAllowed, setSearchParams]);
 
   const [overview, setOverview] = useState<AnalyticsOverview | null>(null);
   const [throughput, setThroughput] = useState<any[]>([]);
@@ -168,14 +195,47 @@ export default function Analytics() {
       <TabBar
         items={[
           { key: 'compare', label: 'Compare', icon: <BarChart2 size={15} /> },
-          { key: 'oee', label: 'OEE', icon: <Cpu size={15} /> },
+          ...(oeeAllowed ? [{
+            key: 'oee' as const,
+            label: 'OEE',
+            icon: oeeLocked ? <Lock size={15} /> : <Cpu size={15} />,
+            badge: oeeLocked
+              ? <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-600 leading-none">PRO</span>
+              : undefined,
+          }] : []),
         ]}
         active={tab}
         onSelect={setTab}
         ariaLabel="App comparison screens"
       />
 
-      {tab === 'oee' && <OEEPanel />}
+      {tab === 'oee' && (oeeLocked ? (
+        <div className="card p-10" data-testid="oee-locked">
+          <div className="flex flex-col items-center text-center gap-3">
+            <div className="w-12 h-12 rounded-full bg-amber-50 flex items-center justify-center">
+              <Lock size={22} className="text-amber-500" strokeWidth={1.75} />
+            </div>
+            <p className="text-sm font-semibold text-gray-700">OEE is a Pro feature</p>
+            <p className="text-xs text-gray-400 max-w-sm leading-relaxed">
+              Availability, performance and quality for every station, measured against its planned
+              hours and ideal cycle time.
+            </p>
+            <button onClick={() => setShowUpgrade(true)} className="btn-primary">
+              Upgrade to Pro
+            </button>
+          </div>
+        </div>
+      ) : (
+        <OEEPanel />
+      ))}
+
+      {showUpgrade && (
+        <UpgradeModal
+          lockedFeature="OEE"
+          onClose={() => setShowUpgrade(false)}
+          onPurchased={() => setShowUpgrade(false)}
+        />
+      )}
 
       {tab === 'compare' && (
       <div className="space-y-6">
