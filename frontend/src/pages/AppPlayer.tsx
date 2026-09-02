@@ -44,7 +44,7 @@ import { subscribeRealtime, isAndonEvent } from '../utils/realtime';
 import {
   claimSideEffect, collectStepTriggers, evaluateKitScan, exitTarget, formatDur,
   getStepBlocks, kitProgress, kitWidgetFor, legacyKey, operatorAttribution,
-  operatorDisplayName, runContextGate, runContextRequired, sideEffectKey,
+  operatorDisplayName, operatorReturnLink, runContextGate, runContextRequired, sideEffectKey,
   stepHidesFooterNav, stepShowsKit, stepTaktSeconds as taktOfStep,
   stepValueSignature, summarizeBlocks, taktBarState, valueInputFor,
 } from '../components/player/runtime';
@@ -91,7 +91,6 @@ export default function AppPlayer() {
   // which is an unlocked manager console with a builder in it.
   const enteredFromOperator = searchParams.get('from') === 'operator';
   const exitPath = exitTarget({ fromOperator: enteredFromOperator, role: user?.role });
-  const leavePlayer = useCallback(() => { navigate(exitPath); }, [navigate, exitPath]);
 
   // ── Loading / catalog state ────────────────────────────────────────────────
   const [app, setApp] = useState<App | null>(null);
@@ -500,16 +499,20 @@ export default function AppPlayer() {
   const explainBlocks = useCallback((blocks: BlockItem[]) => {
     if (blocks.length === 0) return;
     setNavAttempted(true);
-    const first = blocks.find(b => b.widgetId) ?? blocks[0];
+    // Prefer a blocker that is actually rendered (flow widgets and canvas
+    // widgets both carry a pw-<id> container); fall back to the first one with
+    // a widget, then to whatever is blocking at all (kit, photo gate).
+    const locatable = (b: BlockItem) => !!b.widgetId && !!document.getElementById(`pw-${b.widgetId}`);
+    const first = blocks.find(locatable) ?? blocks.find(b => b.widgetId) ?? blocks[0];
     setBlockBanner(first.message);
-    setBlockedWidgetId(first.widgetId ?? null);
     setGateBlock(first);
-    if (!first.widgetId) return;
-    const target = first.widgetId;
+    const el = first.widgetId ? document.getElementById(`pw-${first.widgetId}`) : null;
+    // "Show me" only appears when there is somewhere to go — a button that
+    // does nothing is the thing this whole change is about.
+    setBlockedWidgetId(el ? first.widgetId ?? null : null);
+    if (!el) return;
     // After paint, so a widget that only just gained its ring is measurable.
     requestAnimationFrame(() => {
-      const el = document.getElementById(`pw-${target}`);
-      if (!el) return;
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       el.focus({ preventScroll: true });
     });
@@ -733,6 +736,7 @@ export default function AppPlayer() {
     // The record belongs to the FAILURE, not to the press: an action already
     // carried out for this step with these answers is not carried out twice.
     const valueSig = stepValueSignature(step, formDataRef.current);
+    let enqueueSeen = 0;
     let finalIntent = intent;
     let blocked = false;
     for (const eff of effects) {
@@ -743,7 +747,7 @@ export default function AppPlayer() {
         setBlockBanner(eff.text);
       } else {
         if (eff.kind === 'enqueue') {
-          const key = sideEffectKey(step?.id ?? '', valueSig, eff.op, eff.payload);
+          const key = sideEffectKey(step?.id ?? '', valueSig, eff.op, enqueueSeen++);
           if (!claimSideEffect(firedSideEffectsRef.current, key)) {
             debug(`${eff.op} skipped — already done for this step and these answers`);
             continue;
@@ -1421,6 +1425,18 @@ export default function AppPlayer() {
     }
   }, [badgeInput]);
 
+  /**
+   * The way out. Going back to the floor carries the verified identity and the
+   * station with it: without them the portal asks "Who's working?" and demands
+   * the PIN again after every single unit, which is how a floor learns to stop
+   * clocking in at all.
+   */
+  const leavePlayer = useCallback(() => {
+    navigate(exitPath === '/operator'
+      ? operatorReturnLink(operatorUserId, selectedStationId)
+      : exitPath);
+  }, [navigate, exitPath, operatorUserId, selectedStationId]);
+
   // ── Derived render state ───────────────────────────────────────────────────
 
   const blocks = useMemo(
@@ -1742,6 +1758,7 @@ export default function AppPlayer() {
       <RunSummary
         appName={app.name}
         operatorName={operatorName}
+        completionId={completionId}
         productTypeName={selectedPT?.name}
         steps={app.steps}
         stepTimes={stepTimes}
@@ -1961,6 +1978,7 @@ export default function AppPlayer() {
               widgets={currentStep.widgets}
               height={currentStep.canvasHeight ?? 560}
               background={currentStep.canvasBackground}
+              invalidByWidget={invalidByWidget}
               values={formData as Record<string, unknown>}
               onChange={(key, val) => {
                 const w = currentStep.widgets.find(x => legacyKey(x) === key);

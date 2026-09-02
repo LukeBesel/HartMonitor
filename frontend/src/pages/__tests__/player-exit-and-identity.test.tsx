@@ -23,7 +23,8 @@ vi.mock('../../api/client', () => ({
 }));
 
 import {
-  buildPlayLink, exitTarget, operatorAttribution, operatorDisplayName, UNNAMED_OPERATOR,
+  buildPlayLink, exitTarget, operatorAttribution, operatorDisplayName,
+  operatorReturnLink, UNNAMED_OPERATOR,
 } from '../../components/player/runtime';
 import { enqueueOutbox, flushOutbox } from '../../utils/offlineQueue';
 import RunSummary from '../../components/player/RunSummary';
@@ -103,6 +104,15 @@ describe('who ran this job', () => {
     expect(q.get('from')).toBe('operator');
   });
 
+  it('comes back to the portal as the person who left it', () => {
+    // Without this the portal asks "Who's working?" and demands the PIN again
+    // after every single unit.
+    expect(operatorReturnLink('user-7', 'st-3')).toBe('/operator?uid=user-7&station=st-3');
+    expect(operatorReturnLink('user-7', null)).toBe('/operator?uid=user-7');
+    expect(operatorReturnLink(null, 'st-3')).toBe('/operator?station=st-3');
+    expect(operatorReturnLink(null, null)).toBe('/operator');
+  });
+
   it('omits what it does not know instead of sending blanks', () => {
     const link = buildPlayLink({ appId: 'app-1', operatorName: '', operatorUserId: null, fromOperator: true });
     expect(link).toBe('/play/app-1?from=operator');
@@ -121,11 +131,12 @@ describe('the run summary claims only what happened', () => {
     taktExceededSteps: [],
     capturedCount: 2,
     kitSummary: null,
+    completionId: 'c1',
     onNextUnit: () => undefined,
     onDone: () => undefined,
   };
 
-  it('clears "Saved locally" when the outbox drains — no reload', async () => {
+  it('clears "Saved locally" when this run\'s own save goes up — no reload', async () => {
     enqueueOutbox('completion_update', { completionId: 'c1', body: { partial: false } }, 'completion:c1');
     render(<RunSummary {...props} savedLocally />);
     expect(screen.getByText(/Saved locally/)).toBeTruthy();
@@ -135,6 +146,22 @@ describe('the run summary claims only what happened', () => {
 
     expect(screen.queryByText(/Saved locally/)).toBeNull();
     expect(screen.getByText(/Synced/)).toBeTruthy();
+  });
+
+  it('reports on THIS run, not on whatever else the outbox holds', async () => {
+    // Another run's queued save must not hold this run's banner up...
+    enqueueOutbox('completion_update', { completionId: 'other', body: {} }, 'completion:other');
+    const { unmount } = render(<RunSummary {...props} savedLocally />);
+    expect(screen.queryByText(/Saved locally/)).toBeNull();
+    expect(screen.getByText(/Synced/)).toBeTruthy();
+    unmount();
+
+    // ...and this run's own save must not be reported as synced because the
+    // rest of the outbox happens to be empty.
+    enqueueOutbox('completion_update', { completionId: 'c1', body: {} }, 'completion:c1');
+    render(<RunSummary {...props} savedLocally />);
+    expect(screen.getByText(/Saved locally/)).toBeTruthy();
+    expect(screen.queryByText(/Synced/)).toBeNull();
   });
 
   it('says nothing about local saving for a run that went straight up', () => {

@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import { CheckCircle, AlertTriangle, CloudOff, Package, Tag, RotateCw } from 'lucide-react';
 import type { Step } from '../../types';
 import { useOutboxDepth } from '../../utils/offlineQueue';
+import type { OutboxItem } from '../../utils/offlineQueue';
 import { formatDur, operatorDisplayName } from './runtime';
 
 const CONFETTI_COLORS = ['#f43f5e', '#f59e0b', '#10b981', '#0ea5e9', '#8b5cf6', '#ec4899'];
@@ -46,6 +47,9 @@ export interface RunSummaryProps {
   kitSummary: string | null;    // e.g. "9/9 verified" — null when no kit
   /** The run finished while offline: its final save is sitting in the outbox. */
   savedLocally: boolean;
+  /** THIS run, so "Synced" can be about this run's own queued save and not
+   *  about the outbox happening to be empty of other people's work. */
+  completionId?: string | null;
   /** Run context carried into the next unit (WO number / part number), or null. */
   contextLabel?: string | null;
   /** Non-empty = "Next unit" is disabled with this short reason (no context yet). */
@@ -64,14 +68,22 @@ export interface RunSummaryProps {
 export default function RunSummary(props: RunSummaryProps) {
   const {
     appName, operatorName, productTypeName, steps, stepTimes, getStepTakt,
-    taktExceededSteps, capturedCount, kitSummary, savedLocally,
+    taktExceededSteps, capturedCount, kitSummary, savedLocally, completionId,
     contextLabel, nextUnitDisabledReason, onChangeContext, onNextUnit, onDone, onReview,
   } = props;
 
-  // Live outbox depth, so "Saved locally" stops being a claim about the past.
-  // The moment the queued completion goes up, the warning goes away — no
-  // reload, no reopening the run.
-  const queued = useOutboxDepth(['completion_update']);
+  // Live outbox depth for THIS run's own final save (the player queues it under
+  // the coalesce key `completion:<id>`), so "Saved locally" stops being a claim
+  // about the past and "Synced" is a claim about this run rather than about an
+  // outbox that happens to be empty of everything else. The moment this run's
+  // item goes up, the warning goes away — no reload, no reopening the run.
+  const mine = useCallback(
+    (item: OutboxItem) => (completionId
+      ? item.coalesceKey === `completion:${completionId}`
+      : item.kind === 'completion_update'),
+    [completionId],
+  );
+  const queued = useOutboxDepth(mine);
   const stillQueued = savedLocally && queued > 0;
   const justSynced = savedLocally && queued === 0;
 

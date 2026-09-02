@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import {
   Factory, ChevronRight, Package, Clock, AlertTriangle, CheckCircle, User, Tablet,
@@ -95,8 +95,33 @@ function isToday(iso?: string | null) {
 
 type Tab = 'jobs' | 'history' | 'report' | 'profile';
 
+/** Where a verified clock-in is remembered for the length of this tab's shift.
+ *  sessionStorage, deliberately: it dies with the tab, and it is what stops a
+ *  hand-typed ?uid= from clocking somebody else in — the id in the URL is only
+ *  honoured when it matches the identity THIS tab actually verified. */
+const IDENTITY_KEY = 'hm_operator_identity';
+
+function rememberIdentity(who: OperatorIdentity) {
+  try {
+    if (who.id) sessionStorage.setItem(IDENTITY_KEY, JSON.stringify(who));
+    else sessionStorage.removeItem(IDENTITY_KEY);
+  } catch { /* private mode — the operator just clocks in again */ }
+}
+
+function verifiedIdentity(): OperatorIdentity | null {
+  try {
+    const raw = sessionStorage.getItem(IDENTITY_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as OperatorIdentity;
+    return parsed && parsed.id && parsed.display_name ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function OperatorPortal() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { user } = useAuth();
   const [step, setStep] = useState<'name' | 'main'>('name');
   const [activeTab, setActiveTab] = useState<Tab>('jobs');
@@ -140,6 +165,7 @@ export default function OperatorPortal() {
     const name = who.display_name;
     setOperatorName(name);
     setOperatorUserId(who.id);
+    rememberIdentity(who);
     localStorage.setItem('hm_operator_name', name);
     setLoading(true);
     setIdentifyError('');
@@ -203,12 +229,34 @@ export default function OperatorPortal() {
 
   const switchOperator = () => {
     setOperatorUserId(null);
+    rememberIdentity({ id: null, display_name: '' });
     setStep('name');
     setSelectedWO(null);
     setCompletions(null);
     setActiveTab('jobs');
     setManualMode(false);
   };
+
+  // Coming back from a finished unit (/operator?uid=…&station=…): pick the
+  // operator back up instead of asking who they are after every single unit.
+  // Two locks, because a URL is typed as easily as it is followed: the id must
+  // be on the roster this portal already loaded, AND it must be the identity
+  // this tab verified with a PIN or badge. Anything else falls through to the
+  // normal clock-in screen.
+  const restoredRef = useRef(false);
+  useEffect(() => {
+    if (restoredRef.current || step !== 'name' || !rosterLoaded) return;
+    const uid = searchParams.get('uid');
+    if (!uid) return;
+    restoredRef.current = true;
+    const station = searchParams.get('station');
+    if (station) localStorage.setItem('hm_station', station);
+    const onRoster = roster.find(r => r.id === uid);
+    const verified = verifiedIdentity();
+    if (!onRoster || !verified || verified.id !== uid) return;
+    void identify({ id: onRoster.id, display_name: onRoster.display_name });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rosterLoaded, roster, step, searchParams]);
 
   // Lazy-load completion history the first time that tab is opened.
   useEffect(() => {

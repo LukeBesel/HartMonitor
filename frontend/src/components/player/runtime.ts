@@ -62,17 +62,18 @@ export function widgetLabel(w: Widget, fallback = 'This field'): string {
   return w.label || (typeof configured === 'string' ? configured : '') || fallback;
 }
 
-/** The number a counter shows before anyone touches it. */
-export function counterInitialValue(w: Widget): number {
-  const n = Number(w.config.initialValue ?? 0);
-  return Number.isFinite(n) ? n : 0;
-}
-
 /**
  * Is a required input still unanswered? "Empty" is not one shape:
- *   • checkbox — must be ticked, not merely present (v1 semantics);
- *   • counter  — must have MOVED OFF its initial value, because a counter always
- *                shows a number, so "has a value" would gate on nothing;
+ *   • checkbox — must be checked, not merely present (v1 semantics);
+ *   • counter  — must have been TOUCHED. Presence in formData is the whole
+ *                test: setField is the only writer, and starting a run seeds no
+ *                counter defaults, so a key exists only because the operator
+ *                tapped. Requiring the number to have MOVED stranded the run
+ *                whenever the true answer was the initial value — "Defects
+ *                found: 0" on a counter that starts at 0 and cannot go below
+ *                it could never be given. CounterWidget commits on every tap,
+ *                including at the ends of the range, so confirming a zero is
+ *                one tap of either button.
  *   • signature— a stroke must have been captured (any non-empty signature);
  *   • the rest — a value that is not undefined / null / ''.
  */
@@ -80,11 +81,8 @@ export function requiredMissing(w: Widget, val: unknown): boolean {
   switch (w.type) {
     case 'checkbox':
       return val !== true;
-    case 'counter': {
-      if (isEmpty(val)) return true;
-      const n = Number(val);
-      return !Number.isFinite(n) || n === counterInitialValue(w);
-    }
+    case 'counter':
+      return isEmpty(val);
     default:
       return isEmpty(val);
   }
@@ -96,11 +94,11 @@ export function requiredMessage(w: Widget): string {
   switch (w.type) {
     case 'pass-fail':     return `${label} needs a result`;
     case 'signature':     return `${label} needs a signature`;
-    case 'counter':       return `${label} is still at ${counterInitialValue(w)} — count it`;
+    case 'counter':       return `${label} needs a count — tap + or − to confirm`;
     case 'photo-capture': return `${label} needs a photo`;
     case 'scan-input':    return `${label} needs a scan`;
     case 'select-input':  return `${label} needs a choice`;
-    case 'checkbox':      return `${label} must be ticked`;
+    case 'checkbox':      return `${label} needs to be checked`;
     default:              return `${label} is required`;
   }
 }
@@ -587,26 +585,27 @@ export function stepValueSignature(
     .join('|');
 }
 
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? String(value);
-  if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
-  const obj = value as Record<string, unknown>;
-  return '{' + Object.keys(obj).sort()
-    .map(k => JSON.stringify(k) + ':' + stableStringify(obj[k]))
-    .join(',') + '}';
-}
-
 /**
  * Identity of ONE side-effecting trigger action (create_ncr / save_record) for
- * one attempt at leaving a step: which step, with which answers, doing what.
+ * one attempt at leaving a step: which step, with which answers, which action.
+ *
+ * `occurrence` is the action's position among the enqueue effects of that one
+ * step_exit evaluation — the engine's enqueue effect carries no trigger id, and
+ * for identical answers the same triggers match in the same order, so position
+ * identifies the authored action exactly as a trigger id would.
+ *
+ * The interpolated PAYLOAD is deliberately not part of the key. An authored
+ * title like "Failed after {{app.elapsed_seconds}}s" renders differently on
+ * every press, which would make every duplicate look like a new report and
+ * defeat the guard entirely.
  */
 export function sideEffectKey(
   stepId: string,
   valueSignature: string,
   op: string,
-  payload: unknown,
+  occurrence: number,
 ): string {
-  return [stepId, valueSignature, op, stableStringify(payload)].join('~');
+  return [stepId, valueSignature, op, String(occurrence)].join('~');
 }
 
 /**
@@ -622,4 +621,21 @@ export function claimSideEffect(fired: Set<string>, key: string): boolean {
   if (fired.has(key)) return false;
   fired.add(key);
   return true;
+}
+
+/**
+ * The way back to the Operator Portal, carrying the identity the player already
+ * verified. Without it the portal asks "Who's working?" and demands the PIN
+ * again after every single unit, which is the fastest way to teach a floor to
+ * stop clocking in at all.
+ */
+export function operatorReturnLink(
+  operatorUserId: string | null | undefined,
+  stationId?: string | null,
+): string {
+  const q = new URLSearchParams();
+  if (operatorUserId) q.set('uid', operatorUserId);
+  if (stationId) q.set('station', stationId);
+  const qs = q.toString();
+  return `/operator${qs ? `?${qs}` : ''}`;
 }

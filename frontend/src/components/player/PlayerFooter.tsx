@@ -36,8 +36,16 @@ export default function PlayerFooter(props: PlayerFooterProps) {
   // already scrolled past. Tapping now takes them to the field that is holding
   // the run up, so the button DOES something and must be reachable. It carries
   // the reason instead. Only the in-flight save actually disables it.
+  // The reason is announced with the button, not left as a colour change: a
+  // screen reader reaching "Complete" hears why it will not complete.
+  const REASON_ID = 'p-footer-block-reason';
   const blockedProps = blocked
-    ? { 'data-blocked': 'true', title: blockReason || undefined, style: { opacity: 0.6 } }
+    ? {
+      'data-blocked': 'true',
+      title: blockReason || undefined,
+      'aria-describedby': blockReason ? REASON_ID : undefined,
+      style: { opacity: 0.6 },
+    }
     : {};
 
   return (
@@ -88,6 +96,7 @@ export default function PlayerFooter(props: PlayerFooterProps) {
         {blocked && blockReason && (
           <button
             type="button"
+            id={REASON_ID}
             onClick={onShowBlocker}
             disabled={!onShowBlocker}
             className="flex items-center gap-1.5 truncate max-w-full"

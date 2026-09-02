@@ -201,9 +201,10 @@ describe('side-effecting step_exit actions fire once per failure', () => {
     widget({ id: 'w1', type: 'pass-fail', config: { variableName: 'qc_result' } }),
     widget({ id: 'w2', type: 'text-input', config: { variableName: 'note' } }),
   ]);
-  const ncr = { severity: 'major', title: 'Visual inspection failed', description: 'Unit held' };
-  const keyFor = (data: Record<string, unknown>, payload: unknown = ncr) =>
-    sideEffectKey(failStep.id, stepValueSignature(failStep, data), 'create_ncr', payload);
+  // (step, answers, action, which enqueue of this evaluation) — never the
+  // rendered payload.
+  const keyFor = (data: Record<string, unknown>, occurrence = 0, op = 'create_ncr') =>
+    sideEffectKey(failStep.id, stepValueSignature(failStep, data), op, occurrence);
 
   it('files on the first press and on no press after it', () => {
     const fired = new Set<string>();
@@ -214,21 +215,40 @@ describe('side-effecting step_exit actions fire once per failure', () => {
     expect(fired.size).toBe(1);
   });
 
-  it('files again when the answers changed — a different report', () => {
+  it('files again when the answers changed — a genuinely different report', () => {
     const fired = new Set<string>();
     expect(claimSideEffect(fired, keyFor({ qc_result: 'Fail' }))).toBe(true);
-    // The operator corrects the unit and fails it again for another reason.
+    // The operator writes down a second defect and tries again.
     expect(claimSideEffect(fired, keyFor({ qc_result: 'Fail', note: 'second defect' }))).toBe(true);
     expect(fired.size).toBe(2);
   });
 
-  it('keeps different actions and different steps apart', () => {
+  // The regression this guards: an authored title carrying elapsed time, a
+  // timestamp or a counter renders differently on every single press. Keying on
+  // the payload made every duplicate look new and filed every one of them.
+  it('is not defeated by a payload that changes on every press', () => {
     const fired = new Set<string>();
     const data = { qc_result: 'Fail' };
-    expect(claimSideEffect(fired, keyFor(data))).toBe(true);
-    expect(claimSideEffect(fired, keyFor(data, { ...ncr, severity: 'critical' }))).toBe(true);
-    expect(claimSideEffect(fired, sideEffectKey('other-step', stepValueSignature(failStep, data), 'create_ncr', ncr))).toBe(true);
-    expect(claimSideEffect(fired, sideEffectKey(failStep.id, stepValueSignature(failStep, data), 'save_record', ncr))).toBe(true);
+    const filed: string[] = [];
+    for (const elapsed of [41, 47, 53, 61]) {
+      const title = `Visual inspection failed after ${elapsed}s`;   // re-interpolated each press
+      if (claimSideEffect(fired, keyFor(data))) filed.push(title);
+    }
+    expect(filed).toHaveLength(1);
+    expect(filed[0]).toBe('Visual inspection failed after 41s');
+  });
+
+  it('keeps different actions, different steps and different ops apart', () => {
+    const fired = new Set<string>();
+    const data = { qc_result: 'Fail' };
+    expect(claimSideEffect(fired, keyFor(data, 0))).toBe(true);
+    // A second authored action in the same trigger run.
+    expect(claimSideEffect(fired, keyFor(data, 1))).toBe(true);
+    expect(claimSideEffect(fired, keyFor(data, 0, 'save_record'))).toBe(true);
+    expect(claimSideEffect(fired, sideEffectKey('other-step', stepValueSignature(failStep, data), 'create_ncr', 0))).toBe(true);
+    expect(fired.size).toBe(4);
+    // ...and still only once each.
+    expect(claimSideEffect(fired, keyFor(data, 1))).toBe(false);
   });
 
   it('signs a step by its answers, whatever order the keys arrive in', () => {
@@ -236,11 +256,7 @@ describe('side-effecting step_exit actions fire once per failure', () => {
     const b = stepValueSignature(failStep, { note: 'x', qc_result: 'Fail' });
     expect(a).toBe(b);
     expect(stepValueSignature(failStep, { qc_result: 'Pass' })).not.toBe(a);
+    expect(stepValueSignature(failStep, {})).not.toBe(a);
     expect(stepValueSignature(undefined, {})).toBe('');
-  });
-
-  it('is stable across payload key order', () => {
-    expect(sideEffectKey('s', 'v', 'create_ncr', { a: 1, b: { c: 2, d: 3 } }))
-      .toBe(sideEffectKey('s', 'v', 'create_ncr', { b: { d: 3, c: 2 }, a: 1 }));
   });
 });

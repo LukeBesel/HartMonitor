@@ -53,7 +53,7 @@ describe('required means required (every type the builder offers it on)', () => 
     'number-input':  { empty: '',        filled: '12' },
     'select-input':  { empty: undefined, filled: 'Option 1' },
     'checkbox':      { empty: false,     filled: true },
-    'counter':       { empty: undefined, filled: 3 },
+    'counter':       { empty: undefined, filled: 0 },   // a committed zero counts
     'pass-fail':     { empty: undefined, filled: 'Pass' },
     'signature':     { empty: '',        filled: 'M. Lopez' },
     'scan-input':    { empty: '',        filled: 'LOT-0001' },
@@ -89,16 +89,25 @@ describe('required means required (every type the builder offers it on)', () => 
     }
   });
 
-  it("a required counter must have MOVED — 'has a value' would gate on nothing", () => {
-    const w = widget({ id: 'c', type: 'counter', label: 'Units packed', config: { required: true, initialValue: 0 } });
-    expect(requiredMissing(w, undefined)).toBe(true);     // untouched
-    expect(requiredMissing(w, 0)).toBe(true);             // back to where it started
+  // An honest zero is an answer. "Defects found" on a counter that starts at 0
+  // and cannot go below it has 0 as its most common true value; requiring the
+  // number to have MOVED stranded that run with no way out at all — the minus
+  // button was disabled and the plus button was a lie. Touching the counter is
+  // the test, and CounterWidget commits on every tap, including at the ends of
+  // the range, so confirming a zero is one tap.
+  it('a required counter is satisfied by an honest zero, once it is confirmed', () => {
+    const w = widget({ id: 'c', type: 'counter', label: 'Defects found', config: { required: true, initialValue: 0, min: 0 } });
+    expect(requiredMissing(w, undefined)).toBe(true);     // untouched — nothing recorded
+    expect(requiredMissing(w, 0)).toBe(false);            // confirmed zero — an answer
     expect(requiredMissing(w, 4)).toBe(false);
-    expect(requiredMessage(w)).toBe('Units packed is still at 0 — count it');
+    expect(requiredMessage(w)).toBe('Defects found needs a count — tap + or − to confirm');
+    // Blocks the step while untouched, clears the moment a zero is committed.
+    expect(getStepBlocks(step([w]), {}, null, null)).toHaveLength(1);
+    expect(getStepBlocks(step([w]), { c: 0 }, null, null)).toHaveLength(0);
 
     const fromFive = widget({ id: 'c', type: 'counter', label: 'Cores', config: { required: true, initialValue: 5 } });
-    expect(requiredMissing(fromFive, 5)).toBe(true);
-    expect(requiredMissing(fromFive, 6)).toBe(false);
+    expect(requiredMissing(fromFive, 5)).toBe(false);
+    expect(requiredMissing(fromFive, undefined)).toBe(true);
   });
 
   it('a required signature needs a captured stroke', () => {
@@ -114,7 +123,7 @@ describe('required means required (every type the builder offers it on)', () => 
     expect(msg('photo-capture')).toBe('Ships as-is? needs a photo');
     expect(msg('scan-input')).toBe('Ships as-is? needs a scan');
     expect(msg('select-input')).toBe('Ships as-is? needs a choice');
-    expect(msg('checkbox')).toBe('Ships as-is? must be ticked');
+    expect(msg('checkbox')).toBe('Ships as-is? needs to be checked');
     expect(msg('text-input')).toBe('Ships as-is? is required');
     // Hand-authored apps put the label in config; the message still names it.
     expect(requiredMessage(widget({ id: 'w', type: 'pass-fail', config: { label: 'Ships as-is?' } })))

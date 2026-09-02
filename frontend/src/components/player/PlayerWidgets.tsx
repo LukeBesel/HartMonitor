@@ -253,26 +253,36 @@ function CounterWidget({ widget, value, onChange }: {
   const step = widget.config.step ?? 1;
   const current = typeof value === 'number' ? value : (widget.config.initialValue ?? 0);
 
+  // Every tap COMMITS, including the ones that cannot move the number: a
+  // counter that starts at 0 and cannot go below it has "0" as a real answer,
+  // and a disabled button that writes nothing left a required counter with no
+  // way to be satisfied. The end-of-range buttons keep their dimmed look —
+  // they still say "this is as low as it goes" — but they now record the
+  // operator's confirmation of the value that is already showing.
   const bump = (delta: number) => {
     const next = Math.min(max, Math.max(min, current + delta * step));
     onChange(widget, next);
   };
+  const atMin = current <= min;
+  const atMax = current >= max;
 
   return (
     <div className="p-card p-5">
       {widget.label && <div style={{ fontSize: 14, fontWeight: 550, color: 'var(--p-muted)', marginBottom: 14 }}>{widget.label}</div>}
       <div className="flex items-center justify-between gap-4">
         <button
-          onClick={() => bump(-1)} disabled={current <= min} aria-label="Decrease"
-          className="p-btn p-btn-ghost" style={{ width: 64, height: 64, fontSize: 28, fontWeight: 750 }}
+          onClick={() => bump(-1)} aria-label="Decrease"
+          className="p-btn p-btn-ghost"
+          style={{ width: 64, height: 64, fontSize: 28, fontWeight: 750, opacity: atMin ? 0.45 : 1 }}
         >−</button>
         <div className="text-center">
           <div className="tnum p-mono" style={{ fontSize: 48, fontWeight: 750, color: 'var(--p-ink)' }}>{current}</div>
           <div className="tnum" style={{ fontSize: 12, color: 'var(--p-muted)', marginTop: 2 }}>{min} — {max}</div>
         </div>
         <button
-          onClick={() => bump(1)} disabled={current >= max} aria-label="Increase"
-          className="p-btn" style={{ width: 64, height: 64, fontSize: 28, fontWeight: 750, background: 'var(--p-accent)', color: 'var(--p-on-accent)' }}
+          onClick={() => bump(1)} aria-label="Increase"
+          className="p-btn"
+          style={{ width: 64, height: 64, fontSize: 28, fontWeight: 750, background: 'var(--p-accent)', color: 'var(--p-on-accent)', opacity: atMax ? 0.45 : 1 }}
         >+</button>
       </div>
     </div>
