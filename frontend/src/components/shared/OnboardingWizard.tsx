@@ -198,9 +198,12 @@ export default function OnboardingWizard({ onWillShow }: { onWillShow?: () => vo
   const back = () => setIndex(i => Math.max(0, i - 1));
 
   return (
+    // role="dialog" without aria-modal on purpose: there is no focus trap here,
+    // so claiming the rest of the page is inert would be a promise to screen
+    // readers that this markup does not keep. The role alone is what makes
+    // "how many guides are on screen" a question anyone can ask.
     <div
       role="dialog"
-      aria-modal="true"
       aria-label="Welcome to HartMonitor"
       className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
     >

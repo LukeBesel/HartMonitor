@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X, ArrowLeft, ArrowRight, Check, Compass } from 'lucide-react';
 import { getWalkthrough, WalkthroughStep } from '../../config/walkthroughs';
 import { LIGHT_GROUND, readableInk, shiftUntilReadable } from '../../utils/contrast';
@@ -45,8 +45,10 @@ export function markWalkthroughSeen(moduleId: string): void {
   }
 }
 
-/** Clear the "seen" flag. Kept for callers that want a clean slate; nothing
- *  auto-shows any more, so this only affects the button's own state. */
+/** Clear the "seen" flag. Nothing reads that flag to decide what to render any
+ *  more — the button is always there and the tour opens on click — so this is a
+ *  no-op as far as the UI is concerned, kept only so the module's exported API
+ *  is unchanged for any caller that still calls it. */
 export function resetWalkthrough(moduleId: string): void {
   try {
     localStorage.removeItem(STORAGE_PREFIX + moduleId);
@@ -176,6 +178,15 @@ function PagedWalkthrough({
     else setIndex(i => Math.min(i + 1, total - 1));
   };
   const goBack = () => setIndex(i => Math.max(i - 1, 0));
+
+  // Escape closes it. Someone who opened this by accident should not have to
+  // hunt for the X, and a tour is the one thing on screen that nobody is
+  // obliged to finish.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onDismiss(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onDismiss]);
 
   return (
     <Backdrop>
@@ -352,12 +363,18 @@ function OverviewPage({
 
 /** The tour is a real dialog, and says so. Declaring the role is what lets a
  *  test — and a screen reader — count how many guides are on screen at once;
- *  the answer for a new account is meant to be at most one. */
+ *  the answer for a new account is meant to be at most one.
+ *
+ *  Deliberately NOT aria-modal. That attribute tells assistive tech that
+ *  everything behind this element is inert, and nothing here enforces that —
+ *  there is no focus trap and the page behind stays reachable. Claiming it
+ *  would be a promise to screen-reader users that the markup does not keep.
+ *  Escape closes the tour (see PagedWalkthrough), which is the part that
+ *  actually helps someone who opened it by accident. */
 function Backdrop({ children }: { children: React.ReactNode }) {
   return (
     <div
       role="dialog"
-      aria-modal="true"
       aria-label="Guided tour"
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm px-4 py-6"
     >

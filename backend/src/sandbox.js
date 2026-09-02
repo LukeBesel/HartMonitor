@@ -676,14 +676,23 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   const qcWidgets = widgetIndex(qcSteps);
   const insQcCompletion = db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, operator_user_id, started_at, completed_at, status, data, step_times, takt_exceeded_steps, company_id)
     VALUES (?, ?, 'Final QC Inspection', ?, ?, ?, datetime('now', ?), datetime('now', ?), 'completed', ?, ?, ?, ?)`);
-  // A run that recorded a Fail can never be a COMPLETED run any more — the
-  // step_exit trigger above blocks the last navigation, so the operator's only
-  // way out of a held unit is to leave the job. That closes the run as
-  // 'abandoned' with reason 'operator', which is what routes/completions.js
-  // stamps on that transition, so the held run below is seeded in exactly the
-  // state the live app would leave it in. No completed_at: it never finished.
-  const insQcHeldCompletion = db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, operator_user_id, started_at, status, abandoned_reason, data, step_times, takt_exceeded_steps, company_id)
-    VALUES (?, ?, 'Final QC Inspection', ?, ?, ?, datetime('now', ?), 'abandoned', 'operator', ?, ?, ?, ?)`);
+  // The Fail run below is seeded as a COMPLETED, inspected run — deliberately.
+  //
+  // It was briefly seeded 'abandoned', on the reasoning that the new step_exit
+  // trigger blocks a failed unit from finishing. That reasoning made the demo
+  // lie in four places at once: the per-widget pass/fail stats in routes/apps.js
+  // count completed runs only, so "Ships as-is?" would read 100% yield while
+  // first_pass_yield on the same page read 83%; the run's own detail page would
+  // say "does not count towards yield" directly above "Failed 1 check"; the app
+  // list and /analytics would show it in red among "runs nobody finished"; and
+  // plant quality would drop the fail entirely. An inspection that happened and
+  // found a defect is data, not an unfinished job.
+  //
+  // What makes the copy true in the demo is the NCR at the bottom of this
+  // block: the Fail is here, and the quality record it raised is here with it,
+  // pointing back at this exact run. The HOLD is a live behaviour — drive the
+  // app with a Fail and the trigger blocks the run and files the record — and
+  // sandbox-qc-hold.test.js proves that against the running app.
   // end-minutes-ago, duration, torque, result — spread across ~4 days and 3 operators.
   // The last one has to fall inside today or Station 2 reports no inspected run
   // today at all — which is true, but only because the seed put it in yesterday.
@@ -692,7 +701,8 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
     [5730, 4, 15.1, 'Pass'], [4290, 5, 14.9, 'Pass'], [2850, 4, 15.2, 'Pass'],
     [1400, 6, 14.6, 'Fail'], [1380, 4, 15.0, 'Pass'], [qcToday, 5, 15.3, 'Pass'],
   ];
-  let qcHeldCompletionId = null, qcHeldAgoMin = null;
+  // The failed run, so the quality record below can point at the real row.
+  let qcFailCompletionId = null, qcFailAgoMin = null;
   qcRuns.forEach(([end, dur, torque, result], i) => {
     const cid = uuidv4();
     const [operatorUserId, operatorName] = ops[i % 3];
@@ -705,20 +715,12 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
       .filter(([idx, sec]) => qcTakts[idx] > 0 && sec > qcTakts[idx])
       .map(([idx]) => Number(idx)));
     const runData = JSON.stringify({ final_torque: torque, qc_result: result });
-    if (result === 'Fail') {
-      qcHeldCompletionId = cid;
-      qcHeldAgoMin = end;
-      insQcHeldCompletion.run(
-        cid, qcAppId, st2, operatorName, operatorUserId,
-        `-${end + dur} minutes`, runData, JSON.stringify(qcStepTimes), exceeded, orgId
-      );
-    } else {
-      insQcCompletion.run(
-        cid, qcAppId, st2, operatorName, operatorUserId,
-        `-${end + dur} minutes`, `-${end} minutes`, runData,
-        JSON.stringify(qcStepTimes), exceeded, orgId
-      );
-    }
+    if (result === 'Fail') { qcFailCompletionId = cid; qcFailAgoMin = end; }
+    insQcCompletion.run(
+      cid, qcAppId, st2, operatorName, operatorUserId,
+      `-${end + dur} minutes`, `-${end} minutes`, runData,
+      JSON.stringify(qcStepTimes), exceeded, orgId
+    );
     for (const [varName, raw] of Object.entries({ final_torque: torque, qc_result: result })) {
       const w = qcWidgets[varName];
       if (!w) continue;
@@ -728,18 +730,18 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
     }
   });
 
-  // The quality record the held run raised. The app's trigger writes exactly
-  // this — same title, same severity, same completion link — so the NCR list,
-  // the run it points at, and the app that produced it all tell one story
-  // instead of three. Without it the demo would show a Fail with nothing to
-  // show for it, which is the contradiction the trigger was added to end.
-  if (qcHeldCompletionId) {
+  // The quality record that Fail raised. The app's trigger writes exactly this —
+  // same title, same severity, same completion link — so the NCR list, the run
+  // it points at, and the app that produced it tell one story instead of three.
+  // Without it the demo would show a Fail with nothing to show for it, which is
+  // the contradiction the trigger was added to end.
+  if (qcFailCompletionId) {
     insNcr.run(uuidv4(), `${tag}-NCR-104`, QC_HOLD_NCR_TITLE,
       'Final visual failed at the pack-out quality gate. The unit is held for disposition — do not ship it. Raised automatically by the Final QC Inspection app.',
       'major', 'open', 'production',
-      qcAppId, qcHeldCompletionId, null, null, 'Demo Visitor', '', '',
+      qcAppId, qcFailCompletionId, null, null, 'Demo Visitor', '', '',
       db.prepare(`SELECT date('now', '+2 days') AS d`).get().d, null,
-      `-${Math.max(1, qcHeldAgoMin) * 60} seconds`, orgId);
+      `-${Math.max(1, qcFailAgoMin) * 60} seconds`, orgId);
   }
 }
 

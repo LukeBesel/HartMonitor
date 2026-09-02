@@ -275,7 +275,7 @@ export const WALKTHROUGHS: Record<string, WalkthroughStep[]> = {
     },
     {
       title: 'Watch it live',
-      body: 'Once configured, monitor each station’s status from Plant View or the Command Center to see what is running, idle, or down.',
+      body: 'Once configured, monitor each station’s status from the Command Center or the station’s own page to see what is running, idle, or down.',
       icon: TrendingUp,
       bullets: [
         'Track live status across the floor',

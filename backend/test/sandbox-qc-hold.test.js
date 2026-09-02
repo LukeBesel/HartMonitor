@@ -277,38 +277,76 @@ describe('completing the QC app with Fail holds the run and files the record', (
 });
 
 describe('the seeded history matches what the app now does', () => {
-  it('has no COMPLETED run that recorded a Fail', async () => {
-    const runs = await api('GET', `/api/completions?app_id=${qcApp.id}`, { token });
-    assert.equal(runs.status, 200);
-    const seeded = runs.json.filter(r => r.app_id === qcApp.id);
-    assert.ok(seeded.length >= 6, `the QC app has seeded history (${seeded.length} runs)`);
-    for (const run of seeded) {
-      const data = typeof run.data === 'string' ? JSON.parse(run.data || '{}') : (run.data || {});
-      if (String(data.qc_result).toLowerCase() === 'fail') {
-        assert.notEqual(run.status, 'completed',
-          'a Fail can no longer reach "completed" — the trigger blocks it, so the seed must not show one');
-      }
-    }
+  // A FRESH sandbox: the suites above deliberately started runs of their own in
+  // the first one, and the analytics agreement checked below is about what the
+  // SEED alone produces.
+  let seedToken, seedApp;
+
+  before(async () => {
+    const demo = await api('POST', '/api/auth/demo');
+    assert.equal(demo.status, 201, `second demo sandbox: ${JSON.stringify(demo.json)}`);
+    seedToken = demo.json.token;
+    const apps = await api('GET', '/api/apps', { token: seedToken });
+    seedApp = apps.json.find(a => a.name === 'Final QC Inspection');
+    assert.ok(seedApp, 'the QC app is seeded');
   });
 
-  it('the seeded Fail carries its own quality record', async () => {
-    const runs = await api('GET', `/api/completions?app_id=${qcApp.id}`, { token });
-    const failed = runs.json.filter(r => {
+  it('records the Fail as a finished inspection, not an unfinished job', async () => {
+    const runs = await api('GET', `/api/completions?app_id=${seedApp.id}`, { token: seedToken });
+    assert.equal(runs.status, 200);
+    const seeded = runs.json.filter(r => r.app_id === seedApp.id);
+    assert.ok(seeded.length >= 6, `the QC app has seeded history (${seeded.length} runs)`);
+
+    const failed = seeded.filter(r => {
       const data = typeof r.data === 'string' ? JSON.parse(r.data || '{}') : (r.data || {});
       return String(data.qc_result).toLowerCase() === 'fail';
     });
-    // The suite above drove its own Fail through the API and left it held
-    // (in_progress), so the SEEDED one is the closed-out hold: abandoned.
-    const seededFail = failed.filter(r => r.status === 'abandoned');
-    assert.equal(seededFail.length, 1, `one seeded Fail, held then left: ${failed.map(r => r.status).join(', ')}`);
-    assert.ok(failed.every(r => r.status !== 'completed'), 'and none of them completed');
+    assert.equal(failed.length, 1, 'one seeded Fail');
+    // An inspection that happened and found a defect is DATA. Seeding it as an
+    // unfinished run hid it from every screen that counts completed runs while
+    // leaving it in the ones that do not — two tiles, one page, different
+    // answers. The hold is a live behaviour (proved above), not a stored status.
+    assert.equal(failed[0].status, 'completed', 'the seeded Fail is a completed, inspected run');
+    assert.ok(failed[0].completed_at, 'and it has a finish time');
+    assert.equal(seeded.filter(r => r.status === 'abandoned').length, 0,
+      'nothing in the QC history is seeded as abandoned');
+  });
 
-    const ncrs = await api('GET', '/api/quality/ncrs', { token });
-    const linked = ncrs.json.find(n => n.completion_id === seededFail[0].id);
+  it('gives that Fail the quality record the copy promises', async () => {
+    const runs = await api('GET', `/api/completions?app_id=${seedApp.id}`, { token: seedToken });
+    const failed = runs.json.find(r => {
+      const data = typeof r.data === 'string' ? JSON.parse(r.data || '{}') : (r.data || {});
+      return String(data.qc_result).toLowerCase() === 'fail';
+    });
+
+    const ncrs = await api('GET', '/api/quality/ncrs', { token: seedToken });
+    const linked = ncrs.json.find(n => n.completion_id === failed.id);
     assert.ok(linked, 'the seeded Fail has an NCR pointing at it');
     assert.equal(linked.severity, holdTrigger.actions[0].severity,
       'seeded at the severity the app itself would raise');
     assert.equal(linked.title, holdTrigger.actions[0].title,
       'and with the title the app itself would use');
+    assert.equal(linked.status, 'open');
+  });
+
+  it('makes the two yield numbers on the analytics page agree', async () => {
+    // routes/apps.js computes per-widget pass/fail over COMPLETED runs only,
+    // while first_pass_yield does not filter on status. Any QC run that is not
+    // completed makes those two tiles disagree on the same screen, which is the
+    // exact failure a non-completed seeded Fail used to cause.
+    const an = await api('GET', `/api/apps/${seedApp.id}/analytics?days=30`, { token: seedToken });
+    assert.equal(an.status, 200);
+
+    const passFail = an.json.fields.find(f => f.type === 'pass-fail');
+    assert.ok(passFail, `the "Ships as-is?" field is reported: ${an.json.fields.map(f => f.type).join(', ')}`);
+    assert.equal(passFail.stats.pass, 5, 'five passes');
+    assert.equal(passFail.stats.fail, 1, 'one fail');
+    assert.equal(passFail.stats.yield_pct, 83.3, 'the field-level yield is 83.3%');
+
+    assert.equal(an.json.totals.first_pass_yield, passFail.stats.yield_pct,
+      `first_pass_yield (${an.json.totals.first_pass_yield}) must equal the "Ships as-is?" yield (${passFail.stats.yield_pct})`);
+    assert.equal(an.json.totals.runs, 6, 'six QC runs in the window');
+    assert.equal(an.json.totals.completed, 6, 'all six completed');
+    assert.equal(an.json.totals.abandoned, 0, 'and none reads as a run nobody finished');
   });
 });

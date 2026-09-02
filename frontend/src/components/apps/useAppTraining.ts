@@ -9,7 +9,7 @@
 // Progress therefore follows the account, not the browser. Only the user's
 // own dismiss / collapse preferences live in localStorage.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../api/client';
 import type { App } from '../../types';
 import { appShape } from './appModel';
@@ -228,13 +228,30 @@ export function useAppTraining(
 
   useEffect(() => { setPrefs(readPrefs(userId)); }, [userId]);
 
-  // Keep multiple mounted readers (coach + any page badge) in sync, and take the
-  // event as a cue that something in the account moved — publishing an app and
-  // finishing a run both land here. Re-reading the apps/completions the moment
-  // it fires is what makes the milestones advance on the real events instead of
-  // waiting for the next route change to notice.
+  // Keep multiple mounted readers (coach + the sidebar checklist) in sync.
+  //
+  // Be precise about what this event is: TRAINING_PREFS_EVENT is dispatched by
+  // writePrefs and by nothing else, so it fires on collapse, dismiss, restart
+  // and "data seen" — never on a publish or a run, which the server knows about
+  // and the browser does not. Milestones derived from account data therefore
+  // advance on the REFETCH, which happens when `watchKey` (the route) changes:
+  // publish in the builder, come back, the box is ticked.
+  //
+  // Two of these prefs can change an answer — `dataSeen` feeds the last
+  // milestone and `dismissed` gates the fetch entirely — so those refetch.
+  // Collapsing the panel cannot change any milestone, and used to cost two
+  // needless API calls, so it just updates local state.
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
   useEffect(() => {
-    const sync = () => { setPrefs(readPrefs(userId)); setNonce(n => n + 1); };
+    const sync = () => {
+      const next = readPrefs(userId);
+      const prev = prefsRef.current;
+      setPrefs(next);
+      if (next.dataSeen !== prev.dataSeen || next.dismissed !== prev.dismissed) {
+        setNonce(n => n + 1);
+      }
+    };
     window.addEventListener(TRAINING_PREFS_EVENT, sync);
     window.addEventListener('storage', sync);
     return () => {

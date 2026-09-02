@@ -108,6 +108,22 @@ describe('a page tour waits to be asked', () => {
     expect(hasSeenWalkthrough('dashboard')).toBe(true);
   });
 
+  it('closes on Escape', () => {
+    renderOnboarding('dashboard');
+    fireEvent.click(screen.getByRole('button', { name: /show me around/i }));
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
+  it('does not claim to be modal, because nothing here traps focus', () => {
+    renderOnboarding('dashboard');
+    fireEvent.click(screen.getByRole('button', { name: /show me around/i }));
+    // aria-modal tells a screen reader the rest of the page is inert. There is
+    // no focus trap, so saying it would be a promise the markup cannot keep.
+    expect(screen.getByRole('dialog')).not.toHaveAttribute('aria-modal');
+  });
+
   it('still shows the button once the tour has been seen', () => {
     markWalkthroughSeen('dashboard');
     renderOnboarding('dashboard');
@@ -183,6 +199,41 @@ describe('there are five tours, and each one describes a screen that exists', ()
     const copy = JSON.stringify(WALKTHROUGHS.dashboard);
     expect(copy).not.toMatch(/Live Floor View/);
     expect(copy).not.toMatch(/alert feed/i);
+  });
+
+  it('never sends anyone to a screen that no longer exists', () => {
+    // The tours that were deleted were only half the problem; the ones that
+    // survived still name other screens in their copy, and two of those screens
+    // are now redirects. A tour that says "go and look at Plant View" is the
+    // same bug in a smaller font.
+    const RETIRED = [
+      'Plant View', 'Manager View', 'SQDC', 'OEE Tracker', 'Departments page',
+      'Department View', 'Live Floor View', 'alert feed', 'Transaction Log',
+      'Audit Log', 'Step Metrics',
+    ];
+    const copy = JSON.stringify(WALKTHROUGHS);
+    for (const name of RETIRED) {
+      expect(copy.toLowerCase(), `a tour still points at "${name}"`)
+        .not.toContain(name.toLowerCase());
+    }
+  });
+
+  it('names only screens the app still routes to', () => {
+    // Every multi-word capitalised phrase in the surviving copy, checked by
+    // hand against the product: these four are a nav label, two page headings
+    // and a control, all of which are on screen today.
+    const NAMED_AND_REAL = ['Command Center', 'Needs Attention', 'Operation Analytics', 'Hit Refresh'];
+    const phrases = new Set<string>();
+    for (const steps of Object.values(WALKTHROUGHS)) {
+      for (const step of steps) {
+        for (const text of [step.title, step.body, ...(step.bullets ?? [])]) {
+          for (const m of text.match(/\b[A-Z][a-z]+(?: [A-Z][a-z]+)+\b/g) ?? []) phrases.add(m);
+        }
+      }
+    }
+    for (const phrase of phrases) {
+      expect(NAMED_AND_REAL, `unreviewed screen name in tour copy: "${phrase}"`).toContain(phrase);
+    }
   });
 });
 
