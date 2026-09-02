@@ -244,6 +244,12 @@ router.post('/claim-sandbox', requireAuth, (req, res) => {
     db.prepare('DELETE FROM sessions WHERE user_id = ?').run(sandboxUserId);
     db.prepare('UPDATE completion_sessions SET operator_user_id = NULL WHERE operator_user_id = ?').run(sandboxUserId);
     db.prepare('UPDATE completions SET operator_user_id = NULL WHERE operator_user_id = ?').run(sandboxUserId);
+    // The seeded demo pages management about an escalated call, and the
+    // visitor IS management in a sandbox: messages and PIN grants reference
+    // users(id) without a cascade, so detach them before the login goes.
+    db.prepare('UPDATE messages SET recipient_id = NULL WHERE recipient_id = ?').run(sandboxUserId);
+    db.prepare('UPDATE messages SET sender_id = NULL WHERE sender_id = ?').run(sandboxUserId);
+    db.prepare('DELETE FROM authorization_grants WHERE user_id = ?').run(sandboxUserId);
     db.prepare('DELETE FROM users WHERE id = ?').run(sandboxUserId);
 
     db.prepare(`INSERT INTO sessions (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)`)
