@@ -13,6 +13,7 @@ const { spawn } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const Database = require('better-sqlite3');
 
 const PORT = 3197;
 const BASE = `http://localhost:${PORT}`;
@@ -158,5 +159,131 @@ describe('Multi-tenant isolation', () => {
     // Company A tries to fetch it directly.
     const { status } = await api('GET', `/api/work-orders/${bWoId}`, { token: tokenA });
     assert.ok(status === 404 || status === 403, `Expected 404/403 but got ${status} — cross-tenant WO fetch leaked`);
+  });
+});
+
+// ─── Operations on a work order ───────────────────────────────────────────────
+// A work order released against a routing becomes N rows in
+// work_order_operations, each carrying its own app, department and quantities.
+// Every one of those rows is a new surface for a tenant leak: the operation id
+// is a UUID a caller supplies, so without company_id in the WHERE clause,
+// guessing one would book quantity onto a competitor's job — or read the
+// department and app names off it.
+//
+// The routings themselves are seeded straight into the database because
+// /api/routings is plan-gated and this suite runs with EARLY_ACCESS off. What
+// is under test is the UNGATED execution path, which is exactly the point:
+// releasing and running a job needs no plan, so it needs its own tenant guard.
+
+describe('Multi-tenant isolation: work order operations', () => {
+  let tokenA, tokenB, woA, woB, opA, opB, routingA, routingB;
+
+  before(async () => {
+    const a = await api('POST', '/api/auth/signup', {
+      body: { company_name: 'Ops Iso A', email: 'ops-a@co-a.test', password: 'SecretPass1', display_name: 'Ops A' },
+    });
+    assert.equal(a.status, 201, 'Ops company A signup failed');
+    tokenA = a.json.token;
+    const b = await api('POST', '/api/auth/signup', {
+      body: { company_name: 'Ops Iso B', email: 'ops-b@co-b.test', password: 'SecretPass2', display_name: 'Ops B' },
+    });
+    assert.equal(b.status, 201, 'Ops company B signup failed');
+    tokenB = b.json.token;
+
+    const raw = new Database(DB_PATH);
+    const companyOf = email => raw.prepare('SELECT company_id FROM users WHERE email = ?').get(email).company_id;
+    const seedRouting = (id, email, name, steps) => {
+      const companyId = companyOf(email);
+      raw.prepare('INSERT INTO product_routings (id, company_id, name, description) VALUES (?, ?, ?, ?)')
+        .run(id, companyId, name, '');
+      steps.forEach((stepName, i) => {
+        raw.prepare('INSERT INTO routing_steps (id, routing_id, company_id, step_number, name, estimated_cycle_seconds) VALUES (?, ?, ?, ?, ?, 30)')
+          .run(`${id}-s${i + 1}`, id, companyId, i + 1, stepName);
+      });
+      return companyId;
+    };
+    routingA = 'iso-routing-a';
+    routingB = 'iso-routing-b';
+    seedRouting(routingA, 'ops-a@co-a.test', 'A Line', ['A Cut', 'A Pack']);
+    seedRouting(routingB, 'ops-b@co-b.test', 'B SECRET LINE', ['B Mill', 'B Pack']);
+    raw.close();
+
+    const createA = await api('POST', '/api/work-orders', {
+      token: tokenA, body: { part_number: 'A-OPS', part_name: 'A Job', quantity: 6 },
+    });
+    assert.equal(createA.status, 201);
+    woA = createA.json.id;
+    const relA = await api('POST', `/api/work-orders/${woA}/release`, { token: tokenA, body: { routing_id: routingA } });
+    assert.equal(relA.status, 201, `A release: ${JSON.stringify(relA.json)}`);
+    opA = relA.json.operations[0].id;
+
+    const createB = await api('POST', '/api/work-orders', {
+      token: tokenB, body: { part_number: 'B-OPS', part_name: 'B Job', quantity: 9 },
+    });
+    assert.equal(createB.status, 201);
+    woB = createB.json.id;
+    const relB = await api('POST', `/api/work-orders/${woB}/release`, { token: tokenB, body: { routing_id: routingB } });
+    assert.equal(relB.status, 201, `B release: ${JSON.stringify(relB.json)}`);
+    opB = relB.json.operations[0].id;
+  });
+
+  it('company A cannot list company B operations', async () => {
+    const r = await api('GET', `/api/work-orders/${woB}/operations`, { token: tokenA });
+    assert.equal(r.status, 404, `expected 404, got ${r.status}: ${JSON.stringify(r.json)}`);
+    const own = await api('GET', `/api/work-orders/${woA}/operations`, { token: tokenA });
+    assert.equal(own.json.length, 2, 'company A cannot see its own operations');
+    assert.ok(!JSON.stringify(own.json).includes('B Mill'), "company B's step names leaked into A's operations");
+  });
+
+  it('company A cannot release its job on company B routing', async () => {
+    const created = await api('POST', '/api/work-orders', {
+      token: tokenA, body: { part_number: 'A-CROSS', part_name: 'A Cross', quantity: 2 },
+    });
+    const rel = await api('POST', `/api/work-orders/${created.json.id}/release`, {
+      token: tokenA, body: { routing_id: routingB },
+    });
+    assert.equal(rel.status, 400, `expected 400, got ${rel.status}`);
+    assert.ok(!JSON.stringify(rel.json).includes('B SECRET LINE'), "company B's routing name leaked");
+    const listed = await api('GET', `/api/work-orders/${created.json.id}/operations`, { token: tokenA });
+    assert.deepEqual(listed.json, [], 'a cross-tenant release wrote operations');
+  });
+
+  it("company A cannot move company B's operation", async () => {
+    // Both shapes: B's operation id under A's own work order, and under B's.
+    const underOwn = await api('PUT', `/api/work-orders/${woA}/operations/${opB}`, {
+      token: tokenA, body: { status: 'skipped' },
+    });
+    assert.equal(underOwn.status, 404, `expected 404, got ${underOwn.status}`);
+    const underTheirs = await api('PUT', `/api/work-orders/${woB}/operations/${opB}`, {
+      token: tokenA, body: { status: 'skipped' },
+    });
+    assert.equal(underTheirs.status, 404, `expected 404, got ${underTheirs.status}`);
+
+    const check = await api('GET', `/api/work-orders/${woB}/operations`, { token: tokenB });
+    assert.equal(check.json[0].status, 'ready', "company A changed company B's operation");
+  });
+
+  it('company A cannot append an operation to company B job', async () => {
+    const r = await api('POST', `/api/work-orders/${woB}/operations`, {
+      token: tokenA, body: { name: 'Injected' },
+    });
+    assert.equal(r.status, 404, `expected 404, got ${r.status}`);
+    const check = await api('GET', `/api/work-orders/${woB}/operations`, { token: tokenB });
+    assert.equal(check.json.length, 2, "an operation was injected into company B's job");
+  });
+
+  it("company A's routing usage never lists company B jobs", async () => {
+    // Usage is plan-gated with the rest of /api/routings, so this asserts the
+    // stored rows directly: every operation belongs to the company its work
+    // order belongs to, with no exceptions anywhere in the table.
+    const raw = new Database(DB_PATH, { readonly: true });
+    const mismatched = raw.prepare(`
+      SELECT o.id FROM work_order_operations o
+      JOIN work_orders wo ON wo.id = o.work_order_id
+      WHERE o.company_id != wo.company_id
+    `).all();
+    raw.close();
+    assert.deepEqual(mismatched, [], 'an operation is filed under a different company than its work order');
+    assert.notEqual(opA, opB);
   });
 });
