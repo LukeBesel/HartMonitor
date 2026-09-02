@@ -39,8 +39,47 @@ const RANK_ICON: Record<number, { icon: React.ReactNode; color: string }> = {
   3: { icon: <Award size={14} />, color: 'text-orange-400' },
 };
 
+/** "1 run" / "5 runs" — a board that says "1 operators" is a board nobody
+ *  reads twice. */
+function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/**
+ * A board's title, INCLUDING what it is a board of.
+ *
+ * Every board is one app crossed with one product type, and the server sends a
+ * separate board for the runs that named no product type at all. Titling that
+ * one with the bare app name put two boards on the wall under one heading —
+ * "Torque Check" over 311 runs, then "Torque Check" over 5 — and the only
+ * honest reading was that the plant's numbers had changed in ten seconds. The
+ * scope is part of the name.
+ */
 function boardTitle(board: LeaderboardBoard): string {
-  return board.product_type_name ? `${board.app_name} — ${board.product_type_name}` : board.app_name;
+  return `${board.app_name} — ${board.product_type_name ?? 'All products'}`;
+}
+
+/**
+ * The two counts under a board's title, written once so the desk page and the
+ * wall board cannot word or scope them differently. Both read the SAME fields
+ * of the SAME board object off the same `/leaderboard` payload.
+ */
+function boardCounts(board: LeaderboardBoard): string {
+  return `${plural(board.operator_count, 'operator')} · ${plural(board.qualifying_count, 'run')}`;
+}
+
+/**
+ * The boards a rotation actually shows, best first.
+ *
+ * A board with no qualifying runs is not a leaderboard, and leading the
+ * rotation with one — which is what the unsorted payload did — meant the panel
+ * in the break room opened on "1 operator · 5 runs" while the board everybody
+ * was waiting for sat second. Busiest first, and nothing empty at all.
+ */
+function rotatableBoards(boards: LeaderboardBoard[] | undefined): LeaderboardBoard[] {
+  return (boards ?? [])
+    .filter(b => b.qualifying_count > 0 && (b.leaders?.length ?? 0) > 0)
+    .sort((a, b) => b.qualifying_count - a.qualifying_count);
 }
 
 function LoadError({ title, message, onRetry }: { title: string; message: string; onRetry: () => void }) {
@@ -63,8 +102,8 @@ function BoardCard({ board }: { board: LeaderboardBoard }) {
         <div className="min-w-0">
           <h3 className="font-semibold text-gray-900 truncate">{boardTitle(board)}</h3>
           <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
-            <span className="flex items-center gap-1"><Users size={11} />{board.operator_count} operators</span>
-            <span className="flex items-center gap-1"><Clock size={11} />{board.qualifying_count} runs</span>
+            <span className="flex items-center gap-1"><Users size={11} />{plural(board.operator_count, 'operator')}</span>
+            <span className="flex items-center gap-1"><Clock size={11} />{plural(board.qualifying_count, 'run')}</span>
           </div>
         </div>
         {board.all_time_best_minutes != null && (
@@ -121,7 +160,7 @@ function BoardCard({ board }: { board: LeaderboardBoard }) {
       {board.excluded_quality_count > 0 && (
         <div className="flex items-center gap-1.5 text-[11px] text-gray-400 pt-1 border-t border-gray-50">
           <ShieldCheck size={11} />
-          {board.excluded_quality_count} run{board.excluded_quality_count === 1 ? '' : 's'} excluded for quality issues
+          {plural(board.excluded_quality_count, 'run')} excluded for quality issues
         </div>
       )}
     </div>
@@ -142,7 +181,7 @@ function ChampionCard({ board }: { board: LeaderboardBoard }) {
       <div className="flex items-center gap-3 mt-1 text-sm text-white/90">
         <span className="font-semibold">{fmtMinutes(champ.best_minutes)}</span>
         <span className="text-white/60">·</span>
-        <span>{champ.completions} run{champ.completions === 1 ? '' : 's'}</span>
+        <span>{plural(champ.completions, 'run')}</span>
         {champ.is_record && (
           <span className="flex items-center gap-1 text-amber-600 ml-auto"><Sparkles size={12} /> Record</span>
         )}
@@ -176,8 +215,8 @@ function DepartmentCard({ dept, onSelect }: { dept: LeaderboardDepartment; onSel
               <h3 className="font-semibold text-gray-900 truncate">{dept.department_name}</h3>
             </div>
             <div className="flex items-center gap-3 text-xs text-gray-500 mt-0.5">
-              <span className="flex items-center gap-1"><Users size={11} />{dept.operator_count} operators</span>
-              <span className="flex items-center gap-1"><Clock size={11} />{dept.completions} runs</span>
+              <span className="flex items-center gap-1"><Users size={11} />{plural(dept.operator_count, 'operator')}</span>
+              <span className="flex items-center gap-1"><Clock size={11} />{plural(dept.completions, 'run')}</span>
             </div>
           </div>
         </div>
@@ -257,7 +296,7 @@ function LeaderboardBoardTV({ period }: { period: LeaderboardPeriod }) {
     return () => clearInterval(refresh);
   }, [period]);
 
-  const boards = (data?.boards ?? []).filter(b => b.leaders.length > 0);
+  const boards = rotatableBoards(data?.boards);
 
   useEffect(() => {
     if (boards.length <= 1) { setIndex(0); return; }
@@ -308,10 +347,8 @@ function LeaderboardBoardTV({ period }: { period: LeaderboardPeriod }) {
           <div key={`${board.app_id}-${board.product_type_id ?? 'd'}`} className="w-full max-w-4xl animate-[fadeIn_0.4s_ease-out]">
             <div className="text-center mb-8">
               <div className="text-sm uppercase tracking-[0.15em] text-white/60 mb-1">{boardTitle(board)}</div>
-              <div className="flex items-center justify-center flex-wrap gap-x-4 gap-y-1 text-white/60 text-sm">
-                <span>{board.operator_count} operators</span>
-                <span>·</span>
-                <span>{board.qualifying_count} runs</span>
+              <div className="flex items-center justify-center flex-wrap gap-x-4 gap-y-1 text-white/60 text-sm" data-testid="tv-board-counts">
+                <span>{boardCounts(board)}</span>
                 {board.all_time_best_minutes != null && (
                   <>
                     <span>·</span>
@@ -339,7 +376,7 @@ function LeaderboardBoardTV({ period }: { period: LeaderboardPeriod }) {
                         {l.operator_name}
                         {l.is_record && <Sparkles size="1.15em" className="text-amber-300 flex-shrink-0" />}
                       </div>
-                      <div className="text-sm text-white/60 truncate">{l.completions} run{l.completions === 1 ? '' : 's'} · avg {formatDuration(l.avg_minutes)}</div>
+                      <div className="text-sm text-white/60 truncate">{plural(l.completions, 'run')} · avg {formatDuration(l.avg_minutes)}</div>
                     </div>
                     <div className="text-3xl font-bold tabular-nums flex-shrink-0 ml-auto" style={{ color: l.rank === 1 ? '#fbbf24' : 'white' }}>
                       {formatDuration(l.best_minutes)}

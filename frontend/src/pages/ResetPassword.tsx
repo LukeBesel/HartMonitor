@@ -58,7 +58,7 @@ export default function ResetPassword() {
                 </div>
                 <div>
                   <h2 className="text-lg font-semibold text-gray-900">Invalid reset link</h2>
-                  <p className="text-sm text-gray-500 mt-1">This link is missing its token. Request a new one to continue.</p>
+                  <p className="text-sm text-gray-500 mt-1">This link is incomplete. Request a new one to continue.</p>
                 </div>
                 <Link
                   to="/forgot-password"

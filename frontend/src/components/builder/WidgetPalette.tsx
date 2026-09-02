@@ -129,7 +129,7 @@ export default function WidgetPalette({ onAdd, disabled }: {
       {/* Category tabs */}
       {/* Four category names are wider than a phone, so the row carries its own
           scroller rather than widening the builder. */}
-      <div role="tablist" aria-label="Widget categories" className="flex items-end gap-0.5 px-2 border-b border-grid overflow-x-auto">
+      <div role="tablist" aria-label="Field categories" className="flex items-end gap-0.5 px-2 border-b border-grid overflow-x-auto">
         {PALETTE_GROUPS.map((g, i) => (
           <button
             key={g}

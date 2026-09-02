@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 
 // ─── What comes first on a department screen ─────────────────────────────────
-// The Team panel is a setup panel: who gets this department's help requests.
+// The Team panel is a setup panel: who gets this department's calls.
 // It used to sit directly under the header, above every number on the page, and
 // its empty state is tall — "Nobody is on this department yet" plus a paragraph
 // plus an add-a-teammate form. On a phone that put a whole screen of scrolling
@@ -18,6 +18,7 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom';
 // a department's own page, opened from one of those cards.
 
 const getDepartmentView = vi.fn();
+const getDepartmentTV = vi.fn();
 const getDepartmentMembers = vi.fn();
 const getUsers = vi.fn();
 const getFloorSnapshot = vi.fn();
@@ -25,6 +26,7 @@ const getFloorSnapshot = vi.fn();
 vi.mock('../../api/client', () => ({
   api: {
     get getDepartmentView() { return getDepartmentView; },
+    get getDepartmentTV() { return getDepartmentTV; },
     get getDepartmentMembers() { return getDepartmentMembers; },
     get getUsers() { return getUsers; },
   },
@@ -35,6 +37,7 @@ vi.mock('../../api/floor', () => ({
 }));
 
 import DepartmentView from '../DepartmentView';
+import DepartmentTV from '../DepartmentTV';
 
 const DEPT_VIEW = {
   department: {
@@ -66,6 +69,29 @@ const SNAPSHOT = {
   scope: { site_id: null, department_id: 'd-weld', app_id: null, station_id: null, valid: true },
 };
 
+/** The wall board's own payload. Two of the behind-takt rows are the SAME job
+ *  (two operations of it open at once) and the leaderboard is three runs by one
+ *  operator plus one by another — both shapes the endpoint really returns. */
+const TV_DATA = {
+  department: { id: 'd-weld', name: 'Welding', color: '#f59e0b', manager_name: 'Ana Diaz' },
+  date: '2026-09-02',
+  status: { running: 3, completed_today: 7, upcoming: 2 },
+  hourly: [{ hour: '09:00', count: 4 }],
+  issues: [],
+  leaderboard: [
+    { operator_name: 'Ana Diaz', app_name: 'Weld Check', duration_minutes: 4, duration_seconds: 240 },
+    { operator_name: 'Ana Diaz', app_name: 'Weld Check', duration_minutes: 5, duration_seconds: 300 },
+    { operator_name: 'Ana Diaz', app_name: 'Weld Check', duration_minutes: 6, duration_seconds: 360 },
+    { operator_name: 'Bo Chen', app_name: 'Weld Check', duration_minutes: 7, duration_seconds: 420 },
+  ],
+  behind_takt: [
+    { work_order_number: 'B5E656-WO-1001', operator_name: 'Ana Diaz', station: 'Cell 1', takt_minutes: 6, over_by_minutes: 2, live: true },
+    { work_order_number: 'B5E656-WO-1001', operator_name: 'Ana Diaz', station: 'Cell 1', takt_minutes: 6, over_by_minutes: 9, live: false },
+    { work_order_number: 'B5E656-WO-1002', operator_name: 'Bo Chen', station: 'Cell 2', takt_minutes: 6, over_by_minutes: 1, live: true },
+  ],
+  any_behind: true,
+};
+
 beforeEach(() => {
   vi.clearAllMocks();
   // recharts calls `new ResizeObserver(...)`; the shared setup's arrow-function
@@ -74,6 +100,7 @@ beforeEach(() => {
     observe() {} unobserve() {} disconnect() {}
   };
   getDepartmentView.mockResolvedValue(DEPT_VIEW);
+  getDepartmentTV.mockResolvedValue(TV_DATA);
   getFloorSnapshot.mockResolvedValue(SNAPSHOT);
   // The state the owner hit: a department nobody has been added to yet.
   getDepartmentMembers.mockResolvedValue([]);
@@ -127,6 +154,30 @@ describe('a department screen', () => {
     expect(screen.getByText('91%')).toBeInTheDocument();
   });
 
+  it('says what its average and its percentage were measured over', async () => {
+    renderPage();
+
+    // "97% Pass rate" over what? A percentage with no sample beside it cannot
+    // be checked, and a window nobody names is how two screens quoting
+    // different windows read as one broken system.
+    expect(await screen.findByTestId('dept-pass-rate')).toHaveTextContent('11 inspected runs · today');
+    expect(screen.getByTestId('dept-avg-cycle')).toHaveTextContent('7 runs · wall clock · today');
+  });
+
+  it('never prints "1 stations"', async () => {
+    getDepartmentView.mockResolvedValue({
+      ...DEPT_VIEW,
+      stations: [{
+        id: 's1', name: 'Cell 1', location: '', status: 'active',
+        current_status: 'idle', current_status_since: null,
+        current_app_id: null, current_app_name: null, active_completion: null,
+        oee: { availability: null, performance: null, quality: null, oee: null, completions_today: 0 },
+      }],
+    });
+    renderPage();
+    expect(await screen.findByText(/1 station$/)).toBeInTheDocument();
+  });
+
   it('words the on-track share exactly as every other floor screen does', async () => {
     renderPage();
     expect(await screen.findByTestId('dept-on-track'))
@@ -150,5 +201,53 @@ describe('a department screen', () => {
       .toHaveTextContent('— no open work order to be on track with');
     // A zero cycle time reads as "instant", which is never what happened.
     expect(screen.queryByText('0m')).toBeNull();
+  });
+});
+
+// ─── The wall board ───────────────────────────────────────────────────────────
+
+function renderBoard() {
+  return render(
+    <MemoryRouter initialEntries={['/departments/d-weld/tv']}>
+      <Routes><Route path="/departments/:id/tv" element={<DepartmentTV />} /></Routes>
+    </MemoryRouter>,
+  );
+}
+
+describe("a department's wall board", () => {
+  it('names one operator once in Fastest Today, with their best run', async () => {
+    renderBoard();
+
+    // Ana finished three runs; the board is a leaderboard of PEOPLE, so she is
+    // on it once — and at 4m, the run she would want shown.
+    const board = await screen.findByTestId('tv-fastest-today');
+    expect(within(board).getAllByText('Ana Diaz')).toHaveLength(1);
+    expect(within(board).getByText('4m')).toBeInTheDocument();
+    expect(within(board).queryByText('5m')).toBeNull();
+    expect(within(board).queryByText('6m')).toBeNull();
+    // And the second person is not pushed off the board by the first.
+    expect(within(board).getByText('Bo Chen')).toBeInTheDocument();
+  });
+
+  it('collapses the same job into one behind-takt chip, counted', async () => {
+    renderBoard();
+
+    // Two rows, one job: one chip carrying "×2" rather than two identical ones.
+    const chip = await screen.findByTitle('2 operations of this job are behind takt');
+    expect(chip).toHaveTextContent('×2');
+    expect(screen.getAllByText('WO-1001')).toHaveLength(1);
+    // The worst overrun of the group is the one that survives.
+    expect(screen.getByText('+9m')).toBeInTheDocument();
+    expect(screen.queryByText('+2m')).toBeNull();
+    // The banner's count matches what the banner lists: two jobs, not three rows.
+    expect(screen.getByText('WO-1002')).toBeInTheDocument();
+  });
+
+  it('prints the id the floor says, with the stored id in the title', async () => {
+    renderBoard();
+
+    const id = await screen.findByText('WO-1001');
+    expect(id).toHaveAttribute('title', 'B5E656-WO-1001');
+    expect(screen.queryByText(/B5E656-WO-1001/)).toBeNull();
   });
 });

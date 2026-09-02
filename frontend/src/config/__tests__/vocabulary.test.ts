@@ -98,10 +98,11 @@ const ALLOWLIST: { files: string[]; terms: string[]; why: string }[] = [
     why: 'Code comments in the operator player and portal (both off-limits this wave). Their on-screen labels come from components/player/*, which say "Call for help", and neither screen prints a retired screen name.',
   },
   {
-    // The ONE surviving meaning of the word: the sidebar's groupings of screens
-    // (Production, Quality, Planning …), which Settings → Navigation lets a
-    // company switch on and off. These files define it, render it, or explain a
-    // screen's relationship to it. A COMPANY is never a workspace anywhere.
+    // "Workspace" no longer appears on any screen — the sidebar heading that
+    // used it is gone (a list of sections needs no label over it), and every
+    // remaining surface says "section". What is left is CODE: comments, and two
+    // files this wave may not edit. The on-screen scan below is the one that
+    // matters, and it allows the word in exactly one place: the marketing page.
     files: [
       'config/navigation.tsx',
       'config/pageTitles.ts',
@@ -112,6 +113,8 @@ const ALLOWLIST: { files: string[]; terms: string[]; why: string }[] = [
       'components/apps/AppTrainingCoach.tsx',
       'context/NavPrefsContext.tsx',
       'api/settings.ts',
+      'api/client.ts',
+      'App.tsx',
       'pages/settings/NavigationTab.tsx',
       'pages/settings/CompanySettings.tsx',
       'pages/settings/groups.ts',
@@ -123,7 +126,7 @@ const ALLOWLIST: { files: string[]; terms: string[]; why: string }[] = [
       'types.ts',
     ],
     terms: ['workspace'],
-    why: 'The sidebar grouping of screens — a real, separate concept the product names on screen ("WORKSPACES"), switchable per company in Settings → Navigation. These files define it, render it, or say which grouping a screen belongs to.',
+    why: 'Code comments and identifiers only — no screen prints the word any more. config/navigation.tsx and App.tsx are off-limits this wave; the rest keep it in prose comments describing the sidebar sections. The on-screen scan below bans the word for readers everywhere but the marketing page.',
   },
 ];
 
@@ -203,5 +206,232 @@ describe('product vocabulary', () => {
       }
     }
     expect(stale).toEqual([]);
+  });
+});
+
+// ─── What a person actually READS ─────────────────────────────────────────────
+//
+// The scan above reads whole files, comments included, which is right for words
+// this product has retired outright. It is the wrong tool for a word that is a
+// legitimate part of the CODE and a foreign word on the SCREEN. "Widget" is the
+// type name of a thing an app step holds — `Widget`, `widgets`, `widget_id`,
+// `'widget'` as a discriminator, ninety-odd times in the builder alone — and it
+// is also what four screens called a FIELD in front of a plant manager who has
+// never met the word. Banning it everywhere is impossible; letting it stand is
+// how it came back.
+//
+// So this scan reads only what a reader can see:
+//
+//   • JSX text — the words between an element's tags,
+//   • the value of an attribute a person reads (title, placeholder, aria-label,
+//     alt, and the label/hint/description props this codebase passes around),
+//   • the message handed to setError / addToast / confirm / alert.
+//
+// Everything else — identifiers, discriminators, class names, test ids, import
+// paths, comments — is invisible to a customer and is left alone.
+//
+// The extractor is deliberately conservative: when it cannot tell whether a
+// span is prose or code it drops the span. A miss is a defect this test failed
+// to catch; a false positive is a rule nobody can satisfy, and that is the one
+// that gets a test deleted.
+
+/** Attributes and props whose string values a person reads. */
+const VISIBLE_ATTRS = new Set([
+  'title', 'placeholder', 'alt', 'aria-label', 'ariaLabel', 'aria-description',
+  'label', 'tileLabel', 'hint', 'desc', 'description', 'subtext', 'heading',
+  'matchNoun', 'deltaLabel', 'emptyText', 'confirmLabel', 'why',
+]);
+
+/** Calls whose first string argument is shown to a person. */
+const VISIBLE_CALLS = /\b(?:setError|setSampleError|addToast|confirm|alert|setStatusText)\s*\(\s*(['"`])((?:\\.|(?!\1)[\s\S])*?)\1/g;
+
+/** `label: 'Widget'` and friends, in an object literal rather than on a tag. */
+const VISIBLE_PROPS = new RegExp(
+  `\\b(${[...VISIBLE_ATTRS].filter(a => /^[a-zA-Z]+$/.test(a)).join('|')})\\s*:\\s*(['"\`])((?:\\\\.|(?!\\2)[\\s\\S])*?)\\2`,
+  'g',
+);
+
+/** One readable string, and the line it is on. */
+interface Readable { line: number; text: string }
+
+const lineOf = (source: string, index: number) => source.slice(0, index).split('\n').length;
+
+/** Blank out every comment, preserving offsets and newlines so line numbers
+ *  survive. `://` is left alone — that is a URL, not a comment. */
+function maskComments(source: string): string {
+  const out = source.split('');
+  let i = 0;
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to && k < out.length; k++) if (out[k] !== '\n') out[k] = ' ';
+  };
+  while (i < source.length) {
+    const two = source.slice(i, i + 2);
+    if (two === '//' && source[i - 1] !== ':') {
+      const end = source.indexOf('\n', i);
+      blank(i, end === -1 ? source.length : end);
+      i = end === -1 ? source.length : end;
+      continue;
+    }
+    if (two === '/*') {
+      const end = source.indexOf('*/', i + 2);
+      blank(i, end === -1 ? source.length : end + 2);
+      i = end === -1 ? source.length : end + 2;
+      continue;
+    }
+    if (two === '*/') { i += 2; continue; }
+    i++;
+  }
+  return out.join('');
+}
+
+/** True when a span between a `>` and the next `<` is prose rather than the
+ *  code that follows a generic type argument (`useState<Widget[]>(null);`, or
+ *  a function type ending `): Promise<T>`). Punctuation prose never uses is
+ *  the tell, and when in doubt the span is dropped. */
+function looksLikeProse(text: string): boolean {
+  if (!/[A-Za-z]{2}/.test(text)) return false;
+  return !/[;={}|]/.test(text) && !text.includes('=>') && !/\?:/.test(text);
+}
+
+/** A template literal's `${…}` holes are CODE, not words — `${wo.pm_title}` is
+ *  not the screen saying "WO". Blanked out before anything is matched. */
+function withoutHoles(text: string): string {
+  return text.replace(/\$\{[^}]*\}/g, ' ');
+}
+
+/** Everything on one file a customer can read. */
+function readableText(source: string): Readable[] {
+  const src = maskComments(source);
+  const found: Readable[] = [];
+
+  // JSX text: the span between a tag's `>` and the next `<`. Tags are found by
+  // `<` + a tag name, which is also what a generic looks like — hence the prose
+  // guard above, which throws the generics away.
+  const tagOpen = /<\/?[A-Za-z][\w.]*/g;
+  let m: RegExpExecArray | null;
+  while ((m = tagOpen.exec(src))) {
+    let i = m.index + m[0].length;
+    let depth = 0;
+    // Walk to this tag's own `>`, ignoring any inside braces or strings.
+    while (i < src.length) {
+      const c = src[i];
+      if (c === '{') depth++;
+      else if (c === '}') depth--;
+      else if ((c === '"' || c === "'" || c === '`')) {
+        const close = src.indexOf(c, i + 1);
+        i = close === -1 ? src.length : close;
+      } else if (c === '>' && depth <= 0) break;
+      i++;
+    }
+    if (i >= src.length) break;
+    const next = src.indexOf('<', i + 1);
+    const text = src.slice(i + 1, next === -1 ? src.length : next);
+    if (looksLikeProse(text)) found.push({ line: lineOf(src, i), text: withoutHoles(text) });
+    tagOpen.lastIndex = i;
+  }
+
+  // Attribute values a person reads: name="…" / name='…' / name={`…`}.
+  const attr = /([A-Za-z][\w-]*)\s*=\s*\{?\s*(['"`])((?:\\.|(?!\2)[\s\S])*?)\2/g;
+  while ((m = attr.exec(src))) {
+    if (VISIBLE_ATTRS.has(m[1])) found.push({ line: lineOf(src, m.index), text: withoutHoles(m[3]) });
+  }
+
+  for (const rx of [VISIBLE_PROPS, VISIBLE_CALLS]) {
+    rx.lastIndex = 0;
+    while ((m = rx.exec(src))) found.push({ line: lineOf(src, m.index), text: withoutHoles(m[m.length - 1]) });
+  }
+
+  return found;
+}
+
+/** Words no screen says, and the word every screen says instead. */
+const BANNED_ON_SCREEN: Banned[] = [
+  // ── The sidebar groups screens. It does not need a name for the grouping ───
+  { term: 'workspace',    instead: 'nothing — the sidebar needs no label over it' },
+  // ── An app step holds FIELDS. "Widget" is the type name, not the word ──────
+  { term: 'widget',       instead: 'field' },
+  { term: 'canvas',       instead: 'the page' },
+  // ── One help call ─────────────────────────────────────────────────────────
+  { term: 'help request', instead: 'call' },
+  // ── A maintenance job is a job, never a WO ────────────────────────────────
+  { term: 'WO',           instead: 'job', word: true },
+  // ── Words from inside the machine ─────────────────────────────────────────
+  { term: 'payload',      instead: 'what the screen is showing' },
+  { term: 'schema',       instead: 'the plain word for the thing' },
+  { term: 'token',        instead: 'the plain word for the thing' },
+  { term: 'null',         instead: '— with the reason beside it', word: true },
+  { term: 'prop',         instead: 'the plain word for the thing', word: true },
+];
+
+/** The one screen allowed a retired word, and why. */
+const ON_SCREEN_ALLOWLIST: { files: string[]; terms: string[]; why: string }[] = [
+  {
+    files: ['pages/Landing.tsx'],
+    terms: ['workspace', 'widget', 'WO'],
+    why: 'Public marketing copy, outside the product shell. It sells to a buyer who searches with these words, and its screenshot mock-up prints a work order id verbatim; nobody inside the app meets them.',
+  },
+];
+
+describe('the words on the screen', () => {
+  const files = sourceFiles(SRC);
+
+  it('reads prose and leaves the code alone', () => {
+    // The extractor is only trustworthy if it can be shown to do both halves.
+    const sample = [
+      'const [w, setW] = useState<Widget[]>(null);',
+      'export type ContextTab = \'widget\' | \'step\';',
+      'const el = <p className="x">Select a field on the page</p>;',
+      '<input title="Days of lead time" />',
+      '// a widget comment',
+      'const s = <span>Raised from PM: {`x ${widget.type} y`}</span>;',
+    ].join('\n');
+    const text = readableText(sample).map(r => r.text).join(' ~ ');
+    expect(text).toContain('Select a field on the page');
+    expect(text).toContain('Days of lead time');
+    expect(text.toLowerCase()).not.toContain('widget');
+  });
+
+  it('never says a word the product invented where a customer can read it', () => {
+    const violations: string[] = [];
+    for (const file of files) {
+      const rel = posix(relative(SRC, file));
+      const readable = readableText(readFileSync(file, 'utf-8'));
+      for (const { term, instead, word } of BANNED_ON_SCREEN) {
+        const wanted = term.toLowerCase();
+        if (ON_SCREEN_ALLOWLIST.some(a => a.files.includes(rel) && a.terms.some(t => t.toLowerCase() === wanted))) continue;
+        const rx = word ? new RegExp(`\\b${wanted}\\b`, 'i') : null;
+        for (const { line, text } of readable) {
+          if (rx ? rx.test(text) : text.toLowerCase().includes(wanted)) {
+            violations.push(`${rel}:${line} shows "${term}" to a customer — say "${instead}" (in: ${text.trim().slice(0, 60)})`);
+          }
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+});
+
+
+// ─── The sidebar needs no label over it ──────────────────────────────────────
+// "WORKSPACES" sat above the sidebar's sections in small caps. It named a
+// concept the product invented, over a list whose every row is obviously a
+// section, on the one piece of chrome that is on screen all day. The heading is
+// gone rather than renamed: a grouping this obvious does not need announcing,
+// and "MENU" would have been a second word for the same nothing.
+
+describe('the sidebar', () => {
+  const layout = () => readFileSync(join(SRC, 'components', 'shared', 'Layout.tsx'), 'utf-8');
+
+  it('prints no heading above its sections', () => {
+    for (const { text } of readableText(layout())) {
+      expect(text.toLowerCase()).not.toContain('workspace');
+      expect(text.trim().toLowerCase()).not.toBe('menu');
+    }
+  });
+
+  it('still renders the sections themselves', () => {
+    // The heading went; the nav did not.
+    expect(layout()).toMatch(/primarySections\.map\(renderSection\)/);
+    expect(layout()).toMatch(/secondarySections/);
   });
 });

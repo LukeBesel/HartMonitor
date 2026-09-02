@@ -107,3 +107,71 @@ describe('the Schedule grid', () => {
     await waitFor(() => expect(getWorkOrders).toHaveBeenCalled());
   });
 });
+
+
+// ─── Nowhere prints the raw id ────────────────────────────────────────────────
+// The rule is only worth anything if it holds on every screen, and the way it
+// stopped holding was one new cell at a time — a chip on the wall board, an
+// escalation line on the Andon board, an NCR number on a quality card. Each of
+// those printed `B5E656-WO-1001` where the traveller says `WO-1001`, and on the
+// board it was printed into a chip narrow enough that the tag pushed the actual
+// number out under an ellipsis.
+//
+// So this reads the management screens themselves. An id field may be rendered
+// only through `displayId`, or handed to a `title` attribute — which is the
+// stored id, the thing a support ticket has to quote.
+
+const ID_FIELDS = ['work_order_number', 'ncr_number', 'wo_number', 'open_wo_number', 'mwo_number', 'po_number'];
+
+const ID_SCREENS = [
+  'DepartmentTV.tsx', 'DepartmentView.tsx', 'Andon.tsx', 'AppDetail.tsx',
+  'Quality.tsx', 'Routings.tsx', 'StationView.tsx', 'Maintenance.tsx', 'Dashboard.tsx',
+];
+
+describe('the management screens print the id the floor says', () => {
+  it('renders every id field through displayId, with the stored id in a title', async () => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const here = path.dirname(fileURLToPath(import.meta.url));
+
+    // A JSX expression, not a `${…}` hole: the wall board builds its dedupe key
+    // out of the stored id, which is exactly right — nobody reads a Map key.
+    const printed = new RegExp(`(^|[^$])\\{[^{}]*\\b(${ID_FIELDS.join('|')})\\b[^{}]*\\}`);
+    const raw: string[] = [];
+    for (const screenFile of ID_SCREENS) {
+      const src = await fs.readFile(path.join(here, '..', screenFile), 'utf8');
+      src.split('\n').forEach((line, i) => {
+        if (!printed.test(line)) return;
+        // Allowed: through the shared helper, or into the title attribute that
+        // carries the full stored id.
+        if (/displayId\(/.test(line) || /title=/.test(line) || /hasCompanyTag\(/.test(line)) return;
+        raw.push(`${screenFile}:${i + 1} ${line.trim().slice(0, 90)}`);
+      });
+    }
+    expect(raw).toEqual([]);
+  });
+
+  it('imports the one helper rather than trimming the tag locally', async () => {
+    const fs = await import('node:fs/promises');
+    const path = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    for (const screenFile of ID_SCREENS) {
+      const src = await fs.readFile(path.join(here, '..', screenFile), 'utf8');
+      if (!/displayId\(/.test(src)) continue;
+      expect(src, `${screenFile} must import displayId`).toMatch(/from '\.\.\/utils\/ids'/);
+      // A second local regex for the tag is how the two rules drift apart.
+      expect(src, `${screenFile} must not re-implement the tag rule`).not.toMatch(/\[0-9A-F\]\{6\}/);
+    }
+  });
+
+  it('leaves a part number alone — it is the customer\'s own string', () => {
+    // Six characters and a dash is a shape a real part number has. The
+    // Routings and Quality screens print part numbers and SKUs beside work
+    // order ids, and only the ids get trimmed.
+    expect(displayId('100234-01')).toBe('100234-01');
+    expect(displayId('B5E656-1001')).toBe('B5E656-1001');
+    expect(hasCompanyTag('100234-01')).toBe(false);
+  });
+});

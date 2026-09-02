@@ -183,7 +183,7 @@ function EmptyState({ icon, title, sub }: EmptyStateProps) {
   );
 }
 
-// ── Create WO Modal ───────────────────────────────────────────────────────────
+// ── New maintenance job modal ────────────────────────────────────────────────
 
 interface CreateWOModalProps {
   assets: Asset[];
@@ -345,7 +345,7 @@ function CreateWOModal({ assets, onClose, onCreated }: CreateWOModalProps) {
             onClick={handleSubmit as any}
             className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
           >
-            {saving ? 'Creating…' : 'Create WO'}
+            {saving ? 'Creating…' : 'Create job'}
           </button>
         </div>
       </div>
@@ -979,7 +979,7 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO, onOpenPM }: WorkOrder
           onClick={onNewWO}
           className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
         >
-          <Plus size={15} /> New WO
+          <Plus size={15} /> New job
         </button>
       </div>
 
@@ -1065,7 +1065,7 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO, onOpenPM }: WorkOrder
               {/* Delete confirm */}
               {confirmDelete === wo.id && (
                 <div className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 flex items-center justify-between gap-2">
-                  <span className="text-xs text-red-700">Delete this WO?</span>
+                  <span className="text-xs text-red-700">Delete this job?</span>
                   <div className="flex gap-2">
                     <button
                       onClick={() => setConfirmDelete(null)}
@@ -1338,7 +1338,10 @@ function PMSchedulesTab({ pms, loading, onRefresh, onNewPM, highlightId }: PMSch
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Title</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Frequency</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Next Due</th>
-                  <th className="text-left px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" title="Raise a maintenance job automatically when this PM comes due, and how many days early">Auto</th>
+                  {/* "Auto" over a bare "☐ 0 d" told nobody what the switch
+                       does or what the number counted. The header names the
+                       behaviour and the cell says "lead N days" in words. */}
+                  <th className="text-left px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" title="Raise a maintenance job automatically when this PM comes due, and how many days early">Raises its own job</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Last Done</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Assigned To</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Est. Hrs</th>
@@ -1406,21 +1409,31 @@ function PMSchedulesTab({ pms, loading, onRefresh, onNewPM, highlightId }: PMSch
                             onChange={e => saveSchedule(pm, { auto_create_wo: e.target.checked })}
                             className="rounded border-gray-300"
                           />
-                          <input
-                            type="number"
-                            min={0}
-                            max={365}
-                            defaultValue={pm.lead_days}
-                            disabled={savingId === pm.id || !pm.auto_create_wo}
-                            title={`Days before the due date to raise the job for "${pm.title}"`}
-                            aria-label={`Days of lead time for ${pm.title}`}
-                            onBlur={e => {
-                              const value = Number(e.target.value);
-                              if (value !== pm.lead_days) saveSchedule(pm, { lead_days: value });
-                            }}
-                            className="w-14 bg-white border border-gray-300 rounded-lg px-1.5 py-1 text-gray-900 disabled:opacity-50"
-                          />
-                          <span className="text-xs text-gray-500">d</span>
+                          {pm.auto_create_wo ? (
+                            <span className="flex items-center gap-1 text-xs text-gray-500 whitespace-nowrap">
+                              lead
+                              <input
+                                type="number"
+                                min={0}
+                                max={365}
+                                defaultValue={pm.lead_days}
+                                disabled={savingId === pm.id}
+                                title={`Days before the due date to raise the job for "${pm.title}"`}
+                                aria-label={`Days of lead time for ${pm.title}`}
+                                onBlur={e => {
+                                  const value = Number(e.target.value);
+                                  if (value !== pm.lead_days) saveSchedule(pm, { lead_days: value });
+                                }}
+                                className="w-12 bg-white border border-gray-300 rounded-lg px-1.5 py-1 text-gray-900 disabled:opacity-50"
+                              />
+                              {pm.lead_days === 1 ? 'day' : 'days'}
+                            </span>
+                          ) : (
+                            // No number at all when the switch is off: a greyed
+                            // "0 d" reads as a setting, and this schedule has
+                            // none — somebody raises its job by hand.
+                            <span className="text-xs text-gray-400">raised by hand</span>
+                          )}
                         </div>
                       </td>
                       <td className="px-4 py-3 text-gray-500">{formatDate(pm.last_completed_at)}</td>

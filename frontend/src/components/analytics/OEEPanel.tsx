@@ -89,6 +89,12 @@ function elapsedSince(iso: string | null): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+/** "1 completion" / "4 completions" — the plural this panel kept getting wrong
+ *  on the one station that had run exactly one job. */
+function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
 function MiniBar({ label, value, color, hint }: { label: string; value: number | null; color: string; hint?: string }) {
   const known = value !== null && Number.isFinite(value);
   const safe = known ? (value as number) : 0;
@@ -222,7 +228,7 @@ function StationCard({
         <div className="flex items-center justify-between pt-1">
           <div className="flex items-center gap-1 text-[10px] text-gray-500">
             <Cpu size={11} />
-            <span>{oee.completions_today} completions today</span>
+            <span>{plural(oee.completions_today, 'completion')} today</span>
           </div>
           <button
             onClick={onToggleExpand}

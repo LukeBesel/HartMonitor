@@ -255,6 +255,12 @@ function storeScope(userId: string | undefined, filters: DashboardFilters) {
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
+/** "1 call" / "3 calls". A bare "1 calls" on the plant's home screen is the
+ *  first thing a visitor notices and the last thing they forget. */
+function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
 export default function Dashboard() {
   const { user, isAtLeast } = useAuth();
   const { selectedSiteId, loading: sitesLoading } = useSite();
@@ -478,7 +484,7 @@ export default function Dashboard() {
   const floorRefresh = useAutoRefresh(loadFloor, 30_000, { enabled: scopeReady, immediate: scopeReady });
   const refreshAll = () => { void briefRefresh.refresh(); void floorRefresh.refresh(); };
 
-  // A help request raised on any tablet appears here at once — the 60s poll
+  // A call raised on any tablet appears here at once — the 60s poll
   // above is only the backstop for a dropped socket. Refreshing through the
   // hook keeps the freshness stamp honest about when the data actually landed.
   const refreshBrief = briefRefresh.refresh;
@@ -503,7 +509,7 @@ export default function Dashboard() {
 
   const allAttention = brief?.attention ?? [];
 
-  // Help requests can be filtered to one team — a maintenance lead wants their
+  // Calls can be filtered to one team — a maintenance lead wants their
   // queue, not everyone's. Other items are never hidden by a team filter.
   const callTeams = Array.from(new Set(
     allAttention.filter(i => i.type === 'andon_call' && i.team).map(i => i.team as AndonTeam),
@@ -684,7 +690,7 @@ export default function Dashboard() {
               to="/andon"
               className="ml-auto text-xs font-semibold text-red-600 hover:text-red-700 inline-flex items-center gap-1"
             >
-              {openCallCount} help request{openCallCount === 1 ? '' : 's'} waiting
+              {plural(openCallCount, 'call')} waiting
               <ChevronRight size={13} />
             </Link>
           )}
@@ -767,7 +773,7 @@ export default function Dashboard() {
         ) : (
           <div className="space-y-2">
             {attentionShown.map((item, i) => {
-              // A help request is answerable right here: who is needed, where,
+              // A call is answerable right here: who is needed, where,
               // how long they have waited, and the two actions that end the wait.
               if (item.type === 'andon_call' && item.call_id) {
                 const cfg = teamConfig(item.team);

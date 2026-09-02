@@ -123,7 +123,7 @@ export function NavPrefsProvider({ children }: { children: ReactNode }) {
       setSectionsError(null);
     } catch (err: any) {
       setHiddenSections(confirmed.current);
-      setSectionsError(err?.message || 'Could not save which workspaces this company shows.');
+      setSectionsError(err?.message || 'Could not save which sections this company shows.');
     }
   }, []);
 

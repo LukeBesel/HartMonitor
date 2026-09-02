@@ -37,7 +37,7 @@ const DEBOUNCE_MS = 350;
 
 export default function WipSearch({
   label = 'Where is a job?',
-  placeholder = 'WO number or part number…',
+  placeholder = 'Work order number or part number…',
   className = '',
   onDark = false,
   'data-testid': testId = 'wip-search',

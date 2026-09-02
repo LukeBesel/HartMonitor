@@ -307,7 +307,7 @@ function KitDetailView({ kitId, onBack, onRegisterRefresh, onLoaded }: {
                       {line.qty_picked} / {line.qty_required} {line.unit}
                     </div>
                     {breakdown && (
-                      <div className="text-[11px] text-gray-400 [font-variant-numeric:tabular-nums]" title="WO quantity × qty per unit (snapshot)">
+                      <div className="text-[11px] text-gray-400 [font-variant-numeric:tabular-nums]" title="Work order quantity × qty per unit, as booked">
                         {breakdown}
                       </div>
                     )}

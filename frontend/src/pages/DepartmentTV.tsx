@@ -13,6 +13,7 @@ import type { FloorSnapshot } from '../api/floor';
 import { onTrackSentence } from '../utils/floorWording';
 import { useTvScale } from '../utils/useTvScale';
 import { fmtDuration, fmtMinutes } from '../components/apps/appModel';
+import { displayId, hasCompanyTag } from '../utils/ids';
 import { shiftUntilReadable } from '../utils/contrast';
 import '../tv.css';
 
@@ -27,6 +28,77 @@ const BOARD_GROUND = '#020617';
  *  WHO is behind and by how much, and at four across a 1080p bar the operator's
  *  name is the part that gets trimmed away. */
 const BANNER_SLOTS = 3;
+
+/** One behind-takt job, however many rows the endpoint sent for it. */
+interface BehindGroup {
+  work_order_number: string;
+  operator_name: string;
+  station: string;
+  takt_minutes: number;
+  over_by_minutes: number;
+  live: boolean;
+  /** How many rows collapsed into this one. 1 = it was already unique. */
+  count: number;
+}
+
+/**
+ * One chip per job behind takt.
+ *
+ * A job with several operations open, or one polled twice inside a refresh,
+ * arrives as several identical rows — and three chips reading "WO-1042 · Ana @
+ * Weld · over 6m takt" on a wall board look like three late jobs. They are one,
+ * so they are one chip carrying "×3", and the banner's own count matches what
+ * the banner lists.
+ *
+ * The row kept is the WORST of the group: the whole point of the banner is how
+ * far behind the plant is, and the smallest overrun of three would understate
+ * it.
+ */
+function groupBehind(rows: TVData['behind_takt']): BehindGroup[] {
+  const byJob = new Map<string, BehindGroup>();
+  for (const r of rows ?? []) {
+    const key = `${r.work_order_number}\u0000${r.operator_name}\u0000${r.station}`;
+    const seen = byJob.get(key);
+    if (!seen) {
+      byJob.set(key, { ...r, count: 1 });
+      continue;
+    }
+    seen.count += 1;
+    if (r.over_by_minutes > seen.over_by_minutes) {
+      seen.takt_minutes = r.takt_minutes;
+      seen.over_by_minutes = r.over_by_minutes;
+    }
+    seen.live = seen.live || r.live;
+  }
+  return [...byJob.values()];
+}
+
+/** A leaderboard row's duration in seconds, whichever field carried it. */
+function rowSeconds(l: TVData['leaderboard'][number]): number | null {
+  if (l.duration_seconds != null && Number.isFinite(l.duration_seconds)) return l.duration_seconds;
+  if (l.duration_minutes != null && Number.isFinite(l.duration_minutes)) return l.duration_minutes * 60;
+  return null;
+}
+
+/**
+ * Fastest today: ONE row per operator, their best run of the day.
+ *
+ * The endpoint ranks runs, so an operator who finished five quick jobs filled
+ * all five slots and the board stopped being a leaderboard — it named one
+ * person five times while the rest of the shift went unmentioned. A board that
+ * says "fastest today" is answering "who", so each person appears once, with
+ * the run they'd want shown.
+ */
+function bestPerOperator(rows: TVData['leaderboard']): TVData['leaderboard'] {
+  const best = new Map<string, { row: TVData['leaderboard'][number]; seconds: number }>();
+  for (const row of rows ?? []) {
+    const seconds = rowSeconds(row);
+    if (seconds == null) continue;
+    const held = best.get(row.operator_name);
+    if (!held || seconds < held.seconds) best.set(row.operator_name, { row, seconds });
+  }
+  return [...best.values()].sort((a, b) => a.seconds - b.seconds).map(b => b.row);
+}
 
 interface TVData {
   department: { id: string; name: string; color?: string; manager_name?: string };
@@ -132,13 +204,13 @@ export default function DepartmentTV() {
   const accentInk = shiftUntilReadable(accent, BOARD_GROUND, 3);
   const hourly = data?.hourly ?? [];
   const issues = data?.issues ?? [];
-  const leaderboard = data?.leaderboard ?? [];
+  const leaderboard = bestPerOperator(data?.leaderboard ?? []);
   const maxHour = Math.max(1, ...hourly.map(h => h.count), 1);
   // Every bar at zero is a truthful chart of a quiet shift, but on a wall it is
   // indistinguishable from a chart that failed to load. Name which one it is.
   const noThroughputYet = hourly.length > 0 && hourly.every(h => h.count === 0);
   const onTrack = onTrackSentence(snapshot);
-  const behind = data?.behind_takt ?? [];
+  const behind = groupBehind(data?.behind_takt);
   const anyBehind = !!data?.any_behind && behind.length > 0;
   const bannerShown = behind.slice(0, BANNER_SLOTS);
   const bannerRest = behind.length - bannerShown.length;
@@ -208,7 +280,20 @@ export default function DepartmentTV() {
             {bannerShown.map((b, i) => (
               <div key={i} className="bg-black/25 rounded-xl px-4 py-1.5 min-w-0">
                 <div className="flex items-baseline gap-3 min-w-0">
-                  <span className="font-bold truncate">{b.work_order_number}</span>
+                  <span
+                    className="font-bold truncate"
+                    title={hasCompanyTag(b.work_order_number) ? b.work_order_number : undefined}
+                  >
+                    {displayId(b.work_order_number) || '—'}
+                  </span>
+                  {b.count > 1 && (
+                    <span
+                      className="text-sm font-bold text-white/85 flex-shrink-0 tabular-nums"
+                      title={`${b.count} operations of this job are behind takt`}
+                    >
+                      ×{b.count}
+                    </span>
+                  )}
                   <span className="font-bold tabular-nums ml-auto flex-shrink-0">+{fmtMinutes(b.over_by_minutes)}</span>
                 </div>
                 <div className="text-sm text-white/85 truncate">
@@ -310,7 +395,17 @@ export default function DepartmentTV() {
                     <div key={i} className="flex items-start gap-3 bg-red-500/10 border border-red-500/30 rounded-2xl px-4 py-3 min-w-0">
                       <AlertTriangle size="1.15em" className="text-red-400 mt-0.5 flex-shrink-0" />
                       <div className="min-w-0">
-                        <div className="font-bold text-red-200 text-base truncate">{iss.label}</div>
+                        {/* The label is the id of whatever is wrong — an NCR,
+                            a job — and on a wall it is read from ten metres.
+                            The company tag in front of it is six characters
+                            that push the number people actually quote out
+                            under the truncation. */}
+                        <div
+                          className="font-bold text-red-200 text-base truncate"
+                          title={hasCompanyTag(iss.label) ? iss.label : undefined}
+                        >
+                          {displayId(iss.label)}
+                        </div>
                         <div className="text-red-200/90 text-sm line-clamp-2">{iss.detail}</div>
                       </div>
                     </div>
@@ -331,7 +426,7 @@ export default function DepartmentTV() {
                 No completed runs yet today.
               </div>
             ) : (
-              <div className="flex flex-col gap-3 overflow-y-auto min-h-0">
+              <div className="flex flex-col gap-3 overflow-y-auto min-h-0" data-testid="tv-fastest-today">
                 {leaderboard.map((l, i) => {
                   const rank = i + 1;
                   return (

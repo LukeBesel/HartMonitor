@@ -655,7 +655,12 @@ function DowntimePareto({ stationId }: { stationId: string }) {
                 <div className="flex items-baseline justify-between gap-3 text-xs">
                   <span className={`font-medium truncate pr-1 ${row.reason_code_id ? 'text-gray-700' : 'text-gray-400 italic'}`}>
                     {row.label}
-                    {row.bucket_label && <span className="text-gray-400 font-normal"> · {row.bucket_label}</span>}
+                    {/* The reason code and its loss bucket are often the same
+                        word — "Breakdown · Breakdown" said nothing twice. The
+                        bucket only earns its place when it adds one. */}
+                    {row.bucket_label && row.bucket_label.trim().toLowerCase() !== row.label.trim().toLowerCase() && (
+                      <span className="text-gray-400 font-normal"> · {row.bucket_label}</span>
+                    )}
                   </span>
                   <span className="tabular-nums text-gray-500 flex-shrink-0">
                     {row.minutes}m{row.pct !== null ? ` · ${row.pct}%` : ''}

@@ -1,13 +1,13 @@
 // ─── Andon team vocabulary (frontend mirror of backend/src/andonTeams.js) ────
-// Every surface that renders a team — the Request-help tiles in the player and
+// Every surface that renders a team — the Call-for-help tiles in the player and
 // the app shell, the Andon Board chips, the Command Center attention rows —
 // reads it from here, so labels and colors can never drift between screens.
 
 import { ShieldCheck, UserCog, Wrench, Package, HelpCircle, type LucideIcon } from 'lucide-react';
 import type { AndonTeam } from '../types';
 
-/** Who a help request is aimed at: one of the four function teams, or one of
- *  the company's own departments. */
+/** Who a call is aimed at: one of the four function teams, or one of the
+ *  company's own departments. */
 export type AlertTarget =
   | { kind: 'team'; team: AndonTeam }
   | { kind: 'department'; id: string; name: string };
@@ -42,7 +42,7 @@ export const ANDON_TEAMS: Record<AndonTeam, AndonTeamConfig> = {
   supervisor: {
     label: 'Supervisor',
     tileLabel: 'Supervisor',
-    hint: 'Unit manager — approvals, priorities, anything else',
+    hint: 'Manager — approvals, priorities, anything else',
     icon: UserCog,
     chip: 'bg-blue-50 text-blue-700 border-blue-200',
     dot: 'bg-blue-500',
@@ -52,7 +52,7 @@ export const ANDON_TEAMS: Record<AndonTeam, AndonTeamConfig> = {
   maintenance: {
     label: 'Maintenance',
     tileLabel: 'Maintenance',
-    hint: 'Machine fault, tooling, breakdown',
+    hint: 'Station fault, tooling, breakdown',
     icon: Wrench,
     chip: 'bg-orange-50 text-orange-700 border-orange-200',
     dot: 'bg-orange-500',
