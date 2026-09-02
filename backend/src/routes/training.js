@@ -25,10 +25,15 @@ router.get('/summary', (req, res) => {
     `SELECT COUNT(*) as c FROM apps WHERE company_id = ? AND status = 'published'`
   ).get(cid).c;
 
+  // "Required" = every active operator against every published app. With
+  // either at zero there is nothing to certify against — not 0% coverage,
+  // which reads as "everyone is behind" when the truth is nothing was ever
+  // asked of anyone yet.
   const total_possible = total_operators * active_apps;
   const coverage_pct = total_possible > 0
     ? Math.round((certified_count / total_possible) * 100 * 10) / 10
-    : 0;
+    : null;
+  const empty_reason = total_possible > 0 ? null : 'no certifications required yet';
 
   // Expiry and target dates are calendar dates, so they are compared as stored.
   // Only "today" moves onto the plant's clock — an expiry lapses at the start of
@@ -102,8 +107,11 @@ router.get('/summary', (req, res) => {
     const dept_possible = operator_count * active_apps;
     const dept_coverage_pct = dept_possible > 0
       ? Math.round((dept_certified / dept_possible) * 100 * 10) / 10
-      : 0;
-    return { id: group.id, name: group.name, operator_count, coverage_pct: dept_coverage_pct };
+      : null;
+    return {
+      id: group.id, name: group.name, operator_count, coverage_pct: dept_coverage_pct,
+      empty_reason: dept_possible > 0 ? null : 'no certifications required yet',
+    };
   });
 
   res.json({
@@ -111,6 +119,7 @@ router.get('/summary', (req, res) => {
     certified_count,
     total_possible,
     coverage_pct,
+    empty_reason,
     expiring_soon,
     overdue_plans,
     uncertified_operators,

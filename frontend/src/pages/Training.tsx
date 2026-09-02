@@ -881,7 +881,11 @@ function PlansTab({
 
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
 
-type DeptCoverage = { id: string; name: string; operator_count: number; coverage_pct: number };
+// coverage_pct is null (with empty_reason) rather than 0 when the plant has
+// nothing to certify against yet for this department — a locally widened
+// type, since backend/src/routes/training.js's summary response is typed
+// `any` end to end in this file (see api/client.ts's getTrainingSummary).
+type DeptCoverage = { id: string; name: string; operator_count: number; coverage_pct: number | null; empty_reason?: string | null };
 
 // Defensive dedupe: the backend now merges same-named departments, but old
 // cached responses (or other clients) may still contain duplicates — keep the
@@ -927,8 +931,14 @@ function OverviewTab({ summary, loading }: { summary: any; loading: boolean }) {
           icon={<GraduationCap size={18} className="text-indigo-600" />}
           iconBg="bg-indigo-50"
           label="Overall Coverage"
-          value={`${Math.round(summary.coverage_pct ?? 0)}%`}
-          sub={`${summary.certified_count} / ${summary.total_possible} certified`}
+          // Nothing required yet (no operators, or no published apps) reads as
+          // "—" and says why — never "0%" or "0 of 0 certified", both of which
+          // read as a plant that is failing its training instead of one that
+          // has not been asked to certify anything.
+          value={summary.coverage_pct == null ? '—' : `${Math.round(summary.coverage_pct)}%`}
+          sub={summary.coverage_pct == null
+            ? (summary.empty_reason || 'no certifications required yet')
+            : `${summary.certified_count} / ${summary.total_possible} certified`}
         />
         <KpiCard
           icon={<User size={18} className="text-blue-600" />}
@@ -968,20 +978,26 @@ function OverviewTab({ summary, loading }: { summary: any; loading: boolean }) {
                 <div className="flex items-center justify-between text-sm mb-1">
                   <span className="font-medium text-gray-800">{dept.name}</span>
                   {/* A department with nobody in it has no coverage to report —
-                      showing a red 0% reads as "untrained", which isn't true. */}
-                  {dept.operator_count > 0 ? (
+                      showing a red 0% reads as "untrained", which isn't true.
+                      Same for one with operators but nothing yet required of
+                      them (no published apps): coverage_pct is null there too. */}
+                  {dept.operator_count === 0 ? (
+                    <span className="text-xs text-gray-400 font-normal">No operators assigned</span>
+                  ) : dept.coverage_pct == null ? (
+                    <span className="text-xs text-gray-400 font-normal">
+                      {dept.empty_reason || 'no certifications required yet'}
+                    </span>
+                  ) : (
                     <span className={`font-semibold text-xs ${dept.coverage_pct >= 80 ? 'text-emerald-600' : dept.coverage_pct >= 50 ? 'text-amber-600' : 'text-red-600'}`}>
                       {Math.round(dept.coverage_pct)}%
                       <span className="text-gray-400 font-normal ml-1">({dept.operator_count} operator{dept.operator_count === 1 ? '' : 's'})</span>
                     </span>
-                  ) : (
-                    <span className="text-xs text-gray-400 font-normal">No operators assigned</span>
                   )}
                 </div>
                 <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
                   <div
-                    className={`h-full rounded-full transition-all ${dept.coverage_pct >= 80 ? 'bg-emerald-400' : dept.coverage_pct >= 50 ? 'bg-amber-400' : 'bg-red-400'}`}
-                    style={{ width: `${dept.coverage_pct}%` }}
+                    className={`h-full rounded-full transition-all ${dept.coverage_pct == null ? '' : dept.coverage_pct >= 80 ? 'bg-emerald-400' : dept.coverage_pct >= 50 ? 'bg-amber-400' : 'bg-red-400'}`}
+                    style={{ width: `${dept.coverage_pct ?? 0}%` }}
                   />
                 </div>
               </div>

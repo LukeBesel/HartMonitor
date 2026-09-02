@@ -6,19 +6,30 @@ const { logActivity } = require('../activity');
 
 const router = express.Router();
 
+// ─── Site counts ────────────────────────────────────────────────────────────
+// A department/station/work-order/location with no site_id predates sites (or
+// was never assigned one) and belongs to the whole company — the same COALESCE
+// rule GET /departments and the analytics site scope already apply, so a
+// record made before anyone used sites shows up under the primary site instead
+// of vanishing from every card's count. Without this, "MAIN · 0 depts" read
+// above two real departments simply because they were older than the site.
+const COUNTS_BASIS = 'Assigned to this site, plus anything not yet assigned to any site';
+
+function siteCounts(companyId, siteId) {
+  return db.prepare(`
+    SELECT
+      (SELECT COUNT(*) FROM stations    WHERE company_id = ? AND (site_id = ? OR site_id IS NULL)) as station_count,
+      (SELECT COUNT(*) FROM departments WHERE company_id = ? AND (site_id = ? OR site_id IS NULL)) as department_count,
+      (SELECT COUNT(*) FROM work_orders WHERE company_id = ? AND (site_id = ? OR site_id IS NULL) AND status != 'cancelled') as work_order_count,
+      (SELECT COUNT(*) FROM locations   WHERE company_id = ? AND (site_id = ? OR site_id IS NULL)) as location_count
+  `).get(companyId, siteId, companyId, siteId, companyId, siteId, companyId, siteId);
+}
+
 // ─── GET / - list sites for the org ────────────────────────────────────────────
 
 router.get('/', (req, res) => {
-  const sites = db.prepare(`
-    SELECT s.*,
-      (SELECT COUNT(*) FROM stations    WHERE site_id = s.id) as station_count,
-      (SELECT COUNT(*) FROM departments WHERE site_id = s.id) as department_count,
-      (SELECT COUNT(*) FROM work_orders WHERE site_id = s.id AND status != 'cancelled') as work_order_count,
-      (SELECT COUNT(*) FROM locations   WHERE site_id = s.id) as location_count
-    FROM sites s WHERE s.company_id = ?
-    ORDER BY s.is_primary DESC, s.name
-  `).all(req.companyId);
-  res.json(sites);
+  const sites = db.prepare(`SELECT * FROM sites WHERE company_id = ? ORDER BY is_primary DESC, name`).all(req.companyId);
+  res.json(sites.map(s => ({ ...s, ...siteCounts(req.companyId, s.id), counts_basis: COUNTS_BASIS })));
 });
 
 // ─── POST / - create a site (manager+) ─────────────────────────────────────────
@@ -41,7 +52,9 @@ router.post('/', requireRole('manager'), (req, res) => {
   logActivity(req.companyId, 'site', id, `Site "${name}" created`, req.user.display_name);
 
   const site = db.prepare('SELECT * FROM sites WHERE id = ?').get(id);
-  res.status(201).json({ ...site, station_count: 0, department_count: 0, work_order_count: 0, location_count: 0 });
+  // A brand-new site immediately inherits every not-yet-assigned record under
+  // the same rule GET / uses, so its counts do not lie the moment it is made.
+  res.status(201).json({ ...site, ...siteCounts(req.companyId, id), counts_basis: COUNTS_BASIS });
 });
 
 // ─── PUT /:id - update a site (manager+) ───────────────────────────────────────

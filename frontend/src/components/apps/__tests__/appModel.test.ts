@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  durationTicks, elapsedSeconds, measuredSeconds, runDurationSeconds,
+  durationTicks, elapsedSeconds, fmtDuration, fmtMinutes, measuredSeconds, runDurationSeconds,
   stepSecondsByIndex, stepTimesTotal,
 } from '../appModel';
 
@@ -133,5 +133,34 @@ describe('durationTicks', () => {
   it('has nothing to draw without a range', () => {
     expect(durationTicks(0)).toEqual([0]);
     expect(durationTicks(NaN)).toEqual([0]);
+  });
+});
+
+// ─── fmtMinutes: the one permitted unit conversion onto fmtDuration ───────────
+// Some endpoints (takt times, leaderboard averages) hand back minutes
+// directly. fmtMinutes is the ONLY sanctioned adapter for that — literally
+// `fmtDuration(minutes * 60)` — so a call site never multiplies by 60 inline
+// and never grows a second, independently-rounding implementation.
+
+describe('fmtMinutes', () => {
+  it('matches what fmtDuration renders for the equivalent seconds, exactly', () => {
+    // 7.5 minutes = 450s; fmtDuration(450) = '7m 30s'.
+    expect(fmtMinutes(7.5)).toBe('7m 30s');
+    expect(fmtMinutes(7.5)).toBe(fmtDuration(7.5 * 60));
+    // 0.1 minutes = 6s; fmtDuration(6) = '6s'.
+    expect(fmtMinutes(0.1)).toBe('6s');
+    expect(fmtMinutes(0.1)).toBe(fmtDuration(0.1 * 60));
+  });
+
+  it('says nothing rather than zero when there is nothing to say', () => {
+    expect(fmtMinutes(null)).toBe('—');
+    expect(fmtMinutes(undefined)).toBe('—');
+    expect(fmtMinutes(NaN)).toBe('—');
+    expect(fmtMinutes(-1)).toBe('—');
+  });
+
+  it('still reaches hours for a long enough run', () => {
+    // 90 minutes = 5400s -> fmtDuration(5400) = '1h 30m'.
+    expect(fmtMinutes(90)).toBe('1h 30m');
   });
 });

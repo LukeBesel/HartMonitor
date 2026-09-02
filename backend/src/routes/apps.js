@@ -909,8 +909,48 @@ router.get('/:id/analytics', (req, res) => {
   `).all(...params);
 
   const widgetMeta = captureWidgetMap(app);
-  const meta = (id, fallbackType) => widgetMeta.get(id)
-    || { label: id, type: fallbackType, step_name: '', order: Number.MAX_SAFE_INTEGER };
+
+  // A captured widget_id that no longer matches anything in the app's current
+  // steps blob (deleted, or the app was rebuilt since the run) used to fall
+  // back to the raw widget_id as the label ("_part_number" printed verbatim)
+  // and the row's storage bucket as the type — which is right when it was
+  // actually recorded, but the whole point of a fallback is that we cannot
+  // ask the widget itself. `completion_values.variable_name` is the field's
+  // own name at the moment it was captured, so it beats guessing.
+  const widgetVarNames = new Map(
+    db.prepare(`
+      SELECT v.widget_id, v.variable_name
+      ${vJoin} AND v.variable_name IS NOT NULL AND v.variable_name != ''
+      GROUP BY v.widget_id
+    `).all(...params).map(r => [r.widget_id, r.variable_name])
+  );
+
+  // '_part_number' -> 'Part number': drop leading underscores, split on
+  // underscore and camelCase boundaries, lowercase every word, capitalise
+  // only the first. Returns null for a name with nothing left to show.
+  function humanizeVariableName(name) {
+    const stripped = String(name || '').replace(/^_+/, '');
+    if (!stripped) return null;
+    const words = stripped
+      .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+      .split(/[_\s]+/)
+      .filter(Boolean)
+      .map(w => w.toLowerCase());
+    if (words.length === 0) return null;
+    return words[0].charAt(0).toUpperCase() + words[0].slice(1) + (words.length > 1 ? ' ' + words.slice(1).join(' ') : '');
+  }
+
+  const meta = (id, fallbackType) => {
+    const found = widgetMeta.get(id);
+    if (found) return found;
+    const humanLabel = humanizeVariableName(widgetVarNames.get(id));
+    // A real variable name still tells us the field's own type — the row's
+    // storage bucket, not a guess. With no name at all there is nothing
+    // honest to call it, so it says so instead of defaulting to "Text".
+    return humanLabel
+      ? { label: humanLabel, type: fallbackType, step_name: '', order: Number.MAX_SAFE_INTEGER }
+      : { label: 'Unnamed field', type: 'unknown', step_name: '', order: Number.MAX_SAFE_INTEGER };
+  };
 
   const fields = [];
   const trendByWidget = new Map();

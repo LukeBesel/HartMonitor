@@ -183,6 +183,23 @@ export function fmtDuration(seconds: number | null | undefined): string {
  * one of them has to say which, or a customer reads the gap as the system
  * contradicting itself. See backend/src/cycleTime.js for the model.
  */
+/**
+ * `fmtDuration`, but for a value that arrives in MINUTES instead of seconds
+ * (takt times, leaderboard averages — several endpoints report minutes
+ * directly). This is the ONLY permitted unit conversion onto the shared
+ * formatter: `fmtDuration(minutes * 60)`, nothing else. It exists so that
+ * "this field is minutes" is declared once, here, instead of a call site
+ * quietly assuming it and multiplying inline — which is exactly how a
+ * seconds field once got treated as minutes and rendered 60x too long. Any
+ * other file that needs a duration in minutes imports this, not `fmtDuration`
+ * with its own `* 60`.
+ */
+export function fmtMinutes(minutes: number | null | undefined): string {
+  if (minutes === null || minutes === undefined || !Number.isFinite(Number(minutes))) return '—';
+  if (Number(minutes) < 0) return '—';
+  return fmtDuration(Number(minutes) * 60);
+}
+
 export type DurationBasis = 'hands_on' | 'elapsed' | 'mixed' | null | undefined;
 
 /** Short label for a duration column or tile, e.g. "hands-on". */
