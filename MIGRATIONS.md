@@ -100,8 +100,22 @@ migration rolls back cleanly without leaving partial state.
 This is the live system. Postgres/Prisma above is the future; today every deploy
 runs `backend/src/db/runMigrations.js`, which applies each `NNN_name.sql` file in
 `backend/src/db/migrations/` exactly once and records it in `_schema_migrations`.
-It is called from `backend/src/db.js` (at require time, before any seed or
-backfill) and again from `backend/src/index.js` (a no-op second pass).
+It is called from the **very end of `backend/src/db.js`** — after every
+`CREATE TABLE` and guarded `ALTER` in that file, because db.js keeps creating
+tables (andon_calls, pm_schedules, assets, routing_steps, completion_sessions
+and two dozen more) long past its seed block, and a migration that ALTERs one of
+them would pass on an existing database and throw "no such table" on a fresh
+one. `backend/src/index.js` calls it again at boot; that is a no-op second pass.
+
+Because that call sits in `db.js`, **migrations apply at `require('./db.js')`
+time — before `index.js` validates configuration and before it can exit on a
+fatal config error.** A process that dies on bad config has therefore already
+written the schema; that is harmless (migrations are additive and idempotent),
+but it is why a config error is not a way to stop a migration from landing.
+
+Point the runner at a different directory with the `MIGRATIONS_DIR` environment
+variable, or by passing a path as its second argument. Tests use both; nothing
+in production sets it.
 
 A file applies **wholly or not at all**: every statement plus its
 `_schema_migrations` row runs inside one `db.transaction()`. SQLite DDL is
@@ -153,7 +167,14 @@ cancel each other, so every stream gets its own block and uses only its own.
 | 3415 | demo-seed |
 
 Already in use elsewhere, do not reuse: existing tests hold **3171–3199**,
-**3231–3258**, **3306** and **3308**; production runs on **3321**.
+**3231–3258**, **3306** and **3308**. The app's default port is **3001**
+(`Dockerfile`, `DEPLOYMENT.md`); on a hosted deploy the platform sets `PORT`.
+
+**This table supersedes the port registry in `OPUS_PLAN.md` §2.4.** That section
+told new suites to take 3175 downward and agent scratch servers 3201 upward;
+suites now claim a port here, and scratch servers use **3501 upward**.
+`OPUS_PLAN.md` has been updated to point back at this table — one registry, not
+two.
 
 ### Rules for a new .sql file
 
@@ -179,9 +200,13 @@ Already in use elsewhere, do not reuse: existing tests hold **3171–3199**,
    node -e "const D=require('better-sqlite3');const d=new D('/tmp/schema-peek.db',{readonly:true});
      console.log(d.prepare('PRAGMA table_info(work_orders)').all())"
    ```
-5. **No `BEGIN`/`COMMIT` and no `PRAGMA` inside a file** — the runner owns the
-   transaction, and a PRAGMA inside one is ignored. No `BEGIN…END` trigger
-   bodies either: the runner splits on `;` (string- and comment-aware, but not a
-   full SQL parser).
+5. **No `BEGIN`, `COMMIT`, `PRAGMA` or `END` statements** — the runner rejects
+   them and the file fails to apply. The runner owns the transaction, so a
+   `BEGIN`/`COMMIT` would fight it; a schema `PRAGMA` inside a transaction is
+   *silently ignored* by SQLite, so a file that relied on one would be recorded
+   as applied having changed nothing. `END` is refused because a `BEGIN…END`
+   trigger body cannot survive the splitter, which cuts on `;` outside strings
+   and comments. Quoting is understood for `'string'`, `"ident"`, `` `ident` ``
+   and `[ident]`, so a semicolon inside any of those is safe.
 6. **Never renumber or edit a shipped file.** `_schema_migrations` keys on the
    filename; an edited file is never re-run, and a renamed one runs twice.

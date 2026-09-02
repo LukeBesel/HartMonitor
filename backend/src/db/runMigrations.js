@@ -25,11 +25,21 @@ const path = require('path');
 // be called from db.js itself without a circular require.
 //
 // See MIGRATIONS.md for the reserved migration numbers and the rules a new file
-// has to follow (no BEGIN/COMMIT and no PRAGMA inside a file — the runner owns
-// the transaction; no BEGIN…END trigger bodies — the splitter below is
-// statement-level, not a SQL parser).
+// has to follow. Two of those rules are enforced here rather than trusted: a
+// file may not contain BEGIN/COMMIT/PRAGMA/END (the runner owns the transaction,
+// and SQLite ignores a schema PRAGMA inside one, so such a file would be
+// recorded as applied having changed nothing), and the splitter below is
+// statement-level, not a SQL parser, so a BEGIN…END trigger body is rejected
+// rather than mangled.
 
 const DEFAULT_MIGRATIONS_DIR = path.join(__dirname, 'migrations');
+
+// Statements the runner will not execute. The runner owns the transaction, so a
+// BEGIN/COMMIT inside a file would fight it; a schema PRAGMA inside a
+// transaction is silently ignored by SQLite, which is worse — the file would be
+// recorded as applied having done nothing. END catches a BEGIN…END trigger body,
+// which the statement splitter cannot represent. See MIGRATIONS.md rule 5.
+const FORBIDDEN_STATEMENT = /^(PRAGMA|BEGIN|COMMIT|END)\b/i;
 
 /** Errors that mean "this additive change is already present" — safe to skip. */
 function isAlreadyPresent(err) {
@@ -64,15 +74,16 @@ function splitStatements(sql) {
       current += ' ';
       continue;
     }
-    // String / quoted identifier — copy verbatim, semicolons and all. A doubled
+    // String or quoted identifier — copy verbatim, semicolons and all. SQLite
+    // accepts four quotings: 'string', "ident", `ident` and [ident]. A doubled
     // quote inside closes then immediately reopens, which tracks correctly.
-    if (ch === "'" || ch === '"') {
-      const quote = ch;
+    if (ch === "'" || ch === '"' || ch === '`' || ch === '[') {
+      const close = ch === '[' ? ']' : ch;
       current += ch;
       i++;
       while (i < sql.length) {
         current += sql[i];
-        if (sql[i] === quote) break;
+        if (sql[i] === close) break;
         i++;
       }
       continue;
@@ -92,10 +103,12 @@ function splitStatements(sql) {
  * Apply pending migrations.
  *
  * @param {import('better-sqlite3').Database} db  open database handle
- * @param {string} [migrationsDir]  directory of numbered .sql files.
- *   Defaults to backend/src/db/migrations. Tests point it at a temp directory.
+ * @param {string} [migrationsDir]  directory of numbered .sql files. Defaults to
+ *   $MIGRATIONS_DIR when set, else backend/src/db/migrations. Tests point it at
+ *   a temp directory — either by argument, or via MIGRATIONS_DIR when the runner
+ *   is reached indirectly (db.js requires it and passes no argument).
  */
-function runMigrations(db, migrationsDir = DEFAULT_MIGRATIONS_DIR) {
+function runMigrations(db, migrationsDir = process.env.MIGRATIONS_DIR || DEFAULT_MIGRATIONS_DIR) {
   // Tracking table
   db.exec(`
     CREATE TABLE IF NOT EXISTS _schema_migrations (
@@ -125,6 +138,15 @@ function runMigrations(db, migrationsDir = DEFAULT_MIGRATIONS_DIR) {
     // file. Throwing out of this function rolls the whole thing back.
     const applyFile = db.transaction(() => {
       for (const stmt of statements) {
+        const forbidden = stmt.match(FORBIDDEN_STATEMENT);
+        if (forbidden) {
+          const word = forbidden[1].toUpperCase();
+          console.error(`[migrations] Error in ${file}: ${word} is not allowed inside a migration file.`);
+          throw new Error(
+            `${word} is not allowed inside a migration file — the runner owns the transaction, ` +
+            `and SQLite silently ignores a schema PRAGMA inside one. See MIGRATIONS.md rule 5.`
+          );
+        }
         try {
           db.exec(stmt + ';');
         } catch (err) {

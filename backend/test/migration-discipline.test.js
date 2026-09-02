@@ -144,6 +144,63 @@ describe('a good migration applies exactly once', () => {
     db.close();
   });
 
+  it('splits on semicolons inside backtick and [bracket] quoted identifiers', () => {
+    const db = freshDb('quoting.db');
+    const dir = migrationsDirWith({
+      '903_quoting.sql': [
+        'CREATE TABLE `weird;name` (id TEXT PRIMARY KEY);',
+        'CREATE TABLE [other;name] (id TEXT PRIMARY KEY, "col;two" TEXT);',
+      ].join('\n'),
+    }, 'quoting');
+
+    quietly(() => runMigrations(db, dir));
+    assert.deepStrictEqual(appliedFiles(db), ['903_quoting.sql']);
+    assert.strictEqual(tableExists(db, 'weird;name'), true, 'backtick quoting survived the split');
+    assert.strictEqual(tableExists(db, 'other;name'), true, '[bracket] quoting survived the split');
+    assert.deepStrictEqual(
+      db.prepare('PRAGMA table_info("other;name")').all().map(c => c.name),
+      ['id', 'col;two']
+    );
+    db.close();
+  });
+
+  it('refuses a PRAGMA (SQLite would silently ignore it inside the transaction)', () => {
+    const db = freshDb('pragma.db');
+    const dir = migrationsDirWith({
+      // A migration that turns foreign keys off and rebuilds a table would be
+      // recorded as applied while the PRAGMA did nothing. Fail loudly instead.
+      '904_pragma.sql': [
+        'CREATE TABLE pragma_probe (id TEXT);',
+        'PRAGMA foreign_keys = OFF;',
+      ].join('\n'),
+    }, 'pragma');
+
+    assert.throws(
+      () => quietly(() => runMigrations(db, dir)),
+      /PRAGMA is not allowed inside a migration file/
+    );
+    assert.deepStrictEqual(appliedFiles(db), [], 'not recorded');
+    assert.strictEqual(tableExists(db, 'pragma_probe'), false, 'rolled back');
+    db.close();
+  });
+
+  it('refuses BEGIN/COMMIT and a BEGIN…END trigger body', () => {
+    for (const [label, sql] of [
+      ['begin', 'BEGIN;\nCREATE TABLE t_begin (id TEXT);\nCOMMIT;'],
+      ['trigger', 'CREATE TRIGGER tr AFTER INSERT ON plan BEGIN SELECT 1;\nEND;'],
+    ]) {
+      const db = freshDb(`forbidden-${label}.db`);
+      const dir = migrationsDirWith({ '905_forbidden.sql': sql }, `forbidden-${label}`);
+      assert.throws(
+        () => quietly(() => runMigrations(db, dir)),
+        /Migration failed: 905_forbidden\.sql/,
+        `${label} must be refused`
+      );
+      assert.deepStrictEqual(appliedFiles(db), []);
+      db.close();
+    }
+  });
+
   it('tolerates re-adding a column that db.js already created', () => {
     const db = freshDb('tolerant.db');
     const dir = migrationsDirWith({
@@ -214,6 +271,44 @@ describe('db.js runs the migrations itself', () => {
       '005_company_modules.sql',
     ]);
     assert.strictEqual(tableExists(db, 'company_modules'), true);
+    db.close();
+  });
+});
+
+describe('migrations see every table db.js creates', () => {
+  // The blocker this file exists for. db.js keeps creating tables long past its
+  // seed block — andon_calls, pm_schedules, assets, routing_steps,
+  // completion_sessions and two dozen more. A runner that fired before those
+  // CREATEs would let an ALTER on one of them pass on a developer's existing
+  // database and throw "no such table" on a customer's fresh one, which is the
+  // failure that only shows up on the deploy that matters.
+  it('lets a migration ALTER a table created near the end of db.js, on a fresh database', () => {
+    const DB_PATH = path.join(TMP, 'late-table.db');
+    const dir = migrationsDirWith({
+      '999_late_table_probe.sql': 'ALTER TABLE andon_calls ADD COLUMN _probe_col TEXT;',
+    }, 'late-table');
+
+    // MIGRATIONS_DIR is the hook db.js's zero-argument call reads, so this
+    // exercises the real require-time path, not a hand-rolled one.
+    execFileSync(process.execPath, ['-e', `require(${JSON.stringify(path.join(__dirname, '..', 'src', 'db.js'))})`], {
+      env: {
+        ...process.env,
+        NODE_ENV: 'test',
+        DATABASE_PATH: DB_PATH,
+        SEED_DEMO_DATA: 'false',
+        BACKUP_DIR: '',
+        MIGRATIONS_DIR: dir,
+      },
+      encoding: 'utf8',
+      stdio: 'pipe',
+    });
+
+    const db = new Database(DB_PATH, { readonly: true });
+    assert.deepStrictEqual(appliedFiles(db), ['999_late_table_probe.sql']);
+    assert.ok(
+      db.prepare('PRAGMA table_info(andon_calls)').all().map(c => c.name).includes('_probe_col'),
+      'the ALTER landed, so andon_calls existed by the time migrations ran'
+    );
     db.close();
   });
 });

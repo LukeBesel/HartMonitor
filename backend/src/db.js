@@ -1621,15 +1621,6 @@ function hashPwDemo(password) {
   return `${salt}:${hash}`;
 }
 
-// ─── Numbered .sql migrations ─────────────────────────────────────────────────
-// Runs here, not at server boot, because everything below this line — the demo
-// seed, the backfills — and every consumer that requires db.js without starting
-// a server (tests, scripts) reads the schema straight after this file finishes.
-// A migration-created table that only appeared once index.js ran would crash a
-// seed that touched it. index.js calls this again after boot; by then it is a
-// no-op second pass. See MIGRATIONS.md.
-require('./db/runMigrations').runMigrations(db);
-
 // ─── Run all seeds (DEVELOPMENT ONLY) ─────────────────────────────────────────
 // Demo company + sample login accounts (admin@hartmonitor.demo, etc.) and fake
 // production data. Gated behind SEED_DEMO_DATA so a production database starts
@@ -2583,6 +2574,20 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_work_orders_company_dept_app  ON work_orders(company_id, department_id, app_id);
   CREATE INDEX IF NOT EXISTS idx_work_orders_company_status    ON work_orders(company_id, status);
 `);
+
+// ─── Numbered .sql migrations ─────────────────────────────────────────────────
+// Dead last in this file, and deliberately so. db.js creates tables all the way
+// down to the line above — andon_calls, pm_schedules, assets, routing_steps,
+// completion_sessions and two dozen others live well below the seed block — so
+// a migration that ALTERs one of them would hit "no such table" on a fresh
+// database while passing on an existing one. Running here means every CREATE
+// and every guarded ALTER has already happened.
+//
+// It also runs at require time rather than at server boot, so every consumer
+// that requires db.js without starting a server (tests, scripts) reads the
+// migrated schema. index.js calls it again after boot; by then it is a no-op
+// second pass. See MIGRATIONS.md.
+require('./db/runMigrations').runMigrations(db);
 
 module.exports = db;
 module.exports.loadSampleDataForCompany = loadSampleDataForCompany;
