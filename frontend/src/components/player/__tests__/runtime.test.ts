@@ -286,7 +286,10 @@ describe('step helpers', () => {
 
 // ─── Nothing the portal already knows is asked twice ─────────────────────────
 
-import { setupNeeded, concurrentRun, buildPlayLink, resumeTarget, isOwnRun } from '../runtime';
+import {
+  setupNeeded, concurrentRun, buildPlayLink, resumeTarget, isOwnRun,
+  playableWorkOrders, routedLookupCandidates,
+} from '../runtime';
 
 const FULL = {
   operatorUserId: 'u1',
@@ -341,6 +344,82 @@ describe('setupNeeded — the setup screen only appears when something is missin
     expect(setupNeeded({ ...FULL, operatorUserId: null, workOrderId: '', partNumber: '' }, selfId)).toBe(true);
     expect(setupNeeded({ ...FULL, operatorUserId: null }, { ...selfId, productTypeCount: 2 })).toBe(true);
     expect(setupNeeded({ ...FULL, operatorUserId: null }, { ...selfId, preview: true })).toBe(true);
+  });
+
+  // ── A routed job ───────────────────────────────────────────────────────────
+  // A work order released against a routing carries its app on the OPERATION
+  // and leaves `work_orders.product_type_id` NULL — the routing decides what
+  // each station runs, not a variant. The player used to hold every such job on
+  // the setup screen demanding a product type nobody had recorded, which is
+  // what stopped one-tap start working for the whole routed floor.
+  it('does not demand a product type of a job the dispatch queue routed here', () => {
+    const routed = { ...FULL, operationId: 'op-3' };
+    expect(setupNeeded(routed, { ...NO_CHOICE, productTypeCount: 3 })).toBe(false);
+    // Everything else it was already asking for, it still asks for.
+    expect(setupNeeded({ ...routed, stationId: '' }, { ...NO_CHOICE, productTypeCount: 3 })).toBe(true);
+    expect(setupNeeded({ ...routed, operatorUserId: null }, { ...NO_CHOICE, productTypeCount: 3 })).toBe(true);
+  });
+
+  it('still asks an UNROUTED job for the product type — there, it is the only thing that says which variant', () => {
+    expect(setupNeeded(FULL, { ...NO_CHOICE, productTypeCount: 3 })).toBe(true);
+    // An operation with no work order is not a routed job; it is a broken link.
+    expect(setupNeeded({ ...FULL, workOrderId: '', partNumber: 'PN-4471', operationId: 'op-3' },
+      { ...NO_CHOICE, productTypeCount: 3 })).toBe(true);
+  });
+});
+
+// ─── Which work orders the player can actually be run against ────────────────
+
+describe('playableWorkOrders — a routed job is reachable from the app it routes to', () => {
+  const APP = 'app-weld';
+  const own      = { id: 'wo-own',    app_id: APP,  status: 'in_progress' };
+  const routed   = { id: 'wo-routed', app_id: null, status: 'in_progress', released_at: '2026-09-01 08:00:00' };
+  const other    = { id: 'wo-other',  app_id: 'app-qc', status: 'in_progress' };
+  const done     = { id: 'wo-done',   app_id: APP,  status: 'completed' };
+  const killed   = { id: 'wo-kill',   app_id: APP,  status: 'cancelled' };
+  const all = [own, routed, other, done, killed];
+
+  it('keeps this app\'s own jobs and drops the closed ones', () => {
+    expect(playableWorkOrders(all, APP).map(w => w.id)).toEqual(['wo-own']);
+  });
+
+  it('keeps the job the LINK named, whatever column it hangs its app on', () => {
+    // The portal already decided which job this tablet is running. Re-deriving
+    // it from `work_orders.app_id` is what printed "— No work order —" on the
+    // setup screen of a job the operator had just tapped.
+    expect(playableWorkOrders(all, APP, 'wo-routed').map(w => w.id)).toEqual(['wo-own', 'wo-routed']);
+  });
+
+  it('keeps a job whose OPERATIONS run this app, even with no link', () => {
+    expect(playableWorkOrders(all, APP, null, new Set(['wo-routed'])).map(w => w.id))
+      .toEqual(['wo-own', 'wo-routed']);
+  });
+
+  it('never resurrects a completed or cancelled job, however it was named', () => {
+    expect(playableWorkOrders(all, APP, 'wo-done', new Set(['wo-kill'])).map(w => w.id)).toEqual(['wo-own']);
+  });
+});
+
+describe('routedLookupCandidates — which jobs are worth one request each', () => {
+  const APP = 'app-weld';
+  const rows = [
+    { id: 'a', app_id: APP,  status: 'in_progress', released_at: '2026-09-01' },   // already this app's
+    { id: 'b', app_id: null, status: 'in_progress', released_at: '2026-09-01' },   // released, unknown app
+    { id: 'c', app_id: null, status: 'in_progress', released_at: null },           // never released: no operations
+    { id: 'd', app_id: null, status: 'in_progress', current_operation: { id: 'op-1' } },
+    { id: 'e', app_id: null, status: 'completed',   released_at: '2026-09-01' },   // closed
+  ];
+
+  it('asks only about released jobs that do not already name this app', () => {
+    expect(routedLookupCandidates(rows, APP).map(w => w.id)).toEqual(['b', 'd']);
+  });
+
+  it('caps the list, so a plant with a thousand open jobs is not a thousand requests', () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({
+      id: `wo-${i}`, app_id: null, status: 'in_progress', released_at: '2026-09-01',
+    }));
+    expect(routedLookupCandidates(many, APP)).toHaveLength(25);
+    expect(routedLookupCandidates(many, APP, 5)).toHaveLength(5);
   });
 });
 

@@ -4,6 +4,7 @@ import {
   LifeBuoy,
 } from 'lucide-react';
 import { formatDur, operatorDisplayName, UNNAMED_OPERATOR } from './runtime';
+import { displayId, hasCompanyTag } from '../../utils/ids';
 
 export interface PlayerHeaderProps {
   appName: string;
@@ -124,7 +125,11 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
           )}
           {workOrderNumber && (
             <span className="p-chip p-chip-gold">
-              <span className="p-mono">{workOrderNumber}</span>
+              {/* On the floor the traveller says WO-1001, so the chip does too —
+                the stored id stays in the title for a support ticket. */}
+            <span className="p-mono" title={hasCompanyTag(workOrderNumber) ? workOrderNumber : undefined}>
+              {displayId(workOrderNumber)}
+            </span>
               {partName && <span style={{ color: 'var(--p-ink-2)' }}>· {partName}</span>}
             </span>
           )}
@@ -171,7 +176,7 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
           </span>
           {/* The name shows at every width. Phone screens used to get the bare
               initial alone, which reads as a mystery badge — "E" — rather than
-              as who is clocked in. */}
+              as who is signed in. */}
           <span className="max-w-[72px] sm:max-w-[120px] truncate">{who}</span>
           {operatorVerified && <ShieldCheck size={14} style={{ color: 'var(--p-good)' }} />}
         </span>

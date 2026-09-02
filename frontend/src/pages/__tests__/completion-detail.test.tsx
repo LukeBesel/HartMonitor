@@ -322,3 +322,26 @@ describe('CompletionDetail says which revision the operator followed', () => {
     expect(await screen.findByText('Approved by Quality Lead')).toBeTruthy();
   });
 });
+
+// ── The id a person reads ────────────────────────────────────────────────────
+
+describe('the work order this run was booked to', () => {
+  it('prints WO-1001, not the sandbox tag it was minted with', async () => {
+    renderPage();
+    // The stored id is 158D03-WO-1001. On the floor the traveller, the barcode
+    // and the operator all say WO-1001, so the page does too.
+    const cell = await screen.findByText('WO-1001');
+    expect(cell).toBeTruthy();
+    expect(screen.queryByText('158D03-WO-1001')).toBeNull();
+    // …and the id a support ticket has to quote is still one hover away.
+    expect(cell).toHaveAttribute('title', '158D03-WO-1001');
+  });
+
+  it('leaves an untagged number exactly as it was typed', async () => {
+    getCompletionDetail.mockResolvedValue(runPayload({
+      work_order: { id: 'wo-1', work_order_number: 'WO-2026-042' },
+    }));
+    renderPage();
+    expect(await screen.findByText('WO-2026-042')).toBeTruthy();
+  });
+});
