@@ -390,7 +390,7 @@ export default function CompletionDetail() {
           <ArrowLeft size={15} /> Back
         </button>
         <ChevronRight size={13} className="text-gray-300" />
-        <Link to={`/apps/${run.app_id}/history`} className="hover:text-indigo-600 transition-colors truncate max-w-[14rem]">
+        <Link to={`/apps/${run.app_id}?tab=runs`} className="hover:text-indigo-600 transition-colors truncate max-w-[14rem]">
           {run.app_name}
         </Link>
         <ChevronRight size={13} className="text-gray-300" />
@@ -412,7 +412,7 @@ export default function CompletionDetail() {
           </div>
           <div className="flex items-center gap-2 flex-wrap">
             {isLive && <LastRefreshed at={lastRefreshed} refreshing={refreshing} onRefresh={() => void refresh()} />}
-            <Link to={`/apps/${run.app_id}/history`} className="btn-secondary text-xs"><History size={13} /> Run history</Link>
+            <Link to={`/apps/${run.app_id}?tab=runs`} className="btn-secondary text-xs"><History size={13} /> Run history</Link>
             <Link to={`/play/${run.app_id}`} className="btn-primary text-xs"><ExternalLink size={13} /> Run this app</Link>
           </div>
         </div>
@@ -817,7 +817,7 @@ export default function CompletionDetail() {
             <History size={15} className="text-gray-400" />
             <h2 className="font-semibold text-gray-900">Recent runs of {run.app_name}</h2>
             <Link
-              to={`/apps/${run.app_id}/history`}
+              to={`/apps/${run.app_id}?tab=runs`}
               className="ml-auto text-xs font-medium text-indigo-600 hover:text-indigo-800 flex items-center gap-0.5"
             >
               Full history <ChevronRight size={12} />

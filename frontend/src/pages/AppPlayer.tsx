@@ -12,6 +12,7 @@ import {
   Hash, Loader2, Lock, MessageSquare, Package, ScanLine, ShieldCheck, Tag, X, Zap,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { getAppDraft } from '../api/revisions';
 import {
   startRun as startRunRequest, notQualified, verifyOverrideAuthorizer, mintOverrideToken,
 } from '../api/training';
@@ -272,7 +273,7 @@ export default function AppPlayer() {
     if (!id) return;
     setLoading(true);
     setLoadError(null);
-    Promise.all([api.getApp(id), api.getWorkOrders(), api.getProductTypes(id), api.getStations()])
+    Promise.all([previewMode ? getAppDraft(id) : api.getApp(id), api.getWorkOrders(), api.getProductTypes(id), api.getStations()])
       .then(([a, wos, pts, sts]: [AppExt, WorkOrderExt[], ProductType[], Station[]]) => {
         // Compute the run-context rule from the RAW blob — normalizeApp
         // force-upgrades schema_version in memory (spec: absent flag → enforce

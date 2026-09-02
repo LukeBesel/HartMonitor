@@ -123,7 +123,7 @@ export default function AppTrainingCoach() {
         else navigate('/apps?new=1');
         break;
       case 'data':
-        if (targetApp) navigate(`/apps/${targetApp.id}/analytics`);
+        if (targetApp) navigate(`/apps/${targetApp.id}`);
         else navigate('/apps');
         break;
       default:
