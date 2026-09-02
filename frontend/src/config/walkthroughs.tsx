@@ -31,6 +31,16 @@ export interface WalkthroughStep {
   icon?: React.ElementType;
   /** Optional bullet list of concrete things to look at or do. */
   bullets?: string[];
+  /**
+   * The element on the page this step is talking about, as a CSS selector.
+   *
+   * A tour is only honest if every sentence in it points at something that is
+   * actually on screen — the dashboard tour used to narrate two sections that
+   * had been deleted and a Customize button that no longer exists. Elements
+   * carry `data-tour="…"` for exactly this, and a scripted check resolves
+   * every selector here against the live page.
+   */
+  target?: string;
 }
 
 /**
@@ -47,51 +57,51 @@ export interface WalkthroughStep {
  */
 export const WALKTHROUGHS: Record<string, WalkthroughStep[]> = {
   // ───────────────────────────── Command Center ─────────────────────────────
+  // Seven sentences about the seven things on the screen, in the order they
+  // are read, each one pointing at an element that exists (`data-tour` on
+  // Dashboard.tsx). A tour of furniture nobody can find is worse than silence.
   dashboard: [
     {
-      title: 'Welcome to your Command Center',
-      body: "This is your home base for running the shop floor. It pulls live data from every module into one screen so you always know what's happening right now and what to do next.",
-      icon: LayoutDashboard,
-      bullets: [
-        'Everything here updates in near real time',
-        'Use it to start your shift and triage problems',
-        'Each section can be turned on or off to fit how you work',
-      ],
-    },
-    {
-      title: 'Greeting & shift KPIs',
-      body: 'The top of the page greets you and shows the headline numbers for the current shift. Scan these first to gauge how the day is going at a glance.',
-      icon: TrendingUp,
-      bullets: [
-        'Units produced and completions so far this shift',
-        'Active stations and people currently working',
-        'Hit Refresh any time to pull the latest figures',
-      ],
-    },
-    {
-      title: 'Needs Attention',
-      body: 'This panel surfaces the issues that matter most — anything that is blocking output or about to. Work it top to bottom to clear problems fast.',
+      title: 'Everything that needs you, first',
+      body: 'The top of the page is the only block that can change your plan today: work orders behind or overdue, stations down, low stock, and help requests raised from the floor. Answer a help request right here, or click a row to open the screen where you fix it.',
       icon: AlertTriangle,
-      bullets: [
-        'Down stations, overdue work orders, and low stock',
-        'Open quality flags and non-conformances',
-        'Click an item to jump straight to where you fix it',
-      ],
+      target: '[data-tour="attention"]',
     },
-    // Two steps used to sit here: "Live Floor View" (a collapsible section of
-    // department cards with pace-against-plan and color cues) and "Throughput &
-    // alerts" (a chart row plus a live alert feed). Neither is on the page any
-    // more — see DASHBOARD_SECTIONS in hooks/useDashboardPrefs.ts, whose retired
-    // ids say so — so both were narrating furniture nobody could find.
     {
-      title: 'Make it yours',
-      body: 'Use the Customize button in the header to show or hide any section. Set it up once and the Command Center remembers your layout.',
-      icon: SlidersHorizontal,
-      bullets: [
-        'Toggle sections on or off from the Customize panel',
-        'Reset to defaults at any time',
-        "Your layout is saved per device — you're all set!",
-      ],
+      title: 'The whole plant, with nothing selected',
+      body: 'Under it sits your plant as it is right now. You do not pick anything to see it — it loads plant-wide, and the heading always names what you are reading.',
+      icon: LayoutDashboard,
+      target: '[data-tour="scope-heading"]',
+    },
+    {
+      title: 'Five numbers, measured not guessed',
+      body: 'How many runs finished today, how many are running this second, how long an average run takes, the pass rate over inspected runs, and how many open work orders are on track. A number nobody measured shows a dash and says why — never a zero that reads as bad news.',
+      icon: TrendingUp,
+      target: '[data-tour="kpis"]',
+    },
+    {
+      title: 'Narrow it to one department',
+      body: 'Choosing a department or an app filters every number, list and chart below it at once. Clear the choice and you are back to the whole plant.',
+      icon: Filter,
+      target: '[data-tour="filters"]',
+    },
+    {
+      title: 'Each area of the floor',
+      body: 'One card per department, showing that area with the same figures in the same words. Open a card for its stations, its wall board and the people on it.',
+      icon: MapPin,
+      target: '[data-tour="departments"]',
+    },
+    {
+      title: 'Runs as they land',
+      body: 'Every run your apps record appears here with the time it took, and anything still on the bench counts up live so you can see what is taking longer than it should.',
+      icon: Clock,
+      target: '[data-tour="latest-runs"]',
+    },
+    {
+      title: 'Output, and what is due',
+      body: 'The chart shows what finished across the last 24 hours or the last 7 days, and the card under it lists the work orders due in the next two days. Hit Refresh in the header whenever you want the latest.',
+      icon: BarChart2,
+      target: '[data-tour="output"]',
     },
   ],
 

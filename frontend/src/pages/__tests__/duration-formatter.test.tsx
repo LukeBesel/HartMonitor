@@ -84,19 +84,18 @@ function scanWidenedDeclarations(): { rel: string; name: string }[] {
  * wave and is named here rather than edited out of place.
  *
  * `pages/Leaderboard.tsx formatDuration` is the single legitimate unit
- * adapter left in the tree: LeaderboardTV.tsx (outside this workstream) still
- * imports it by that name, so it stays exported, but its body is one line —
+ * adapter left in the tree: the wall board inside that same file reads it by
+ * that name, so it stays exported, but its body is one line —
  * `return fmtMinutes(minutes);` — a re-export, not a second implementation.
  *
- * The remaining two were discovered only by actually running this wider scan
- * against the real tree, in files this workstream does not own (its remit is
- * appModel.ts, DepartmentTV/ManagerView/DashboardView/Leaderboard, not the
- * whole frontend) — so each is documented and named, never silently dropped,
- * exactly like `formatDur` above. (Two siblings this same scan found —
- * pages/Departments.tsx's `formatElapsed` and pages/Routings.tsx's
- * `formatCycleTime` — WERE genuine local duration-string reimplementations;
- * once the file-ownership conflict on those pages cleared, both were deleted
- * in favor of the shared formatter, so they no longer appear here.)
+ * The remaining one was discovered only by actually running this wider scan
+ * against the real tree, in a file that workstream did not own — so it is
+ * documented and named, never silently dropped, exactly like `formatDur`
+ * above. (Two siblings this same scan found — the old departments list page's
+ * `formatElapsed` and pages/Routings.tsx's `formatCycleTime` — WERE genuine
+ * local duration-string reimplementations; both were deleted in favor of the
+ * shared formatter, so they no longer appear here. The departments list page
+ * itself is gone: the Command Center is the one live-floor screen.)
  *
  *   - `pages/ReceivingPortal.tsx fmtTime` renders a wall-clock reading
  *     ("2:45 PM" via toLocaleTimeString), the same shape as appModel's own
@@ -129,7 +128,7 @@ describe('the shared duration formatter is the only one', () => {
   it('is the implementation behind every duration a screen prints', () => {
     // Leaderboard's whole payload is in minutes; it renders through the shared
     // minutes adapter, never a local reimplementation. `formatDuration` stays
-    // exported (LeaderboardTV.tsx imports it) but is now a one-line re-export.
+    // exported (the wall board in that file reads it) but is a re-export now.
     const src = fs.readFileSync(path.join(SRC, 'pages', 'Leaderboard.tsx'), 'utf8');
     expect(src).toMatch(/import \{ fmtMinutes \} from '\.\.\/components\/apps\/appModel'/);
     expect(src).toMatch(/return fmtMinutes\(minutes\);/);
@@ -172,8 +171,8 @@ describe('the shared duration formatter is the only one', () => {
 
 // ─── No copy-pasted call site can rename its way around the guard ─────────────
 // The narrow check above only catches a declaration literally named
-// `fmt*Duration`/`format*Duration`. ManagerView.tsx's `formatElapsed` and
-// DashboardView.tsx's old `toFixed(1)` renderings were both real 60x-shaped
+// `fmt*Duration`/`format*Duration`. The retired manager screen's `formatElapsed`
+// and DashboardView.tsx's old `toFixed(1)` renderings were both real 60x-shaped
 // hazards that a Duration-only name check would never see. This widens the
 // name check to the whole family of duration-shaped names, and separately
 // checks for the `.toFixed(` shortcut on a duration-shaped value — the two
@@ -216,8 +215,8 @@ describe('no duration-shaped declaration escapes the guard by name alone', () =>
       }
     }
     // No legitimate hit exists today — every duration-shaped `.toFixed(` this
-    // workstream found was a real hazard and was fixed at the call site
-    // (ManagerView's ETA, DashboardView's two minute renderings). If a future
+    // workstream found was a real hazard and was fixed at the call site (the
+    // retired manager screen's ETA, DashboardView's two minute renderings). If a future
     // change adds a genuinely non-duration hit, it gets allowlisted here by
     // exact file + identifier with a comment, never by loosening TARGET_RE.
     expect(hits).toEqual([]);

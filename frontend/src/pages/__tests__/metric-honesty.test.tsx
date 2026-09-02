@@ -40,7 +40,7 @@ vi.mock('../../api/client', () => ({
 }));
 
 vi.mock('../../components/shared/ModuleOnboarding', () => ({ default: () => null }));
-vi.mock('../StepMetrics', () => ({ StepMetricsPanel: () => null }));
+vi.mock('../../components/analytics/StepMetricsPanel', () => ({ StepMetricsPanel: () => null }));
 
 import AppHistory from '../AppHistory';
 import Analytics from '../Analytics';

@@ -1,6 +1,8 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
+import { getFloorSnapshot, getFloorDepartments } from '../api/floor';
+import type { FloorSnapshot, DepartmentSnapshot } from '../api/floor';
 import { useAuth } from '../context/AuthContext';
 import { useBranding } from '../context/BrandingContext';
 import { useSite } from '../context/SiteContext';
@@ -8,8 +10,8 @@ import {
   TrendingUp, Activity, CheckCircle,
   RefreshCw, CalendarCheck,
   BarChart2, Clock,
-  AlertTriangle, CheckCircle2, ChevronRight, ChevronDown, ChevronUp, Lock, SlidersHorizontal, RotateCcw,
-  Pin, Building2, Tv, ArrowRight,
+  AlertTriangle, CheckCircle2, ChevronRight, ChevronDown, ChevronUp, Lock,
+  Building2, Tv, ArrowRight, CalendarClock,
 } from 'lucide-react';
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer,
@@ -21,10 +23,9 @@ import type { DashboardFilters } from '../api/client';
 import { attentionIcon, attentionLabel } from '../config/attention';
 import { ANDON_TEAMS, ANDON_TEAM_ORDER, teamConfig } from '../config/andonTeams';
 import { subscribeRealtime, isAndonEvent } from '../utils/realtime';
-import { useDashboardPrefs, DASHBOARD_SECTIONS, DashboardSectionId } from '../hooks/useDashboardPrefs';
+import { onTrackSentence } from '../utils/floorWording';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
-import Toggle from '../components/shared/Toggle';
 import OnboardingWizard from '../components/shared/OnboardingWizard';
 import ModuleOnboarding, { markWalkthroughSeen } from '../components/shared/ModuleOnboarding';
 import PageHeader from '../components/shared/PageHeader';
@@ -35,52 +36,31 @@ import EmptyState from '../components/shared/EmptyState';
 // declare its own `fmtDuration(m: number)` taking MINUTES, which shadowed it —
 // feeding it a seconds value rendered a seven-minute cycle as "7.5h". One
 // formatter, one unit, no shadowing.
-import { fmtDuration, durationBasisLabel, durationBasisNote } from '../components/apps/appModel';
+import { fmtDuration, durationBasisLabel, durationBasisNote, elapsedSeconds } from '../components/apps/appModel';
 import {
   LayoutDashboard, Tablet, AppWindow, CalendarRange,
   GitBranch, ShieldCheck, Bell, Database, Sparkles,
 } from 'lucide-react';
 
-// ─── Plant view types ────────────────────────────────────────────────────────
+// ─── What this screen is ──────────────────────────────────────────────────────
+//
+// The one live-floor screen. It answers "what is the floor doing right now" for
+// the WHOLE PLANT the moment it opens — nothing selected, nothing to pick — and
+// a department (or an app) is a filter that narrows the same tiles, the same
+// lists and the same words.
+//
+// Every headline number comes from GET /api/floor/snapshot through api/floor.ts:
+// finished today, running now, average cycle, pass rate and the on-track share
+// are defined once, server-side, against the PLANT's calendar day. Nothing here
+// counts completions by date for itself — that is how four screens ended up
+// disagreeing at the same minute — and a number nobody measured renders as '—'
+// beside the reason the payload gives, never as a 0.
+
+// ─── Floor lists ─────────────────────────────────────────────────────────────
+// The snapshot answers the numbers; these two lists are the rows behind them.
 
 interface PlantViewData {
-  kpis: {
-    total_completed_today: number;
-    active_now: number;
-    /** null when no run has recorded a QC result. */
-    pass_rate: number | null;
-    /** Whole minutes, so 0 for anything under 30 seconds. Do not render it. */
-    avg_cycle_time: number | null;
-    /** The one to render. null when nothing in scope has finished — '—', never 0. */
-    avg_cycle_seconds: number | null;
-    /** Which measurement the average is: per-step timers added up, or wall
-     *  clock, or a mix of both across the runs behind it. Two legitimately
-     *  different numbers exist for one run, so a tile showing one has to say
-     *  which. Optional here only because this branch predates the field —
-     *  once merged, label it with `durationBasisLabel` / `durationBasisNote`
-     *  from components/apps/appModel rather than any wording written here. */
-    avg_cycle_basis?: 'hands_on' | 'elapsed' | 'mixed' | null;
-    /** % of open work orders on track — null when there are none. */
-    schedule_adherence: number | null;
-    work_orders_on_track: number;
-    work_orders_total: number;
-  };
-  department_performance: Array<{
-    id: string;
-    department: string;
-    color: string;
-    completion_count: number;
-    /** Whole minutes; 0 for anything under 30 seconds. Do not render it. */
-    avg_cycle_time: number;
-    /** The one to render. null when this department has finished nothing. */
-    avg_cycle_seconds: number | null;
-    takt_time: number;
-    on_track_count: number;
-    total_count: number;
-    status: 'on_track' | 'at_risk' | 'behind' | 'idle';
-  }>;
   hourly_throughput: Array<{ hour: string; count: number }>;
-  work_order_summary: { on_track: number; at_risk: number; behind: number; not_started: number };
   active_alerts: Array<{
     id: string; work_order_number: string; part_name: string;
     department: string; status: 'behind' | 'overdue';
@@ -90,11 +70,11 @@ interface PlantViewData {
     id: string; app_name: string; operator_name: string;
     department: string; status: string;
     /** When this run last did something: its finish, or its start if it is
-     *  still open. The column heading is "When", so this is what it shows.
-     *  Optional only because this branch predates the field — `completed_at`
-     *  is the fallback, and is nullable on the newer payload. */
+     *  still open. The column heading is "When", so this is what it shows. */
     activity_at?: string | null;
     completed_at?: string | null;
+    /** When the run went on the bench. What a live elapsed counts from. */
+    started_at?: string | null;
     /** True for the rows a completions table may count as completions. */
     is_complete?: boolean;
     /** The cycle time, and null until the run finishes — never an
@@ -102,7 +82,7 @@ interface PlantViewData {
     duration_seconds: number | null;
     /** Set only while the run is open. Not a cycle time; label it "so far". */
     elapsed_so_far_seconds?: number | null;
-    /** Which measurement `duration_seconds` is — see `avg_cycle_basis`. */
+    /** Which measurement `duration_seconds` is: step timers, or wall clock. */
     duration_basis?: 'hands_on' | 'elapsed' | 'mixed' | null;
   }>;
 }
@@ -113,6 +93,14 @@ function fmtAgo(iso: string) {
   if (d < 3600000) return `${Math.floor(d / 60000)}m ago`;
   if (d < 86400000) return `${Math.floor(d / 3600000)}h ago`;
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+/** A department's colour band, from the counts the snapshot already reports. */
+function deptStatus(dept: DepartmentSnapshot): 'on_track' | 'at_risk' | 'behind' | 'idle' {
+  if (dept.open_work_orders <= 0) return 'idle';
+  if (dept.behind + dept.overdue > 0) return 'behind';
+  if (dept.at_risk > 0) return 'at_risk';
+  return 'on_track';
 }
 
 function deptBorderColor(status: string) {
@@ -162,6 +150,23 @@ function SkeletonBox({ className = '' }: { className?: string }) {
   return <div className={`bg-gray-200 animate-pulse rounded ${className}`} />;
 }
 
+/** Seconds a still-open run has been on the bench, ticking once a second — the
+ *  one thing the retired third floor screen did that nothing else did. */
+function useLiveElapsed(startedAt: string | null | undefined, fallback: number | null | undefined) {
+  const [seconds, setSeconds] = useState<number | null>(() => elapsedSeconds(startedAt) ?? fallback ?? null);
+  useEffect(() => {
+    // elapsedSeconds parses SQLite's "YYYY-MM-DD HH:MM:SS" as UTC
+    // (parseServerTime); `new Date(...)` would read the same string as LOCAL
+    // time, and a plant west of UTC would watch every live run count from zero.
+    const tick = () => setSeconds(elapsedSeconds(startedAt) ?? fallback ?? null);
+    tick();
+    if (!startedAt) return;
+    const t = setInterval(tick, 1000);
+    return () => clearInterval(t);
+  }, [startedAt, fallback]);
+  return seconds;
+}
+
 // ─── Page scope ───────────────────────────────────────────────────────────────
 // The Command Center's department / app scope — remembered per user rather than
 // per browser, so two supervisors sharing the office terminal do not inherit
@@ -202,46 +207,6 @@ function storeScope(userId: string | undefined, filters: DashboardFilters) {
   }
 }
 
-// ─── Customize panel ──────────────────────────────────────────────────────────
-
-function CustomizePanel({
-  isHidden, toggleSection, resetSections, onClose,
-}: {
-  isHidden: (id: DashboardSectionId) => boolean;
-  toggleSection: (id: DashboardSectionId) => void;
-  resetSections: () => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="absolute right-0 top-full mt-2 w-72 popover z-50 animate-slide-up">
-      <div className="px-3.5 py-2.5 border-b border-gray-100 flex items-center justify-between">
-        <div>
-          <div className="text-sm font-semibold text-gray-800">Customize this page</div>
-          <div className="text-[11px] text-gray-400">Hide what you don't need</div>
-        </div>
-        <button onClick={onClose} className="text-gray-300 hover:text-gray-500 text-xs">Done</button>
-      </div>
-      <div className="py-1.5 max-h-80 overflow-y-auto">
-        {DASHBOARD_SECTIONS.map(s => (
-          <div key={s.id} className="flex items-center justify-between gap-3 px-3.5 py-2 hover:bg-gray-50">
-            <div className="min-w-0">
-              <div className="text-sm font-medium text-gray-800">{s.label}</div>
-              <div className="text-[11px] text-gray-400 truncate">{s.description}</div>
-            </div>
-            <Toggle checked={!isHidden(s.id)} onChange={() => toggleSection(s.id)} />
-          </div>
-        ))}
-      </div>
-      <button
-        onClick={resetSections}
-        className="w-full flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-xs font-medium text-gray-500 hover:text-gray-800 hover:bg-gray-50 border-t border-gray-100 transition-colors"
-      >
-        <RotateCcw size={12} /> Show everything
-      </button>
-    </div>
-  );
-}
-
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function Dashboard() {
@@ -252,9 +217,6 @@ export default function Dashboard() {
   // poll tick just to read one name off it. The branding provider already has it.
   const { companyName } = useBranding();
   const [loading, setLoading] = useState(true);
-  const { isHidden, toggleSection, resetSections } = useDashboardPrefs();
-  const [showCustomize, setShowCustomize] = useState(false);
-  const customizeRef = useRef<HTMLDivElement>(null);
   const [loadingSample, setLoadingSample] = useState(false);
   const [sampleError, setSampleError] = useState('');
 
@@ -321,13 +283,13 @@ export default function Dashboard() {
   // ── Arriving from the player: /dashboard?department_id=…&app_id=…
   //
   // The run-complete screen offers "Review this run in the live report", and the
-  // operator has to land on the board that already contains the run they just
-  // finished — not on a picker asking them where they work.
+  // operator has to land on the plant already narrowed to the run they just
+  // finished.
   //
   // Two deliberate choices here. The ids are checked against the option lists
   // rather than trusted, so a deleted department (or one belonging to another
   // tenant, or to a site this user isn't looking at) quietly falls back to the
-  // normal default instead of scoping every card to nothing. And the scope is
+  // plant-wide view instead of scoping every card to nothing. And the scope is
   // set with `setFilters`, NOT `applyFilters`: a link opens a view, it does not
   // rewrite what this person's Command Center remembers. Then the params are
   // consumed, so the picker — and only the picker — owns the scope from the
@@ -350,18 +312,6 @@ export default function Dashboard() {
     setSearchParams(rest, { replace: true });
   }, [urlDeptId, urlAppId, departmentsLoaded, departments, apps, searchParams, setSearchParams]);
 
-  // A one-department shop should not be made to pick from a list of one. The
-  // moment we know there is exactly one, it becomes the page — and the picker
-  // below hides itself, because a dropdown with a single choice is furniture.
-  // Held back while a link is still carrying its own scope, so the two never
-  // race to set the department on the same render.
-  useEffect(() => {
-    if (!departmentsLoaded || filters.department_id) return;
-    if (urlDeptId || urlAppId) return;
-    if (departments.length !== 1) return;
-    applyFilters({ ...filters, department_id: departments[0].id });
-  }, [departmentsLoaded, departments, filters, applyFilters, urlDeptId, urlAppId]);
-
   const selectedDept = departments.find(d => d.id === selectedDeptId);
 
   const scopeLabel = useMemo(() => [
@@ -380,23 +330,14 @@ export default function Dashboard() {
   const [callActionId, setCallActionId] = useState<string | null>(null);
   const [callError, setCallError] = useState('');
 
-  // Plant view data — the live half of the department board.
+  // ── The floor, as the plant itself defines it ───────────────────────────────
+  const [snapshot, setSnapshot] = useState<FloorSnapshot | null>(null);
+  const [deptRows, setDeptRows] = useState<DepartmentSnapshot[]>([]);
   const [plantData, setPlantData] = useState<PlantViewData | null>(null);
-  const [plantLoading, setPlantLoading] = useState(true);
+  const [floorLoading, setFloorLoading] = useState(true);
   // One output chart with two ranges instead of two charts side by side. The
   // history is the point of the product, so it is one click away, not gone.
   const [outputRange, setOutputRange] = useState<'day' | 'week'>('day');
-  const [pinnedStations, setPinnedStations] = useState<string[]>(() => {
-    try { return JSON.parse(localStorage.getItem('hm_pinned_stations') ?? '[]'); } catch { return []; }
-  });
-
-  const togglePin = (id: string) => {
-    setPinnedStations(prev => {
-      const next = prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id];
-      localStorage.setItem('hm_pinned_stations', JSON.stringify(next));
-      return next;
-    });
-  };
 
   // Both loaders take the page scope, so a filter change re-fetches EVERY
   // section rather than narrowing one card and leaving the rest plant-wide. A
@@ -404,14 +345,9 @@ export default function Dashboard() {
   // useAutoRefresh refetch immediately.
   const loadData = useCallback(async () => {
     // The site selection belongs to the brief too. Without it the attention list
-    // and the KPI tiles were plant-wide while the department board directly
-    // below them was scoped to one site — a manager at a two-site company was
-    // reading the other site's late work orders next to this site's numbers.
-    //
-    // Only the brief is fetched here. The company name comes from the branding
-    // context now; re-reading /api/config on every poll tick to fill in a header
-    // subtitle was one of the duplicate requests that made a page load cost ~28
-    // calls and put a whole factory behind one rate-limit bucket.
+    // would be plant-wide while the tiles directly above it were scoped to one
+    // site — a manager at a two-site company reading the other site's late work
+    // orders next to this site's numbers.
     try {
       setBrief(await api.getDailyBrief({ ...filters, site_id: selectedSiteId || undefined }));
     } catch {
@@ -420,28 +356,28 @@ export default function Dashboard() {
     setLoading(false);
   }, [filters, selectedSiteId]);
 
-  const loadPlantData = useCallback(async () => {
-    try {
-      const result = await api.getPlantView({ ...filters, site_id: selectedSiteId || undefined });
-      setPlantData(result);
-    } catch {
-      // keep stale data
-    } finally {
-      setPlantLoading(false);
-    }
-  }, [selectedSiteId, filters]);
+  const loadFloor = useCallback(async () => {
+    const scope = { ...filters, site_id: selectedSiteId || undefined };
+    const [snap, depts, plant] = await Promise.all([
+      getFloorSnapshot(scope).catch(() => null),
+      getFloorDepartments(selectedSiteId ? { site_id: selectedSiteId } : undefined).catch(() => null),
+      api.getPlantView(scope).catch(() => null),
+    ]);
+    if (snap) setSnapshot(snap);
+    if (depts) setDeptRows(depts.departments ?? []);
+    if (plant) setPlantData(plant);
+    setFloorLoading(false);
+  }, [filters, selectedSiteId]);
 
   // Live data: the brief moves slowly (60s), the floor moves fast (30s). Both
-  // pause while the tab is hidden and catch up the moment it comes back.
-  // Both loaders wait for the site context. Firing before it resolves cost a
-  // wasted round trip per page load — the brief was fetched once unscoped and
-  // again a few milliseconds later with ?site_id= — and the first answer was
-  // for the wrong scope, so for a moment the screen showed plant-wide numbers
-  // under a site-scoped heading.
+  // pause while the tab is hidden and catch up the moment it comes back, and
+  // both wait for the site context — firing before it resolves cost a wasted
+  // round trip per page load and put plant-wide numbers under a site-scoped
+  // heading for a moment.
   const scopeReady = !sitesLoading;
   const briefRefresh = useAutoRefresh(loadData, 60_000, { enabled: scopeReady, immediate: scopeReady });
-  const plantRefresh = useAutoRefresh(loadPlantData, 30_000, { enabled: scopeReady, immediate: scopeReady });
-  const refreshAll = () => { void briefRefresh.refresh(); void plantRefresh.refresh(); };
+  const floorRefresh = useAutoRefresh(loadFloor, 30_000, { enabled: scopeReady, immediate: scopeReady });
+  const refreshAll = () => { void briefRefresh.refresh(); void floorRefresh.refresh(); };
 
   // A help request raised on any tablet appears here at once — the 60s poll
   // above is only the backstop for a dropped socket. Refreshing through the
@@ -466,16 +402,6 @@ export default function Dashboard() {
     }
   }, [callActionId, refreshBrief]);
 
-  useEffect(() => {
-    if (!showCustomize) return;
-    const onClick = (e: MouseEvent) => {
-      if (customizeRef.current && !customizeRef.current.contains(e.target as Node)) setShowCustomize(false);
-    };
-    document.addEventListener('mousedown', onClick);
-    return () => document.removeEventListener('mousedown', onClick);
-  }, [showCustomize]);
-
-  const kpis = brief?.kpis;
   const allAttention = brief?.attention ?? [];
 
   // Help requests can be filtered to one team — a maintenance lead wants their
@@ -498,10 +424,10 @@ export default function Dashboard() {
   // The CTA disappears the moment sample data (which creates work orders) loads.
   // Never shown while a filter is on — an empty DEPARTMENT is not an empty
   // company, and "build your first app" would be a lie on a running plant.
-  const isEmptyWorkspace = !loading && !!brief && !filtersActive
-    && brief.kpis.work_orders_total === 0
-    && brief.kpis.completed_today === 0
-    && brief.kpis.active_now === 0
+  const isEmptyWorkspace = !loading && !floorLoading && !!snapshot && !filtersActive
+    && snapshot.total_work_orders === 0
+    && snapshot.finished_today === 0
+    && snapshot.running_now === 0
     && attention.length === 0;
 
   const handleLoadSampleData = async () => {
@@ -509,7 +435,7 @@ export default function Dashboard() {
     setSampleError('');
     try {
       await api.loadSampleData();
-      await Promise.all([briefRefresh.refresh(), plantRefresh.refresh()]);
+      await Promise.all([briefRefresh.refresh(), floorRefresh.refresh()]);
     } catch (err: any) {
       setSampleError(err?.message || 'Failed to load sample data');
     } finally {
@@ -517,12 +443,6 @@ export default function Dashboard() {
     }
   };
 
-  const deptCards = plantData?.department_performance ?? [];
-  // Pinned first — a plant with a dozen areas wants its two on top.
-  const orderedDeptCards = [
-    ...deptCards.filter(d => pinnedStations.includes(d.id || d.department)),
-    ...deptCards.filter(d => !pinnedStations.includes(d.id || d.department)),
-  ];
   const behindCount = plantData?.active_alerts.length ?? 0;
   const recentRuns = plantData?.recent_completions ?? [];
   // Both series only carry the periods that had a completion, so an empty array
@@ -530,6 +450,10 @@ export default function Dashboard() {
   const outputSeriesEmpty = outputRange === 'day'
     ? (plantData?.hourly_throughput ?? []).length === 0
     : (brief?.throughput_7d ?? []).length === 0;
+
+  /** The heading over the tiles: the plant, or the slice of it being read. */
+  const scopeHeading = selectedDept?.name ?? 'The whole plant';
+  const onTrack = onTrackSentence(snapshot);
 
   return (
     <div className="p-4 sm:p-6 space-y-6 animate-fade-in">
@@ -539,18 +463,18 @@ export default function Dashboard() {
       <ModuleOnboarding
         moduleId="dashboard"
         title="Welcome to your MES"
-        description="This is your command center. Anything that needs you today sits at the top; below it you pick a department and watch it run — what finished, how long each run took, and what is due next."
+        description="This is your command center. Anything that needs you today sits at the top; under it the whole plant — what finished, what is running, how long a run takes and what is due next. Pick a department to narrow the same numbers."
         steps={[
           'Check what needs attention today',
-          'Pick the department you are running',
-          'Watch runs land live, with the time each one took',
-          'Open the full department view for stations and OEE',
+          'Read the plant: finished, running, cycle time, pass rate, on track',
+          'Narrow to one department or app when you need to',
+          'Open a department for its stations and wall board',
         ]}
         icon={LayoutDashboard}
         color="#3b82f6"
         overviewTitle="What's inside your MES"
         overview={[
-          { icon: LayoutDashboard, label: 'Command Center', desc: "Your home base — what needs attention, then the department you're running." },
+          { icon: LayoutDashboard, label: 'Command Center', desc: 'Your home base — what needs attention, then the whole plant, live.' },
           { icon: Tablet,          label: 'Operator Portal', desc: 'The shop-floor screen operators use to pick a job and start working.' },
           { icon: AppWindow,       label: 'App Library & Builder', desc: 'Build drag-and-drop digital work instructions, then publish them.' },
           { icon: Building2,       label: 'Departments & Stations', desc: 'Define work centers and watch live status across the floor.' },
@@ -568,34 +492,11 @@ export default function Dashboard() {
         title={<>{getGreeting()}{user?.display_name ? `, ${user.display_name.split(' ')[0]}` : ''}</>}
         subtitle={<>{formatDate()}{companyName ? ` · ${companyName}` : ''}</>}
         actions={
-          <>
-            <LastRefreshed
-              at={briefRefresh.lastRefreshed}
-              refreshing={briefRefresh.refreshing || plantRefresh.refreshing}
-              onRefresh={refreshAll}
-              className="mr-1"
-            />
-            <div className="relative" ref={customizeRef}>
-              <button
-                onClick={() => setShowCustomize(o => !o)}
-                title="Customize this page"
-                className={`flex items-center gap-2 px-4 py-2 border rounded-lg text-sm font-medium shadow-sm transition-colors ${
-                  showCustomize ? 'bg-gray-100 border-gray-300 text-gray-800' : 'bg-white border-gray-200 text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                <SlidersHorizontal size={14} />
-                Customize
-              </button>
-              {showCustomize && (
-                <CustomizePanel
-                  isHidden={isHidden}
-                  toggleSection={toggleSection}
-                  resetSections={resetSections}
-                  onClose={() => setShowCustomize(false)}
-                />
-              )}
-            </div>
-          </>
+          <LastRefreshed
+            at={floorRefresh.lastRefreshed}
+            refreshing={briefRefresh.refreshing || floorRefresh.refreshing}
+            onRefresh={refreshAll}
+          />
         }
       />
 
@@ -642,8 +543,7 @@ export default function Dashboard() {
           This is the only block on the page that can change somebody's plan
           today, so it never moves below the fold and never sits behind a
           collapsed panel. */}
-      {!isHidden('attention') && (
-      <div className="card p-5">
+      <div className="card p-5" data-tour="attention">
         <div className="flex items-center gap-2 mb-4 flex-wrap">
           <AlertTriangle size={16} className={attention.length > 0 ? 'text-red-500' : 'text-gray-300'} />
           <h2 className="font-semibold text-gray-900">Needs Attention</h2>
@@ -737,7 +637,7 @@ export default function Dashboard() {
             icon={CheckCircle2}
             title={filtersActive ? `All good${inScope}` : 'All good right now'}
             description={filtersActive
-              ? `Nothing is behind, down or overdue${inScope}. Clear the department to see the whole plant.`
+              ? `Nothing is behind, down or overdue${inScope}. Clear the filter to see the whole plant.`
               : 'Nothing is behind, down, short or overdue. Check back when something changes.'}
           />
         ) : (
@@ -836,38 +736,32 @@ export default function Dashboard() {
           </div>
         )}
       </div>
-      )}
 
-      {/* ── Which department am I running? ────────────────────────────────────
-          The scope control for the whole page. A shop with one department never
-          sees it — nobody should have to choose from a list of one — and a shop
-          with none gets told how to make one instead of a dead dropdown. */}
-      {departments.length > 1 && (
-        <div className="card p-4 sm:p-5" data-testid="department-picker">
+      {/* ── Narrow it, if you want to ──────────────────────────────────────────
+          A filter, not a gate: the numbers below are the whole plant's until
+          somebody chooses otherwise. The two scope questions are one question —
+          which slice am I looking at — so they read left to right on one row
+          and shrink together. */}
+      {(departments.length > 1 || apps.length > 0) && (
+        <div className="card p-4 sm:p-5" data-testid="department-picker" data-tour="filters">
           <div className="flex flex-wrap items-end gap-3">
-            {/* The two scope questions are one question — which slice of the
-                plant am I looking at — so they read left to right on one line
-                and shrink together. The row holds a floor of 16rem: below that
-                the buttons beside it wrap away rather than squeezing the
-                selects into something nobody can read a department name in. */}
             <div className="flex items-end gap-3 flex-1 min-w-[16rem]" data-testid="scope-selects">
-              {/* Three parts to two: a department name is longer than "All
-                  apps", and an even split truncated the placeholder on a
-                  phone. */}
-              <label className="flex-[3] min-w-0 sm:flex-none sm:w-64">
-                <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
-                  <Building2 size={12} /> Department
-                </span>
-                <select
-                  aria-label="Department"
-                  className="input-field w-full text-sm"
-                  value={selectedDeptId}
-                  onChange={e => chooseDepartment(e.target.value)}
-                >
-                  <option value="">{selectedDeptId ? 'All departments' : 'Pick a department'}</option>
-                  {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                </select>
-              </label>
+              {departments.length > 1 && (
+                <label className="flex-[3] min-w-0 sm:flex-none sm:w-64">
+                  <span className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-500 mb-1.5">
+                    <Building2 size={12} /> Department
+                  </span>
+                  <select
+                    aria-label="Department"
+                    className="input-field w-full text-sm"
+                    value={selectedDeptId}
+                    onChange={e => chooseDepartment(e.target.value)}
+                  >
+                    <option value="">All departments</option>
+                    {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+                </label>
+              )}
 
               {apps.length > 0 && (
                 <label className="flex-[2] min-w-0 sm:flex-none sm:w-56">
@@ -911,421 +805,342 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ── No department chosen: the plant, as a set of doors ────────────────
-          A grid of departments is the whole screen until one is picked. It is
-          both the answer to "how is the plant doing" and the way in. */}
-      {!selectedDeptId && (
-        <div className="card p-5">
-          <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
-            <h2 className="font-semibold text-gray-900">
-              {departments.length > 0 ? 'Pick a department' : 'Departments'}
-            </h2>
-            <Link to="/departments" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
-              Jobs by department <ChevronRight size={12} />
+      {/* ── The plant, right now ───────────────────────────────────────────────
+          Five tiles, always on screen, plant-wide until somebody narrows them.
+          Every value is the server's own answer; a value nobody could measure
+          prints '—' with the payload's reason next to it, never a 0. */}
+      <div className="flex items-baseline gap-3 flex-wrap" data-tour="scope-heading">
+        <h2 className="text-lg font-bold text-gray-900">{scopeHeading}</h2>
+        <span className="text-xs text-gray-500">
+          today so far{filters.app_id ? ` · ${apps.find(a => a.id === filters.app_id)?.name}` : ''}
+          {snapshot?.plant_date ? ` · ${snapshot.plant_date}` : ''}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-4" data-tour="kpis">
+        {floorLoading && !snapshot ? (
+          [1, 2, 3, 4, 5].map(i => <SkeletonBox key={i} className="h-24 w-full" />)
+        ) : (
+          <>
+            <div data-testid="kpi-finished-today">
+              <StatCard
+                label="Finished today"
+                value={snapshot?.finished_today ?? '—'}
+                // The heading directly above already names the scope, so this
+                // line stays word-for-word the same whatever is selected: a
+                // tile that renames itself when you filter reads as a
+                // different measurement.
+                deltaLabel="runs completed today"
+                icon={<CheckCircle size={18} />} iconBg="bg-green-50" iconColor="text-green-600"
+              />
+            </div>
+            <div data-testid="kpi-running-now">
+              <StatCard
+                label="Running now"
+                value={snapshot?.running_now ?? '—'}
+                deltaLabel="operators mid-run"
+                icon={<Activity size={18} />} iconBg="bg-blue-50" iconColor="text-blue-600"
+                pulse={(snapshot?.running_now ?? 0) > 0}
+              />
+            </div>
+            {/* The product's whole point, so it is a headline and not a
+                footnote. Seconds in, seconds out — never a rounded 0m. The
+                value never wraps: "6m 36s" broken across two lines on a phone
+                reads as two numbers. `avg_cycle_basis` names whether this is
+                hands-on time or wall clock, through the one shared vocabulary
+                in components/apps/appModel. */}
+            <div data-testid="kpi-avg-cycle">
+              <StatCard
+                label="Average cycle time"
+                value={<span className="whitespace-nowrap" title={durationBasisNote(snapshot?.avg_cycle_basis ?? null)}>
+                  {snapshot?.avg_cycle_seconds != null ? fmtDuration(snapshot.avg_cycle_seconds) : '—'}
+                </span>}
+                deltaLabel={snapshot?.avg_cycle_seconds != null
+                  ? `${snapshot.avg_cycle_sample} run${snapshot.avg_cycle_sample === 1 ? '' : 's'}${durationBasisLabel(snapshot.avg_cycle_basis) ? ` · ${durationBasisLabel(snapshot.avg_cycle_basis)}` : ''}`
+                  : `${snapshot?.avg_cycle_reason ?? 'no run has finished yet'}${inScope}`}
+                icon={<Clock size={18} />} iconBg="bg-orange-50" iconColor="text-orange-600"
+              />
+            </div>
+            <div data-testid="kpi-pass-rate">
+              <StatCard
+                label="Pass rate"
+                value={snapshot?.pass_rate != null ? `${snapshot.pass_rate}%` : '—'}
+                deltaLabel={snapshot?.pass_rate != null
+                  ? `${snapshot.pass_rate_sample} inspected run${snapshot.pass_rate_sample === 1 ? '' : 's'}`
+                  : `${snapshot?.pass_rate_reason ?? 'no pass/fail result recorded yet'}${inScope}`}
+                icon={<TrendingUp size={18} />} iconBg="bg-purple-50" iconColor="text-purple-600"
+              />
+            </div>
+            {/* One sentence, shared with the department page and its wall board
+                (utils/floorWording) so the three cannot word it differently. */}
+            <div data-testid="kpi-on-track">
+              <StatCard
+                label="Work orders on track"
+                value={<span className="text-base leading-snug block">{onTrack ?? '—'}</span>}
+                deltaLabel={onTrack
+                  ? undefined
+                  : `${snapshot?.on_track_reason ?? 'no open work order to be on track with'}${inScope}`}
+                icon={<CalendarClock size={18} />} iconBg="bg-sky-50" iconColor="text-sky-600"
+              />
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* ── The departments, as doors ──────────────────────────────────────────
+          The same figures the department's own page and its wall board show,
+          from the same endpoint. A card opens that department. */}
+      <div className="card p-5" data-tour="departments">
+        <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
+          <h2 className="font-semibold text-gray-900">Departments</h2>
+          <p className="text-xs text-gray-500">Open one for its stations, wall board and team</p>
+        </div>
+
+        {floorLoading && deptRows.length === 0 ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 mt-4">
+            {[1, 2, 3].map(i => <SkeletonBox key={i} className="h-28 w-full" />)}
+          </div>
+        ) : deptRows.length === 0 ? (
+          <EmptyState
+            icon={Building2}
+            title="No departments yet"
+            description="A department is an area of the floor — Assembly, Paint, Packaging. Create one and every run your apps capture gets grouped under it."
+            action={isAtLeast('manager')
+              ? <Link to="/settings?tab=sites" className="btn-primary">Create a department</Link>
+              : undefined}
+          />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3 mt-4">
+            {deptRows.map(dept => {
+              const status = deptStatus(dept);
+              const sentence = onTrackSentence(dept);
+              return (
+                <Link
+                  key={dept.department_id}
+                  to={`/departments/${dept.department_id}`}
+                  className={`block bg-white rounded-xl border border-gray-200 border-l-4 ${deptBorderColor(status)} hover:shadow-md transition-shadow p-3.5`}
+                >
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    <span className="font-semibold text-gray-900 text-sm truncate">{dept.department_name}</span>
+                    <StatusPill status={status} />
+                    <ChevronRight size={14} className="text-gray-300 ml-auto flex-shrink-0" />
+                  </div>
+                  <div className="flex items-end gap-5">
+                    <div className="min-w-0">
+                      <div className="text-2xl font-bold text-gray-900 leading-none tabular-nums">{dept.finished_today}</div>
+                      <div className="text-[11px] text-gray-500 mt-1">finished today</div>
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-2xl font-bold text-gray-900 leading-none tabular-nums whitespace-nowrap">
+                        {dept.avg_cycle_seconds != null ? fmtDuration(dept.avg_cycle_seconds) : '—'}
+                      </div>
+                      <div className="text-[11px] text-gray-500 mt-1">
+                        {dept.avg_cycle_seconds != null ? 'average cycle' : dept.avg_cycle_reason ?? 'nothing measured yet'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-[11px] text-gray-400 mt-2.5">
+                    {sentence ?? `— ${dept.on_track_reason ?? 'no open work order to be on track with'}`}
+                  </div>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Latest runs — the cycle times as they are captured, one row per run,
+          and a live count-up on whatever is still on the bench. */}
+      <div className="card p-5" data-tour="latest-runs">
+        <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+          <div className="min-w-0">
+            <h2 className="font-semibold text-gray-900">Latest runs</h2>
+            <p className="text-[11px] text-gray-500">What each one took, as your apps record it</p>
+          </div>
+          <Link to="/analytics" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
+            Cycle-time history <ArrowRight size={12} />
+          </Link>
+        </div>
+        {floorLoading && recentRuns.length === 0 ? (
+          <div className="space-y-2">{[1, 2, 3].map(i => <SkeletonBox key={i} className="h-9 w-full" />)}</div>
+        ) : recentRuns.length === 0 ? (
+          <EmptyState
+            compact
+            icon={Clock}
+            title={`No runs recorded yet${inScope}`}
+            description="As soon as an operator finishes an app on the floor, the run and the time it took land here."
+          />
+        ) : (
+          /* Three columns, not four: app and operator share a cell so the row
+             fits a 390px phone without a sideways scroll. Splitting them was
+             what pushed the time taken — the whole point of the row — off the
+             right-hand edge. */
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-gray-100">
+                  <th className="text-left text-[11px] font-medium text-gray-400 pb-1.5 pr-3">Run</th>
+                  <th className="text-right text-[11px] font-medium text-gray-400 pb-1.5 pr-6 whitespace-nowrap">Time taken</th>
+                  <th className="text-right text-[11px] font-medium text-gray-400 pb-1.5 whitespace-nowrap">When</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-50">
+                {recentRuns.slice(0, 8).map(c => <RunRow key={c.id} run={c} />)}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Output — one chart, two ranges. Today's shape and the week's trend
+          were two separate cards competing for the same glance. */}
+      <div className="card p-5" data-tour="output">
+        <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+          <h2 className="font-semibold text-gray-900">Output</h2>
+          <div className="flex items-center gap-2">
+            <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
+              {([['day', 'Last 24 hours'], ['week', 'Last 7 days']] as const).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setOutputRange(id)}
+                  className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
+                    outputRange === id ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <Link to="/analytics" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
+              Reports <ChevronRight size={12} />
             </Link>
           </div>
-
-          {/* The plant in one line rather than a wall of tiles. Every figure is
-              the same scoped number the department board would show. */}
-          {plantData && deptCards.length > 0 && (
-            <p className="text-xs text-gray-500 mb-4">
-              {deptCards.length} department{deptCards.length === 1 ? '' : 's'}
-              {' · '}{plantData.kpis.total_completed_today} finished today
-              {' · '}{plantData.kpis.active_now} running now
-              {' · '}
-              {plantData.kpis.avg_cycle_seconds != null
-                ? `${fmtDuration(plantData.kpis.avg_cycle_seconds)} average cycle`
-                : '— average cycle, no completed runs yet'}
-            </p>
-          )}
-
-          {plantLoading && deptCards.length === 0 ? (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              {[1, 2, 3].map(i => <SkeletonBox key={i} className="h-28 w-full" />)}
-            </div>
-          ) : deptCards.length === 0 ? (
-            <EmptyState
-              icon={Building2}
-              title="No departments yet"
-              description="A department is an area of the floor — Assembly, Paint, Packaging. Create one and every run your apps capture gets grouped under it."
-              action={isAtLeast('manager')
-                ? <Link to="/settings?tab=sites" className="btn-primary">Create a department</Link>
-                : undefined}
-            />
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
-              {orderedDeptCards.map(dept => {
-                const key = dept.id || dept.department;
-                const isPinned = pinnedStations.includes(key);
-                const onTrackPct = dept.total_count > 0 ? Math.round((dept.on_track_count / dept.total_count) * 100) : null;
-                return (
-                  <div
-                    key={key}
-                    className={`relative bg-white rounded-xl border border-gray-200 border-l-4 ${deptBorderColor(dept.status)} ${isPinned ? 'ring-2 ring-blue-300' : ''} hover:shadow-md transition-shadow`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => dept.id && chooseDepartment(dept.id)}
-                      className="w-full text-left p-3.5 pr-10"
-                    >
-                      <div className="flex items-center gap-2 mb-2 flex-wrap">
-                        <span className="font-semibold text-gray-900 text-sm truncate">{dept.department}</span>
-                        <StatusPill status={dept.status} />
-                      </div>
-                      <div className="flex items-end gap-5">
-                        <div className="min-w-0">
-                          <div className="text-2xl font-bold text-gray-900 leading-none tabular-nums">{dept.completion_count}</div>
-                          <div className="text-[11px] text-gray-500 mt-1">finished today</div>
-                        </div>
-                        <div className="min-w-0">
-                          <div className="text-2xl font-bold text-gray-900 leading-none tabular-nums">
-                            {dept.avg_cycle_seconds != null ? fmtDuration(dept.avg_cycle_seconds) : '—'}
-                          </div>
-                          <div className="text-[11px] text-gray-500 mt-1">
-                            {dept.avg_cycle_seconds != null ? 'average cycle' : 'no runs yet'}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="text-[11px] text-gray-400 mt-2.5">
-                        {onTrackPct === null ? 'No work orders assigned' : `${onTrackPct}% of work orders on track`}
-                      </div>
-                    </button>
-                    {isAtLeast('manager') && (
-                      <button
-                        type="button"
-                        onClick={() => togglePin(key)}
-                        title={isPinned ? 'Unpin' : 'Pin this department'}
-                        className={`absolute top-2.5 right-2.5 p-1 rounded-lg transition-colors ${isPinned ? 'text-blue-500 bg-blue-50' : 'text-gray-300 hover:text-gray-500 hover:bg-gray-50'}`}
-                      >
-                        <Pin size={12} />
-                      </button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
         </div>
-      )}
+        {loading || floorLoading ? (
+          <SkeletonBox className="h-52 w-full" />
+        ) : outputSeriesEmpty ? (
+          // Recharts draws nothing at all for an empty series — not even axes —
+          // which reads as a broken card rather than a quiet day.
+          <EmptyState
+            compact
+            icon={BarChart2}
+            title={outputRange === 'day'
+              ? `No runs finished in the last 24 hours${inScope}`
+              : `No runs finished in the last 7 days${inScope}`}
+            description="Every completed run is counted here the moment an operator finishes it."
+          />
+        ) : outputRange === 'day' ? (
+          <ResponsiveContainer width="100%" height={210}>
+            <BarChart data={plantData?.hourly_throughput ?? []} barSize={12} margin={{ left: 0, right: 10, top: 5, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+              <XAxis dataKey="hour" tick={{ fontSize: 10 }} tickFormatter={h => h.slice(11, 16)} interval="preserveStartEnd" minTickGap={24} />
+              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} width={28} />
+              <Tooltip labelFormatter={l => `${l}`} formatter={(v: any) => [v, 'Runs finished']} />
+              <Bar dataKey="count" fill="#3b82f6" radius={[2, 2, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        ) : (
+          <ResponsiveContainer width="100%" height={210}>
+            <AreaChart data={brief?.throughput_7d ?? []} margin={{ left: 0, right: 10, top: 5, bottom: 0 }}>
+              <defs>
+                <linearGradient id="throughputFill" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.25} />
+                  <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+              <XAxis
+                dataKey="date" tick={{ fontSize: 10 }}
+                tickFormatter={d => new Date(d + 'T00:00:00').toLocaleDateString([], { weekday: 'short' })}
+              />
+              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} width={28} />
+              <Tooltip
+                labelFormatter={d => new Date(d + 'T00:00:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}
+                formatter={(v: any) => [v, 'Runs finished']}
+              />
+              {(brief?.week_avg_per_day ?? 0) > 0 && (
+                <ReferenceLine
+                  y={brief!.week_avg_per_day}
+                  stroke="#9ca3af" strokeDasharray="5 4"
+                  label={{ value: `avg ${brief!.week_avg_per_day}`, position: 'insideTopRight', style: { fontSize: 10, fill: '#9ca3af' } }}
+                />
+              )}
+              <Area type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2} fill="url(#throughputFill)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
 
-      {/* ── The chosen department, live ───────────────────────────────────────── */}
-      {selectedDeptId && (
-        <>
-          <div className="flex items-baseline gap-3 flex-wrap">
-            <h2 className="text-lg font-bold text-gray-900">{selectedDept?.name ?? 'Department'}</h2>
-            <span className="text-xs text-gray-500">
-              today so far{filters.app_id ? ` · ${apps.find(a => a.id === filters.app_id)?.name}` : ''}
-            </span>
+      {/* Due soon. The schedule health that used to need its own tile and its
+          own alert list now rides in this card's header — the same on-track
+          sentence the tile above prints, from the same payload. */}
+      <div className="card p-5" data-tour="due-soon">
+        <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+          <div className="min-w-0">
+            <h2 className="font-semibold text-gray-900">Due in the next 48 hours</h2>
+            <p className="text-[11px] text-gray-500">
+              {onTrack ?? `No open work orders${inScope}`}
+            </p>
           </div>
-
-          {!isHidden('kpis') && (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {loading ? (
-              [1, 2, 3, 4].map(i => <SkeletonBox key={i} className="h-24 w-full" />)
-            ) : (
-              <>
-                <StatCard
-                  label="Finished today"
-                  value={kpis?.completed_today ?? 0}
-                  delta={kpis?.vs_7day_avg_pct}
-                  deltaLabel="vs 7-day avg"
-                  icon={<CheckCircle size={18} />} iconBg="bg-green-50" iconColor="text-green-600"
-                />
-                <StatCard
-                  label="Running now"
-                  value={kpis?.active_now ?? 0}
-                  deltaLabel="operators mid-run"
-                  icon={<Activity size={18} />} iconBg="bg-blue-50" iconColor="text-blue-600"
-                  pulse={(kpis?.active_now ?? 0) > 0}
-                />
-                {/* The product's whole point, so it is a headline and not a
-                    footnote. Seconds in, seconds out — never a rounded 0m.
-                    The value never wraps: "6m 36s" broken across two lines on a
-                    phone reads as two numbers. The department is named in the
-                    heading directly above, so only the DASH spends words
-                    repeating it — that one has to say why it is a dash.
-                    `kpis.avg_cycle_basis` names whether this is hands-on time
-                    or wall clock, via the one shared vocabulary in
-                    components/apps/appModel. */}
-                <StatCard
-                  label="Average cycle time"
-                  value={<span className="whitespace-nowrap" title={durationBasisNote(plantData?.kpis.avg_cycle_basis)}>
-                    {plantData?.kpis.avg_cycle_seconds != null ? fmtDuration(plantData.kpis.avg_cycle_seconds) : '—'}
-                  </span>}
-                  deltaLabel={plantData?.kpis.avg_cycle_seconds != null
-                    ? `across every recorded run${durationBasisLabel(plantData.kpis.avg_cycle_basis) ? ` · ${durationBasisLabel(plantData.kpis.avg_cycle_basis)}` : ''}`
-                    : `no completed runs${inScope}`}
-                  icon={<Clock size={18} />} iconBg="bg-orange-50" iconColor="text-orange-600"
-                />
-                <StatCard
-                  label="Pass rate (7 days)"
-                  value={kpis?.pass_rate_7d != null ? `${kpis.pass_rate_7d}%` : '—'}
-                  deltaLabel={kpis?.pass_rate_7d != null
-                    ? `from QC results${inScope}`
-                    : `No QC results recorded${inScope}`}
-                  icon={<TrendingUp size={18} />} iconBg="bg-purple-50" iconColor="text-purple-600"
-                />
-              </>
-            )}
-          </div>
-          )}
-
-          {/* Latest runs — the cycle times as they are captured, one row per
-              run. This used to sit at the very bottom of a collapsible panel;
-              it is the thing the product exists to produce. */}
-          {!isHidden('floor_activity') && (
-          <div className="card p-5">
-            <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
-              <div className="min-w-0">
-                <h2 className="font-semibold text-gray-900">Latest runs</h2>
-                <p className="text-[11px] text-gray-500">What each one took, as your apps record it</p>
-              </div>
-              <Link to="/analytics" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
-                Cycle-time history <ArrowRight size={12} />
+          <div className="flex items-center gap-2 flex-wrap">
+            {behindCount > 0 && (
+              <Link
+                to="/schedule"
+                className="text-[11px] font-semibold bg-red-100 text-red-700 px-2 py-1 rounded-full hover:bg-red-200 transition-colors"
+              >
+                {behindCount} behind or overdue
               </Link>
-            </div>
-            {plantLoading && recentRuns.length === 0 ? (
-              <div className="space-y-2">{[1, 2, 3].map(i => <SkeletonBox key={i} className="h-9 w-full" />)}</div>
-            ) : recentRuns.length === 0 ? (
-              <EmptyState
-                compact
-                icon={Clock}
-                title={`No runs recorded yet${inScope}`}
-                description="As soon as an operator finishes an app on the floor, the run and the time it took land here."
-              />
-            ) : (
-              /* Three columns, not four: app and operator share a cell so the
-                 row fits a 390px phone without a sideways scroll. Splitting
-                 them was what pushed the time taken — the whole point of the
-                 row — off the right-hand edge. */
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-gray-100">
-                      <th className="text-left text-[11px] font-medium text-gray-400 pb-1.5 pr-3">Run</th>
-                      <th className="text-right text-[11px] font-medium text-gray-400 pb-1.5 pr-6 whitespace-nowrap">Time taken</th>
-                      <th className="text-right text-[11px] font-medium text-gray-400 pb-1.5 whitespace-nowrap">When</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {recentRuns.slice(0, 8).map(c => {
-                      // Three states, three honest readings.
-                      //
-                      // A finished run has a cycle time. A run still on the
-                      // bench has an elapsed-so-far, which is a different
-                      // measurement and is labelled as one — "6m" unqualified
-                      // would fold a job that has not finished into the
-                      // reader's sense of what a cycle costs. An abandoned run
-                      // has neither: nothing ever stamped it finished, so any
-                      // figure measured against the clock grows forever, and
-                      // the only true thing to print is a dash.
-                      const running = c.status === 'in_progress';
-                      const finished = c.is_complete ?? c.status === 'completed';
-                      // A zero here is not a run that took no time — it is a
-                      // run shorter than the reported figure can resolve. Still
-                      // a dash, never "0s".
-                      const took = finished
-                        ? (c.duration_seconds || null)
-                        : running
-                          // The newer payload keeps the two apart; the older one
-                          // put the elapsed-so-far in duration_seconds.
-                          ? (c.elapsed_so_far_seconds ?? c.duration_seconds) || null
-                          : null;
-                      const when = c.activity_at ?? c.completed_at;
-                      return (
-                        <tr key={c.id} className="hover:bg-gray-50 transition-colors align-top">
-                          <td className="py-2 pr-3 max-w-0 w-full">
-                            <span className="font-medium text-gray-900 truncate block">{c.app_name}</span>
-                            <span className="text-[11px] text-gray-400 truncate block">
-                              {c.operator_name}
-                              {!finished && (
-                                <span className={`ml-1.5 font-semibold uppercase tracking-wide ${running ? 'text-blue-600' : 'text-gray-400'}`}>
-                                  {running ? 'running' : c.status}
-                                </span>
-                              )}
-                            </span>
-                          </td>
-                          {/* The tooltip names which measurement this is —
-                              hands-on vs wall clock — via the one shared
-                              vocabulary in components/apps/appModel. */}
-                          <td
-                            className="py-2 pr-6 text-right font-medium text-gray-700 tabular-nums whitespace-nowrap"
-                            title={took === null && finished
-                              ? 'This run finished faster than the reported time can resolve'
-                              : durationBasisNote(c.duration_basis)}
-                          >
-                            {took !== null ? `${fmtDuration(took)}${running ? ' so far' : ''}` : '—'}
-                          </td>
-                          <td className="py-2 text-right text-gray-400 whitespace-nowrap">
-                            {when ? fmtAgo(when) : '—'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
             )}
+            <Link to="/schedule" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
+              Schedule <ChevronRight size={12} />
+            </Link>
           </div>
-          )}
-
-          {/* Output — one chart, two ranges. Today's shape and the week's trend
-              were two separate cards competing for the same glance. */}
-          {!isHidden('output') && (
-          <div className="card p-5">
-            <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-              <h2 className="font-semibold text-gray-900">Output</h2>
-              <div className="flex items-center gap-2">
-                <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
-                  {([['day', 'Last 24 hours'], ['week', 'Last 7 days']] as const).map(([id, label]) => (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => setOutputRange(id)}
-                      className={`px-2.5 py-1 rounded-md text-xs font-semibold transition-colors ${
-                        outputRange === id ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </div>
-                <Link to="/analytics" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
-                  Reports <ChevronRight size={12} />
-                </Link>
-              </div>
-            </div>
-            {loading || plantLoading ? (
-              <SkeletonBox className="h-52 w-full" />
-            ) : outputSeriesEmpty ? (
-              // Recharts draws nothing at all for an empty series — not even
-              // axes — which reads as a broken card rather than a quiet day.
-              <EmptyState
-                compact
-                icon={BarChart2}
-                title={outputRange === 'day'
-                  ? `No runs finished in the last 24 hours${inScope}`
-                  : `No runs finished in the last 7 days${inScope}`}
-                description="Every completed run is counted here the moment an operator finishes it."
-              />
-            ) : outputRange === 'day' ? (
-              <ResponsiveContainer width="100%" height={210}>
-                <BarChart data={plantData?.hourly_throughput ?? []} barSize={12} margin={{ left: 0, right: 10, top: 5, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                  <XAxis dataKey="hour" tick={{ fontSize: 10 }} tickFormatter={h => h.slice(11, 16)} interval="preserveStartEnd" minTickGap={24} />
-                  <YAxis tick={{ fontSize: 11 }} allowDecimals={false} width={28} />
-                  <Tooltip labelFormatter={l => `${l}`} formatter={(v: any) => [v, 'Runs finished']} />
-                  <Bar dataKey="count" fill="#3b82f6" radius={[2, 2, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            ) : (
-              <ResponsiveContainer width="100%" height={210}>
-                <AreaChart data={brief?.throughput_7d ?? []} margin={{ left: 0, right: 10, top: 5, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="throughputFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#3b82f6" stopOpacity={0.25} />
-                      <stop offset="100%" stopColor="#3b82f6" stopOpacity={0.02} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                  <XAxis
-                    dataKey="date" tick={{ fontSize: 10 }}
-                    tickFormatter={d => new Date(d + 'T00:00:00').toLocaleDateString([], { weekday: 'short' })}
-                  />
-                  <YAxis tick={{ fontSize: 11 }} allowDecimals={false} width={28} />
-                  <Tooltip
-                    labelFormatter={d => new Date(d + 'T00:00:00').toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}
-                    formatter={(v: any) => [v, 'Runs finished']}
-                  />
-                  {(brief?.week_avg_per_day ?? 0) > 0 && (
-                    <ReferenceLine
-                      y={brief!.week_avg_per_day}
-                      stroke="#9ca3af" strokeDasharray="5 4"
-                      label={{ value: `avg ${brief!.week_avg_per_day}`, position: 'insideTopRight', style: { fontSize: 10, fill: '#9ca3af' } }}
-                    />
-                  )}
-                  <Area type="monotone" dataKey="count" stroke="#3b82f6" strokeWidth={2} fill="url(#throughputFill)" />
-                </AreaChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-          )}
-
-          {/* Due soon. The schedule health that used to need its own tile and
-              its own alert list now rides in this card's header — the numbers
-              are the same, and /schedule holds the detail behind them. */}
-          {!isHidden('due_soon') && (
-          <div className="card p-5">
-            <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-              <div className="min-w-0">
-                <h2 className="font-semibold text-gray-900">Due in the next 48 hours</h2>
-                <p className="text-[11px] text-gray-500">
-                  {(kpis?.work_orders_total ?? 0) > 0
-                    ? `${kpis?.work_orders_on_track ?? 0} of ${kpis?.work_orders_total} open work orders on track${inScope}`
-                    : `No open work orders${inScope}`}
-                </p>
-              </div>
-              <div className="flex items-center gap-2 flex-wrap">
-                {behindCount > 0 && (
-                  <Link
-                    to="/schedule"
-                    className="text-[11px] font-semibold bg-red-100 text-red-700 px-2 py-1 rounded-full hover:bg-red-200 transition-colors"
-                  >
-                    {behindCount} behind or overdue
-                  </Link>
-                )}
-                <Link to="/schedule" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
-                  Schedule <ChevronRight size={12} />
-                </Link>
-              </div>
-            </div>
-            {loading ? (
-              <div className="space-y-2">{[1, 2, 3].map(i => <SkeletonBox key={i} className="h-14 w-full" />)}</div>
-            ) : (brief?.due_soon ?? []).length === 0 ? (
-              <EmptyState
-                compact
-                icon={CalendarCheck}
-                title={`Nothing due in the next two days${inScope}`}
-                description="Scheduled work orders show up here as their due dates approach."
-              />
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                {brief!.due_soon.map(wo => (
-                  <div key={wo.id} className="border border-gray-100 rounded-lg p-3">
-                    <div className="flex items-center justify-between gap-2 mb-1.5">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <span className="font-semibold text-xs text-gray-900 truncate">{wo.work_order_number}</span>
-                        <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${SCHEDULE_PILL[wo.schedule_status] ?? 'bg-gray-100 text-gray-600'}`}>
-                          {wo.schedule_status.replace('_', ' ')}
-                        </span>
-                      </div>
-                      <span className="text-xs text-gray-400 flex-shrink-0">
-                        due {new Date(wo.scheduled_end).toLocaleDateString([], { month: 'short', day: 'numeric' })}
-                      </span>
-                    </div>
-                    <div className="text-xs text-gray-600 truncate mb-1.5">
-                      {wo.part_name}{wo.department_name ? ` · ${wo.department_name}` : ''}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${
-                            wo.schedule_status === 'overdue' || wo.schedule_status === 'behind' ? 'bg-red-500' :
-                            wo.schedule_status === 'at_risk' ? 'bg-amber-500' : 'bg-green-500'
-                          }`}
-                          style={{ width: `${wo.completion_pct}%` }}
-                        />
-                      </div>
-                      <span className="text-[11px] text-gray-500 tabular-nums">{wo.quantity_completed}/{wo.quantity}</span>
-                    </div>
+        </div>
+        {loading ? (
+          <div className="space-y-2">{[1, 2, 3].map(i => <SkeletonBox key={i} className="h-14 w-full" />)}</div>
+        ) : (brief?.due_soon ?? []).length === 0 ? (
+          <EmptyState
+            compact
+            icon={CalendarCheck}
+            title={`Nothing due in the next two days${inScope}`}
+            description="Scheduled work orders show up here as their due dates approach."
+          />
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {brief!.due_soon.map(wo => (
+              <div key={wo.id} className="border border-gray-100 rounded-lg p-3">
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="font-semibold text-xs text-gray-900 truncate">{wo.work_order_number}</span>
+                    <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${SCHEDULE_PILL[wo.schedule_status] ?? 'bg-gray-100 text-gray-600'}`}>
+                      {wo.schedule_status.replace('_', ' ')}
+                    </span>
                   </div>
-                ))}
+                  <span className="text-xs text-gray-400 flex-shrink-0">
+                    due {new Date(wo.scheduled_end).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                  </span>
+                </div>
+                <div className="text-xs text-gray-600 truncate mb-1.5">
+                  {wo.part_name}{wo.department_name ? ` · ${wo.department_name}` : ''}
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full rounded-full ${
+                        wo.schedule_status === 'overdue' || wo.schedule_status === 'behind' ? 'bg-red-500' :
+                        wo.schedule_status === 'at_risk' ? 'bg-amber-500' : 'bg-green-500'
+                      }`}
+                      style={{ width: `${wo.completion_pct}%` }}
+                    />
+                  </div>
+                  <span className="text-[11px] text-gray-500 tabular-nums">{wo.quantity_completed}/{wo.quantity}</span>
+                </div>
               </div>
-            )}
+            ))}
           </div>
-          )}
-        </>
-      )}
+        )}
+      </div>
 
       {/* Free-tier upgrade banner */}
       {brief && !brief.is_pro && (
@@ -1341,5 +1156,57 @@ export default function Dashboard() {
         </Link>
       )}
     </div>
+  );
+}
+
+/** One row of Latest runs. Three states, three honest readings.
+ *
+ *  A finished run has a cycle time. A run still on the bench has an
+ *  elapsed-so-far, which is a different measurement, is labelled as one, and
+ *  counts up live rather than freezing at whatever the last poll returned. An
+ *  abandoned run has neither: nothing ever stamped it finished, so any figure
+ *  measured against the clock grows forever, and the only true thing to print
+ *  is a dash. */
+function RunRow({ run: c }: { run: PlantViewData['recent_completions'][number] }) {
+  const running = c.status === 'in_progress';
+  const finished = c.is_complete ?? c.status === 'completed';
+  // Ticks once a second while the run is open; null for every other state, so
+  // nothing is doing arithmetic on a run nobody is watching.
+  const live = useLiveElapsed(running ? c.started_at : null, running ? c.elapsed_so_far_seconds : null);
+  // A zero here is not a run that took no time — it is a run shorter than the
+  // reported figure can resolve. Still a dash, never "0s".
+  const took = finished
+    ? (c.duration_seconds || null)
+    : running
+      ? (live || null)
+      : null;
+  const when = c.activity_at ?? c.completed_at;
+  return (
+    <tr className="hover:bg-gray-50 transition-colors align-top">
+      <td className="py-2 pr-3 max-w-0 w-full">
+        <span className="font-medium text-gray-900 truncate block">{c.app_name}</span>
+        <span className="text-[11px] text-gray-400 truncate block">
+          {c.operator_name}
+          {!finished && (
+            <span className={`ml-1.5 font-semibold uppercase tracking-wide ${running ? 'text-blue-600' : 'text-gray-400'}`}>
+              {running ? 'running' : c.status}
+            </span>
+          )}
+        </span>
+      </td>
+      {/* The tooltip names which measurement this is — hands-on vs wall clock —
+          through the one shared vocabulary in components/apps/appModel. */}
+      <td
+        className="py-2 pr-6 text-right font-medium text-gray-700 tabular-nums whitespace-nowrap"
+        title={took === null && finished
+          ? 'This run finished faster than the reported time can resolve'
+          : durationBasisNote(c.duration_basis)}
+      >
+        {took !== null ? `${fmtDuration(took)}${running ? ' so far' : ''}` : '—'}
+      </td>
+      <td className="py-2 text-right text-gray-400 whitespace-nowrap">
+        {when ? fmtAgo(when) : '—'}
+      </td>
+    </tr>
   );
 }

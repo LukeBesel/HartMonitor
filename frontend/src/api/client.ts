@@ -577,7 +577,6 @@ export const api = {
   getOperatorPerformance: (f?: AnalyticsFilters) => request<any[]>(`/analytics/operator-performance${filterQS(f)}`),
   getAppPerformance: (f?: AnalyticsFilters) => request<any[]>(`/analytics/app-performance${filterQS(f)}`),
   getQualityData: (days?: number, f?: AnalyticsFilters) => request<any[]>(`/analytics/quality${filterQS(f, { days: days ?? 30 })}`),
-  getManagerView: () => request<any>('/analytics/manager-view'),
   getPlantView: (params?: DashboardFilters) =>
     request<any>(`/analytics/plant-view${dashboardFilterQS(params)}`),
   getDepartmentView: (id: string) => request<any>(`/analytics/department/${id}`),

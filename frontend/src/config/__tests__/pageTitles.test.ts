@@ -97,6 +97,29 @@ describe('resolvePageTitle', () => {
     expect(resolvePageTitle('/departments/9/tv')).toBe(`Department TV${SUFFIX}`);
   });
 
+  it('titles a retired floor screen with the screen it redirects to', () => {
+    // The tab must not blink "Page Not Found" while a stale bookmark redirects,
+    // and it must not carry the name of a screen the product no longer has.
+    expect(resolvePageTitle('/manager')).toBe(`Command Center${SUFFIX}`);
+    expect(resolvePageTitle('/departments')).toBe(`Command Center${SUFFIX}`);
+    expect(resolvePageTitle('/sqdc')).toBe(`Command Center${SUFFIX}`);
+    expect(resolvePageTitle('/plant')).toBe(`Command Center${SUFFIX}`);
+    expect(resolvePageTitle('/transaction-log')).toBe(`Audit Log${SUFFIX}`);
+    expect(resolvePageTitle('/leaderboard/tv')).toBe(`Leaderboard${SUFFIX}`);
+    expect(resolvePageTitle('/step-metrics')).toBe(`Operation Analytics${SUFFIX}`);
+  });
+
+  it('no longer names a screen that was deleted', () => {
+    const retired = ['Manager View', 'Transaction Log', 'Leaderboard TV', 'Departments'];
+    const named = [
+      '/', '/manager', '/departments', '/departments/d-1', '/departments/d-1/tv',
+      '/transaction-log', '/audit-log', '/leaderboard', '/leaderboard/tv', '/dashboard',
+    ].map(resolveScreenName);
+    for (const gone of retired) {
+      expect(named, `a route still resolves to "${gone}"`).not.toContain(gone);
+    }
+  });
+
   it('says so for a URL that matches nothing', () => {
     expect(resolvePageTitle('/nonexistent-page-xyz')).toBe(`${NOT_FOUND_SCREEN}${SUFFIX}`);
   });
