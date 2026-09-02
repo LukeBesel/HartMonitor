@@ -30,6 +30,7 @@
 //   FIT_ACCOUNTS              default "demo,fresh" — comma separated
 //   FIT_THEMES                default "light,dark"
 //   FIT_PORT                  default 3302 (3301 and 3171-3258 are spoken for)
+//   FIT_ROUTES                optional comma-separated route labels to limit the crawl
 
 import { test, before, after } from 'node:test';
 import assert from 'node:assert';
@@ -54,6 +55,7 @@ const VIEWPORTS = [
 ];
 const THEMES = (process.env.FIT_THEMES || 'light,dark').split(',');
 const ACCOUNTS = (process.env.FIT_ACCOUNTS || 'demo,fresh').split(',');
+const ONLY = process.env.FIT_ROUTES ? process.env.FIT_ROUTES.split(',').map(s => s.trim()) : null;
 
 // Every route the app serves. `:app`, `:dept` and `:station` are filled in from
 // whatever the signed-in company actually has; a company with none of a thing
@@ -240,9 +242,21 @@ async function entityIds(token) {
 function measure() {
   const de = document.documentElement;
   const main = document.querySelector('main');
+  const limit = main ? main.clientWidth : de.clientWidth;
+  // Name the widest offenders so a failure says WHAT stuck out, not just how far.
+  const wide = [];
+  for (const el of (main || document.body).querySelectorAll('*')) {
+    const r = el.getBoundingClientRect();
+    if (r.right > limit + 2 && el.children.length < 8) {
+      const cls = String(el.className || '').split(' ').slice(0, 4).join('.');
+      wide.push(`${el.tagName.toLowerCase()}.${cls}@${Math.round(r.right)}px "${(el.textContent || '').trim().slice(0, 40)}"`);
+      if (wide.length >= 5) break;
+    }
+  }
   return {
     doc: de.scrollWidth - de.clientWidth,
     main: main ? main.scrollWidth - main.clientWidth : 0,
+    wide,
   };
 }
 
@@ -284,6 +298,7 @@ before(async () => {
         }, [session.user, theme.trim() === 'dark']);
 
         for (const [name, template] of ROUTES) {
+          if (ONLY && !ONLY.includes(name)) continue;
           const route = template
             .replace(':app', ids.app)
             .replace(':dept', ids.dept)
@@ -325,6 +340,7 @@ after(async () => {
 });
 
 for (const [name] of ROUTES) {
+  if (ONLY && !ONLY.includes(name)) continue;
   test(`${name} fits the screen`, () => {
     const readings = measured.get(name) ?? [];
     assert.ok(readings.length > 0, `${name} was never measured`);
@@ -333,7 +349,8 @@ for (const [name] of ROUTES) {
       .map(r => r.error
         ? `${r.combo}: could not load ${r.route} — ${r.error}`
         : `${r.combo}: ${r.route} overflows by ${Math.max(r.doc, r.main)}px`
-          + ` (document ${r.doc}px, main ${r.main}px)`);
+          + ` (document ${r.doc}px, main ${r.main}px)`
+          + (r.wide?.length ? `\n      widest: ${r.wide.join('; ')}` : ''));
     assert.deepStrictEqual(failures, [], `\n  ${failures.join('\n  ')}\n`);
   });
 }

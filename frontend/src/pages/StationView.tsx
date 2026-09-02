@@ -158,7 +158,7 @@ export default function StationView() {
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <span className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm font-medium ${ms.bg} ${ms.text}`}>
             <span className={`w-2.5 h-2.5 rounded-full ${ms.dot} ${st.current_status === 'running' ? 'animate-pulse' : ''}`} />
             {ms.label}
