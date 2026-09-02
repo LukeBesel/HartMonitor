@@ -8,6 +8,7 @@
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const db = require('./db');
+const seedShapes = require('./seedShapes');
 
 // Marker column — additive, guarded, safe to run on every boot.
 const orgCols = db.prepare('PRAGMA table_info(organizations)').all().map(r => r.name);
@@ -56,6 +57,14 @@ function shiftShape(minutesToday, idealCycleS) {
   // window is never clamped below itself by its own plan.
   const plannedHours = Math.min(8, Math.max(1, Math.ceil(todaySoFarMin / 60)));
   return { runs, windowMin, plannedHours };
+}
+
+/** A SQLite foreign-key (or other constraint) violation, whatever better-sqlite3
+ *  chose to call it — used by deleteSandboxOrg's retry sweep below. */
+function isConstraintFailure(err) {
+  const code = String(err && err.code || '');
+  const message = String(err && err.message || '');
+  return code.startsWith('SQLITE_CONSTRAINT') || message.includes('constraint failed');
 }
 
 function hashPassword(password) {
@@ -127,7 +136,12 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   const lowTag = tag.toLowerCase();
 
   const appId = uuidv4();
-  db.prepare(`INSERT INTO apps (id, name, description, status, steps, company_id) VALUES (?, ?, ?, 'published', ?, ?)`)
+  // require_run_context: true — Bracket Assembly is now also the Weld step of
+  // the Bracket Line routing below, so it should appear on the operator portal
+  // only as a released operation, not a second time as a standing job with no
+  // work order behind it. 'Final QC Inspection' (require_run_context unset)
+  // stays the portal's only standing job.
+  db.prepare(`INSERT INTO apps (id, name, description, status, steps, company_id, require_run_context) VALUES (?, ?, ?, 'published', ?, ?, 1)`)
     .run(appId, 'Bracket Assembly', 'A sample guided work instruction — open it in the App Builder or run it in the Player.', JSON.stringify(steps), orgId);
 
   // ── The demo factory's day, and the arithmetic behind its OEE ───────────────
@@ -214,18 +228,34 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   // morning whole.
   const downMin = Math.max(3, Math.round(shiftMin * 0.094));
   const downFrac = f => Math.max(1, Math.round(downMin * f));
-  const st1 = uuidv4(), st2 = uuidv4();
+  const st1 = uuidv4(), st2 = uuidv4(), stWeld = uuidv4();
   db.prepare(`INSERT INTO stations (id, name, description, location, status, current_app_id, company_id, department_id, current_status, current_status_since, ideal_cycle_seconds, planned_hours_per_day)
               VALUES (?, 'Station 1', 'Bracket assembly bench', 'Line A', 'active', ?, ?, ?, 'running', datetime('now', ?), ?, ?)`)
     .run(st1, appId, orgId, deptA, `-${todayWindowMin} minutes`, IDEAL_CYCLE_S, shiftHours);
   db.prepare(`INSERT INTO stations (id, name, description, location, status, company_id, department_id, current_status, current_status_since, planned_hours_per_day)
               VALUES (?, 'Station 2', 'Pack-out bench', 'Line A', 'active', ?, ?, 'down', datetime('now', ?), ?)`)
     .run(st2, orgId, deptB, `-${downMin} minutes`, shiftHours);
+  // A third station for the Bracket Line's Cut/Weld operations — deliberately
+  // NOT Station 1. Station 1's whole OEE story ("everything it finishes today
+  // is WO-1001, and it logs no downtime") is metric-honesty.test.js's own
+  // fixture; booking the routing's runs there too would make Station 1
+  // finish more today than WO-1001 accounts for, and would put the Bracket
+  // Line's downtime Pareto stops on the one station that is supposed to stay
+  // clean. A dedicated cell keeps both stories true at once.
+  db.prepare(`INSERT INTO stations (id, name, description, location, status, company_id, department_id, planned_hours_per_day)
+              VALUES (?, 'Weld Cell', 'Bracket Line — cut and weld', 'Line A', 'active', ?, ?, ?)`)
+    .run(stWeld, orgId, deptA, shiftHours);
 
   const insEvent = db.prepare(`INSERT INTO machine_events (id, station_id, event_type, reason, started_at, ended_at, duration_minutes) VALUES (?, ?, ?, ?, datetime('now', ?), ?, ?)`);
   insEvent.run(uuidv4(), st1, 'up', '', `-${todayWindowMin} minutes`, null, null);
   insEvent.run(uuidv4(), st2, 'up', '', `-${downMin + 255} minutes`, db.prepare(`SELECT datetime('now', ?) AS t`).get(`-${downMin} minutes`).t, 255);
-  insEvent.run(uuidv4(), st2, 'down', 'Conveyor drive jam', `-${downMin} minutes`, null, null);
+  // Coded further down (once reason codes exist) so the Pareto's top bars are
+  // all named causes rather than one large "Not coded" bar outweighing the
+  // three deliberately-seeded ones — this stop reads as a genuine
+  // 'breakdown' (it is the one an emergency maintenance work order and a
+  // critical NCR are already about), not a brief 'jam'.
+  const conveyorJamEventId = uuidv4();
+  insEvent.run(conveyorJamEventId, st2, 'down', 'Conveyor drive jam', `-${downMin} minutes`, null, null);
 
   // ── Product types ───────────────────────────────────────────────────────────
   const ptStd = uuidv4(), ptHd = uuidv4();
@@ -297,6 +327,17 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
     opId[key] = uuidv4();
     insUser.run(opId[key], `${key}-${lowTag}@${SANDBOX_EMAIL_DOMAIN}`, name, opPassword, orgId, deptA, opPin, badge);
   }
+
+  // A manager and a supervisor, distinct from the visitor's own 'Demo Visitor'
+  // account — so an app revision's approver is a real second person, an andon
+  // escalation has someone on the roster above the operator who raised it, and
+  // a qualification override is signed by someone who actually holds the rank.
+  const managerId = uuidv4(), supervisorId = uuidv4();
+  const managerName = 'Alex Chen', supervisorName = 'Jamie Torres';
+  db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role, company_id, department_id, job_title) VALUES (?, ?, ?, ?, 'manager', ?, ?, 'Plant Manager')`)
+    .run(managerId, `alex-${lowTag}@${SANDBOX_EMAIL_DOMAIN}`, managerName, opPassword, orgId, deptA);
+  db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role, company_id, department_id, job_title) VALUES (?, ?, ?, ?, 'supervisor', ?, ?, 'Line Supervisor')`)
+    .run(supervisorId, `jamie-${lowTag}@${SANDBOX_EMAIL_DOMAIN}`, supervisorName, opPassword, orgId, deptA);
 
   // ── BOMs: an ACTIVE versioned BOM per product type ──────────────────────────
   const insBom = db.prepare(`INSERT INTO boms (id, company_id, product_type_id, version, status, notes, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, 'Demo Visitor', datetime('now', ?))`);
@@ -673,9 +714,21 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   db.prepare(`INSERT INTO apps (id, name, description, status, steps, company_id) VALUES (?, ?, ?, 'published', ?, ?)`)
     .run(qcAppId, 'Final QC Inspection', 'Pack-out quality gate — a torque re-check and a ship/hold decision.', JSON.stringify(qcSteps), orgId);
 
+  // ── Change control: two published revisions, cut BEFORE the runs below ─────
+  // appRevisions.publish() snapshots whatever is in `apps.steps` right now, so
+  // publishing has to happen before any run is seeded — a run stamped with a
+  // revision that did not exist yet when it ran would be a completion lying
+  // about what it was measured against. The visitor (the account signed in on
+  // this sandbox) is the publisher both times; the seeded manager is the
+  // approver — one pair of hands writes the instructions, a different pair
+  // signs off on shipping them, on every revision.
+  const qcRevisions = seedShapes.seedTwoRevisions(orgId, {
+    appId: qcAppId, publisherUserId: visitorUserId, approverUserId: managerId,
+  });
+
   const qcWidgets = widgetIndex(qcSteps);
-  const insQcCompletion = db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, operator_user_id, started_at, completed_at, status, data, step_times, takt_exceeded_steps, company_id)
-    VALUES (?, ?, 'Final QC Inspection', ?, ?, ?, datetime('now', ?), datetime('now', ?), 'completed', ?, ?, ?, ?)`);
+  const insQcCompletion = db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, operator_user_id, started_at, completed_at, status, data, step_times, takt_exceeded_steps, app_revision_id, company_id)
+    VALUES (?, ?, 'Final QC Inspection', ?, ?, ?, datetime('now', ?), datetime('now', ?), 'completed', ?, ?, ?, ?, ?)`);
   // The Fail run below is seeded as a COMPLETED, inspected run — deliberately.
   //
   // It was briefly seeded 'abandoned', on the reasoning that the new step_exit
@@ -702,7 +755,11 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
     [1400, 6, 14.6, 'Fail'], [1380, 4, 15.0, 'Pass'], [qcToday, 5, 15.3, 'Pass'],
   ];
   // The failed run, so the quality record below can point at the real row.
+  // The last run (today's) is also the one the completions page shows next to
+  // the revision picker, so it carries Rev 2 — every earlier run carries Rev 1,
+  // which is the truth: they ran before "Added torque check" was published.
   let qcFailCompletionId = null, qcFailAgoMin = null;
+  let qcTodayCompletionId = null, qcTodayOperatorUserId = null, qcTodayOperatorName = null;
   qcRuns.forEach(([end, dur, torque, result], i) => {
     const cid = uuidv4();
     const [operatorUserId, operatorName] = ops[i % 3];
@@ -716,10 +773,13 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
       .map(([idx]) => Number(idx)));
     const runData = JSON.stringify({ final_torque: torque, qc_result: result });
     if (result === 'Fail') { qcFailCompletionId = cid; qcFailAgoMin = end; }
+    const isLast = i === qcRuns.length - 1;
+    if (isLast) { qcTodayCompletionId = cid; qcTodayOperatorUserId = operatorUserId; qcTodayOperatorName = operatorName; }
     insQcCompletion.run(
       cid, qcAppId, st2, operatorName, operatorUserId,
       `-${end + dur} minutes`, `-${end} minutes`, runData,
-      JSON.stringify(qcStepTimes), exceeded, orgId
+      JSON.stringify(qcStepTimes), exceeded,
+      isLast ? qcRevisions.rev2.id : qcRevisions.rev1.id, orgId
     );
     for (const [varName, raw] of Object.entries({ final_torque: torque, qc_result: result })) {
       const w = qcWidgets[varName];
@@ -743,6 +803,73 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
       db.prepare(`SELECT date('now', '+2 days') AS d`).get().d, null,
       `-${Math.max(1, qcFailAgoMin) * 60} seconds`, orgId);
   }
+
+  // ── Coded reasons (scrap / rework / downtime): seeded exactly as a first
+  // read of GET /api/andon/reason-codes would seed them ─────────────────────
+  const reasonIds = seedShapes.seedReasonCodes(orgId);
+  // The pre-existing Station 2 stop above now has a code to point at — a
+  // genuine breakdown, not a brief jam (see the comment where it was raised).
+  seedShapes.codeDowntimeEvent(conveyorJamEventId, reasonIds.downtime.breakdown);
+
+  // ── Routings and operations: a 4-op job standing on Weld, 12 of 50 done ────
+  // Cut/Weld run at the dedicated Weld Cell, not Station 1 — see its own
+  // comment above for why Station 1 has to stay out of this.
+  const routing = seedShapes.seedBracketLineRouting(orgId, {
+    tag, deptId: deptA, siteId,
+    weldAppId: appId, inspectAppId: qcAppId,
+    weldStationId: stWeld, inspectStationId: st2,
+    cutOperatorUserId: opId.bob, cutOperatorName: 'Bob Operator',
+  });
+
+  // ── Scrap: two runs booked against the Weld operation, one carrying a coded
+  // reason — SUM(quantity_good) across them is exactly the 12 advance() booked.
+  seedShapes.seedWeldScrapRuns(orgId, {
+    appId, stationId: stWeld, tag,
+    workOrderId: routing.inProgress.workOrderId,
+    workOrderOperationId: routing.inProgress.op2Id,
+    productTypeId: ptStd,
+    operatorUserId: opId.maria, operatorName: 'Maria Lopez',
+    scrapReasonCodeId: reasonIds.scrap.weld_porosity,
+    widgets,
+  });
+
+  // ── Downtime Pareto: three coded stops across three loss buckets ───────────
+  seedShapes.seedDowntimePareto(orgId, {
+    stationIds: [st1, st2],
+    reasonIds: {
+      breakdown: reasonIds.downtime.breakdown,
+      changeover: reasonIds.downtime.changeover,
+      jam: reasonIds.downtime.jam,
+    },
+  });
+
+  // ── Andon: one call that climbed to management, one answered inside target.
+  // Driven through the REAL escalateOne() — nothing real is listening on a
+  // throwaway sandbox org, so its email/webhook side effects are harmless. ──
+  seedShapes.seedAndonCalls(orgId, {
+    deptId: deptA, stationId: st1,
+    raiserUserId: opId.bob, raiserName: 'Bob Operator',
+    supervisorUserId: supervisorId,
+    responderUserId: opId.maria, responderName: 'Maria Lopez',
+    driveLive: true,
+  });
+
+  // ── Training: an expired cert on the QC app, overridden by the supervisor,
+  // stamped onto today's QC run (Rev 2, Priya Shah). Enforcement is 'block' —
+  // the mode the override exists for — so Bob and the visitor (who
+  // sandbox-qc-hold.test.js and a live demo both run the QC app as) keep a
+  // clean certification and are never the ones the block actually stops. ────
+  seedShapes.seedTrainingOverride(orgId, {
+    appId: qcAppId,
+    operatorUserId: qcTodayOperatorUserId, operatorName: qcTodayOperatorName,
+    certifierUserId: visitorUserId,
+    supervisorUserId: supervisorId, supervisorName,
+    completionId: qcTodayCompletionId,
+    alsoCertify: [
+      { userId: opId.bob, name: 'Bob Operator' },
+      { userId: visitorUserId, name: 'Demo Visitor' },
+    ],
+  });
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -821,11 +948,36 @@ function deleteSandboxOrg(orgId) {
       if (tables.includes(t)) db.prepare(`DELETE FROM "${t}" WHERE ${where}`).run(orgId);
     }
 
-    for (const t of tables) {
+    // Every remaining company-scoped table, in a couple of retried passes.
+    // sqlite_master lists tables in CREATION order, not dependency order, and a
+    // handful of columns are a bare `REFERENCES users(id)` with no ON DELETE
+    // clause at all (messages.sender_id/recipient_id, authorization_grants.
+    // user_id) — 'users' is created early, so a single top-to-bottom pass tries
+    // to delete users while a later table's rows still point at them and the
+    // constraint trips. Retrying the tables that fail, after the ones that
+    // succeeded had a chance to clear whatever was blocking them, is a plain
+    // topological sort without having to hand-maintain one; a pass that makes
+    // no progress at all means the failure is real, and its own error surfaces.
+    let pending = tables.filter(t => {
       const cols = db.prepare(`PRAGMA table_info(${JSON.stringify(t)})`).all().map(c => c.name);
-      if (cols.includes('company_id')) {
-        db.prepare(`DELETE FROM "${t}" WHERE company_id = ?`).run(orgId);
+      return cols.includes('company_id');
+    });
+    while (pending.length > 0) {
+      const stillBlocked = [];
+      for (const t of pending) {
+        try {
+          db.prepare(`DELETE FROM "${t}" WHERE company_id = ?`).run(orgId);
+        } catch (err) {
+          if (isConstraintFailure(err)) stillBlocked.push(t);
+          else throw err;
+        }
       }
+      if (stillBlocked.length === pending.length) {
+        // No progress this pass: re-run the first one so its real SqliteError
+        // (naming the actual constraint) is what the caller sees.
+        db.prepare(`DELETE FROM "${stillBlocked[0]}" WHERE company_id = ?`).run(orgId);
+      }
+      pending = stillBlocked;
     }
     db.prepare(`DELETE FROM organizations WHERE id = ?`).run(orgId);
   });

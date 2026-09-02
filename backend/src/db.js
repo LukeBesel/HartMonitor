@@ -1535,6 +1535,115 @@ function loadSampleDataForCompany(companyId) {
       .run(uuidv4(), 'Production Overview', 'Sample dashboard — customize or delete.', JSON.stringify(cards), companyId);
   }
 
+  // ── Waves 3/4 shapes: a routed job, coded scrap/downtime, an escalated
+  // andon call, a change-controlled app on Rev 2, and a training override.
+  // Same shared helpers the no-sign-in sandbox uses (backend/src/seedShapes.js)
+  // so a real signup that clicks "Load sample data" sees the same modules
+  // alive that the public demo does — required lazily, here, so nothing
+  // outside this function changes. Every "today" timestamp is placed in THIS
+  // company's own timezone, not the server's.
+  const seedShapes = require('./seedShapes');
+  const tag = uuidv4().replace(/-/g, '').slice(0, 6).toUpperCase();
+  const appWidgets = seedShapes.widgetIndex(steps);
+
+  const reasonIds = seedShapes.seedReasonCodes(companyId);
+  const routing = seedShapes.seedBracketLineRouting(companyId, {
+    tag, deptId, siteId, weldAppId: appId, inspectAppId: null, weldStationId: s1, inspectStationId: null,
+    cutOperatorName: operators[1],
+  });
+  seedShapes.seedWeldScrapRuns(companyId, {
+    appId, stationId: s1, tag,
+    workOrderId: routing.inProgress.workOrderId,
+    workOrderOperationId: routing.inProgress.op2Id,
+    operatorUserId: null, operatorName: operators[0],
+    scrapReasonCodeId: reasonIds.scrap.weld_porosity,
+    widgets: appWidgets,
+  });
+  seedShapes.seedDowntimePareto(companyId, {
+    stationIds: [s1, s2],
+    reasonIds: {
+      breakdown: reasonIds.downtime.breakdown,
+      changeover: reasonIds.downtime.changeover,
+      jam: reasonIds.downtime.jam,
+    },
+  });
+
+  // The signed-in owner who clicked "Load sample data" publishes and
+  // certifies; a manager or developer always exists here (the route that
+  // calls this function is gated at manager role or above).
+  const owner = db.prepare(`
+    SELECT id, display_name FROM users
+    WHERE company_id = ? AND role IN ('manager', 'developer') AND is_active = 1
+    ORDER BY created_at ASC LIMIT 1
+  `).get(companyId);
+
+  if (owner) {
+    // Two more people for the app-revision approval, the training override
+    // sign-off, and (the supervisor) the andon escalation's first rung — a
+    // supervisor really has to be someone other than the publisher, or
+    // neither the approval nor the override means anything.
+    const supervisorId = uuidv4();
+    db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role, company_id) VALUES (?, ?, 'Line Supervisor', ?, 'supervisor', ?)`)
+      .run(supervisorId, `sample-supervisor-${tag.toLowerCase()}@hartmonitor.local`, hashPwDemo(uuidv4()), companyId);
+    const traineeId = uuidv4();
+    db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role, company_id) VALUES (?, ?, 'Sample Trainee', ?, 'operator', ?)`)
+      .run(traineeId, `sample-trainee-${tag.toLowerCase()}@hartmonitor.local`, hashPwDemo(uuidv4()), companyId);
+
+    // driveLive: false — this is a REAL company's own data. Firing the real
+    // escalateOne() would email and webhook whoever it resolves, potentially
+    // at an integration this customer has already configured for real
+    // events; see seedAndonCalls' doc comment. The escalation state (and its
+    // in-app trail) is still written, just without any outbound side effect.
+    seedShapes.seedAndonCalls(companyId, {
+      deptId, stationId: s1, raiserUserId: null, raiserName: operators[0],
+      supervisorUserId: supervisorId,
+      responderUserId: owner.id, responderName: owner.display_name,
+      driveLive: false,
+    });
+
+    const revisions = seedShapes.seedTwoRevisions(companyId, {
+      appId, publisherUserId: owner.id, approverUserId: supervisorId,
+    });
+
+    // Stamp the app's own history with the revision it actually ran under:
+    // every earlier run Rev 1, the latest Rev 2 — the same rule the sandbox
+    // seed follows, applied to the completions this function already wrote.
+    const appRow = db.prepare('SELECT name FROM apps WHERE id = ? AND company_id = ?').get(appId, companyId);
+
+    // A dedicated, most-recent completion for the trainee — never a randomly
+    // selected run by one of the OTHER seeded operators. The override and
+    // Rev 2 both have to land on a run that is actually the trainee's own,
+    // or "the operator this override covers" and "the operator who ran it"
+    // are two different people.
+    const traineeCompletionId = uuidv4();
+    db.prepare(`
+      INSERT INTO completions (id, app_id, app_name, station_id, operator_name, operator_user_id, started_at, completed_at, status, data, step_times, company_id)
+      VALUES (?, ?, ?, ?, 'Sample Trainee', ?, datetime('now', '-6 minutes'), datetime('now', '-1 minutes'), 'completed', ?, ?, ?)
+    `).run(
+      traineeCompletionId, appId, appRow ? appRow.name : '', s1, traineeId,
+      JSON.stringify({ ppe_worn: true, bolt_count: 8, final_inspection: 'Pass' }),
+      JSON.stringify({ 0: 6, 1: 210, 2: 40 }),
+      companyId,
+    );
+    seedShapes.stampCompletionValues(companyId, appId, traineeCompletionId, appWidgets,
+      { ppe_worn: true, bolt_count: 8, final_inspection: 'Pass' }, 1);
+
+    const appCompletions = db.prepare(
+      `SELECT id FROM completions WHERE company_id = ? AND app_id = ? AND id != ? ORDER BY completed_at ASC`
+    ).all(companyId, appId, traineeCompletionId);
+    const stampRevision = db.prepare(`UPDATE completions SET app_revision_id = ? WHERE id = ? AND company_id = ?`);
+    appCompletions.forEach(c => stampRevision.run(revisions.rev1.id, c.id, companyId));
+    stampRevision.run(revisions.rev2.id, traineeCompletionId, companyId);
+
+    seedShapes.seedTrainingOverride(companyId, {
+      appId, operatorUserId: traineeId, operatorName: 'Sample Trainee',
+      certifierUserId: owner.id,
+      supervisorUserId: supervisorId, supervisorName: 'Line Supervisor',
+      completionId: traineeCompletionId,
+      alsoCertify: [{ userId: owner.id, name: owner.display_name }],
+    });
+  }
+
   return { appId, deptId, stationIds: [s1, s2], locationId: locId };
 }
 

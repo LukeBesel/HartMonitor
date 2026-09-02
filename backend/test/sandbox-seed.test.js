@@ -257,21 +257,28 @@ test('quality, maintenance, andon, training, purchasing and kaizen are coherent'
   assert.ok(mwo, 'open maintenance work order');
 
   // Andon: resolved call on Station 2, consistent with the downtime story.
+  // Filtered on type='maintenance' — the seed now also carries a still-open,
+  // escalated safety call and a separately-answered quality call (see
+  // demo-seed-truth.test.js), so this is the only 'maintenance' row.
   const andon = db.prepare(`
     SELECT a.*, s.name AS station_name, s.current_status FROM andon_calls a
-    JOIN stations s ON s.id = a.station_id WHERE a.company_id = ?
+    JOIN stations s ON s.id = a.station_id WHERE a.company_id = ? AND a.type = 'maintenance'
   `).get(orgId);
   assert.equal(andon.status, 'resolved');
   assert.equal(andon.station_name, 'Station 2');
   assert.equal(andon.current_status, 'down', 'Station 2 is still down (awaiting the MWO)');
   assert.ok(andon.resolution.includes('MWO'), 'resolution hands off to the maintenance work order');
 
-  // Training: three operators at mixed levels, one expiring soon.
+  // Training: three operators at mixed levels on the assembly app, one
+  // expiring soon, plus the QC app's own records — Priya's expired one
+  // (demo-seed-truth.test.js covers the override that lets her run anyway)
+  // and the clean certifications Bob and the visitor need under 'block' mode
+  // so the live QC demo and sandbox-qc-hold.test.js are never the ones it stops.
   const training = db.prepare(`
     SELECT tr.status, tr.expiry_date, u.display_name FROM training_records tr
     JOIN users u ON u.id = tr.user_id WHERE tr.company_id = ?
   `).all(orgId);
-  assert.equal(training.length, 3, 'training records for the three operators');
+  assert.equal(training.length, 6, 'training records: three on the assembly app, three on the QC app');
   assert.ok(new Set(training.map(r => r.status)).size >= 2, 'mixed training levels');
   const expiringSoon = training.filter(r => r.expiry_date && r.expiry_date <= db.prepare(`SELECT date('now', '+30 days') AS d`).get().d);
   assert.ok(expiringSoon.length >= 1, 'a certification window expires soon');
@@ -392,6 +399,9 @@ test('deleteSandboxOrg deletes EVERYTHING the seed created', async () => {
     'certifications', 'training_plans', 'kaizen_ideas', 'shift_notes',
     'shipments', 'boms', 'bom_lines', 'kits', 'kit_lines', 'users', 'plan',
     'org_settings', 'sites',
+    // Waves 3/4: routings and operations, coded reasons, change control, overrides.
+    'product_routings', 'routing_steps', 'work_order_operations',
+    'reason_codes', 'andon_targets', 'app_revisions', 'qualification_overrides',
   ];
   for (const t of SEEDED_TABLES) {
     const c = db.prepare(`SELECT COUNT(*) AS c FROM "${t}" WHERE company_id = ?`).get(orgId).c;
