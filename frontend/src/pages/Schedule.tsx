@@ -12,8 +12,14 @@ import {
   Plus, Search, Filter, List, BarChart2, Edit2, Trash2, CheckSquare,
   X, ChevronDown, AlertTriangle, Calendar, Package, Building2, Clock, History,
   MessageSquare, Send, QrCode, Printer, Trash, PackageOpen, Flag, ExternalLink,
+  Upload, FileDown, CheckCircle2, XCircle, RefreshCw,
 } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
+import {
+  previewWorkOrderImport, commitWorkOrderImport, verdictLabel,
+  IMPORT_COLUMNS, IMPORT_TEMPLATE_URL,
+  type ImportOutcome, type ImportRowVerdict,
+} from '../api/workOrders';
 import QRCodeLib from 'qrcode';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -37,6 +43,12 @@ interface WorkOrder {
   takt_time_minutes: number;
   notes: string;
   product_type_id?: string | null;
+  /** The date the customer needs it, YYYY-MM-DD. null when nobody has said. */
+  due_date?: string | null;
+  /** Customer / sales-order reference off the paperwork. */
+  customer_ref?: string | null;
+  /** The ERP's own id for this job — the key a re-import matches on. */
+  external_id?: string | null;
 }
 
 interface App {
@@ -82,6 +94,8 @@ interface WOFormData {
   scheduled_end: string;
   takt_time_minutes: number;
   notes: string;
+  due_date: string;
+  customer_ref: string;
 }
 
 interface ScheduleViewFilters {
@@ -174,7 +188,17 @@ function defaultForm(): WOFormData {
     scheduled_end: toDatetimeLocal(end.toISOString()),
     takt_time_minutes: 5,
     notes: '',
+    due_date: '',
+    customer_ref: '',
   };
+}
+
+/** A due date printed as a plain day. Empty stays empty — never today's date. */
+function formatDueDate(due?: string | null) {
+  if (!due) return '—';
+  const d = new Date(`${due}T00:00:00`);
+  if (isNaN(d.getTime())) return due;
+  return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: '2-digit' });
 }
 
 /** API payload from the form — product_type_id/department_id empty string → null. */
@@ -183,6 +207,8 @@ function toPayload(form: WOFormData) {
     ...form,
     department_id: form.department_id || null,
     product_type_id: form.product_type_id || null,
+    due_date: form.due_date || null,
+    customer_ref: form.customer_ref || null,
   };
 }
 
@@ -603,6 +629,28 @@ function WOModal({
             </div>
           </div>
 
+          <div className="field-row gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Due Date</label>
+              <input
+                type="date"
+                className="input-field"
+                value={form.due_date}
+                onChange={e => onChange('due_date', e.target.value)}
+              />
+              <p className="text-[11px] text-gray-400 mt-1">The day the customer needs it. Leave blank if nobody has said.</p>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Customer Ref</label>
+              <input
+                className="input-field"
+                placeholder="e.g. SO-4471"
+                value={form.customer_ref}
+                onChange={e => onChange('customer_ref', e.target.value)}
+              />
+            </div>
+          </div>
+
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Takt Time (min/unit)</label>
             <input
@@ -718,6 +766,9 @@ type ViewMode = 'list' | 'gantt';
 export default function Schedule() {
   const { selectedSiteId } = useSite();
   const { canEdit, user } = useAuth();
+  // Importing rewrites the week's schedule, so it is manager-or-above — the
+  // same bar /api/work-orders/import/* enforces on the server.
+  const canImport = user?.role === 'manager' || user?.role === 'developer';
   const { addToast } = useToast();
   const { highlightId, isHighlighted, highlightRef } = useHighlight();
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
@@ -744,6 +795,7 @@ export default function Schedule() {
   };
 
   const [showCreate, setShowCreate] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [editTarget, setEditTarget] = useState<WorkOrder | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<WorkOrder | null>(null);
   const [form, setForm] = useState<WOFormData>(defaultForm());
@@ -804,6 +856,8 @@ export default function Schedule() {
       scheduled_end: toDatetimeLocal(wo.scheduled_end),
       takt_time_minutes: wo.takt_time_minutes,
       notes: wo.notes,
+      due_date: wo.due_date ?? '',
+      customer_ref: wo.customer_ref ?? '',
     });
     setEditTarget(wo);
   };
@@ -944,12 +998,28 @@ export default function Schedule() {
           <p className="text-gray-500 text-sm mt-0.5">Work order management and production scheduling</p>
         </div>
         {canEdit && (
-          <button onClick={openCreate} className="btn-primary flex-shrink-0 whitespace-nowrap self-start sm:self-auto">
-            <Plus size={16} />
-            New Work Order
-          </button>
+          <div className="flex items-center gap-2 flex-wrap self-start sm:self-auto">
+            {canImport && (
+              <button
+                onClick={() => setShowImport(v => !v)}
+                aria-expanded={showImport}
+                className="btn-secondary flex-shrink-0 whitespace-nowrap"
+              >
+                <Upload size={16} />
+                Import work orders
+              </button>
+            )}
+            <button onClick={openCreate} className="btn-primary flex-shrink-0 whitespace-nowrap">
+              <Plus size={16} />
+              New Work Order
+            </button>
+          </div>
         )}
       </div>
+
+      {canImport && showImport && (
+        <ImportPanel onClose={() => setShowImport(false)} onImported={load} />
+      )}
 
       {/* Filter Bar */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-wrap items-center gap-3">
@@ -1103,6 +1173,230 @@ export default function Schedule() {
   );
 }
 
+// ── Import Work Orders ────────────────────────────────────────────────────────
+//
+// Paste the week's list, see exactly what will happen to every line, then
+// import. The rules this panel is built around:
+//
+//   * Nothing is written until Import is pressed. Preview is a dry run on the
+//     server — the same validator, told not to save.
+//   * A row the server rejected STAYS ON SCREEN with its reason after the
+//     import. Making the bad lines disappear is what turns a five-minute fix
+//     into an afternoon of re-exporting.
+//   * The verdicts come from the server. This component never decides that a
+//     row is fine, and never prints a work order number the server has not
+//     assigned.
+//   * The textarea does not take focus when the panel opens: a planner arriving
+//     by keyboard should not have the page scroll-jump into a paste box.
+
+const VERDICT_CLASSES: Record<string, string> = {
+  created:  'bg-green-100 text-green-700',
+  updated:  'bg-blue-100 text-blue-700',
+  rejected: 'bg-red-100 text-red-700',
+};
+
+function ImportPanel({ onClose, onImported }: {
+  onClose: () => void;
+  onImported: () => void;
+}) {
+  const [csv, setCsv] = useState('');
+  const [fileName, setFileName] = useState('');
+  const [preview, setPreview] = useState<ImportOutcome | null>(null);
+  const [applied, setApplied] = useState<ImportOutcome | null>(null);
+  const [busy, setBusy] = useState<'preview' | 'import' | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Any edit to the text invalidates the verdicts that were read off the old text.
+  const editText = (value: string) => {
+    setCsv(value);
+    setPreview(null);
+    setApplied(null);
+    setError(null);
+  };
+
+  const pickFile = async (file: File | null) => {
+    if (!file) return;
+    try {
+      const text = await file.text();
+      setFileName(file.name);
+      editText(text);
+    } catch {
+      setError('Could not read that file.');
+    }
+  };
+
+  const runPreview = async () => {
+    setBusy('preview');
+    setError(null);
+    try {
+      setApplied(null);
+      setPreview(await previewWorkOrderImport(csv));
+    } catch (e: any) {
+      setPreview(null);
+      setError(e?.message ?? 'Could not read those rows.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const runImport = async () => {
+    setBusy('import');
+    setError(null);
+    try {
+      const outcome = await commitWorkOrderImport(csv);
+      setApplied(outcome);
+      setPreview(null);
+      onImported();
+    } catch (e: any) {
+      setError(e?.message ?? 'Could not import those rows.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const shown = applied ?? preview;
+  const importable = preview ? preview.summary.created + preview.summary.updated : 0;
+  const rejected = shown ? shown.results.filter(r => r.result === 'rejected') : [];
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+      <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-200">
+        <div className="flex items-center gap-2">
+          <Upload size={16} className="text-indigo-600" />
+          <h2 className="font-semibold text-gray-900 text-sm">Import work orders</h2>
+        </div>
+        <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-gray-100 transition-colors" aria-label="Close import panel">
+          <X size={16} className="text-gray-500" />
+        </button>
+      </div>
+
+      <div className="p-5 space-y-4">
+        <div>
+          <label htmlFor="wo-import-csv" className="block text-xs font-medium text-gray-700 mb-1">
+            Paste your job list, or choose a .csv file
+          </label>
+          <textarea
+            id="wo-import-csv"
+            className="input-field resize-y font-mono text-xs"
+            rows={6}
+            placeholder="work_order_number,external_id,part_number,part_name,quantity,due_date,…"
+            value={csv}
+            onChange={e => editText(e.target.value)}
+          />
+          <p className="text-[11px] text-gray-500 mt-1.5 leading-relaxed">
+            The first line is the column headers. Columns we read:{' '}
+            <span className="font-mono text-gray-600">{IMPORT_COLUMNS.join(', ')}</span>.
+            Everything else in the file is ignored. Common spellings work too — “WO Number”, “Qty”, “Due”.
+            Quantity must be a whole number; due date must be written 2026-04-17.
+            A row with an <span className="font-mono">external_id</span> updates the job that already has it,
+            so importing the same file twice does not duplicate anything.
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={e => { void pickFile(e.target.files?.[0] ?? null); e.target.value = ''; }}
+          />
+          <button onClick={() => fileRef.current?.click()} className="btn-secondary">
+            <Upload size={14} /> Choose file
+          </button>
+          {fileName && <span className="text-xs text-gray-500">{fileName}</span>}
+
+          <a href={IMPORT_TEMPLATE_URL} className="text-xs font-medium text-indigo-600 hover:text-indigo-700 inline-flex items-center gap-1">
+            <FileDown size={13} /> Download blank template
+          </a>
+
+          <div className="flex items-center gap-2 ml-auto">
+            <button onClick={runPreview} disabled={!csv.trim() || busy !== null} className="btn-secondary">
+              {busy === 'preview' ? 'Checking…' : 'Preview'}
+            </button>
+            <button onClick={runImport} disabled={!preview || importable === 0 || busy !== null} className="btn-primary">
+              {busy === 'import' ? 'Importing…' : `Import${importable ? ` ${importable}` : ''}`}
+            </button>
+          </div>
+        </div>
+
+        {error && (
+          <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+            <AlertTriangle size={15} className="mt-0.5 flex-shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
+
+        {applied && (
+          <div className="flex items-start gap-2 text-sm text-green-800 bg-green-50 border border-green-100 rounded-lg px-3 py-2">
+            <CheckCircle2 size={15} className="mt-0.5 flex-shrink-0" />
+            <span>
+              Imported: {applied.summary.created} created, {applied.summary.updated} updated
+              {applied.summary.rejected > 0
+                ? `. ${applied.summary.rejected} row${applied.summary.rejected === 1 ? '' : 's'} still need fixing — they are listed below and were not imported.`
+                : '. Every row went in.'}
+            </span>
+          </div>
+        )}
+
+        {preview && (
+          <div className="flex flex-wrap items-center gap-4 text-xs text-gray-600">
+            <span className="inline-flex items-center gap-1.5"><CheckCircle2 size={13} className="text-green-600" /> {preview.summary.created} to create</span>
+            <span className="inline-flex items-center gap-1.5"><RefreshCw size={13} className="text-blue-600" /> {preview.summary.updated} to update</span>
+            <span className="inline-flex items-center gap-1.5"><XCircle size={13} className="text-red-600" /> {preview.summary.rejected} rejected</span>
+            <span className="text-gray-400">Nothing has been saved yet.</span>
+          </div>
+        )}
+
+        {shown && shown.results.length > 0 && (
+          <div className="border border-gray-200 rounded-lg overflow-hidden">
+            <div className="max-h-80 overflow-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-gray-50 border-b border-gray-200 sticky top-0">
+                  <tr>
+                    {['Row', 'Result', 'WO #', 'External ID', 'Reason'].map(h => (
+                      <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide px-3 py-2 whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {shown.results.map((r: ImportRowVerdict) => (
+                    <tr key={r.row} className={r.result === 'rejected' ? 'bg-red-50/40' : ''}>
+                      <td className="px-3 py-2 text-xs text-gray-500 [font-variant-numeric:tabular-nums]">{r.row}</td>
+                      <td className="px-3 py-2">
+                        <span className={`text-xs px-2 py-0.5 rounded-full font-semibold whitespace-nowrap ${VERDICT_CLASSES[r.result] ?? 'bg-gray-100 text-gray-600'}`}>
+                          {verdictLabel(r.result, Boolean(applied))}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs text-gray-700 whitespace-nowrap">
+                        {r.work_order_number
+                          ? r.work_order_number
+                          : r.result === 'rejected'
+                            ? <span className="text-gray-400">—</span>
+                            : <span className="text-gray-400">assigned on import</span>}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-xs text-gray-500 whitespace-nowrap">{r.external_id ?? '—'}</td>
+                      <td className="px-3 py-2 text-xs text-gray-700">{r.reason ?? ''}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {applied && rejected.length > 0 && (
+          <p className="text-xs text-gray-500">
+            Fix the rows above in your file, then paste again — the ones that already went in will be
+            recognised by their external_id and updated rather than duplicated.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── List View ─────────────────────────────────────────────────────────────────
 
 function ListView({
@@ -1156,7 +1450,7 @@ function ListView({
         <table className="w-full text-sm whitespace-nowrap">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
-              {['WO #', 'Part', 'Department', 'Quantity', 'Kit', 'Priority', 'Scheduled', 'Status', 'Actions'].map(h => (
+              {['WO #', 'Part', 'Department', 'Quantity', 'Kit', 'Priority', 'Due', 'Scheduled', 'Status', 'Actions'].map(h => (
                 <th key={h} className="text-left text-xs font-medium text-gray-500 uppercase tracking-wide px-4 py-3">{h}</th>
               ))}
             </tr>
@@ -1176,7 +1470,10 @@ function ListView({
                   </td>
                   <td className="px-4 py-3">
                     <div className="font-medium text-gray-900 text-xs">{wo.part_name}</div>
-                    <div className="text-xs text-gray-400">{wo.part_number}</div>
+                    <div className="text-xs text-gray-400">
+                      {wo.part_number}
+                      {wo.customer_ref ? ` · ${wo.customer_ref}` : ''}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-1.5 text-xs text-gray-600">
@@ -1213,6 +1510,9 @@ function ListView({
                     <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${PRIORITY_CLASSES[wo.priority] ?? 'bg-gray-100 text-gray-600'}`}>
                       {wo.priority}
                     </span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className="text-xs text-gray-700 whitespace-nowrap">{formatDueDate(wo.due_date)}</div>
                   </td>
                   <td className="px-4 py-3">
                     <div className="text-xs text-gray-600 whitespace-nowrap">

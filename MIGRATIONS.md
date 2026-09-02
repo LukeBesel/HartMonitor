@@ -135,7 +135,7 @@ picking `006` in parallel worktrees is a merge conflict that only shows up at bo
 | 003 | `003_activity_log.sql` | (shipped) | activity_log |
 | 004 | `004_sessions_cleanup_index.sql` | (shipped) | session cleanup indexes |
 | 005 | `005_company_modules.sql` | (shipped) | per-company module toggles |
-| 006 | `006_*.sql` | erp-door | ERP import/export door |
+| 006 | `006_work_order_import_fields.sql` | erp-door | ERP import/export door |
 | 007 | `007_*.sql` | calls-escalate-and-pm-raises-jobs | andon calls + reason_codes |
 | 008 | `008_*.sql` | calls-escalate-and-pm-raises-jobs | preventive maintenance (PM) |
 | 009 | `009_*.sql` | work-orders-carry-operations | operations on work orders |
