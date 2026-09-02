@@ -169,3 +169,46 @@ export function dispatchRowLabel(row: Pick<DispatchRow,
   const suffix = name && !echoesSequence ? ` · ${name}` : '';
   return `Op ${row.operation_sequence} of ${row.operation_count}${suffix}`;
 }
+
+// ─── The demo's own PINs, when the server says this is a demo ─────────────────
+
+/**
+ * The PINs a SANDBOX hands out, straight from the server.
+ *
+ * A visitor who taps a name on the PIN pad of a sandbox they were dropped into
+ * has no way to know the demo operator's PIN is 1234, and the dead end is the
+ * first screen of the product they meet. GET /api/auth/me carries `demo_hints`
+ * on a sandbox and on nothing else, so the hint is the SERVER saying "this is a
+ * demo" — never a guess this screen makes from a hostname or a flag it invented.
+ */
+export interface DemoHints {
+  operator_pin?: string | null;
+  supervisor_pin?: string | null;
+  manager_pin?: string | null;
+}
+
+/**
+ * `demo_hints` from GET /api/auth/me, or null.
+ *
+ * Null for every real company, for a signed-out visitor, for an older server
+ * that does not send the field, and for any failure at all: a screen that
+ * printed a PIN because a request went wrong would be worse than one that
+ * printed nothing.
+ */
+export async function getDemoHints(): Promise<DemoHints | null> {
+  try {
+    const me = await request<{ demo_hints?: DemoHints | null }>('/auth/me');
+    const hints = me && typeof me === 'object' ? me.demo_hints : null;
+    if (!hints || typeof hints !== 'object') return null;
+    // Only the PINs, and only ones that are really strings — the line renders
+    // off what is present, so a null field must not become "null" on a tablet.
+    const clean: DemoHints = {};
+    for (const key of ['operator_pin', 'supervisor_pin', 'manager_pin'] as const) {
+      const v = (hints as Record<string, unknown>)[key];
+      if (typeof v === 'string' && v.trim()) clean[key] = v.trim();
+    }
+    return Object.keys(clean).length > 0 ? clean : null;
+  } catch {
+    return null;
+  }
+}

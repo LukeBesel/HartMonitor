@@ -28,11 +28,26 @@ function fmtDate(iso) {
 
 // ─── Schedule status helper ───────────────────────────────────────────────────
 
+// A missing or unreadable date is not the Unix epoch. A job released from the
+// ERP import or the API often carries only a due date; reading NULL as
+// 1970 made every such job "decades overdue". The window is the scheduled
+// pair when both are real, else released/created → due date; with no end
+// there is no pace to be behind, so the job is simply not started or on track.
+function asDate(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const d = new Date(typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T23:59:59` : v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 function calcScheduleStatus(wo) {
   if (wo.status === 'completed') return 'completed';
   const now   = new Date();
-  const start = new Date(wo.scheduled_start);
-  const end   = new Date(wo.scheduled_end);
+  const start = asDate(wo.scheduled_start) ?? asDate(wo.released_at) ?? asDate(wo.created_at);
+  const end   = asDate(wo.scheduled_end) ?? asDate(wo.due_date);
+  if (!end || !start || end <= start) {
+    if (end && now > end && wo.quantity_completed < wo.quantity) return 'overdue';
+    return wo.quantity_completed > 0 ? 'on_track' : 'not_started';
+  }
   if (now < start) return 'not_started';
   if (now > end && wo.quantity_completed < wo.quantity) return 'overdue';
   const totalMs    = end - start;

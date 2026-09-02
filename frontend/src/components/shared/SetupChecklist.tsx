@@ -37,7 +37,7 @@ interface ChecklistItem {
 // for the whole arc and leaves the teaching to the coach. What remains here is
 // the account setup the coach never covers.
 //
-// "Set up a work station" used to sit between the app and the team. The publish
+// "Set up a station" used to sit between the app and the team. The publish
 // modal in AppBuilder says "You can leave these blank to publish without a
 // target", and the player's start screen labels the field "Station (optional)"
 // — so this list was raising, as an unticked setup step, the exact thing the

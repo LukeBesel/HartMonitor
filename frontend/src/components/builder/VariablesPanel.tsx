@@ -233,7 +233,7 @@ export default function VariablesPanel({ app, onChangeApp, onClose, canEdit }: {
         <div className="flex-1 overflow-y-auto overflow-x-auto">
           {variables.length === 0 ? (
             <div className="py-12 text-center text-muted" style={{ fontSize: 13 }}>
-              No variables yet. Create one below, or add an input widget — its variable registers automatically.
+              No variables yet. Create one below, or add an input field — its variable registers automatically.
             </div>
           ) : (
             <table className="w-full" style={{ fontSize: 13.5 }}>
@@ -319,7 +319,7 @@ export default function VariablesPanel({ app, onChangeApp, onClose, canEdit }: {
                           <span className="flex items-center justify-end gap-0.5">
                             <button
                               className="wb-btn-ghost !min-h-0 p-1"
-                              title="Rename (updates every widget and trigger that uses it)"
+                              title="Rename (updates every field and trigger that uses it)"
                               onClick={() => { setRenamingId(v.id); setRenameDraft(v.name); setError(''); }}
                             ><Pencil size={13} /></button>
                             <button

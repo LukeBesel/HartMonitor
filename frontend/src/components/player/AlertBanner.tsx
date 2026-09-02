@@ -1,8 +1,8 @@
 // ─── Open help-request banner (player) ───────────────────────────────────────
-// Sits under the header for as long as a request is open: "Quality notified ·
+// Sits under the header for as long as a call is open: "Quality notified ·
 // 2m ago", switching to "Quality is on the way" the moment a responder taps "On
 // my way" on the board. The run underneath is untouched — the only action here
-// is standing the request down.
+// is cancelling the call.
 
 import { BellRing, UserCheck, X } from 'lucide-react';
 import { teamConfig, formatAge } from '../../config/andonTeams';
@@ -52,7 +52,7 @@ export default function AlertBanner({ call, ageSeconds, cancelling, onCancel }: 
           opacity: cancelling ? 0.5 : 1,
         }}
       >
-        <X size={15} /> {cancelling ? 'Standing down…' : 'Stand down'}
+        <X size={15} /> {cancelling ? 'Cancelling…' : 'Cancel call'}
       </button>
     </div>
   );

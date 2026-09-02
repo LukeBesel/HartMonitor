@@ -62,7 +62,7 @@ export default function AlertsBell({ collapsed }: { collapsed: boolean }) {
     return () => clearInterval(t);
   }, [loadAlerts]);
 
-  // A help request raised anywhere on the floor bumps the badge immediately,
+  // A call raised anywhere on the floor bumps the badge immediately,
   // over the same socket that carries messages — no waiting for the next poll.
   useEffect(() => subscribeRealtime(evt => {
     if (isAndonEvent(evt)) void loadAlerts();

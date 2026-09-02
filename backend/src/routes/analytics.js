@@ -4,8 +4,8 @@ const { plantDayShift, plantToday } = require('../plantDay');
 const { calcScheduleStatus } = require('./workorders');
 // The one server-side answer to finished-today, running-now, average cycle,
 // pass rate and on-track. Every figure below that reports one of those five
-// comes from here, so the Command Center, Manager View and the department
-// drill-down cannot describe different plants at the same minute. The WINDOW
+// comes from here, so the Command Center and the department drill-down cannot
+// describe different plants at the same minute. The WINDOW
 // each screen asks for is still its own (all-time, 7 days, today) — what is
 // shared is how any of them is measured, and which day "today" is.
 const plantTruth = require('../plantTruth');
@@ -83,13 +83,39 @@ router.get('/overview', (req, res) => {
   const f = completionFilter(req);
   // The plant's day and the plant's counts, from the one module that defines
   // them. This used to bind its own date modifier and count its own runs, which
-  // is how the same company read 62 here and 1 on Manager View.
+  // is how the same company read 62 here and 1 on the floor screen.
   // The plant's day, its date and its zone: resolved ONCE per request and
   // threaded through every query below. Each of the calls this replaced re-read
   // the company's timezone from org_settings, and two of them could land on
   // different instants — which is how one page ends up with two "todays".
   const ctx = plantTruth.plantContext(cid);
   const scope = plantTruth.scopeFromQuery(req);
+
+  // ── An id this company does not own narrows to NOTHING, and says so ────────
+  // Same contract as /plant-view: a site, department, app or product type from
+  // another tenant (or one that simply does not exist) is not quietly dropped —
+  // dropping it WIDENS the answer to the whole plant while the page still shows
+  // the filter as applied, which is how a scoped screen prints plant-wide
+  // numbers under a department's name. Every figure is empty and `scope_valid`
+  // is false, so the client can say which filter it could not honour.
+  if (!scope.valid) {
+    return res.json({
+      scope: { site_id: null, department_id: null, app_id: null, product_type_id: null },
+      /** False when an id in the request belongs to no record this company owns. */
+      scope_valid: false,
+      totalCompletions: 0, todayCompletions: 0, inProgress: 0,
+      totalApps: 0, publishedApps: 0, activeStations: 0,
+      avgCycleTime: null, avgCycleSeconds: null, avgCycleBasis: null, avgCycleSample: 0,
+      passRate: null, qcSampleSize: 0,
+      avg_cycle_reason: plantTruth.REASONS.avg_cycle,
+      pass_rate_reason: plantTruth.REASONS.pass_rate,
+      avg_cycle_window: 'all',
+      pass_rate_window: 'all',
+      plant_date: ctx.plant_date,
+      timezone: ctx.timezone,
+    });
+  }
+
   const totalCompletions  = db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed'${f.clause}`).get(cid, ...f.params).c;
   const todayCompletions  = plantTruth.finishedToday(ctx, scope);
   const inProgress        = plantTruth.runningNow(ctx, scope);
@@ -119,6 +145,13 @@ router.get('/overview', (req, res) => {
   const quality = plantTruth.passRate(ctx, scope, 'all');
 
   res.json({
+    /** What the server actually applied, so a client never has to assume a
+     *  parameter it sent was honoured. */
+    scope: {
+      site_id: scope.site_id, department_id: scope.department_id,
+      app_id: scope.app_id, product_type_id: scope.product_type_id ?? null,
+    },
+    scope_valid: true,
     totalCompletions, todayCompletions, inProgress, totalApps, publishedApps, activeStations,
     avgCycleTime, avgCycleSeconds,
     /** 'hands_on' | 'elapsed' | 'mixed' | null — what the average was measured with. */
@@ -256,93 +289,6 @@ router.get('/quality', (req, res) => {
     else if (vals.some(v => v === 'Pass')) byDate[row.date].pass++;
   }
   res.json(Object.values(byDate).sort((a, b) => a.date.localeCompare(b.date)));
-});
-
-// ─── GET /manager-view ────────────────────────────────────────────────────────
-
-router.get('/manager-view', (req, res) => {
-  // Optional site scope, same convention as /plant-view and GET /departments:
-  // a record with no site belongs to the whole company and stays visible under
-  // every site, so selecting the auto-created primary site never empties the
-  // page for a company that has never used sites.
-  const { site_id } = req.query;
-  const siteClause = site_id ? ' AND (site_id = ? OR site_id IS NULL)' : '';
-  const siteParams = site_id ? [site_id] : [];
-
-  // Active (in-progress) completions joined with app and work order info
-  const activeCompletions = db.prepare(`
-    SELECT
-      c.id, c.app_id, c.app_name, c.station_id, c.operator_name,
-      c.started_at, c.status, c.work_order_id,
-      wo.work_order_number, wo.part_name, wo.part_number,
-      wo.quantity, wo.quantity_completed, wo.status AS wo_status,
-      wo.priority, wo.department_id,
-      d.name AS department_name, d.color AS department_color
-    FROM completions c
-    LEFT JOIN work_orders wo ON wo.id = c.work_order_id
-    LEFT JOIN stations    st ON st.id = c.station_id
-    LEFT JOIN departments d  ON d.id  = wo.department_id
-    WHERE c.company_id = ? AND c.status = 'in_progress'${site_id ? ' AND (COALESCE(wo.site_id, st.site_id) = ? OR COALESCE(wo.site_id, st.site_id) IS NULL)' : ''}
-    ORDER BY c.started_at DESC
-  `).all(req.companyId, ...siteParams);
-
-  // All non-cancelled work orders, each carrying the one schedule status.
-  // Statused by src/plantTruth.js so this page cannot say "1 active / 33% on
-  // track" while the Command Center says 67% off the same rows — the disagreement
-  // this whole workstream exists to end. Wave 2 deletes this endpoint's consumer;
-  // until then it reads from the same place as everything else.
-  const ctx = plantTruth.plantContext(req.companyId);
-  const scope = plantTruth.resolveScope(ctx, { siteId: site_id });
-  const woStates = plantTruth.workOrderStates(ctx, scope);
-  // The order this page has always been served in: `ORDER BY wo.priority DESC,
-  // wo.scheduled_end ASC` — which SQLite sorts as TEXT, so it reads medium,
-  // low, high, critical. Reproduced rather than corrected: changing what a
-  // screen shows is wave 2's job, not this one's.
-  const workOrders = woStates.rows.slice().sort((a, b) =>
-    String(b.priority || '').localeCompare(String(a.priority || ''))
-    || String(a.scheduled_end || '').localeCompare(String(b.scheduled_end || '')));
-
-  // Per-department stats. Scoped to the requested site as well as the company —
-  // without the site filter a multi-site tenant read another site's departments
-  // in its Department Summary (empty rows for departments it cannot see). The
-  // canonical per-department figures come from one query set, not one per card.
-  const snapshots = plantTruth.departmentSnapshots(ctx, {
-    // Same scope, same work orders, already selected and statused above.
-    scope, workOrderRows: woStates.rows,
-  });
-  const managerRows = db.prepare(`SELECT id, manager_name FROM departments WHERE company_id = ?${siteClause}`)
-    .all(req.companyId, ...siteParams);
-  const managerById = Object.fromEntries(managerRows.map(d => [d.id, d.manager_name]));
-
-  const departmentStats = snapshots.departments.map(snap => {
-    const deptWOs = workOrders.filter(wo => wo.department_id === snap.department_id);
-    return {
-      id:           snap.department_id,
-      name:         snap.department_name,
-      color:        snap.department_color,
-      manager_name: managerById[snap.department_id] ?? null,
-      /** Work orders with a status of in_progress — not the same thing as runs
-       *  open on the floor right now, which is `running_now` below. */
-      active_count: deptWOs.filter(wo => wo.status === 'in_progress').length,
-      on_track_count: snap.on_track,
-      behind_count: snap.behind + snap.overdue,
-      total_work_orders: snap.total_work_orders,
-      // ── The canonical figures, added beside them. Wave 2 renders these.
-      finished_today:   snap.finished_today,
-      running_now:      snap.running_now,
-      on_track:         snap.on_track,
-      open_work_orders: snap.open_work_orders,
-      on_track_pct:     snap.on_track_pct,
-      on_track_basis:   'open_work_orders',
-    };
-  });
-
-  res.json({
-    plant_date:         snapshots.plant_date,
-    active_completions: activeCompletions,
-    work_orders:        workOrders,
-    department_stats:   departmentStats,
-  });
 });
 
 // ─── GET /plant-view ──────────────────────────────────────────────────────────
@@ -1188,7 +1134,7 @@ router.get('/daily-brief', (req, res) => {
       SELECT COUNT(*) AS c FROM andon_calls a
       LEFT JOIN stations s ON s.id = a.station_id
       WHERE a.company_id = ? AND a.status IN ('open', 'acknowledged') AND (${missing.join(' OR ')})
-    `).get(cid).c, 'unrouted help requests');
+    `).get(cid).c, 'unrouted calls');
   }
   for (const c of openCalls) {
     const team = andonTeamOf(c);
@@ -1366,13 +1312,34 @@ router.get('/daily-brief', (req, res) => {
     SELECT COUNT(*) as c FROM completions
     WHERE company_id = ? AND status='completed' AND date(completed_at, ?)=date('now', ?)${cf.clause}
   `).get(cid, day, day, ...cf.params).c;
+  // ── "vs the 7-day average" — over the days the plant actually ran ──────────
+  //
+  // The divisor used to be a flat 7. A company three days old, or a plant that
+  // runs Monday to Wednesday, therefore had four or five ZERO days folded into
+  // its own baseline: the average came out roughly half of what the plant
+  // really does in a day, and today read "+108% vs 7-day average" on an
+  // entirely ordinary shift. Nobody can see that number is wrong.
+  //
+  // So the baseline is output per DAY WITH OUTPUT — a plant day on which
+  // anything at all was finished — and the payload says how many days that was,
+  // so a reader can judge it. Fewer than two such days is not an average and is
+  // reported as null with the reason, never as a percentage.
   const weekAvgRow = db.prepare(`
-    SELECT COUNT(*) / 7.0 as avg
+    SELECT COUNT(*) AS runs, COUNT(DISTINCT date(completed_at, ?)) AS days
     FROM completions
     WHERE company_id = ? AND status='completed' AND date(completed_at, ?) >= date('now', ?, '-7 days') AND date(completed_at, ?) < date('now', ?)${cf.clause}
-  `).get(cid, day, day, day, day, ...cf.params);
-  const weekAvg = weekAvgRow?.avg || 0;
-  const vsAvgPct = weekAvg > 0 ? Math.round(((completedToday - weekAvg) / weekAvg) * 100) : null;
+  `).get(day, cid, day, day, day, day, ...cf.params);
+  const weekDays = weekAvgRow?.days || 0;
+  const weekAvg = weekDays > 0 ? (weekAvgRow.runs / weekDays) : 0;
+  const MIN_BASELINE_DAYS = 2;
+  const vsAvgReason = weekDays < MIN_BASELINE_DAYS
+    ? (weekDays === 0
+      ? 'nothing was finished in the seven days before today'
+      : 'only one day in the last seven has any output — not yet an average')
+    : null;
+  const vsAvgPct = (!vsAvgReason && weekAvg > 0)
+    ? Math.round(((completedToday - weekAvg) / weekAvg) * 100)
+    : null;
 
   const activeNow = db.prepare(`
     SELECT COUNT(*) as c FROM completions
@@ -1453,6 +1420,11 @@ router.get('/daily-brief', (req, res) => {
     kpis: {
       completed_today: completedToday,
       vs_7day_avg_pct: vsAvgPct,
+      /** How many of the seven days before today the baseline is built from —
+       *  days the plant finished anything, not calendar days. */
+      vs_7day_sample_days: weekDays,
+      /** Why the comparison is null, when it is. Printed instead of a bare dash. */
+      vs_7day_reason: vsAvgReason,
       active_now: activeNow,
       pass_rate_7d: passRate7d,
       schedule_adherence: scheduleAdherence,
@@ -1461,7 +1433,10 @@ router.get('/daily-brief', (req, res) => {
     },
     due_soon: dueSoon,
     throughput_7d: days7,
+    /** Output per day WITH output over the last seven days — the same baseline
+     *  vs_7day_avg_pct is measured against, and 0 when nothing ran at all. */
     week_avg_per_day: Math.round(weekAvg * 10) / 10,
+    week_avg_basis: 'days with any completion in the last 7',
     is_pro: !!isPro,
   });
 });

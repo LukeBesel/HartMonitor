@@ -104,12 +104,12 @@ export default function Stations() {
       <ModuleOnboarding
         moduleId="stations"
         title="Stations"
-        description="Stations are your physical workstations linked to apps. Configure each station's ideal cycle time and shift hours."
+        description="A station is one place on your floor where work happens, linked to the app that runs there. Configure each station's ideal cycle time and shift hours."
         steps={[
-          "Create a station for each physical workstation",
+          "Create a station for each place work happens on your floor",
           "Assign an app to define what operators see",
           "Set ideal cycle time for OEE tracking",
-          "Monitor status from Plant View or Command Center",
+          "Watch station status from the Command Center",
         ]}
         icon={Monitor}
         color="#f59e0b"
@@ -117,7 +117,7 @@ export default function Stations() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Stations</h1>
-          <p className="text-gray-500 text-sm mt-0.5">Physical workstations and kiosks running apps</p>
+          <p className="text-gray-500 text-sm mt-0.5">The places on your floor where apps run</p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <DepartmentFilter
@@ -163,7 +163,7 @@ export default function Stations() {
         <div className="text-center py-16 text-gray-400">
           <Monitor size={40} className="mx-auto mb-3 opacity-30" />
           <p className="font-medium">No stations yet</p>
-          <p className="text-sm">Create workstations to deploy apps to the shop floor</p>
+          <p className="text-sm">Create a station to deploy apps to the shop floor</p>
           {canEdit && (
             <button onClick={() => setShowCreate(true)} className="btn-primary mt-4"><Plus size={14} /> Add Station</button>
           )}

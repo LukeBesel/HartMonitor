@@ -1,4 +1,4 @@
-// ─── Request help (player) ────────────────────────────────────────────────────
+// ─── Call for help (player) ───────────────────────────────────────────────────
 // A bottom sheet of big touch tiles — one per team the operator can alert, plus
 // the company's own departments where they exist. Picking one raises an Andon
 // alert carrying the whole run context; the run itself is never paused or reset.
@@ -63,11 +63,11 @@ export default function RequestHelpSheet({
         className="p-sheet"
         onClick={e => e.stopPropagation()}
         role="dialog"
-        aria-label="Request help"
+        aria-label="Call for help"
       >
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2" style={{ fontSize: 20, fontWeight: 750, color: 'var(--p-ink)' }}>
-            <LifeBuoy size={20} style={{ color: 'var(--p-live)' }} /> Request help
+            <LifeBuoy size={20} style={{ color: 'var(--p-live)' }} /> Call for help
           </div>
           <button
             onClick={onClose}

@@ -308,7 +308,7 @@ describe('Command Center department + app scope', () => {
     // and the down station that belongs to no department.
     assert.equal(weld.attention_plant_wide_hidden, 3);
     assert.deepEqual(weld.attention_plant_wide_kinds.sort(), [
-      'stations with no department', 'unassigned work orders', 'unrouted help requests',
+      'stations with no department', 'unassigned work orders', 'unrouted calls',
     ]);
   });
 

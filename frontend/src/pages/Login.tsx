@@ -254,13 +254,13 @@ export default function Login() {
                   className="w-full py-3 rounded-xl text-white font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-60 transition-all"
                   style={{ background: 'linear-gradient(135deg, #2563eb, #1d4ed8)' }}
                 >
-                  {loading ? 'Creating workspace…' : <><span>Create Workspace</span><ArrowRight size={14} /></>}
+                  {loading ? 'Creating company…' : <><span>Create Company</span><ArrowRight size={14} /></>}
                 </button>
                 <p className="text-xs text-gray-400 text-center">
                   Free plan includes 5 production apps & 2 dashboards — no credit card required. You become the owner.
                 </p>
                 <p className="text-xs text-gray-400 text-center">
-                  By creating a workspace you agree to our{' '}
+                  By creating a company you agree to our{' '}
                   <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Terms</a>{' '}
                   and{' '}
                   <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline">Privacy Policy</a>.

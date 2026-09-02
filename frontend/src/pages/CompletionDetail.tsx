@@ -10,7 +10,7 @@
 // It reads several endpoints because no single one carries all of that today —
 // what each is here for is noted at the fetch. Nothing on the page is derived
 // from a number the server did not measure: an unknown reads "—" with the
-// reason, and a run still on the bench is shown as running rather than dressed
+// reason, and a run that is still going is shown as running rather than dressed
 // up as a finished one.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -32,6 +32,7 @@ import type { AppRevisionSnapshot, RunRevisionStamp } from '../api/revisions';
 import useAutoRefresh from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
 import EmptyState from '../components/shared/EmptyState';
+import { displayId, hasCompanyTag } from '../utils/ids';
 import {
   durationTicks, elapsedSeconds, fmtDateTime, fmtDuration, fmtRelative, measuredSeconds,
   orderedSteps, parseServerTime, pluralize, runDurationSeconds, stepSecondsByIndex,
@@ -434,7 +435,7 @@ export default function CompletionDetail() {
             </div>
             <p className="text-[11px] text-gray-400 mt-1">
               {isLive
-                ? `started ${fmtRelative(run.started_at).toLowerCase()} · still on the bench`
+                ? `started ${fmtRelative(run.started_at).toLowerCase()} · still running`
                 : total === null
                   ? 'nobody timed this run'
                   : timedSteps.length > 0
@@ -485,7 +486,12 @@ export default function CompletionDetail() {
             unknown={run.station_id ? 'station no longer exists' : 'no station recorded'}
           />
           {run.work_order?.work_order_number && (
-            <Meta icon={<Package size={13} />} label="Work order" value={run.work_order.work_order_number} />
+            <Meta
+              icon={<Package size={13} />}
+              label="Work order"
+              value={displayId(run.work_order.work_order_number)}
+              title={hasCompanyTag(run.work_order.work_order_number) ? run.work_order.work_order_number : undefined}
+            />
           )}
         </div>
 
@@ -688,7 +694,7 @@ export default function CompletionDetail() {
                               <AlertTriangle
                                 size={11}
                                 className="text-amber-500 flex-shrink-0"
-                                aria-label="The player flagged this step as over takt while it ran"
+                                aria-label="Flagged as over takt while this step ran"
                               />
                             )}
                           </span>
@@ -742,7 +748,7 @@ export default function CompletionDetail() {
             title={isLive ? 'Nothing captured yet' : 'This run captured no values'}
             description={isLive
               ? 'Entries land here as the operator fills them in.'
-              : 'Either this app has no input, check or scan widgets, or nobody filled them in.'}
+              : 'Either this app has no input, check or scan fields, or nobody filled them in.'}
           />
         ) : (
           <ul className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2.5">
@@ -903,15 +909,19 @@ function Compare({ label, deltaSeconds, baseline, unavailable }: {
   );
 }
 
-function Meta({ icon, label, value, unknown }: {
+function Meta({ icon, label, value, unknown, title }: {
   icon: React.ReactNode; label: string; value: string | null; unknown?: string;
+  /** What the cell says on hover when that is not simply its own text — an id
+   *  printed without its company tag keeps the STORED id here, because that is
+   *  what a support ticket has to quote. */
+  title?: string;
 }) {
   return (
     <div className="min-w-0">
       <div className="flex items-center gap-1.5 text-[11px] text-gray-400 mb-0.5">{icon}{label}</div>
       <div
         className={`text-[13px] font-semibold truncate ${value ? 'text-gray-900' : 'text-gray-400'}`}
-        title={value ?? unknown}
+        title={title ?? value ?? unknown}
       >
         {value ?? `— ${unknown ?? ''}`.trim()}
       </div>

@@ -49,7 +49,7 @@ export function AccountTab() {
             <div className="font-semibold text-gray-800">{user?.display_name}</div>
             <div className="text-sm text-gray-500">{user?.email}</div>
             <span className={`text-xs font-semibold px-2 py-0.5 rounded-full mt-1 inline-block ${ROLE_COLORS[user?.role ?? ''] ?? 'bg-gray-100 text-gray-600'}`}>
-              {user?.role}
+              {user?.display_role ?? user?.role}
             </span>
           </div>
         </div>

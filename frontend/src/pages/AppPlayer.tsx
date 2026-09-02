@@ -17,7 +17,7 @@ import {
   startRun as startRunRequest, notQualified, verifyOverrideAuthorizer, mintOverrideToken,
 } from '../api/training';
 import type { NotQualified, StartRunPayload } from '../api/training';
-import { fmtDuration } from '../components/apps/appModel';
+import { fmtDuration, pluralize } from '../components/apps/appModel';
 import { useAuth } from '../context/AuthContext';
 import { setRunActive } from '../utils/staleChunk';
 import type { CompletionFlushPayload, CompletionSession, JobInProgress, KitLineUpdate } from '../api/client';
@@ -51,7 +51,8 @@ import { subscribeRealtime, isAndonEvent } from '../utils/realtime';
 import {
   claimSideEffect, collectStepTriggers, concurrentRun, evaluateKitScan, exitTarget, formatDur,
   getStepBlocks, kitProgress, kitWidgetFor, legacyKey, operatorAttribution,
-  operatorDisplayName, operatorReturnLink, runContextGate, runContextRequired, setupNeeded,
+  operatorDisplayName, operatorReturnLink, playableWorkOrders, routedLookupCandidates,
+  runContextGate, runContextRequired, setupNeeded,
   sideEffectKey, stepHidesFooterNav, stepShowsKit, stepTaktSeconds as taktOfStep,
   resumeTarget, stepValueSignature, summarizeBlocks, taktBarState, unitsBalance, unitsSummary,
   valueInputFor,
@@ -59,6 +60,10 @@ import {
 import type { BlockItem } from '../components/player/runtime';
 import { getReasonCodes } from '../api/andon';
 import type { ReasonCode } from '../api/andon';
+import { getOperations } from '../api/operations';
+import { getDemoHints } from '../api/operator';
+import type { DemoHints } from '../api/operator';
+import { displayId, hasCompanyTag } from '../utils/ids';
 import '../player.css';
 
 // Work-order fields added by the v2 backend (list returns wo.*).
@@ -129,7 +134,17 @@ export default function AppPlayer() {
 
   // ── Loading / catalog state ────────────────────────────────────────────────
   const [app, setApp] = useState<App | null>(null);
-  const [workOrders, setWorkOrders] = useState<WorkOrderExt[]>([]);
+  /** Every open work order the server returned — the LOOKUP table. A run's job
+   *  is named from here whatever list the picker happens to offer, so a routed
+   *  job never reads "No work order" on a screen that is running it. */
+  const [allWorkOrders, setAllWorkOrders] = useState<WorkOrderExt[]>([]);
+  /** Work orders whose OPERATIONS run this app (resolved from
+   *  GET /work-orders/:id/operations). A routed job carries its app there, not
+   *  on the work order row, so this is the only way to recognise one. */
+  const [routedWorkOrderIds, setRoutedWorkOrderIds] = useState<ReadonlySet<string>>(() => new Set());
+  /** The PINs a sandbox hands out, when the server says this is one. Null on
+   *  every real company — see api/operator.getDemoHints. */
+  const [demoHints, setDemoHints] = useState<DemoHints | null>(null);
   const [productTypes, setProductTypes] = useState<ProductType[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
   const [loading, setLoading] = useState(true);
@@ -177,6 +192,12 @@ export default function AppPlayer() {
    * a screen that says so.
    */
   const stationFromLink = searchParams.get('station') !== null;
+  /** The work order the link named, if any. The portal already decided which
+   *  job this tablet is running; the picker believes it rather than re-deriving
+   *  it from a column a routed job leaves NULL. */
+  const woFromLink = searchParams.get('wo');
+  /** The operation of that job the dispatch queue sent this tablet to. */
+  const opFromLink = searchParams.get('op');
   /** The operator has seen the concurrent-run warning and chosen to go on. */
   const [concurrentAck, setConcurrentAck] = useState(false);
   /** Abandoning is a destructive choice, so it gets a sheet that says what is
@@ -292,7 +313,15 @@ export default function AppPlayer() {
    *  the operator presses the button it was blocked on. */
   const firedSideEffectsRef = useRef<Set<string>>(new Set());
 
-  const selectedWO = workOrders.find(w => w.id === selectedWorkOrderId);
+  /** What the picker OFFERS: this app's own jobs, the one the link named, and
+   *  every routed job whose operations run this app. */
+  const workOrders = useMemo(
+    () => playableWorkOrders(allWorkOrders, id ?? '', woFromLink, routedWorkOrderIds),
+    [allWorkOrders, id, woFromLink, routedWorkOrderIds],
+  );
+  // Named from the FULL list, never from the picker's: the job a run is bound
+  // to is a fact about the run, not a row that has to have survived a filter.
+  const selectedWO = allWorkOrders.find(w => w.id === selectedWorkOrderId);
   const selectedPT = productTypes.find(p => p.id === selectedProductTypeId);
   const currentStep: Step | undefined = app?.steps[currentStepIdx];
 
@@ -325,6 +354,34 @@ export default function AppPlayer() {
     };
   }, []);
 
+  /**
+   * Which of these work orders are ROUTED through this app.
+   *
+   * A job released against a routing has `work_orders.app_id` NULL and names an
+   * app on each operation instead, so nothing on the work order row says it can
+   * be run here. One GET /work-orders/:id/operations per released job that does
+   * not already name this app answers it; the list is capped so a plant with a
+   * thousand open jobs does not turn a setup screen into a thousand requests.
+   *
+   * Entirely best-effort. The picker is already usable without it (this app's
+   * own jobs, plus whatever the link named), so a failure narrows the list
+   * rather than breaking the screen.
+   */
+  const resolveRoutedWorkOrders = useCallback(async (wos: WorkOrderExt[]) => {
+    if (!id || previewMode) return;
+    const candidates = routedLookupCandidates(wos, id);
+    if (candidates.length === 0) { setRoutedWorkOrderIds(new Set()); return; }
+    const found = await Promise.all(candidates.map(async w => {
+      try {
+        const ops = await getOperations(w.id);
+        return Array.isArray(ops) && ops.some(op => op.app_id === id) ? w.id : null;
+      } catch {
+        return null;
+      }
+    }));
+    setRoutedWorkOrderIds(new Set(found.filter((x): x is string => !!x)));
+  }, [id, previewMode]);
+
   // ── Load app + catalogs ────────────────────────────────────────────────────
   const loadAll = useCallback(() => {
     if (!id) return;
@@ -337,7 +394,8 @@ export default function AppPlayer() {
         // only for schema_version ≥ 2; explicit false → never; true → always).
         setRequireContext(runContextRequired(a));
         setApp(normalizeApp(a));
-        setWorkOrders(wos.filter(w => w.app_id === id && w.status !== 'completed' && w.status !== 'cancelled'));
+        setAllWorkOrders(Array.isArray(wos) ? wos : []);
+        void resolveRoutedWorkOrders(Array.isArray(wos) ? wos : []);
         setProductTypes(pts);
         setStations(sts.filter(s => s.status === 'active'));
         const woParam = searchParams.get('wo');
@@ -377,6 +435,15 @@ export default function AppPlayer() {
     setOperatorUserId(prev => prev || user.id);
     setOperatorName(prev => (prev.trim() ? prev : (user.display_name || '').trim()));
   }, [enteredFromDispatch, user]);
+
+  // Whether this is a sandbox, and the PINs it hands out. The server answers;
+  // this screen never infers a demo from a hostname or a flag of its own.
+  useEffect(() => {
+    if (previewMode) return;
+    let live = true;
+    void getDemoHints().then(h => { if (live) setDemoHints(h); });
+    return () => { live = false; };
+  }, [previewMode]);
 
   // The coded scrap reasons the finish step picks from. Loaded once; a company
   // that has none gets a control that says so rather than an empty select.
@@ -1446,6 +1513,9 @@ export default function AppPlayer() {
         operatorUserId,
         stationId: stationFromLink ? selectedStationId : '',
         workOrderId: selectedWorkOrderId,
+        // A routed job: the operation the dispatch queue linked to. It is what
+        // makes the product type optional — see setupNeeded.
+        operationId: opFromLink && woFromLink ? opFromLink : null,
         partNumber: manualPartNumber,
         productTypeId: selectedProductTypeId,
       },
@@ -1464,6 +1534,7 @@ export default function AppPlayer() {
     void startRun();
   }, [
     loading, app, previewMode, status, starting, jobsLoaded, jobs, stationFromLink,
+    opFromLink, woFromLink,
     operatorUserId, selectedStationId, selectedWorkOrderId, manualPartNumber,
     selectedProductTypeId, productTypes.length, productTypeLocked, startRun,
     enteredFromDispatch, user, resumingId, searchParams,
@@ -1477,7 +1548,7 @@ export default function AppPlayer() {
     const st = stations.find(s => s.id === selectedStationId);
     return [
       st?.name,
-      selectedWO?.work_order_number ? `WO ${selectedWO.work_order_number}` : (manualPartNumber.trim() || undefined),
+      selectedWO?.work_order_number ? `WO ${displayId(selectedWO.work_order_number)}` : (manualPartNumber.trim() || undefined),
       app?.name,
       currentStep?.name,
       operatorName || undefined,
@@ -1700,7 +1771,7 @@ export default function AppPlayer() {
     if (!previewMode) {
       try {
         const wos = await api.getWorkOrders();
-        setWorkOrders(wos.filter((w: WorkOrderExt) => w.app_id === id && w.status !== 'completed' && w.status !== 'cancelled'));
+        setAllWorkOrders(Array.isArray(wos) ? wos : []);
       } catch { /* non-fatal */ }
     }
     setStatus('setup');
@@ -1746,7 +1817,7 @@ export default function AppPlayer() {
    * The way out. Going back to the floor carries the verified identity and the
    * station with it: without them the portal asks "Who's working?" and demands
    * the PIN again after every single unit, which is how a floor learns to stop
-   * clocking in at all.
+   * signing in at all.
    */
   const leavePlayer = useCallback(() => {
     navigate(exitPath === '/operator'
@@ -1873,7 +1944,7 @@ export default function AppPlayer() {
               {app.name}
             </h1>
             <span className="p-chip tnum" style={{ fontSize: 12.5 }}>
-              {app.steps.length} steps · {app.steps.reduce((a, s) => a + s.widgets.length, 0)} widgets
+              {pluralize(app.steps.length, 'step')} · {pluralize(app.steps.reduce((a, s) => a + s.widgets.length, 0), 'field')}
               {app.steps.filter(s => s.takt_time_seconds).length > 0
                 ? ` · ${app.steps.filter(s => s.takt_time_seconds).length} timed`
                 : ''}
@@ -1941,7 +2012,9 @@ export default function AppPlayer() {
                 <select id="setup-work-order" className="p-input" value={selectedWorkOrderId} onChange={e => { setSelectedWorkOrderId(e.target.value); setConcurrentAck(false); }}>
                   <option value="">— No work order —</option>
                   {workOrders.map(wo => (
-                    <option key={wo.id} value={wo.id}>{wo.work_order_number} · {wo.part_name} ({wo.quantity_completed}/{wo.quantity})</option>
+                    <option key={wo.id} value={wo.id} title={hasCompanyTag(wo.work_order_number) ? wo.work_order_number : undefined}>
+                      {displayId(wo.work_order_number)} · {wo.part_name} ({wo.quantity_completed}/{wo.quantity})
+                    </option>
                   ))}
                 </select>
               </div>
@@ -2081,7 +2154,7 @@ export default function AppPlayer() {
               </div>
               <div className="space-y-2">
                 {jobs.map(job => {
-                  const jobWO = workOrders.find(w => w.id === job.work_order_id);
+                  const jobWO = allWorkOrders.find(w => w.id === job.work_order_id);
                   const jobPN = typeof job.data?._part_number === 'string' ? job.data._part_number : '';
                   const stepIdxRaw = Number(job.data?._step_index ?? 0);
                   const stepPos = Number.isFinite(stepIdxRaw) ? Math.min(Math.max(0, stepIdxRaw), app.steps.length - 1) : 0;
@@ -2091,8 +2164,19 @@ export default function AppPlayer() {
                     <div key={job.id} className="p-well p-3">
                       <div className="flex items-center gap-2.5">
                         <div className="flex-1 min-w-0">
-                          <div className="truncate" style={{ fontSize: 15, fontWeight: 650, color: 'var(--p-ink)' }}>
-                            {jobWO ? `${jobWO.work_order_number} · ${jobWO.part_name}` : jobPN ? `PN ${jobPN}` : 'No work order'}
+                          <div
+                            className="truncate"
+                            style={{ fontSize: 15, fontWeight: 650, color: 'var(--p-ink)' }}
+                            title={jobWO && hasCompanyTag(jobWO.work_order_number) ? jobWO.work_order_number : undefined}
+                          >
+                            {/* A run bound to a work order says so. It used to
+                                read "No work order" for every routed job,
+                                because the row it looked the number up in had
+                                been filtered out from under it. */}
+                            {jobWO
+                              ? `${displayId(jobWO.work_order_number)} · ${jobWO.part_name}`
+                              : job.work_order_id ? 'Work order'
+                                : jobPN ? `PN ${jobPN}` : 'No work order'}
                           </div>
                           <div className="truncate" style={{ fontSize: 12.5, color: 'var(--p-muted)', marginTop: 2 }}>
                             Step {stepPos + 1}/{app.steps.length}
@@ -2138,6 +2222,7 @@ export default function AppPlayer() {
             error={qualError}
             onCancel={() => { setQualBlock(null); leavePlayer(); }}
             onApprove={pin => void approveQualification(pin)}
+            demoSupervisorPin={demoHints?.supervisor_pin ?? null}
           />
         )}
       </div>
@@ -2153,7 +2238,7 @@ export default function AppPlayer() {
     // Next-unit run context (player batch B): carried forward from this run,
     // one-tap change, disabled with a short reason until context exists.
     const contextLabel = selectedWO
-      ? `${selectedWO.work_order_number} · ${selectedWO.part_name}`
+      ? `${displayId(selectedWO.work_order_number)} · ${selectedWO.part_name}`
       : manualPartNumber.trim() ? `PN ${manualPartNumber.trim()}` : null;
     const summaryGate = runContextGate(requireContext && !previewMode, selectedWorkOrderId, manualPartNumber);
     return (

@@ -9,7 +9,7 @@ import { Zap, X, Check, Loader2 } from 'lucide-react';
 // run, work order and setting the visitor touched stays exactly where it is.
 //
 // The copy below is deliberately explicit about what carries over — the sample
-// plant data comes with it, because it lives in the same workspace. Telling
+// plant data comes with it, because it lives in the same company. Telling
 // someone their demo "becomes their account" while quietly dropping half of it
 // would be the same lie in a new costume.
 
@@ -55,9 +55,9 @@ export function ClaimSandboxModal({ onClose }: Props) {
             <Zap size={18} />
           </span>
           <div className="flex-1">
-            <h2 id="claim-sandbox-title" className="text-lg font-bold text-gray-900">Keep this workspace</h2>
+            <h2 id="claim-sandbox-title" className="text-lg font-bold text-gray-900">Keep this company</h2>
             <p className="mt-1 text-sm text-gray-600">
-              This exact demo workspace becomes your free account — nothing is copied or reset.
+              This exact demo company becomes your free account — nothing is copied or reset.
             </p>
           </div>
           <button

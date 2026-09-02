@@ -13,6 +13,7 @@ import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
 import DepartmentFilter from '../components/shared/DepartmentFilter';
 import { fmtDuration } from '../components/apps/appModel';
 import { getRoutingUsage, type RoutingUsage } from '../api/operations';
+import { displayId, hasCompanyTag } from '../utils/ids';
 
 interface RoutingStep {
   id: string;
@@ -507,8 +508,12 @@ export default function Routings() {
                         to={`/schedule?highlight=${wo.id}`}
                         className="font-mono font-semibold text-blue-700 hover:text-blue-800"
                       >
-                        {wo.work_order_number}
+                        <span title={hasCompanyTag(wo.work_order_number) ? wo.work_order_number : undefined}>
+                          {displayId(wo.work_order_number)}
+                        </span>
                       </Link>
+                      {/* A part name and a part NUMBER are the customer's own
+                          strings — printed exactly as they were typed. */}
                       <span className="text-gray-600">{wo.part_name || wo.part_number || '—'}</span>
                       {wo.current_operation ? (
                         <span className="text-gray-500 [font-variant-numeric:tabular-nums]">

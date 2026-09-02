@@ -8,6 +8,7 @@
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const db = require('./db');
+const seedShapes = require('./seedShapes');
 
 // Marker column — additive, guarded, safe to run on every boot.
 const orgCols = db.prepare('PRAGMA table_info(organizations)').all().map(r => r.name);
@@ -17,6 +18,21 @@ if (!orgCols.includes('is_sandbox')) {
 
 const SANDBOX_EMAIL_DOMAIN = 'sandbox.hartmonitor.local';
 const SANDBOX_TTL_HOURS = 24;
+
+/**
+ * The PINs a demo sandbox is seeded with, and the ONE place they are written.
+ *
+ * A visitor meets three PIN prompts — badge/PIN sign-in on the operator portal,
+ * a supervisor sign-off on a blocked run, and a manager approval — and a PIN
+ * nobody has been told is a locked door. GET /api/auth/me hands these back as
+ * `demo_hints` for SANDBOX companies only, so the portal can print them beside
+ * the keypad; a real company never sees the field at all.
+ */
+const DEMO_PINS = Object.freeze({
+  operator: '1234',
+  supervisor: '2468',
+  manager: '1357',
+});
 
 // The pace the seeded shift is laid out at. 79 % Performance is a good plant —
 // neither a crisis nor a world-class number nobody would believe.
@@ -56,6 +72,14 @@ function shiftShape(minutesToday, idealCycleS) {
   // window is never clamped below itself by its own plan.
   const plannedHours = Math.min(8, Math.max(1, Math.ceil(todaySoFarMin / 60)));
   return { runs, windowMin, plannedHours };
+}
+
+/** A SQLite foreign-key (or other constraint) violation, whatever better-sqlite3
+ *  chose to call it — used by deleteSandboxOrg's retry sweep below. */
+function isConstraintFailure(err) {
+  const code = String(err && err.code || '');
+  const message = String(err && err.message || '');
+  return code.startsWith('SQLITE_CONSTRAINT') || message.includes('constraint failed');
 }
 
 function hashPassword(password) {
@@ -127,8 +151,13 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   const lowTag = tag.toLowerCase();
 
   const appId = uuidv4();
-  db.prepare(`INSERT INTO apps (id, name, description, status, steps, company_id) VALUES (?, ?, ?, 'published', ?, ?)`)
-    .run(appId, 'Bracket Assembly', 'A sample guided work instruction — open it in the App Builder or run it in the Player.', JSON.stringify(steps), orgId);
+  // require_run_context: true — Bracket Assembly is now also the Weld step of
+  // the Bracket Line routing below, so it should appear on the operator portal
+  // only as a released operation, not a second time as a standing job with no
+  // work order behind it. 'Final QC Inspection' (require_run_context unset)
+  // stays the portal's only standing job.
+  db.prepare(`INSERT INTO apps (id, name, description, status, steps, company_id, require_run_context) VALUES (?, ?, ?, 'published', ?, ?, 1)`)
+    .run(appId, 'Bracket Assembly', 'Sample work instruction for the bracket line. Tap Start to run it.', JSON.stringify(steps), orgId);
 
   // ── The demo factory's day, and the arithmetic behind its OEE ───────────────
   // /oee computes OEE = Availability × Performance × Quality over TODAY only,
@@ -214,18 +243,34 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   // morning whole.
   const downMin = Math.max(3, Math.round(shiftMin * 0.094));
   const downFrac = f => Math.max(1, Math.round(downMin * f));
-  const st1 = uuidv4(), st2 = uuidv4();
+  const st1 = uuidv4(), st2 = uuidv4(), stWeld = uuidv4();
   db.prepare(`INSERT INTO stations (id, name, description, location, status, current_app_id, company_id, department_id, current_status, current_status_since, ideal_cycle_seconds, planned_hours_per_day)
               VALUES (?, 'Station 1', 'Bracket assembly bench', 'Line A', 'active', ?, ?, ?, 'running', datetime('now', ?), ?, ?)`)
     .run(st1, appId, orgId, deptA, `-${todayWindowMin} minutes`, IDEAL_CYCLE_S, shiftHours);
   db.prepare(`INSERT INTO stations (id, name, description, location, status, company_id, department_id, current_status, current_status_since, planned_hours_per_day)
               VALUES (?, 'Station 2', 'Pack-out bench', 'Line A', 'active', ?, ?, 'down', datetime('now', ?), ?)`)
     .run(st2, orgId, deptB, `-${downMin} minutes`, shiftHours);
+  // A third station for the Bracket Line's Cut/Weld operations — deliberately
+  // NOT Station 1. Station 1's whole OEE story ("everything it finishes today
+  // is WO-1001, and it logs no downtime") is metric-honesty.test.js's own
+  // fixture; booking the routing's runs there too would make Station 1
+  // finish more today than WO-1001 accounts for, and would put the Bracket
+  // Line's downtime Pareto stops on the one station that is supposed to stay
+  // clean. A dedicated cell keeps both stories true at once.
+  db.prepare(`INSERT INTO stations (id, name, description, location, status, company_id, department_id, planned_hours_per_day)
+              VALUES (?, 'Weld Cell', 'Bracket Line — cut and weld', 'Line A', 'active', ?, ?, ?)`)
+    .run(stWeld, orgId, deptA, shiftHours);
 
   const insEvent = db.prepare(`INSERT INTO machine_events (id, station_id, event_type, reason, started_at, ended_at, duration_minutes) VALUES (?, ?, ?, ?, datetime('now', ?), ?, ?)`);
   insEvent.run(uuidv4(), st1, 'up', '', `-${todayWindowMin} minutes`, null, null);
   insEvent.run(uuidv4(), st2, 'up', '', `-${downMin + 255} minutes`, db.prepare(`SELECT datetime('now', ?) AS t`).get(`-${downMin} minutes`).t, 255);
-  insEvent.run(uuidv4(), st2, 'down', 'Conveyor drive jam', `-${downMin} minutes`, null, null);
+  // Coded further down (once reason codes exist) so the Pareto's top bars are
+  // all named causes rather than one large "Not coded" bar outweighing the
+  // three deliberately-seeded ones — this stop reads as a genuine
+  // 'breakdown' (it is the one an emergency maintenance work order and a
+  // critical NCR are already about), not a brief 'jam'.
+  const conveyorJamEventId = uuidv4();
+  insEvent.run(conveyorJamEventId, st2, 'down', 'Conveyor drive jam', `-${downMin} minutes`, null, null);
 
   // ── Product types ───────────────────────────────────────────────────────────
   const ptStd = uuidv4(), ptHd = uuidv4();
@@ -233,24 +278,29 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   db.prepare(`INSERT INTO product_types (id, app_id, name, description, company_id) VALUES (?, ?, 'BRKT-200 Heavy Duty', 'Heavy-duty variant', ?)`).run(ptHd, appId, orgId);
 
   // ── Items (ids captured for BOMs / kit / stock / PO links) ──────────────────
+  // SKUs a storeman would recognise, NOT tag-prefixed. items.sku is
+  // UNIQUE(company_id, sku) — every sandbox is its own org, so 'M6-BOLT-KIT'
+  // cannot collide with another visitor's, and a part number nobody can read
+  // out loud ('A1B2C3-M6BOLTKIT') is a demo that fails the first time anyone
+  // types one into a search box. See the numbering note above seedSandboxData.
   const items = [
-    ['bracket', 'Base Bracket',   'Steel base bracket',  'Components',  4.2,  25],
-    ['boltkit', 'M6 Bolt Kit',    'Bag of 4 M6 bolts',   'Hardware',    0.8,  100],
-    ['board',   'Control Board',  'Rev C control board', 'Electronics', 18.5, 10],
-    ['harness', 'Wire Harness',   '12-pin harness',      'Electronics', 6.4,  15],
-    ['foam',    'Foam Packaging', 'Molded foam insert',  'Packaging',   1.1,  40],
+    ['bracket', 'BRKT-BASE-100', 'Base Bracket',   'Steel base bracket',  'Components',  4.2,  25],
+    ['boltkit', 'M6-BOLT-KIT',   'M6 Bolt Kit',    'Bag of 4 M6 bolts',   'Hardware',    0.8,  100],
+    ['board',   'CTRL-BOARD-7',  'Control Board',  'Rev C control board', 'Electronics', 18.5, 10],
+    ['harness', 'HARN-12P',      'Wire Harness',   '12-pin harness',      'Electronics', 6.4,  15],
+    ['foam',    'FOAM-INS-1',    'Foam Packaging', 'Molded foam insert',  'Packaging',   1.1,  40],
   ];
   const itemId = {};
   const insItem = db.prepare(`INSERT INTO items (id, sku, name, description, category, unit_of_measure, unit_cost, reorder_point, company_id) VALUES (?, ?, ?, ?, ?, 'ea', ?, ?, ?)`);
-  for (const [key, name, description, category, cost, reorder] of items) {
+  for (const [key, sku, name, description, category, cost, reorder] of items) {
     itemId[key] = uuidv4();
-    insItem.run(itemId[key], `${tag}-${name.replace(/[^A-Za-z0-9]+/g, '').slice(0, 10).toUpperCase()}`, name, description, category, cost, reorder, orgId);
+    insItem.run(itemId[key], sku, name, description, category, cost, reorder, orgId);
   }
 
   // ── Locations + stock (the bolt kit sits BELOW its reorder point) ───────────
   const locWh = uuidv4(), locLine = uuidv4();
-  db.prepare(`INSERT INTO locations (id, name, code, description, type, company_id, site_id) VALUES (?, 'Main Warehouse', ?, 'Central stores', 'warehouse', ?, ?)`).run(locWh, `${tag}-WH1`, orgId, siteId);
-  db.prepare(`INSERT INTO locations (id, name, code, description, type, company_id, site_id) VALUES (?, 'Line A Supermarket', ?, 'Point-of-use rack at Line A', 'production', ?, ?)`).run(locLine, `${tag}-LINEA`, orgId, siteId);
+  db.prepare(`INSERT INTO locations (id, name, code, description, type, company_id, site_id) VALUES (?, 'Main Warehouse', ?, 'Central stores', 'warehouse', ?, ?)`).run(locWh, 'WH1', orgId, siteId);
+  db.prepare(`INSERT INTO locations (id, name, code, description, type, company_id, site_id) VALUES (?, 'Line A Supermarket', ?, 'Point-of-use rack at Line A', 'production', ?, ?)`).run(locLine, 'LINE-A', orgId, siteId);
 
   const insStock = db.prepare(`INSERT INTO stock_levels (id, item_id, location_id, quantity) VALUES (?, ?, ?, ?)`);
   insStock.run(uuidv4(), itemId.bracket, locWh, 180);
@@ -273,23 +323,23 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   const wo0998 = uuidv4(), wo1001 = uuidv4(), wo1002 = uuidv4();
   db.prepare(`INSERT INTO work_orders (id, work_order_number, part_number, part_name, quantity, quantity_completed, app_id, department_id, product_type_id, status, priority, takt_time_minutes, scheduled_start, scheduled_end, company_id, site_id)
               VALUES (?, ?, 'BRKT-100', 'Standard Bracket', ?, ?, ?, ?, ?, 'completed', 'medium', ?, datetime('now', ?), datetime('now', '-1 days'), ?, ?)`)
-    .run(wo0998, `${tag}-WO-0998`, HISTORY_QTY, HISTORY_QTY, appId, deptA, ptStd, IDEAL_CYCLE_MIN, `-${HISTORY_DAYS + 1} days`, orgId, siteId);
+    .run(wo0998, 'WO-0998', HISTORY_QTY, HISTORY_QTY, appId, deptA, ptStd, IDEAL_CYCLE_MIN, `-${HISTORY_DAYS + 1} days`, orgId, siteId);
   db.prepare(`INSERT INTO work_orders (id, work_order_number, part_number, part_name, quantity, quantity_completed, app_id, department_id, product_type_id, status, priority, takt_time_minutes, scheduled_start, scheduled_end, company_id, site_id)
               VALUES (?, ?, 'BRKT-100', 'Standard Bracket', ?, ?, ?, ?, ?, 'in_progress', 'high', ?, datetime('now', ?), datetime('now', '+1 days'), ?, ?)`)
-    .run(wo1001, `${tag}-WO-1001`, WO_QTY, RUNS_TODAY, appId, deptA, ptStd, IDEAL_CYCLE_MIN, `-${todayWindowMin} minutes`, orgId, siteId);
+    .run(wo1001, 'WO-1001', WO_QTY, RUNS_TODAY, appId, deptA, ptStd, IDEAL_CYCLE_MIN, `-${todayWindowMin} minutes`, orgId, siteId);
   db.prepare(`INSERT INTO work_orders (id, work_order_number, part_number, part_name, quantity, quantity_completed, app_id, department_id, product_type_id, status, priority, scheduled_start, scheduled_end, company_id, site_id)
               VALUES (?, ?, 'BRKT-200', 'Heavy Duty Bracket', 10, 0, ?, ?, ?, 'pending', 'medium', datetime('now', '+2 days'), datetime('now', '+7 days'), ?, ?)`)
-    .run(wo1002, `${tag}-WO-1002`, appId, deptA, ptHd, orgId, siteId);
+    .run(wo1002, 'WO-1002', appId, deptA, ptHd, orgId, siteId);
 
   // ── Operators (verified floor identities: badge + PIN) ──────────────────────
   // One shared scrypt hash keeps sandbox creation fast; these accounts are for
   // badge/PIN attribution in the demo, not password logins.
   const opPassword = hashPassword(crypto.randomBytes(12).toString('hex'));
-  const opPin = hashPassword('1234');
+  const opPin = hashPassword(DEMO_PINS.operator);
   const operators = [
-    ['Bob Operator', 'bob',   `${tag}-OP1`],
-    ['Maria Lopez',  'maria', `${tag}-OP2`],
-    ['Priya Shah',   'priya', `${tag}-OP3`],
+    ['Bob Operator', 'bob',   'OP1'],
+    ['Maria Lopez',  'maria', 'OP2'],
+    ['Priya Shah',   'priya', 'OP3'],
   ];
   const opId = {};
   const insUser = db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role, company_id, department_id, job_title, pin_hash, badge_code) VALUES (?, ?, ?, ?, 'operator', ?, ?, 'Assembly Operator', ?, ?)`);
@@ -297,6 +347,42 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
     opId[key] = uuidv4();
     insUser.run(opId[key], `${key}-${lowTag}@${SANDBOX_EMAIL_DOMAIN}`, name, opPassword, orgId, deptA, opPin, badge);
   }
+
+  // A manager and a supervisor, distinct from the visitor's own 'Demo Visitor'
+  // account — so an app revision's approver is a real second person, an andon
+  // escalation has someone on the roster above the operator who raised it, and
+  // a qualification override is signed by someone who actually holds the rank.
+  //
+  // Both of them carry a PIN, and that is not decoration. Training enforcement
+  // in this sandbox is 'block' (see seedTrainingOverride below), and the way a
+  // blocked run is cleared is POST /api/operators/verify-authorizer — which
+  // only accepts the PIN of somebody at supervisor rank or above. With no PIN
+  // on the only two people who hold that rank, the demo showed the block and
+  // then had no way on earth to clear it: a dead end on the one screen the
+  // feature exists to demonstrate. The PINs are published to the sandbox UI by
+  // GET /api/auth/me's `demo_hints` (sandbox companies only).
+  const managerId = uuidv4(), supervisorId = uuidv4();
+  const managerName = 'Alex Chen', supervisorName = 'Jamie Torres';
+  const managerPin = hashPassword(DEMO_PINS.manager);
+  const supervisorPin = hashPassword(DEMO_PINS.supervisor);
+  db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role, company_id, department_id, job_title, pin_hash, badge_code) VALUES (?, ?, ?, ?, 'manager', ?, ?, 'Plant Manager', ?, 'MGR1')`)
+    .run(managerId, `alex-${lowTag}@${SANDBOX_EMAIL_DOMAIN}`, managerName, opPassword, orgId, deptA, managerPin);
+  db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role, company_id, department_id, job_title, pin_hash, badge_code) VALUES (?, ?, ?, ?, 'supervisor', ?, ?, 'Line Supervisor', ?, 'SUP1')`)
+    .run(supervisorId, `jamie-${lowTag}@${SANDBOX_EMAIL_DOMAIN}`, supervisorName, opPassword, orgId, deptA, supervisorPin);
+
+  // ── Change control on the flagship app: Rev 1, cut BEFORE its runs ─────────
+  // Bracket Assembly is the app every visitor opens first, and it read
+  // "Revision not tracked yet" — the one app in the demo with no change
+  // control on it. One revision is enough to make the trail real: the visitor
+  // (this sandbox's owner) publishes, the seeded manager approves, and it is
+  // dated ten days back so every run below — today's shift and the four before
+  // it — ran against instructions that already existed. stampRunsWithRevisions()
+  // at the end of this function is what puts the revision on each run, by the
+  // only rule that can be true: whichever revision was in force when it started.
+  db.prepare(`UPDATE apps SET requires_approval = 1 WHERE id = ? AND company_id = ?`).run(appId, orgId);
+  seedShapes.publishRevisionAt(orgId, appId, {
+    userId: visitorUserId, changeNote: 'First release', approverUserId: managerId, agoDays: 10,
+  });
 
   // ── BOMs: an ACTIVE versioned BOM per product type ──────────────────────────
   const insBom = db.prepare(`INSERT INTO boms (id, company_id, product_type_id, version, status, notes, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, 'Demo Visitor', datetime('now', ?))`);
@@ -307,7 +393,7 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   const bomStdV1 = uuidv4();
   insBom.run(bomStdV1, orgId, ptStd, 1, 'superseded', 'Original release — harness was field-installed', '-30 days');
   insBomLine.run(uuidv4(), bomStdV1, orgId, itemId.bracket, 1, 'ea', 'BASE', asmStep, '', 0);
-  insBomLine.run(uuidv4(), bomStdV1, orgId, itemId.boltkit, 1, 'kit', 'M6 x4', asmStep, `${tag}-M6KIT-BAG`, 1);
+  insBomLine.run(uuidv4(), bomStdV1, orgId, itemId.boltkit, 1, 'kit', 'M6 x4', asmStep, 'M6KIT-BAG', 1);
   insBomLine.run(uuidv4(), bomStdV1, orgId, itemId.board, 1, 'ea', 'PCB U1', asmStep, '', 2);
 
   const bomStdV2 = uuidv4();
@@ -315,7 +401,7 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   const stdLine = {};
   for (const [i, [key, qty, unit, ref, scan]] of [
     ['bracket', 1, 'ea',  'BASE',   ''],
-    ['boltkit', 1, 'kit', 'M6 x4',  `${tag}-M6KIT-BAG`],
+    ['boltkit', 1, 'kit', 'M6 x4',  'M6KIT-BAG'],
     ['board',   1, 'ea',  'PCB U1', ''],
     ['harness', 1, 'ea',  'J1-J12', ''],
   ].entries()) {
@@ -328,7 +414,7 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   insBom.run(bomHdV1, orgId, ptHd, 1, 'active', 'Heavy-duty variant — doubled fasteners and harness runs', '-14 days');
   for (const [i, [key, qty, unit, ref, scan]] of [
     ['bracket', 1, 'ea',  'BASE',    ''],
-    ['boltkit', 2, 'kit', 'M6 x8',   `${tag}-M6KIT-BAG`],
+    ['boltkit', 2, 'kit', 'M6 x8',   'M6KIT-BAG'],
     ['board',   1, 'ea',  'PCB U1',  ''],
     ['harness', 2, 'ea',  'J1-J24',  ''],
     ['foam',    1, 'ea',  'PACKOUT', ''],
@@ -355,7 +441,7 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   const kitLines = [
     // key,      name,             qty,     picked,      scan,               status,    pickedBy,      pickedAt,  verBy,          verAt,     shortReason
     ['bracket', 'Base Bracket',    WO_QTY,  WO_QTY,      '',                  'verified', 'Maria Lopez', kitT(8),  'Bob Operator', kitT(13), ''],
-    ['boltkit', 'M6 Bolt Kit',     WO_QTY,  RUNS_TODAY,  `${tag}-M6KIT-BAG`,  'short',    'Maria Lopez', kitT(18), '',             0,        `Bin empty after ${RUNS_TODAY} kits — stockout, awaiting PO ${tag}-PO-2001`],
+    ['boltkit', 'M6 Bolt Kit',     WO_QTY,  RUNS_TODAY,  'M6KIT-BAG',  'short',    'Maria Lopez', kitT(18), '',             0,        `Bin empty after ${RUNS_TODAY} kits — stockout, awaiting PO PO-2001`],
     ['board',   'Control Board',   WO_QTY,  WO_QTY,      '',                  'picked',   'Maria Lopez', kitT(23), '',             0,        ''],
     ['harness', 'Wire Harness',    WO_QTY,  WO_QTY,      '',                  'verified', 'Maria Lopez', kitT(26), 'Bob Operator', kitT(28), ''],
   ];
@@ -465,7 +551,7 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
       const torque = Number((14.6 + (i % 9) * 0.1).toFixed(1));
       const data = {
         ppe_worn: true, area_clear: true,
-        torque_value: torque, serial_number: `${tag}-SN-${serial}`,
+        torque_value: torque, serial_number: `SN-${serial}`,
         visual_ok: run.visual, function_ok: run.visual,
         notes: run.visual === 'Fail' ? 'Solder bridging on U3 — raised NCR' : '',
       };
@@ -481,7 +567,7 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
       // a shift too short to have scrapped anything yet still gets a real
       // completion to point at rather than an invented one.
       if (run.visual === 'Fail' && (failedAgoS === null || run.endedAgoS < failedAgoS)) {
-        failedCompletionId = cid; failedSerial = `${tag}-SN-${serial}`;
+        failedCompletionId = cid; failedSerial = `SN-${serial}`;
         failedAgoS = run.endedAgoS; failedWoId = plan.woId;
       }
       addValues(cid, run.endedAgoS, data);
@@ -504,16 +590,16 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   // real serial and work order — the NCR detail page links straight back to the
   // completion, so an invented serial would contradict the row it opens.
   const ncrAgoS = failedAgoS === null ? 4800 : Math.max(120, Math.round(failedAgoS - 240));
-  insNcr.run(ncr1, `${tag}-NCR-101`, 'Solder bridging on control board',
+  insNcr.run(ncr1, 'NCR-101', 'Solder bridging on control board',
     `Visual inspection failed on unit ${failedSerial ?? 'under review'} — solder bridge across U3 pins 4-5.`,
     'critical', 'open', 'production',
     appId, failedCompletionId, failedWoId ?? wo1001, itemId.board, 'Demo Visitor', '', '',
     db.prepare(`SELECT date('now', '+3 days') AS d`).get().d, null, `-${ncrAgoS} seconds`, orgId);
-  insNcr.run(ncr2, `${tag}-NCR-102`, 'Wire harness pin misalignment', 'Pin 7 seated half-depth on three units; caught at functional test.', 'major', 'resolved', 'production',
+  insNcr.run(ncr2, 'NCR-102', 'Wire harness pin misalignment', 'Pin 7 seated half-depth on three units; caught at functional test.', 'major', 'resolved', 'production',
     appId, null, wo1001, itemId.harness, 'Demo Visitor', 'Crimp die worn past service limit', 'Die replaced; first-article check added to setup sheet',
     db.prepare(`SELECT date('now', '-1 days') AS d`).get().d,
     db.prepare(`SELECT datetime('now', '-2 days') AS t`).get().t, '-6 days', orgId);
-  insNcr.run(ncr3, `${tag}-NCR-103`, 'M6 bolt kits under-count in bags', 'Two receiving samples contained 3 bolts instead of 4.', 'minor', 'open', 'receiving',
+  insNcr.run(ncr3, 'NCR-103', 'M6 bolt kits under-count in bags', 'Two receiving samples contained 3 bolts instead of 4.', 'minor', 'open', 'receiving',
     null, null, null, itemId.boltkit, 'Bob Operator', '', '',
     db.prepare(`SELECT date('now', '+7 days') AS d`).get().d, null, '-1 days', orgId);
   db.prepare(`INSERT INTO ncr_comments (id, ncr_id, author, body, created_at) VALUES (?, ?, 'Demo Visitor', 'Quarantined remaining WO-1001 boards pending rework instructions.', datetime('now', ?))`)
@@ -535,13 +621,13 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   {
     const contain = 'Quarantine current board lot; 100% visual on U3 until closed';
     const cause = 'Stencil aperture oversized for the U3 pad redesign';
-    insCapa.run(capa1, orgId, `${tag}-CAPA-001`, 'Eliminate solder bridging on Rev C boards', 'ncr', 'corrective', 'high', 'action', deptA, 'Demo Visitor', 'Demo Visitor',
+    insCapa.run(capa1, orgId, 'CAPA-001', 'Eliminate solder bridging on Rev C boards', 'ncr', 'corrective', 'high', 'action', deptA, 'Demo Visitor', 'Demo Visitor',
       db.prepare(`SELECT date('now', '+7 days') AS d`).get().d,
-      'Recurring solder bridges near U3 on Rev C control boards (see ' + tag + '-NCR-101).',
+      'Recurring solder bridges near U3 on Rev C control boards (see NCR-101).',
       contain, contain, cause, cause,
       'Order corrected stencil; requalify reflow profile', 'Add stencil review to the ECO checklist', '-5 days', '-5 days');
   }
-  insCapa.run(capa2, orgId, `${tag}-CAPA-002`, 'Prevent conveyor drive jams at pack-out', 'andon', 'preventive', 'medium', 'open', deptB, 'Demo Visitor', 'Demo Visitor',
+  insCapa.run(capa2, orgId, 'CAPA-002', 'Prevent conveyor drive jams at pack-out', 'andon', 'preventive', 'medium', 'open', deptB, 'Demo Visitor', 'Demo Visitor',
     db.prepare(`SELECT date('now', '+14 days') AS d`).get().d,
     'Station 2 conveyor jammed twice this quarter; PM interval may be too long.', '', '', '', '', '', 'Shorten belt inspection PM from monthly to biweekly', `-${downFrac(0.89)} minutes`, `-${downFrac(0.89)} minutes`);
 
@@ -556,22 +642,29 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   // ── Maintenance: assets, PM schedules (one due soon), open MWO ──────────────
   const asset1 = uuidv4(), asset2 = uuidv4();
   const insAsset = db.prepare(`INSERT INTO assets (id, company_id, name, asset_number, category, type, manufacturer, make, model, department_id, location, status, purchase_date, install_date, notes, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`);
-  insAsset.run(asset1, orgId, 'Torque Driver — Station 1', `${tag}-AST-01`, 'Tooling', 'Tooling', 'Atlas Copco', 'Atlas Copco', 'ETV ST61', deptA, 'Line A', 'active', '2023-06-12', '2023-06-12', 'Calibrated quarterly');
-  insAsset.run(asset2, orgId, 'Pack-out Conveyor', `${tag}-AST-02`, 'Conveyance', 'Conveyance', 'Dorner', 'Dorner', '2200 Series', deptB, 'Line A', 'maintenance', '2021-03-02', '2021-03-02', 'Drive jam — see open work order');
+  insAsset.run(asset1, orgId, 'Torque Driver — Station 1', 'AST-01', 'Tooling', 'Tooling', 'Atlas Copco', 'Atlas Copco', 'ETV ST61', deptA, 'Line A', 'active', '2023-06-12', '2023-06-12', 'Calibrated quarterly');
+  insAsset.run(asset2, orgId, 'Pack-out Conveyor', 'AST-02', 'Conveyance', 'Conveyance', 'Dorner', 'Dorner', '2200 Series', deptB, 'Line A', 'maintenance', '2021-03-02', '2021-03-02', 'Drive jam — see open work order');
 
   const insPm = db.prepare(`INSERT INTO pm_schedules (id, company_id, asset_id, title, description, frequency_value, frequency_type, last_completed_at, next_due_at, assigned_to, estimated_hours) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', ?), datetime('now', ?), ?, ?)`);
   insPm.run(uuidv4(), orgId, asset1, 'Torque driver calibration', 'Verify against reference transducer; record as-found/as-left.', 1, 'months', '-28 days', '+2 days', 'Demo Visitor', 1);
   insPm.run(uuidv4(), orgId, asset2, 'Belt & roller inspection', 'Check belt tracking, tension and roller bearings.', 1, 'months', '-9 days', '+21 days', 'Priya Shah', 1.5);
 
+  // A third schedule that fell due YESTERDAY, and the sweep that answered it —
+  // driven through pmScheduler.runOnce(), so the job on the board is the
+  // scheduler's own work rather than a hand-written row that looks like it.
+  // Nothing real is listening on a throwaway sandbox org, so its one outbound
+  // side effect (a 'maintenance.pm_raised' webhook) has no subscriber.
+  seedShapes.seedPmRaisedJob(orgId, { assetId: asset1, assignedTo: 'Priya Shah', driveLive: true });
+
   db.prepare(`INSERT INTO maintenance_work_orders (id, company_id, number, wo_number, title, type, priority, status, asset_id, department_id, assigned_to, description, estimated_hours, requested_by, due_date, created_at, updated_at)
               VALUES (?, ?, ?, ?, 'Conveyor drive jam — Station 2 stopped', 'emergency', 'critical', 'open', ?, ?, 'Demo Visitor', 'Pack-out conveyor jammed mid-cycle; Station 2 down until the drive belt is replaced.', 2, 'Priya Shah', date('now', '+1 days'), datetime('now', ?), datetime('now', ?))`)
-    .run(uuidv4(), orgId, `${tag}-MWO-100`, `${tag}-MWO-100`, asset2, deptB, `-${downFrac(0.89)} minutes`, `-${downFrac(0.89)} minutes`);
+    .run(uuidv4(), orgId, 'MWO-100', 'MWO-100', asset2, deptB, `-${downFrac(0.89)} minutes`, `-${downFrac(0.89)} minutes`);
 
   // ── Andon: resolved call, consistent with Station 2's downtime ──────────────
   db.prepare(`INSERT INTO andon_calls (id, company_id, department_id, station_id, type, priority, status, description, raised_by, acknowledged_by, acknowledged_at, resolved_by, resolved_at, resolution, created_at)
               VALUES (?, ?, ?, ?, 'maintenance', 'high', 'resolved', 'Conveyor stopped mid-cycle at pack-out', 'Priya Shah', 'Demo Visitor', datetime('now', ?), 'Demo Visitor', datetime('now', ?), ?, datetime('now', ?))`)
     .run(uuidv4(), orgId, deptB, st2, `-${downFrac(0.93)} minutes`, `-${downFrac(0.78)} minutes`,
-      `Escalated to maintenance — ${tag}-MWO-100 opened; station stays down pending drive belt`, `-${downMin} minutes`);
+      'Escalated to maintenance — MWO-100 opened; station stays down pending drive belt', `-${downMin} minutes`);
 
   // ── Training: mixed levels for the three operators ──────────────────────────
   const insTraining = db.prepare(`INSERT INTO training_records (id, company_id, user_id, app_id, status, certified_date, expiry_date, certified_by, score, attempts, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
@@ -580,20 +673,20 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   insTraining.run(uuidv4(), orgId, opId.maria, appId, 'in_training', null, null, null, null, 1, 'Shadowing Bob on Line A this week');
   insTraining.run(uuidv4(), orgId, opId.priya, appId, 'certified', d('-350 days'), d('+15 days'), visitorUserId, 88, 2, 'Recert due — schedule refresher');
   db.prepare(`INSERT INTO certifications (id, company_id, user_id, name, issuer, cert_number, issued_date, expiry_date, notes) VALUES (?, ?, ?, 'IPC J-STD-001 Soldering', 'IPC', ?, ?, ?, 'Expiring soon — book renewal exam')`)
-    .run(uuidv4(), orgId, opId.priya, `${tag}-CERT-88`, d('-350 days'), d('+15 days'));
+    .run(uuidv4(), orgId, opId.priya, 'CERT-88', d('-350 days'), d('+15 days'));
   db.prepare(`INSERT INTO training_plans (id, company_id, user_id, app_id, assigned_by, target_date, status, notes) VALUES (?, ?, ?, ?, ?, ?, 'in_progress', 'Certify before BRKT-200 ramp')`)
     .run(uuidv4(), orgId, opId.maria, appId, visitorUserId, d('+10 days'));
 
   // ── Purchasing: vendor + late PO for the low-stock bolt kit + shipment ──────
   const vendorId = uuidv4(), poId = uuidv4();
   db.prepare(`INSERT INTO vendors (id, name, code, contact_name, email, phone, payment_terms, lead_time_days, rating, company_id) VALUES (?, 'FastenerWorks Supply', ?, 'Dana Reeves', 'orders@fastenerworks.example', '+1 (216) 555-0182', 'net30', 10, 4, ?)`)
-    .run(vendorId, `${tag}-FSTW`, orgId);
+    .run(vendorId, 'FSTW', orgId);
   db.prepare(`INSERT INTO purchase_orders (id, po_number, vendor_id, status, order_date, expected_date, shipping_cost, notes, company_id) VALUES (?, ?, ?, 'sent', date('now', '-9 days'), date('now', '-2 days'), 45, 'Expedite — bolt kits below reorder point', ?)`)
-    .run(poId, `${tag}-PO-2001`, vendorId, orgId);
+    .run(poId, 'PO-2001', vendorId, orgId);
   db.prepare(`INSERT INTO po_lines (id, po_id, item_id, quantity_ordered, quantity_received, unit_cost, notes) VALUES (?, ?, ?, 500, 0, 0.72, 'Covers WO-1001 shortage + safety stock')`)
     .run(uuidv4(), poId, itemId.boltkit);
   db.prepare(`INSERT INTO shipments (id, company_id, po_id, carrier, tracking_number, origin, status, shipped_date, estimated_arrival, notes) VALUES (?, ?, ?, 'FreightLine', ?, 'Cleveland, OH', 'delayed', datetime('now', '-5 days'), datetime('now', '+1 days'), 'Carrier reports weather delay at the Toledo hub')`)
-    .run(uuidv4(), orgId, poId, `${tag}-TRK-8842`);
+    .run(uuidv4(), orgId, poId, 'TRK-8842');
 
   // ── Kaizen: three ideas across the funnel ───────────────────────────────────
   const insKaizen = db.prepare(`INSERT INTO kaizen_ideas (id, company_id, number, idea_number, title, description, category, status, department_id, submitted_by, assigned_to, estimated_savings, actual_savings, created_at, completed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', ?), ?)`);
@@ -601,10 +694,10 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   // constraint AND the Kaizen page's STATUS_CONFIG/CATEGORY_CONFIG maps —
   // the intersection is: submitted, approved, in_progress, implemented,
   // rejected ('under_review' crashes the page; 'reviewing' fails the CHECK).
-  insKaizen.run(uuidv4(), orgId, `${tag}-KZ-1`, `${tag}-KZ-1`, 'Pre-kit bolts at receiving', 'Bag bolts into per-unit kits when they arrive so assemblers stop counting at the bench.', 'delivery', 'submitted', deptA, 'Bob Operator', '', 0, 0, '-4 days', null);
-  insKaizen.run(uuidv4(), orgId, `${tag}-KZ-2`, `${tag}-KZ-2`, 'Shadow board for torque drivers', 'Outlined shadow board at Station 1 ended the morning hunt for the 15 Nm driver.', 'safety', 'implemented', deptA, 'Maria Lopez', 'Demo Visitor', 800, 1200, '-30 days',
+  insKaizen.run(uuidv4(), orgId, 'KZ-1', 'KZ-1', 'Pre-kit bolts at receiving', 'Bag bolts into per-unit kits when they arrive so assemblers stop counting at the bench.', 'delivery', 'submitted', deptA, 'Bob Operator', '', 0, 0, '-4 days', null);
+  insKaizen.run(uuidv4(), orgId, 'KZ-2', 'KZ-2', 'Shadow board for torque drivers', 'Outlined shadow board at Station 1 ended the morning hunt for the 15 Nm driver.', 'safety', 'implemented', deptA, 'Maria Lopez', 'Demo Visitor', 800, 1200, '-30 days',
     db.prepare(`SELECT datetime('now', '-10 days') AS t`).get().t);
-  insKaizen.run(uuidv4(), orgId, `${tag}-KZ-3`, `${tag}-KZ-3`, 'Vacuum lifter for heavy-duty brackets', 'BRKT-200 brackets are 14 kg — a vacuum lifter at pack-out would cut strain and drops.', 'cost', 'approved', deptB, 'Priya Shah', 'Demo Visitor', 3500, 0, '-12 days', null);
+  insKaizen.run(uuidv4(), orgId, 'KZ-3', 'KZ-3', 'Vacuum lifter for heavy-duty brackets', 'BRKT-200 brackets are 14 kg — a vacuum lifter at pack-out would cut strain and drops.', 'cost', 'approved', deptB, 'Priya Shah', 'Demo Visitor', 3500, 0, '-12 days', null);
 
   // ── Shift handoff note (yesterday, tells the same downtime story) ───────────
   db.prepare(`INSERT INTO shift_notes (id, company_id, department_id, shift_name, shift_date, supervisor, good_count, scrap_count, downtime_minutes, notes, status, created_by) VALUES (?, ?, ?, 'Day', date('now', '-1 days'), 'Demo Visitor', ?, ?, 25, 'Pack-out conveyor squealing near the drive end — maintenance notified, keep an eye on it.', 'submitted', 'Demo Visitor')`)
@@ -673,9 +766,21 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   db.prepare(`INSERT INTO apps (id, name, description, status, steps, company_id) VALUES (?, ?, ?, 'published', ?, ?)`)
     .run(qcAppId, 'Final QC Inspection', 'Pack-out quality gate — a torque re-check and a ship/hold decision.', JSON.stringify(qcSteps), orgId);
 
+  // ── Change control: two published revisions, cut BEFORE the runs below ─────
+  // appRevisions.publish() snapshots whatever is in `apps.steps` right now, so
+  // publishing has to happen before any run is seeded — a run stamped with a
+  // revision that did not exist yet when it ran would be a completion lying
+  // about what it was measured against. The visitor (the account signed in on
+  // this sandbox) is the publisher both times; the seeded manager is the
+  // approver — one pair of hands writes the instructions, a different pair
+  // signs off on shipping them, on every revision.
+  seedShapes.seedTwoRevisions(orgId, {
+    appId: qcAppId, publisherUserId: visitorUserId, approverUserId: managerId,
+  });
+
   const qcWidgets = widgetIndex(qcSteps);
-  const insQcCompletion = db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, operator_user_id, started_at, completed_at, status, data, step_times, takt_exceeded_steps, company_id)
-    VALUES (?, ?, 'Final QC Inspection', ?, ?, ?, datetime('now', ?), datetime('now', ?), 'completed', ?, ?, ?, ?)`);
+  const insQcCompletion = db.prepare(`INSERT INTO completions (id, app_id, app_name, station_id, operator_name, operator_user_id, started_at, completed_at, status, data, step_times, takt_exceeded_steps, app_revision_id, company_id)
+    VALUES (?, ?, 'Final QC Inspection', ?, ?, ?, datetime('now', ?), datetime('now', ?), 'completed', ?, ?, ?, ?, ?)`);
   // The Fail run below is seeded as a COMPLETED, inspected run — deliberately.
   //
   // It was briefly seeded 'abandoned', on the reasoning that the new step_exit
@@ -702,7 +807,15 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
     [1400, 6, 14.6, 'Fail'], [1380, 4, 15.0, 'Pass'], [qcToday, 5, 15.3, 'Pass'],
   ];
   // The failed run, so the quality record below can point at the real row.
+  // No revision is written here: stampRunsWithRevisions() at the end of this
+  // function gives every run the revision that was IN FORCE when it started,
+  // which is the only rule that cannot produce a run measured against
+  // instructions published after it. Rev 1 was cut ten days ago and Rev 2 two
+  // days ago (seedTwoRevisions), so the older runs land on Rev 1 and the
+  // recent ones — today's included — on Rev 2, by arithmetic rather than by a
+  // hand-picked index that a change to the run list would silently falsify.
   let qcFailCompletionId = null, qcFailAgoMin = null;
+  let qcTodayCompletionId = null, qcTodayOperatorUserId = null, qcTodayOperatorName = null;
   qcRuns.forEach(([end, dur, torque, result], i) => {
     const cid = uuidv4();
     const [operatorUserId, operatorName] = ops[i % 3];
@@ -716,10 +829,13 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
       .map(([idx]) => Number(idx)));
     const runData = JSON.stringify({ final_torque: torque, qc_result: result });
     if (result === 'Fail') { qcFailCompletionId = cid; qcFailAgoMin = end; }
+    const isLast = i === qcRuns.length - 1;
+    if (isLast) { qcTodayCompletionId = cid; qcTodayOperatorUserId = operatorUserId; qcTodayOperatorName = operatorName; }
     insQcCompletion.run(
       cid, qcAppId, st2, operatorName, operatorUserId,
       `-${end + dur} minutes`, `-${end} minutes`, runData,
-      JSON.stringify(qcStepTimes), exceeded, orgId
+      JSON.stringify(qcStepTimes), exceeded,
+      null, orgId
     );
     for (const [varName, raw] of Object.entries({ final_torque: torque, qc_result: result })) {
       const w = qcWidgets[varName];
@@ -736,13 +852,98 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   // Without it the demo would show a Fail with nothing to show for it, which is
   // the contradiction the trigger was added to end.
   if (qcFailCompletionId) {
-    insNcr.run(uuidv4(), `${tag}-NCR-104`, QC_HOLD_NCR_TITLE,
+    insNcr.run(uuidv4(), 'NCR-104', QC_HOLD_NCR_TITLE,
       'Final visual failed at the pack-out quality gate. The unit is held for disposition — do not ship it. Raised automatically by the Final QC Inspection app.',
       'major', 'open', 'production',
       qcAppId, qcFailCompletionId, null, null, 'Demo Visitor', '', '',
       db.prepare(`SELECT date('now', '+2 days') AS d`).get().d, null,
       `-${Math.max(1, qcFailAgoMin) * 60} seconds`, orgId);
   }
+
+  // ── Coded reasons (scrap / rework / downtime): seeded exactly as a first
+  // read of GET /api/andon/reason-codes would seed them ─────────────────────
+  const reasonIds = seedShapes.seedReasonCodes(orgId);
+  // The pre-existing Station 2 stop above now has a code to point at — a
+  // genuine breakdown, not a brief jam (see the comment where it was raised).
+  seedShapes.codeDowntimeEvent(conveyorJamEventId, reasonIds.downtime.breakdown);
+
+  // ── Routings and operations: a 4-op job standing on Weld, 12 of 50 done ────
+  //
+  // The Cut and Weld STEPS name no station — they are Assembly's work, and the
+  // dispatch rule (plantTruth.stationClause) puts a station-less operation on
+  // every tablet in that department. Pinning them to the dedicated Weld Cell
+  // instead is what made the operator portal at Station 1 — the station that
+  // has the runs, the work order and the kit — say "All caught up" while the
+  // plant had a released job standing on operation 2.
+  //
+  // The finished RUNS still belong to a real bench: `runStationId` books op 1's
+  // completions (and, below, the Weld scrap runs) to the Weld Cell, so Station
+  // 1's OEE story — everything it finishes today is WO-1001, and it logs no
+  // downtime — stays exactly as metric-honesty.test.js fixes it.
+  const routing = seedShapes.seedBracketLineRouting(orgId, {
+    tag: '', deptId: deptA, siteId,
+    weldAppId: appId, inspectAppId: qcAppId,
+    weldStationId: null, inspectStationId: null,
+    runStationId: stWeld,
+    cutOperatorUserId: opId.bob, cutOperatorName: 'Bob Operator',
+  });
+
+  // ── Scrap: two runs booked against the Weld operation, one carrying a coded
+  // reason — SUM(quantity_good) across them is exactly the 12 advance() booked.
+  seedShapes.seedWeldScrapRuns(orgId, {
+    appId, stationId: stWeld, tag: '',
+    workOrderId: routing.inProgress.workOrderId,
+    workOrderOperationId: routing.inProgress.op2Id,
+    productTypeId: ptStd,
+    operatorUserId: opId.maria, operatorName: 'Maria Lopez',
+    scrapReasonCodeId: reasonIds.scrap.weld_porosity,
+    widgets,
+  });
+
+  // ── Downtime Pareto: three coded stops across three loss buckets ───────────
+  seedShapes.seedDowntimePareto(orgId, {
+    stationIds: [st1, st2],
+    reasonIds: {
+      breakdown: reasonIds.downtime.breakdown,
+      changeover: reasonIds.downtime.changeover,
+      jam: reasonIds.downtime.jam,
+    },
+  });
+
+  // ── Andon: one call that climbed to management, one answered inside target.
+  // Driven through the REAL escalateOne() — nothing real is listening on a
+  // throwaway sandbox org, so its email/webhook side effects are harmless. ──
+  seedShapes.seedAndonCalls(orgId, {
+    deptId: deptA, stationId: st1,
+    raiserUserId: opId.bob, raiserName: 'Bob Operator',
+    supervisorUserId: supervisorId,
+    responderUserId: opId.maria, responderName: 'Maria Lopez',
+    driveLive: true,
+  });
+
+  // ── Training: an expired cert on the QC app, overridden by the supervisor,
+  // stamped onto today's QC run (Rev 2, Priya Shah). Enforcement is 'block' —
+  // the mode the override exists for — so Bob and the visitor (who
+  // sandbox-qc-hold.test.js and a live demo both run the QC app as) keep a
+  // clean certification and are never the ones the block actually stops. ────
+  // ── Every run carries the revision that was in force when it started ──────
+  // Done last, in one statement per app, so it covers every completion this
+  // function seeded — the shift history, the live run, the Cut batches and the
+  // Weld scrap runs — rather than only the ones written next to a publish.
+  seedShapes.stampRunsWithRevisions(orgId, appId);
+  seedShapes.stampRunsWithRevisions(orgId, qcAppId);
+
+  seedShapes.seedTrainingOverride(orgId, {
+    appId: qcAppId,
+    operatorUserId: qcTodayOperatorUserId, operatorName: qcTodayOperatorName,
+    certifierUserId: visitorUserId,
+    supervisorUserId: supervisorId, supervisorName,
+    completionId: qcTodayCompletionId,
+    alsoCertify: [
+      { userId: opId.bob, name: 'Bob Operator' },
+      { userId: visitorUserId, name: 'Demo Visitor' },
+    ],
+  });
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -821,11 +1022,36 @@ function deleteSandboxOrg(orgId) {
       if (tables.includes(t)) db.prepare(`DELETE FROM "${t}" WHERE ${where}`).run(orgId);
     }
 
-    for (const t of tables) {
+    // Every remaining company-scoped table, in a couple of retried passes.
+    // sqlite_master lists tables in CREATION order, not dependency order, and a
+    // handful of columns are a bare `REFERENCES users(id)` with no ON DELETE
+    // clause at all (messages.sender_id/recipient_id, authorization_grants.
+    // user_id) — 'users' is created early, so a single top-to-bottom pass tries
+    // to delete users while a later table's rows still point at them and the
+    // constraint trips. Retrying the tables that fail, after the ones that
+    // succeeded had a chance to clear whatever was blocking them, is a plain
+    // topological sort without having to hand-maintain one; a pass that makes
+    // no progress at all means the failure is real, and its own error surfaces.
+    let pending = tables.filter(t => {
       const cols = db.prepare(`PRAGMA table_info(${JSON.stringify(t)})`).all().map(c => c.name);
-      if (cols.includes('company_id')) {
-        db.prepare(`DELETE FROM "${t}" WHERE company_id = ?`).run(orgId);
+      return cols.includes('company_id');
+    });
+    while (pending.length > 0) {
+      const stillBlocked = [];
+      for (const t of pending) {
+        try {
+          db.prepare(`DELETE FROM "${t}" WHERE company_id = ?`).run(orgId);
+        } catch (err) {
+          if (isConstraintFailure(err)) stillBlocked.push(t);
+          else throw err;
+        }
       }
+      if (stillBlocked.length === pending.length) {
+        // No progress this pass: re-run the first one so its real SqliteError
+        // (naming the actual constraint) is what the caller sees.
+        db.prepare(`DELETE FROM "${stillBlocked[0]}" WHERE company_id = ?`).run(orgId);
+      }
+      pending = stillBlocked;
     }
     db.prepare(`DELETE FROM organizations WHERE id = ?`).run(orgId);
   });
@@ -863,4 +1089,4 @@ function startSandboxSweeper() {
   setInterval(sweep, 60 * 60 * 1000).unref();
 }
 
-module.exports = { createSandbox, cleanupExpiredSandboxes, deleteSandboxOrg, startSandboxSweeper, shiftShape, SANDBOX_EMAIL_DOMAIN, TARGET_PERF };
+module.exports = { createSandbox, cleanupExpiredSandboxes, deleteSandboxOrg, startSandboxSweeper, shiftShape, SANDBOX_EMAIL_DOMAIN, TARGET_PERF, DEMO_PINS };

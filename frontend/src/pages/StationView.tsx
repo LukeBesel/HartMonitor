@@ -13,6 +13,8 @@ import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
 import { tintedChipStyle } from '../utils/contrast';
 import { useIsDark } from '../utils/useIsDark';
+import { fmtMinutes } from '../components/apps/appModel';
+import { displayId, hasCompanyTag } from '../utils/ids';
 
 interface StationViewData {
   station: {
@@ -190,7 +192,9 @@ export default function StationView() {
               <span className="flex items-center gap-1 whitespace-nowrap"><User size={13} /> {data.active_completion.operator_name}</span>
               <span className="flex items-center gap-1 whitespace-nowrap"><Clock size={13} /> {elapsedSince(data.active_completion.started_at)} elapsed</span>
               {data.active_completion.work_order_number && (
-                <span>{data.active_completion.work_order_number} · {data.active_completion.part_name}</span>
+                <span title={hasCompanyTag(data.active_completion.work_order_number) ? data.active_completion.work_order_number : undefined}>
+                  {displayId(data.active_completion.work_order_number)} · {data.active_completion.part_name}
+                </span>
               )}
             </div>
           </div>
@@ -280,8 +284,14 @@ export default function StationView() {
                       <Link to={`/completions/${c.id}`} className="hover:text-blue-600">{c.app_name}</Link>
                     </td>
                     <td className="py-2.5 pr-3 text-xs text-gray-600">{c.operator_name}</td>
-                    <td className="py-2.5 pr-3 text-xs text-gray-500">{c.work_order_number || '—'}</td>
-                    <td className="py-2.5 pr-3 text-xs text-gray-700 text-right tabular-nums">{c.duration_minutes != null && !isNaN(c.duration_minutes) ? `${c.duration_minutes}m` : '—'}</td>
+                    <td className="py-2.5 pr-3 text-xs text-gray-500">
+                      {c.work_order_number
+                        ? <span title={hasCompanyTag(c.work_order_number) ? c.work_order_number : undefined}>{displayId(c.work_order_number)}</span>
+                        : '—'}
+                    </td>
+                    {/* Through the one shared formatter, so "0.1m" here and
+                        "6s" on the run's own page stop being two answers. */}
+                    <td className="py-2.5 pr-3 text-xs text-gray-700 text-right tabular-nums">{fmtMinutes(c.duration_minutes)}</td>
                     <td className="py-2.5 pr-3 text-right">
                       {c.qc_result === 'pass' && <span className="text-xs font-semibold text-green-600">Pass</span>}
                       {c.qc_result === 'fail' && <span className="text-xs font-semibold text-red-600">Fail</span>}
@@ -295,17 +305,17 @@ export default function StationView() {
           </div>
         </div>
 
-        {/* Machine events */}
+        {/* Station events */}
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="font-semibold text-gray-900">Machine Events</h2>
+            <h2 className="font-semibold text-gray-900">Station Events</h2>
             <Link to="/analytics?tab=oee" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
-              <Gauge size={12} /> OEE Tracker
+              <Gauge size={12} /> OEE
             </Link>
           </div>
           <div className="space-y-2.5">
             {recentEvents.length === 0 && (
-              <div className="text-center text-gray-400 text-xs py-6">No events logged. Use the OEE Tracker to log up/down/maintenance events.</div>
+              <div className="text-center text-gray-400 text-xs py-6">No events logged. Log up/down/maintenance events from the OEE tab on App comparison.</div>
             )}
             {recentEvents.map(ev => (
               <div key={ev.id} className="flex items-start gap-2.5 text-xs">
@@ -314,7 +324,7 @@ export default function StationView() {
                   <div className="font-medium text-gray-800 capitalize">{ev.event_type}{ev.reason ? ` — ${ev.reason}` : ''}</div>
                   <div className="text-gray-400">
                     {formatTimeAgo(ev.started_at)}
-                    {ev.duration_minutes != null && ` · ${Math.round(ev.duration_minutes)}m`}
+                    {ev.duration_minutes != null && ` · ${fmtMinutes(ev.duration_minutes)}`}
                   </div>
                 </div>
               </div>

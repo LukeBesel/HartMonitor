@@ -770,6 +770,12 @@ export interface StartContext {
   stationId?: string | null;
   /** Work order id (?wo=) — what. */
   workOrderId?: string | null;
+  /**
+   * Work order OPERATION id (?op=) — which step of a routed job. Only ever
+   * meaningful alongside a work order: it is the operation the dispatch queue
+   * sent this tablet to, and it is what makes the job a ROUTED one.
+   */
+  operationId?: string | null;
   /** A typed / scanned part number, when there is no work order. */
   partNumber?: string | null;
   /** The chosen product type, when the app offers a choice. */
@@ -819,8 +825,78 @@ export function setupNeeded(ctx: StartContext, choices: StartChoices): boolean {
   // What is being built: a work order, or a part number in its place.
   if (!ctx.workOrderId && !String(ctx.partNumber ?? '').trim()) return true;
   // A product type the app offers, nobody has chosen, and no work order fixed.
-  if (choices.productTypeCount > 0 && !choices.productTypeLocked && !ctx.productTypeId) return true;
+  //
+  // THE RULE FOR A ROUTED JOB: a work order released against a routing carries
+  // its app on the OPERATION, and `work_orders.product_type_id` is legitimately
+  // NULL — the routing, not a variant, decides what each station runs. Holding
+  // such a job on the setup screen to demand a product type asks the operator
+  // for a fact the planner deliberately did not record, and it is what stopped
+  // one-tap start working for every routed job on the floor. So: a work order
+  // WITH an operation (?wo= + ?op=, which is what the dispatch queue links to)
+  // does not need a product type. An unrouted job still asks, because there the
+  // product type is the only thing that says which variant is being built.
+  const routedJob = !!ctx.workOrderId && !!ctx.operationId;
+  if (choices.productTypeCount > 0 && !choices.productTypeLocked && !ctx.productTypeId && !routedJob) return true;
   return false;
+}
+
+// ─── Which work orders this app can actually be run against ──────────────────
+
+/** The little a work order has to carry for the player to place it. */
+export interface PlayableWorkOrder {
+  id: string;
+  app_id?: string | null;
+  status?: string | null;
+  released_at?: string | null;
+  current_operation?: { id: string } | null;
+}
+
+/** A job nobody can run any more. */
+function isClosed(w: PlayableWorkOrder): boolean {
+  return w.status === 'completed' || w.status === 'cancelled';
+}
+
+/**
+ * The work orders the player offers for THIS app.
+ *
+ * `work_orders.app_id` alone was the whole filter, and it is NULL on every
+ * routed job: releasing against a routing puts the app on each OPERATION
+ * (`work_order_operations.app_id`) instead. So the picker silently dropped
+ * exactly the jobs the dispatch queue sends people to, and the setup screen
+ * said "— No work order —" about the job the operator had just tapped.
+ *
+ * Three ways in, all of them the job's own facts:
+ *   • the work order names this app itself (the unrouted case);
+ *   • the LINK names the work order (the portal already decided — believe it);
+ *   • one of its operations runs this app (`routedIds`, resolved by the caller
+ *     from GET /work-orders/:id/operations).
+ */
+export function playableWorkOrders<W extends PlayableWorkOrder>(
+  wos: W[],
+  appId: string,
+  linkedWorkOrderId?: string | null,
+  routedIds?: ReadonlySet<string>,
+): W[] {
+  return wos.filter(w => !isClosed(w) && (
+    w.app_id === appId
+    || (!!linkedWorkOrderId && w.id === linkedWorkOrderId)
+    || !!routedIds?.has(w.id)
+  ));
+}
+
+/**
+ * The open work orders worth asking the server about: released jobs that do NOT
+ * already name this app, since those are the only ones whose operations could
+ * add anything. One request each, so the caller caps how many it will make.
+ */
+export function routedLookupCandidates<W extends PlayableWorkOrder>(
+  wos: W[],
+  appId: string,
+  limit = 25,
+): W[] {
+  return wos
+    .filter(w => !isClosed(w) && w.app_id !== appId && (!!w.released_at || !!w.current_operation))
+    .slice(0, limit);
 }
 
 /** A run already open on the same unit, and how long it has been going. */

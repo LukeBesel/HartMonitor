@@ -36,7 +36,7 @@ interface OEEData {
   missing_hint?: string | null;
 }
 
-interface OEEMachine {
+interface OEEStation {
   id: string;
   name: string;
   description: string;
@@ -89,6 +89,12 @@ function elapsedSince(iso: string | null): string {
   return `${Math.floor(hrs / 24)}d ago`;
 }
 
+/** "1 completion" / "4 completions" — the plural this panel kept getting wrong
+ *  on the one station that had run exactly one job. */
+function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
 function MiniBar({ label, value, color, hint }: { label: string; value: number | null; color: string; hint?: string }) {
   const known = value !== null && Number.isFinite(value);
   const safe = known ? (value as number) : 0;
@@ -112,13 +118,13 @@ function MiniBar({ label, value, color, hint }: { label: string; value: number |
   );
 }
 
-function MachineCard({
-  machine,
+function StationCard({
+  station,
   isExpanded,
   onToggleExpand,
   onLogEvent,
 }: {
-  machine: OEEMachine;
+  station: OEEStation;
   isExpanded: boolean;
   onToggleExpand: () => void;
   onLogEvent: (id: string, data: StationEventInput) => Promise<void>;
@@ -135,8 +141,8 @@ function MachineCard({
     getReasonCodes({ kind: 'downtime' }).then(setCodes).catch(() => setCodes([]));
   }, [isExpanded, codes.length]);
 
-  const statusCfg = STATUS_CONFIG[machine.current_status] ?? STATUS_CONFIG.idle;
-  const oee: OEEData = machine.oee ?? {
+  const statusCfg = STATUS_CONFIG[station.current_status] ?? STATUS_CONFIG.idle;
+  const oee: OEEData = station.oee ?? {
     availability: null, performance: null, quality: null, oee: null,
     measurable: false, missing: [],
     uptime_minutes: 0, downtime_minutes: 0, planned_minutes: 0, completions_today: 0,
@@ -154,7 +160,7 @@ function MachineCard({
     setSaving(true);
     setFormError('');
     try {
-      await onLogEvent(machine.id, {
+      await onLogEvent(station.id, {
         event_type: form.event_type,
         ...(requiresCode ? { reason_code_id: form.reason_code_id } : {}),
         ...(form.reason.trim() ? { reason: form.reason.trim() } : {}),
@@ -176,14 +182,14 @@ function MachineCard({
           <div className="flex items-center gap-2 min-w-0">
             <div className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${statusCfg.color}`} />
             <div className="min-w-0">
-              <div className="font-semibold text-gray-900 text-sm truncate">{machine.name}</div>
-              <div className="text-[11px] text-gray-500 truncate">{machine.location}</div>
+              <div className="font-semibold text-gray-900 text-sm truncate">{station.name}</div>
+              <div className="text-[11px] text-gray-500 truncate">{station.location}</div>
             </div>
           </div>
           <div className="text-right flex-shrink-0">
             <div className={`text-[10px] font-medium ${statusCfg.text}`}>{statusCfg.label}</div>
-            {machine.current_status_since && (
-              <div className="text-[10px] text-gray-500 mt-0.5">{elapsedSince(machine.current_status_since)}</div>
+            {station.current_status_since && (
+              <div className="text-[10px] text-gray-500 mt-0.5">{elapsedSince(station.current_status_since)}</div>
             )}
           </div>
         </div>
@@ -222,7 +228,7 @@ function MachineCard({
         <div className="flex items-center justify-between pt-1">
           <div className="flex items-center gap-1 text-[10px] text-gray-500">
             <Cpu size={11} />
-            <span>{oee.completions_today} completions today</span>
+            <span>{plural(oee.completions_today, 'completion')} today</span>
           </div>
           <button
             onClick={onToggleExpand}
@@ -264,12 +270,12 @@ function MachineCard({
 
           {requiresCode && (
             <div>
-              <label className="text-[11px] text-gray-500 mb-1 block" htmlFor={`reason-code-${machine.id}`}>
+              <label className="text-[11px] text-gray-500 mb-1 block" htmlFor={`reason-code-${station.id}`}>
                 Reason <span className="text-red-500">*</span>
               </label>
               {codes.length > 0 ? (
                 <select
-                  id={`reason-code-${machine.id}`}
+                  id={`reason-code-${station.id}`}
                   value={form.reason_code_id}
                   onChange={e => { setFormError(''); setForm(f => ({ ...f, reason_code_id: e.target.value })); }}
                   className="w-full px-3 py-2 rounded-lg text-sm bg-white border border-gray-300 text-gray-900 focus:outline-none focus:border-blue-500 transition-colors"
@@ -329,7 +335,7 @@ function MachineCard({
  * which is the drill-down from here.
  */
 export function OEEPanel() {
-  const [machines, setMachines] = useState<OEEMachine[]>([]);
+  const [stations, setStations] = useState<OEEStation[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -337,7 +343,7 @@ export function OEEPanel() {
   const load = useCallback(async () => {
     try {
       const data = await api.getOEE();
-      setMachines(Array.isArray(data) ? data : []);
+      setStations(Array.isArray(data) ? data : []);
       setLoadError(null);
     } catch (err: any) {
       console.error('Failed to load OEE data', err);
@@ -348,22 +354,22 @@ export function OEEPanel() {
     }
   }, []);
 
-  // Machine state turns over fast on the floor — poll every 30s while visible.
+  // Station state turns over fast on the floor — poll every 30s while visible.
   const auto = useAutoRefresh(load, 30_000);
 
   const handleLogEvent = async (id: string, data: StationEventInput) => {
     // The typed call, because api.logOEEEvent cannot carry a reason code.
-    const updated = await logStationEvent(id, data) as OEEMachine | null;
-    setMachines(prev => prev.map(m => (m.id === id && updated ? updated : m)));
+    const updated = await logStationEvent(id, data) as OEEStation | null;
+    setStations(prev => prev.map(m => (m.id === id && updated ? updated : m)));
   };
 
   // KPI aggregates
-  const totalMachines = machines.length;
-  const runningNow = machines.filter(m => m.current_status === 'running').length;
-  const downNow = machines.filter(m => m.current_status === 'down').length;
-  // Plant-wide OEE averages ONLY the machines whose OEE is actually measurable —
-  // folding un-measurable machines in as zeros would understate the whole plant.
-  const measured = machines.filter(m => typeof m.oee?.oee === 'number');
+  const totalStations = stations.length;
+  const runningNow = stations.filter(m => m.current_status === 'running').length;
+  const downNow = stations.filter(m => m.current_status === 'down').length;
+  // Plant-wide OEE averages ONLY the stations whose OEE is actually measurable —
+  // folding un-measurable stations in as zeros would understate the whole plant.
+  const measured = stations.filter(m => typeof m.oee?.oee === 'number');
   const plantOEE = measured.length > 0
     ? measured.reduce((sum, m) => sum + (m.oee.oee as number), 0) / measured.length
     : null;
@@ -399,15 +405,15 @@ export function OEEPanel() {
         <KpiCard
           icon={<Monitor size={18} className="text-blue-600" />}
           iconBg="bg-blue-50"
-          label="Total Machines"
-          value={String(totalMachines)}
+          label="Stations"
+          value={String(totalStations)}
         />
         <KpiCard
           icon={<CheckCircle size={18} className="text-green-600" />}
           iconBg="bg-green-50"
           label="Running Now"
           value={String(runningNow)}
-          sub={`${totalMachines > 0 ? Math.round((runningNow / totalMachines) * 100) : 0}% of fleet`}
+          sub={`${totalStations > 0 ? Math.round((runningNow / totalStations) * 100) : 0}% of stations`}
         />
         <KpiCard
           icon={<AlertTriangle size={18} className="text-red-500" />}
@@ -422,42 +428,42 @@ export function OEEPanel() {
           label="Plant-wide OEE"
           value={plantOEE === null ? '—' : `${plantOEE.toFixed(1)}%`}
           sub={plantOEE === null
-            ? 'No machine has enough data yet'
-            : `averaged over ${measured.length} of ${totalMachines} machines`}
+            ? 'No station has enough data yet'
+            : `averaged over ${measured.length} of ${totalStations} stations`}
           valueClass={plantOEE === null ? 'text-gray-400' : oeeColor(plantOEE)}
         />
       </div>
 
-      {/* Machine grid */}
+      {/* Station grid */}
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
           {Array.from({ length: 8 }).map((_, i) => (
             <div key={i} className="h-48 rounded-2xl bg-gray-100 animate-pulse" />
           ))}
         </div>
-      ) : loadError && machines.length === 0 ? (
+      ) : loadError && stations.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 gap-3 text-center">
           <AlertTriangle size={28} className="text-red-700" />
-          <p className="text-gray-500 font-medium">Couldn't load machines</p>
+          <p className="text-gray-500 font-medium">Couldn't load stations</p>
           <p className="text-sm text-gray-500">{loadError}</p>
           <button onClick={() => { void auto.refresh(); }} className="btn-secondary">
             <RefreshCw size={14} /> Retry
           </button>
         </div>
-      ) : machines.length === 0 ? (
+      ) : stations.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-gray-500">
           <Activity size={40} className="mb-3 opacity-30" />
-          <div className="font-medium text-gray-500">No machines configured</div>
-          <div className="text-sm mt-1">Add machines to the OEE system to see data here</div>
+          <div className="font-medium text-gray-500">No stations configured</div>
+          <div className="text-sm mt-1">Add stations, then log their up/down events, to see OEE here</div>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {machines.map(machine => (
-            <MachineCard
-              key={machine.id}
-              machine={machine}
-              isExpanded={expandedId === machine.id}
-              onToggleExpand={() => setExpandedId(prev => (prev === machine.id ? null : machine.id))}
+          {stations.map(station => (
+            <StationCard
+              key={station.id}
+              station={station}
+              isExpanded={expandedId === station.id}
+              onToggleExpand={() => setExpandedId(prev => (prev === station.id ? null : station.id))}
               onLogEvent={handleLogEvent}
             />
           ))}

@@ -869,7 +869,7 @@ function PublishModal({
 
           <p className="text-muted" style={{ fontSize: 12.5 }}>
             Choose where to publish <span className="text-ink" style={{ fontWeight: 650 }}>{app.name}</span>. Operators at the selected
-            department / workstation will see it. You can leave these blank to publish without a target.
+            department / station will see it. You can leave these blank to publish without a target.
           </p>
           <Field label="Department">
             <select className="wb-input" value={departmentId} onChange={e => handleDept(e.target.value)}>
@@ -879,16 +879,16 @@ function PublishModal({
               ))}
             </select>
           </Field>
-          <Field label="Workstation">
+          <Field label="Station">
             <select className="wb-input" value={stationId} onChange={e => setStationId(e.target.value)}>
-              <option value="">— No workstation —</option>
+              <option value="">— No station —</option>
               {availableStations.map(s => (
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
             </select>
             {departmentId && availableStations.length === 0 && (
               <p className="mt-1 flex items-center gap-1 text-warn-ink" style={{ fontSize: 11 }}>
-                <MapPin size={11} /> No workstations in this department yet.
+                <MapPin size={11} /> No stations in this department yet.
               </p>
             )}
           </Field>

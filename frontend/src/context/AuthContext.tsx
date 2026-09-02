@@ -8,6 +8,12 @@ interface User {
   email: string;
   display_name: string;
   role: 'developer' | 'manager' | 'supervisor' | 'operator' | 'viewer';
+  /** What a SCREEN prints for `role`. The stored role is a permission level —
+   *  and one of its values, 'developer', is a word no plant calls a person, so
+   *  the API names it ('Owner') and no component invents a label of its own.
+   *  Optional: a session restored from before this field existed has no copy of
+   *  it, so every reader falls back to the raw role. */
+  display_role?: string;
   company_name?: string;
   /** True only for HartMonitor's own staff. Separate from `role`, which says
    *  what someone may do inside their own company — the first user of every

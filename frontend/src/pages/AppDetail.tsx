@@ -1,9 +1,9 @@
 // The one screen for one app: /apps/:id.
 //
-// This app's cycle time used to be reported on five screens — App Detail, Run
-// History, App Analytics, the Apps Dashboard and Operation Analytics — under
-// four different labels, at three different precisions, each behind its own
-// filter bar. The numbers came from the same runs, so the disagreements were
+// This app's cycle time used to be reported on five screens — a detail page, a
+// run history, a per-app statistics page, an apps overview and a per-operation
+// breakdown — under four different labels, at three different precisions, each
+// behind its own filter bar. The numbers came from the same runs, so the disagreements were
 // all presentation, and the one genuinely useful comparison ("who ran it") was
 // six clicks and a dead end away.
 //
@@ -51,6 +51,7 @@ import {
   fmtDateTime, fmtDuration, fmtRelative, isCaptureWidget, measuredSeconds,
   orderedSteps, parseServerTime, pluralize, widgetTypeLabel, widgetsOf,
 } from '../components/apps/appModel';
+import { displayId, hasCompanyTag } from '../utils/ids';
 import {
   DAY_PRESETS, buildCycleTrend, buildHeadlineMetrics, buildOperatorRollup, emptyReasonFor,
   fieldSampleSize, filterRuns, filtersFromQuery, hasNarrowingFilters, hasServerFilters,
@@ -262,7 +263,7 @@ export default function AppDetail() {
     setQuery({ days: String(filters.days) }, true);
   }, [askedFor, filters.days, setQuery]);
 
-  // Runs still on the bench report how long they have been open, so the clock
+  // Runs still running report how long they have been open, so the clock
   // has to move between polls or a live row reads as frozen.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -410,7 +411,7 @@ export default function AppDetail() {
   const cycleTicks = durationTicks(Math.max(0, ...durationData.map(d => d.avg_duration_s ?? 0)));
 
   // What went wrong in this slice: failures the server counted per pass/fail
-  // widget, plus the runs nobody finished. Nothing here is inferred.
+  // field, plus the runs nobody finished. Nothing here is inferred.
   const failedChecks = (analytics?.fields ?? [])
     .filter(f => f.kind === 'boolean' && (f.stats.fail ?? 0) > 0)
     .map(f => ({ label: f.label, fail: f.stats.fail ?? 0, of: (f.stats.pass ?? 0) + (f.stats.fail ?? 0) }))
@@ -609,7 +610,7 @@ export default function AppDetail() {
           >
             <option value="">All work orders</option>
             {(options?.work_orders ?? []).map(wo => (
-              <option key={wo.id} value={wo.id}>{wo.work_order_number}</option>
+              <option key={wo.id} value={wo.id} title={wo.work_order_number}>{displayId(wo.work_order_number)}</option>
             ))}
           </select>
 
@@ -860,7 +861,7 @@ export default function AppDetail() {
                               <span className="min-w-0 flex-1">
                                 <span className="block text-[13px] font-medium text-gray-900 truncate">
                                   {run.pass_fail === 'fail' ? 'Failed a check' : 'Never finished'}
-                                  {run.work_order_number ? ` · ${run.work_order_number}` : ''}
+                                  {run.work_order_number ? ` · ${displayId(run.work_order_number)}` : ''}
                                 </span>
                                 <span className="block text-[11px] text-gray-500 truncate">
                                   {run.operator_name || 'Unknown operator'} · {fmtRelative(run.completed_at ?? run.started_at)}
@@ -909,20 +910,30 @@ export default function AppDetail() {
                     </div>
                   ) : (
                   <ul className="divide-y divide-gray-100">
-                    {(analytics?.fields ?? []).map(field => (
+                    {(analytics?.fields ?? []).map(field => {
+                      const summary = summariseField(field);
+                      const sample = pluralize(fieldSampleSize(field), 'entry', 'entries');
+                      return (
                       <li key={field.widget_id} className="py-2 flex items-baseline justify-between gap-4">
                         <div className="min-w-0">
                           <p className="text-sm font-medium text-gray-800 truncate" title={field.label}>{field.label}</p>
                           {field.step_name && <p className="text-[11px] text-gray-400 truncate">{field.step_name}</p>}
                         </div>
                         <div className="text-right flex-shrink-0 max-w-[55%]">
-                          <p className="text-xs text-gray-700 tabular-nums truncate" title={summariseField(field)}>
-                            {summariseField(field)}
+                          <p className="text-xs text-gray-700 tabular-nums truncate" title={summary}>
+                            {summary}
                           </p>
-                          <p className="text-[11px] text-gray-400">{pluralize(fieldSampleSize(field), 'entry', 'entries')}</p>
+                          {/* A TEXT field has nothing to summarise but its own
+                              count, so its summary already IS "312 entries" —
+                              printing the sample underneath said the same
+                              number twice and read as two measurements. */}
+                          {sample !== summary && (
+                            <p className="text-[11px] text-gray-400">{sample}</p>
+                          )}
                         </div>
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                   )}
                 </section>
@@ -942,7 +953,7 @@ export default function AppDetail() {
                 </div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-gray-500">
                   <span className="flex items-center gap-1"><Layers size={11} /> {pluralize(shape.stepCount, 'step')}</span>
-                  <span className="flex items-center gap-1"><MousePointerClick size={11} /> {pluralize(shape.widgetCount, 'widget')}</span>
+                  <span className="flex items-center gap-1"><MousePointerClick size={11} /> {pluralize(shape.widgetCount, 'field')}</span>
                   <span className="flex items-center gap-1"><Zap size={11} /> {pluralize(shape.triggerCount, 'trigger')}</span>
                 </div>
               </header>
@@ -951,7 +962,7 @@ export default function AppDetail() {
                 <EmptyState
                   icon={Layers}
                   title="This app has no content yet"
-                  description="Open the builder and drop a few widgets onto the first step — instructions, a photo, a pass/fail check."
+                  description="Open the builder and drop a few fields onto the first step — instructions, a photo, a pass/fail check."
                   action={canEdit ? (
                     <Link to={`/apps/${app.id}/build`} className="btn-primary">
                       <Edit3 size={14} /> Open the builder
@@ -999,7 +1010,7 @@ export default function AppDetail() {
                             )}
 
                             {widgets.length === 0 ? (
-                              <p className="text-[11px] text-gray-400 mt-2 italic">No widgets on this step yet</p>
+                              <p className="text-[11px] text-gray-400 mt-2 italic">No fields on this step yet</p>
                             ) : (
                               <ul className="flex flex-wrap gap-1.5 mt-2">
                                 {widgets.map((w, wi) => {
@@ -1035,7 +1046,7 @@ export default function AppDetail() {
               {shape.captureCount > 0 && (
                 <p className="text-[11px] text-gray-400 mt-4 flex items-center gap-1.5">
                   <Info size={12} className="flex-shrink-0" />
-                  {pluralize(shape.captureCount, 'widget')} on this app record a value on every run — those are the
+                  {pluralize(shape.captureCount, 'field')} on this app record a value on every run — those are the
                   columns you get in the CSV export.
                 </p>
               )}
@@ -1115,7 +1126,10 @@ export default function AppDetail() {
                         </span>
                         {bindings.work_orders.slice(0, 4).map(wo => (
                           <Link key={wo.id} to="/schedule" className="text-[12px] hover:underline">
-                            {wo.work_order_number} <span className="text-gray-400">· {wo.part_number} · {wo.quantity_completed}/{wo.quantity}</span>
+                            <span title={hasCompanyTag(wo.work_order_number) ? wo.work_order_number : undefined}>{displayId(wo.work_order_number)}</span>
+                            {/* The part number is the CUSTOMER's own string, so
+                                it is printed exactly as they typed it. */}
+                            <span className="text-gray-400"> · {wo.part_number} · {wo.quantity_completed}/{wo.quantity}</span>
                           </Link>
                         ))}
                       </span>
@@ -1224,7 +1238,9 @@ export default function AppDetail() {
                           )}
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-600">
-                          {run.work_order_number || <span className="text-gray-400">—</span>}
+                          {run.work_order_number
+                            ? <span title={hasCompanyTag(run.work_order_number) ? run.work_order_number : undefined}>{displayId(run.work_order_number)}</span>
+                            : <span className="text-gray-400">—</span>}
                         </td>
                         <td className="px-4 py-3 text-xs text-gray-600">
                           {run.product_type_name || <span className="text-gray-400">—</span>}
@@ -1546,7 +1562,7 @@ function LiveBand({ runs, now }: {
     <section className="card border-blue-100 bg-blue-50/40 p-4">
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <span className="w-2 h-2 rounded-full bg-blue-500 live-pulse" aria-hidden="true" />
-        <h2 className="font-semibold text-gray-900 text-sm">On the bench right now</h2>
+        <h2 className="font-semibold text-gray-900 text-sm">Running now</h2>
         <span className="text-xs text-gray-500">{pluralize(runs.length, 'run')} in progress</span>
       </div>
       <ul className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">
@@ -1561,7 +1577,7 @@ function LiveBand({ runs, now }: {
                   {run.operator_name || 'Unknown operator'}
                 </span>
                 <span className="block text-[11px] text-gray-400 truncate">
-                  {run.work_order_number ? `${run.work_order_number} · ` : ''}
+                  {run.work_order_number ? `${displayId(run.work_order_number)} · ` : ''}
                   started {fmtRelative(run.started_at).toLowerCase()}
                 </span>
               </span>
@@ -1716,7 +1732,7 @@ function Unset({ children }: { children: React.ReactNode }) {
 }
 
 // ── Field cards ──────────────────────────────────────────────────────────────
-// What each capture widget actually recorded, in the shape the value has: a
+// What each capture field actually recorded, in the shape the value has: a
 // pass/fail split with its yield, a number's spread and daily trend, an
 // option's top values. One line per field says a field was recorded; these say
 // what it said.

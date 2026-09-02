@@ -14,7 +14,7 @@ import { DAY_LETTERS, formatShiftRange, parseDays } from '../utils/shifts';
 import type { SiteShift } from '../utils/shifts';
 
 // Enterprise multi-level drill-down:
-//   Facility (site) → Department → Work Center (station) → Operations (completions)
+//   Facility (site) → Department → Station → Operations (completions)
 // Reuses the existing sites / departments / stations / completions data so there
 // are no schema changes — it's a roll-up view for multi-facility operators.
 
@@ -95,7 +95,7 @@ export default function Facilities() {
           </div>
           <h1 className="text-xl font-bold text-gray-900">Facilities is an Enterprise feature</h1>
           <p className="text-gray-500 mt-2 max-w-md mx-auto text-sm">
-            Roll up multiple facilities and drill down into departments, work centers, and
+            Roll up multiple facilities and drill down into departments, stations, and
             individual operations from one place. Upgrade to Enterprise to unlock it.
           </p>
           <button onClick={() => navigate('/settings?tab=plan')} className="btn-primary mt-5">
@@ -116,7 +116,7 @@ export default function Facilities() {
           </div>
           <div className="min-w-0">
             <h1 className="text-lg sm:text-xl font-bold text-gray-900 truncate">Facilities</h1>
-            <p className="text-xs text-gray-500 hidden sm:block">Drill from facility to department to work center to operations</p>
+            <p className="text-xs text-gray-500 hidden sm:block">Drill from facility to department to station to operations</p>
           </div>
         </div>
         <button onClick={load} className="btn-secondary flex items-center gap-1.5 flex-shrink-0" title="Refresh">
@@ -187,7 +187,7 @@ export default function Facilities() {
                       company-wide without being tied to a facility, so a 0 here
                       means "none assigned to this site", not "none exist". */}
                   <StatCard icon={Layers} label="departments assigned" value={s.department_count ?? 0} color="#7c3aed" />
-                  <StatCard icon={Monitor} label="work centers assigned" value={s.station_count ?? 0} color="#0891b2" />
+                  <StatCard icon={Monitor} label="stations assigned" value={s.station_count ?? 0} color="#0891b2" />
                   <StatCard icon={ClipboardList} label="open work orders" value={s.work_order_count ?? 0} color="#ea580c" />
                 </div>
               </button>
@@ -216,7 +216,7 @@ export default function Facilities() {
                 </div>
               </div>
               <div className="mt-3 space-y-1">
-                <StatCard icon={Monitor} label="work centers" value={d.station_count ?? 0} color="#0891b2" />
+                <StatCard icon={Monitor} label="stations" value={d.station_count ?? 0} color="#0891b2" />
                 <StatCard icon={ClipboardList} label="open work orders" value={d.work_order_count ?? d.open_work_orders ?? 0} color="#ea580c" />
               </div>
             </button>
@@ -226,7 +226,7 @@ export default function Facilities() {
 
       {!loading && !error && current.level === 'workcenters' && (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {stations.length === 0 && <Empty label="No work centers in this department yet." />}
+          {stations.length === 0 && <Empty label="No stations in this department yet." />}
           {stations.map(st => (
             <button
               key={st.id}
@@ -254,7 +254,7 @@ export default function Facilities() {
       {!loading && !error && current.level === 'operations' && (
         <div className="bg-white rounded-2xl border border-gray-200 overflow-hidden">
           {operations.length === 0 ? (
-            <Empty label="No operations have been run at this work center yet." />
+            <Empty label="No operations have been run at this station yet." />
           ) : (
             <div className="divide-y divide-gray-100">
               {operations.map(op => (

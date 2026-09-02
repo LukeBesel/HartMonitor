@@ -43,7 +43,7 @@ export function ThemeTab() {
 
   return (
     <div className="space-y-8 max-w-2xl">
-      {/* Theme change confirmation (developer only) */}
+      {/* Theme change confirmation (Owner only) */}
       {confirmTheme && (
         <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full">
@@ -67,13 +67,13 @@ export function ThemeTab() {
       {!isDeveloper && (
         <div className="flex items-center gap-2 px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-500 mb-4">
           <Key size={13} className="text-gray-400 flex-shrink-0" />
-          Theme changes are restricted to developers. Contact your developer to update the color scheme.
+          Only the Owner can change the theme. Ask them to update the color scheme.
         </div>
       )}
 
       {/* Color Themes grid */}
       <div>
-        <SectionHeader title="Color Themes" subtitle={isDeveloper ? "Choose an accent color for your workspace" : "Theme is set by your developer"} />
+        <SectionHeader title="Color Themes" subtitle={isDeveloper ? "Choose an accent color for your company" : "Theme is set by the Owner"} />
         <div className={`grid grid-cols-4 gap-4 ${!isDeveloper ? 'opacity-50 pointer-events-none' : ''}`}>
           {THEME_PRESETS.map((preset) => {
             const isSelected = theme.name === preset.name;
@@ -104,7 +104,7 @@ export function ThemeTab() {
           })}
         </div>
 
-        {/* Custom accent + secondary colors — developer only */}
+        {/* Custom accent + secondary colors — Owner only */}
         {isDeveloper && (
         <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
           {/* Primary / accent */}

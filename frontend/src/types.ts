@@ -430,8 +430,8 @@ export interface AttentionItem {
 }
 
 // ── Andon / help requests ─────────────────────────────────────────────────────
-// One mechanism for every "request help": the player's Request-help sheet, the
-// Request-help action in the app shell and the Andon Board all write an
+// One mechanism for every call for help: the player's Call-for-help sheet, the
+// Call-for-help action in the app shell and the Andon Board all write an
 // andon_call tagged with the team or department being alerted. It notifies
 // people — it does not dial anyone.
 

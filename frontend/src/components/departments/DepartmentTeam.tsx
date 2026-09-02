@@ -1,6 +1,6 @@
 // ─── Department team — who gets this department's alerts ─────────────────────
 // The routing layer made visible: put a person on a department with a role, and
-// help requests aimed at that role reach them by email, in the app, or both.
+// calls aimed at that role reach them by email, in the app, or both.
 // A person can sit on several departments with a different role in each.
 
 import { useCallback, useEffect, useState } from 'react';
@@ -130,7 +130,7 @@ export default function DepartmentTeam({ departmentId, departmentName }: {
         )}
       </div>
       <p className="text-xs text-gray-500 mb-4">
-        People here receive {departmentName}'s help requests. A request for a role — Quality, Maintenance,
+        People here receive {departmentName}'s calls. A call for a role — Quality, Maintenance,
         Materials, Supervisor — goes to whoever holds that role here first.
       </p>
 

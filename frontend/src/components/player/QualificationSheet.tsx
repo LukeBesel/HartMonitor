@@ -9,7 +9,7 @@
 // certificate ran out, if it ever existed. Then one field: a supervisor's PIN.
 //
 // Cancel goes back to the floor through the player's own exit helper, so the
-// operator stays clocked in and does not have to enter their PIN again to try
+// operator stays signed in and does not have to enter their PIN again to try
 // something else.
 
 import { useState } from 'react';
@@ -39,10 +39,15 @@ export interface QualificationSheetProps {
   error: string;
   onCancel: () => void;
   onApprove: (pin: string) => void;
+  /** The supervisor PIN this SANDBOX hands out, when the server said this is a
+   *  sandbox (GET /api/auth/me → demo_hints). Absent everywhere else, and an
+   *  absent value renders nothing — a real plant must never be shown a PIN. */
+  demoSupervisorPin?: string | null;
 }
 
 export default function QualificationSheet({
   appName, operatorName, state, expiryDate, submitting, error, onCancel, onApprove,
+  demoSupervisorPin,
 }: QualificationSheetProps) {
   const [pin, setPin] = useState('');
 
@@ -102,6 +107,15 @@ export default function QualificationSheet({
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } }}
             />
           </div>
+
+          {/* A visitor exploring a demo has no supervisor to fetch and no way to
+              guess the PIN, so the sandbox says it. The server decides whether
+              this is a sandbox; this screen never guesses. */}
+          {demoSupervisorPin && (
+            <p data-testid="demo-pin-hint" style={{ fontSize: 13, color: 'var(--p-muted)' }}>
+              Demo: supervisor PIN <span className="p-mono" style={{ color: 'var(--p-ink-2)' }}>{demoSupervisorPin}</span>
+            </p>
+          )}
 
           {error && <div className="p-field-error">{error}</div>}
 

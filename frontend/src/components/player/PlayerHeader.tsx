@@ -4,6 +4,7 @@ import {
   LifeBuoy,
 } from 'lucide-react';
 import { formatDur, operatorDisplayName, UNNAMED_OPERATOR } from './runtime';
+import { displayId, hasCompanyTag } from '../../utils/ids';
 
 export interface PlayerHeaderProps {
   appName: string;
@@ -124,7 +125,11 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
           )}
           {workOrderNumber && (
             <span className="p-chip p-chip-gold">
-              <span className="p-mono">{workOrderNumber}</span>
+              {/* On the floor the traveller says WO-1001, so the chip does too —
+                the stored id stays in the title for a support ticket. */}
+            <span className="p-mono" title={hasCompanyTag(workOrderNumber) ? workOrderNumber : undefined}>
+              {displayId(workOrderNumber)}
+            </span>
               {partName && <span style={{ color: 'var(--p-ink-2)' }}>· {partName}</span>}
             </span>
           )}
@@ -171,18 +176,18 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
           </span>
           {/* The name shows at every width. Phone screens used to get the bare
               initial alone, which reads as a mystery badge — "E" — rather than
-              as who is clocked in. */}
+              as who is signed in. */}
           <span className="max-w-[72px] sm:max-w-[120px] truncate">{who}</span>
           {operatorVerified && <ShieldCheck size={14} style={{ color: 'var(--p-good)' }} />}
         </span>
 
-        {/* Request help — the one action an operator must never have to hunt
+        {/* Call for help — the one action an operator must never have to hunt
             for. Always visible in the shell, 56px tall, and it turns into a
             live indicator while a request from this run is still open. */}
         <button
           onClick={onRequestHelp}
           className="flex items-center gap-2 rounded-xl transition-colors flex-shrink-0"
-          aria-label={helpRequested ? 'Help is on the way — open the request' : 'Request help'}
+          aria-label={helpRequested ? 'Help is on the way — open the call' : 'Call for help'}
           style={{
             minHeight: 56, padding: '0 16px', fontSize: 15, fontWeight: 700,
             background: helpRequested ? 'var(--p-live)' : 'rgba(224, 49, 49, 0.14)',
@@ -197,7 +202,7 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
           {/* Labeled at every width. A bare red icon on a phone reads as
               danger — or as nothing at all — not as the way to call for help. */}
           <span className="sm:hidden">{helpRequested ? 'On the way' : 'Help'}</span>
-          <span className="hidden sm:inline">{helpRequested ? 'Help requested' : 'Request help'}</span>
+          <span className="hidden sm:inline">{helpRequested ? 'Help called' : 'Call for help'}</span>
         </button>
 
         {/* ⋯ menu */}
@@ -232,7 +237,7 @@ export default function PlayerHeader(props: PlayerHeaderProps) {
                 style={{ color: '#ffb3b3' }}
                 onClick={() => { setMenuOpen(false); onRequestHelp(); }}
               >
-                <LifeBuoy size={17} /> {helpRequested ? 'Help requested — view' : 'Request help'}
+                <LifeBuoy size={17} /> {helpRequested ? 'Help called — view' : 'Call for help'}
               </button>
               <button className={menuItem} onClick={() => { setMenuOpen(false); onReportProblem(); }}>
                 <AlertTriangle size={17} /> Report quality issue

@@ -15,8 +15,8 @@ export function BillingBanner() {
 
   if (!user || dismissed) return null;
 
-  // Throwaway sandbox workspace — steer visitors toward keeping their work.
-  // "Keep my work" opens the claim dialog, which promotes THIS workspace into a
+  // Throwaway sandbox company — steer visitors toward keeping their work.
+  // "Keep my work" opens the claim dialog, which promotes THIS company into a
   // real account. It used to link to plain signup, which started an empty
   // organisation and left everything the visitor built to be swept in 24 hours.
   if (user.email?.endsWith('@sandbox.hartmonitor.local')) {
@@ -30,11 +30,11 @@ export function BillingBanner() {
           <Zap size={14} className="shrink-0" />
           {/* The long sentence only appears where it actually fits. At 640px it
               was chosen and then truncated to "explore ever…", which loses the
-              one fact the banner exists to state — that the workspace resets. */}
+              one fact the banner exists to state — that the demo resets. */}
           <span className="flex-1 min-w-0 truncate">
             <span className="lg:hidden"><strong>Demo</strong> — resets in 24h</span>
             <span className="hidden lg:inline">
-              You're in a <strong>demo workspace</strong> — explore everything freely. It resets after 24 hours.
+              You're in a <strong>demo company</strong> — explore everything freely. It resets after 24 hours.
             </span>
           </span>
           {/* Back to the marketing site. `/` renders the landing page even while

@@ -4,6 +4,7 @@ import type { Step } from '../../types';
 import { useOutboxDepth } from '../../utils/offlineQueue';
 import type { OutboxItem } from '../../utils/offlineQueue';
 import { formatDur, operatorDisplayName } from './runtime';
+import { pluralize } from '../apps/appModel';
 
 const CONFETTI_COLORS = ['#f43f5e', '#f59e0b', '#10b981', '#0ea5e9', '#8b5cf6', '#ec4899'];
 
@@ -171,7 +172,7 @@ export default function RunSummary(props: RunSummaryProps) {
           <div className="p-well flex items-start gap-2.5 px-4 py-3 mb-4">
             <AlertTriangle size={15} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--p-warn)' }} />
             <div style={{ fontSize: 12.5, color: 'var(--p-warn-ink)' }}>
-              <span style={{ fontWeight: 650 }}>Takt exceeded</span> on {taktExceededSteps.length} step{taktExceededSteps.length > 1 ? 's' : ''}: {taktExceededSteps.map(i => steps[i]?.name).filter(Boolean).join(', ')}
+              <span style={{ fontWeight: 650 }}>Takt exceeded</span> on {pluralize(taktExceededSteps.length, 'step')}: {taktExceededSteps.map(i => steps[i]?.name).filter(Boolean).join(', ')}
             </div>
           </div>
         )}

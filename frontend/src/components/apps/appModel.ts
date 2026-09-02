@@ -284,7 +284,7 @@ export function stepTimesTotal(stepTimes: StepTimes): number | null {
  * wall clock from start to finish, otherwise null. Keeping the two in step is
  * what stops a run's own page disagreeing with the history row that links to it.
  *
- * A run still on the bench is not a short run — it has no length yet. Ask
+ * A run that is still running is not a short run — it has no length yet. Ask
  * `elapsedSeconds` for that one.
  */
 export function runDurationSeconds(run: {
@@ -302,7 +302,7 @@ export function runDurationSeconds(run: {
   return measuredSeconds((finished.getTime() - started.getTime()) / 1000);
 }
 
-/** Seconds a still-open run has been on the bench, counted from `now`. */
+/** Seconds a still-open run has been running, counted from `now`. */
 export function elapsedSeconds(startedAt: string | null | undefined, now: number = Date.now()): number | null {
   const started = parseServerTime(startedAt);
   if (!started) return null;

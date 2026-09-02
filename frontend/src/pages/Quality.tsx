@@ -10,6 +10,7 @@ import ActivityLog from '../components/shared/ActivityLog';
 import EmptyState from '../components/shared/EmptyState';
 import SavedViewsBar from '../components/shared/SavedViewsBar';
 import { useAuth } from '../context/AuthContext';
+import { displayId, hasCompanyTag } from '../utils/ids';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -139,7 +140,12 @@ function NCRCard({ ncr, selected, onClick }: { ncr: NCR; selected: boolean; onCl
         {/* Left */}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-mono text-xs text-gray-400">{ncr.ncr_number}</span>
+            <span
+              className="font-mono text-xs text-gray-400"
+              title={hasCompanyTag(ncr.ncr_number) ? ncr.ncr_number : undefined}
+            >
+              {displayId(ncr.ncr_number)}
+            </span>
             {overdue && (
               <span className="text-xs font-bold text-red-600 uppercase tracking-wide">Overdue</span>
             )}
@@ -169,7 +175,10 @@ function NCRCard({ ncr, selected, onClick }: { ncr: NCR; selected: boolean; onCl
             )}
             {ncr.work_order_number && (
               <span className="flex items-center gap-1">
-                <Briefcase size={11} /> {ncr.work_order_number}
+                <Briefcase size={11} />
+                <span title={hasCompanyTag(ncr.work_order_number) ? ncr.work_order_number : undefined}>
+                  {displayId(ncr.work_order_number)}
+                </span>
               </span>
             )}
             {ncr.app_name && (
@@ -422,7 +431,12 @@ function NCRDetail({ ncrId, onClose, onRefresh }: {
       <div className="flex items-start justify-between p-5 border-b border-gray-100">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 mb-1">
-            <span className="font-mono text-xs text-gray-400">{ncr.ncr_number}</span>
+            <span
+              className="font-mono text-xs text-gray-400"
+              title={hasCompanyTag(ncr.ncr_number) ? ncr.ncr_number : undefined}
+            >
+              {displayId(ncr.ncr_number)}
+            </span>
             {overdue && (
               <span className="text-xs font-bold text-red-600 uppercase tracking-wide">Overdue</span>
             )}
@@ -493,7 +507,9 @@ function NCRDetail({ ncrId, onClose, onRefresh }: {
                 <div className="flex items-center gap-2 text-sm text-gray-700">
                   <Briefcase size={14} className="text-gray-400" />
                   <span className="font-medium">Work Order:</span>
-                  <span>{ncr.work_order_number}</span>
+                  <span title={hasCompanyTag(ncr.work_order_number) ? ncr.work_order_number : undefined}>
+                    {displayId(ncr.work_order_number)}
+                  </span>
                 </div>
               )}
               {ncr.app_name && (
@@ -503,6 +519,10 @@ function NCRDetail({ ncrId, onClose, onRefresh }: {
                   <span>{ncr.app_name}</span>
                 </div>
               )}
+              {/* A SKU is the customer's own numbering, not an id this
+                  product mints — printed exactly as they typed it. Trimming a
+                  leading group off "100234-01" would leave a planner reading
+                  "01". */}
               {ncr.item_sku && (
                 <div className="flex items-center gap-2 text-sm text-gray-700">
                   <Package size={14} className="text-gray-400" />
@@ -774,7 +794,11 @@ function CreateNCRModal({ onClose, onCreated }: { onClose: () => void; onCreated
               <label className="text-xs font-semibold text-gray-600 block mb-1">Link to Work Order</label>
               <select className="input-field" value={form.work_order_id} onChange={e => set('work_order_id', e.target.value)}>
                 <option value="">— None —</option>
-                {workOrders.map(w => <option key={w.id} value={w.id}>{w.work_order_number} — {w.part_name}</option>)}
+                {workOrders.map(w => (
+                  <option key={w.id} value={w.id} title={w.work_order_number}>
+                    {displayId(w.work_order_number)} — {w.part_name}
+                  </option>
+                ))}
               </select>
             </div>
             <div>

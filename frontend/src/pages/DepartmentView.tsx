@@ -2,7 +2,7 @@ import { useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { getFloorSnapshot } from '../api/floor';
-import type { FloorSnapshot } from '../api/floor';
+import type { FloorSnapshot, MeasurementWindow } from '../api/floor';
 import { onTrackSentence } from '../utils/floorWording';
 import {
   CheckCircle2, Activity, TrendingUp, Clock, RefreshCw,
@@ -11,7 +11,8 @@ import {
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from 'recharts';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
-import { fmtDuration } from '../components/apps/appModel';
+import { fmtDuration, durationBasisLabel, durationBasisNote } from '../components/apps/appModel';
+import { displayId, hasCompanyTag } from '../utils/ids';
 import DepartmentTeam from '../components/departments/DepartmentTeam';
 
 interface DeptViewData {
@@ -61,6 +62,32 @@ const SCHEDULE_PILL: Record<string, string> = {
   not_started: 'bg-gray-100 text-gray-600',
   completed:   'bg-blue-100 text-blue-700',
 };
+
+/** "1 station" / "2 stations" — the one place this page pluralises a count. */
+function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
+}
+
+/**
+ * The window a measured number was taken over, in the words a supervisor uses.
+ *
+ * A pass rate with no window beside it is the reason two screens "disagree":
+ * one is reporting today and the other everything ever recorded, and nothing on
+ * either says so.
+ */
+function windowLabel(window: MeasurementWindow | null | undefined): string {
+  if (window === 'today') return 'today';
+  if (window === '7d') return 'last 7 days';
+  if (window === '30d') return 'last 30 days';
+  if (window === 'all') return 'all time';
+  return '';
+}
+
+/** "65 inspected runs · today" — the sample and the window, joined once. */
+function withWindow(sample: string, window: MeasurementWindow | null | undefined): string {
+  const w = windowLabel(window);
+  return w ? `${sample} · ${w}` : sample;
+}
 
 function elapsedSince(iso: string) {
   const t = new Date(iso).getTime();
@@ -183,8 +210,8 @@ export default function DepartmentView() {
             <h1 className="text-2xl font-bold text-gray-900">{dept.name}</h1>
             <p className="text-gray-500 text-sm">
               {dept.manager_name && <>Manager: {dept.manager_name} · </>}
-              {dept.headcount > 0 && <>{dept.headcount} operators · </>}
-              {stations.length} station{stations.length !== 1 ? 's' : ''}
+              {dept.headcount > 0 && <>{plural(dept.headcount, 'operator')} · </>}
+              {plural(stations.length, 'station')}
             </p>
           </div>
         </div>
@@ -211,17 +238,31 @@ export default function DepartmentView() {
           label="Running now"
           value={snapshot ? snapshot.running_now : '—'}
         />
+        {/* An average and a percentage each say what they were measured over —
+            how many runs, on what basis, in what window. Without that a reader
+            cannot tell "97%" over 65 inspections from "97%" over one, and two
+            screens reporting different windows look like a broken system. */}
         <KPICard
           icon={<Clock size={18} className="text-orange-600" />} bg="bg-orange-50"
           label="Average cycle time"
           value={snapshot?.avg_cycle_seconds != null ? fmtDuration(snapshot.avg_cycle_seconds) : '—'}
-          note={snapshot?.avg_cycle_seconds != null ? undefined : snapshot?.avg_cycle_reason ?? 'no run has finished yet'}
+          valueTitle={snapshot?.avg_cycle_seconds != null ? durationBasisNote(snapshot.avg_cycle_basis) : undefined}
+          note={snapshot?.avg_cycle_seconds != null
+            ? withWindow(
+                `${plural(snapshot.avg_cycle_sample, 'run')}${durationBasisLabel(snapshot.avg_cycle_basis) ? ` · ${durationBasisLabel(snapshot.avg_cycle_basis)}` : ''}`,
+                snapshot.avg_cycle_window,
+              )
+            : snapshot?.avg_cycle_reason ?? 'no run has finished yet'}
+          testId="dept-avg-cycle"
         />
         <KPICard
           icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50"
           label="Pass rate"
           value={snapshot?.pass_rate != null ? `${snapshot.pass_rate}%` : '—'}
-          note={snapshot?.pass_rate != null ? undefined : snapshot?.pass_rate_reason ?? 'no pass/fail result recorded yet'}
+          note={snapshot?.pass_rate != null
+            ? withWindow(plural(snapshot.pass_rate_sample, 'inspected run'), snapshot.pass_rate_window)
+            : snapshot?.pass_rate_reason ?? 'no pass/fail result recorded yet'}
+          testId="dept-pass-rate"
         />
       </div>
 
@@ -297,7 +338,12 @@ export default function DepartmentView() {
               <div key={wo.id} className="border border-gray-100 rounded-lg p-3">
                 <div className="flex items-center justify-between mb-1.5">
                   <div className="flex items-center gap-2">
-                    <span className="font-semibold text-xs text-gray-900">{wo.work_order_number}</span>
+                    <span
+                      className="font-semibold text-xs text-gray-900"
+                      title={hasCompanyTag(wo.work_order_number) ? wo.work_order_number : undefined}
+                    >
+                      {displayId(wo.work_order_number) || '—'}
+                    </span>
                     <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium ${SCHEDULE_PILL[wo.schedule_status] ?? 'bg-gray-100 text-gray-600'}`}>
                       {wo.schedule_status.replace('_', ' ')}
                     </span>
@@ -343,7 +389,7 @@ export default function DepartmentView() {
                 <div className="text-center text-gray-400 text-xs py-6">No runs recorded here yet</div>
               )}
               {recentCompletions.slice(0, 8).map(c => {
-                // A run still on the bench has elapsed time, not a cycle time.
+                // A run that is still running has elapsed time, not a cycle time.
                 // Printing it unlabelled would quietly fold a job that has not
                 // finished into the reader's sense of what a cycle costs.
                 const running = c.status === 'in_progress';
@@ -373,7 +419,7 @@ export default function DepartmentView() {
         </div>
       </div>
 
-      {/* Who this department's help requests reach.
+      {/* Who this department's calls reach.
           Last on the page on purpose. It is a setup panel, not production
           status, and on a phone its "nobody is here yet" state is a whole
           screen of scrolling between the reader and the numbers they came
@@ -383,16 +429,19 @@ export default function DepartmentView() {
   );
 }
 
-function KPICard({ icon, bg, label, value, note, testId }: {
+function KPICard({ icon, bg, label, value, note, testId, valueTitle }: {
   icon: React.ReactNode; bg: string; label: string; value: string | number;
-  /** Why the value is a dash. Present only when there is nothing to report. */
+  /** What the number was measured over, or why it is a dash. Never absent on a
+   *  measured average or percentage — a figure with no sample beside it is a
+   *  figure nobody can check. */
   note?: string;
   testId?: string;
+  valueTitle?: string;
 }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-5" data-testid={testId}>
       <div className={`w-9 h-9 ${bg} rounded-lg flex items-center justify-center mb-3`}>{icon}</div>
-      <div className="text-2xl font-bold text-gray-900 tabular-nums">{value}</div>
+      <div className="text-2xl font-bold text-gray-900 tabular-nums" title={valueTitle}>{value}</div>
       <div className="text-xs text-gray-500 mt-0.5">{label}</div>
       {note && <div className="text-[11px] text-gray-400 mt-0.5">{note}</div>}
     </div>

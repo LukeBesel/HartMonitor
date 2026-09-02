@@ -1,5 +1,5 @@
 // ─── Andon Board ──────────────────────────────────────────────────────────────
-// The responder's side of the ONE request-help mechanism. Every alert — raised
+// The responder's side of the ONE call-for-help mechanism. Every call — raised
 // from the operator player, from the app shell or from this page — lands here
 // tagged with WHO IS NEEDED (a function team or one of the company's
 // departments), the place it came from and the run context behind it.
@@ -25,6 +25,7 @@ import type { DepartmentOption } from '../hooks/useDepartmentFilter';
 import LastRefreshed from '../components/shared/LastRefreshed';
 import DepartmentFilter from '../components/shared/DepartmentFilter';
 import { ANDON_TEAMS, ANDON_TEAM_ORDER, teamConfig, formatAge, targetLabel, targetPayload } from '../config/andonTeams';
+import { displayId, hasCompanyTag } from '../utils/ids';
 import type { AlertTarget } from '../config/andonTeams';
 import { subscribeRealtime, isAndonEvent } from '../utils/realtime';
 import type { AndonCallType, AndonPriority, AndonStatus, AndonTeam, Station } from '../types';
@@ -67,7 +68,7 @@ const TEAM_CHIP: Record<AndonTeam, string> = {
 };
 const TEAM_CHIP_FALLBACK = 'bg-gray-700/40 text-gray-300 border-gray-600';
 
-// Selected-tile fill in the request-help modal.
+// Selected-tile fill in the call-for-help modal.
 const TEAM_BUTTON: Record<AndonTeam, string> = {
   quality:     'bg-purple-600 hover:bg-purple-700',
   supervisor:  'bg-blue-600 hover:bg-blue-700',
@@ -123,6 +124,29 @@ function ResponseClock({ call, now }: { call: AndonCallLive; now: number }) {
       Respond by {clockAt(call.respond_by)} · {late ? `${fmtDuration(-left)} over` : `${fmtDuration(left)} left`}
     </span>
   );
+}
+
+/**
+ * A note somebody wrote about a call, with any id in it read the way the floor
+ * reads it.
+ *
+ * The escalation and resolution notes are sentences with an id in the middle —
+ * "Escalated to maintenance — 6BDD57-MWO-100 opened; station stays down". The
+ * shared helper trims a company tag off an id that IS the whole string, so the
+ * sentence is split into words and each word handed to that ONE helper. No
+ * second rule about what a tag looks like lives here; a word that is not a
+ * tagged id of a family this product issues comes back exactly as it was
+ * written, which is what has to happen to the rest of the sentence.
+ */
+function noteText(text: string | null | undefined): string {
+  if (!text) return '';
+  return String(text).split(/(\s+)/).map(part => displayId(part)).join('');
+}
+
+/** "1 call" / "3 calls" — this board counts calls in a dozen places and a
+ *  bare "1 calls" is the kind of thing a plant manager stops trusting. */
+function plural(n: number, one: string, many = `${one}s`): string {
+  return `${n} ${n === 1 ? one : many}`;
 }
 
 /** Red, because an escalated call is one nobody answered — not a status change
@@ -327,17 +351,17 @@ function TargetsPanel() {
   );
 }
 
-// ── Request-help modal ────────────────────────────────────────────────────────
+// ── Call-for-help modal ───────────────────────────────────────────────────────
 // The same targets the player offers: four function teams plus the company's
 // own departments. Raised from this page there is no run context to attach.
 
-interface RequestHelpModalProps {
+interface CallForHelpModalProps {
   departments: DepartmentOption[];
   onClose: () => void;
   onCreated: () => void;
 }
 
-function RequestHelpModal({ departments, onClose, onCreated }: RequestHelpModalProps) {
+function CallForHelpModal({ departments, onClose, onCreated }: CallForHelpModalProps) {
   const [target, setTarget] = useState<AlertTarget | null>(null);
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
@@ -376,7 +400,7 @@ function RequestHelpModal({ departments, onClose, onCreated }: RequestHelpModalP
       onCreated();
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to send the request.');
+      setError(err instanceof Error ? err.message : 'Failed to send the call.');
     } finally {
       setSubmitting(false);
     }
@@ -726,7 +750,7 @@ export default function Andon() {
   const teamCounts = useMemo(() => summary?.by_team ?? {}, [summary]);
 
   // What the board is currently narrowed to, for the empty state: "Nothing open
-  // for Assembly · Quality" beats "No open help requests" when the manager has
+  // for Assembly · Quality" beats "No open calls" when the manager has
   // in fact only asked about one corner of the plant.
   const scopeLabel = useMemo(() => [
     deptFilter.selected?.name,
@@ -741,11 +765,11 @@ export default function Andon() {
     if (statusFilter === 'all') {
       return {
         heading: 'All clear',
-        subtext: scopeLabel ? `Nothing open for ${scopeLabel}` : 'No open help requests',
+        subtext: scopeLabel ? `Nothing open for ${scopeLabel}` : 'No open calls',
       };
     }
     return {
-      heading: `No ${statusFilter} requests`,
+      heading: `No ${statusFilter} calls`,
       subtext: scopeLabel ? `Nothing ${statusFilter} for ${scopeLabel}` : `Nothing ${statusFilter} right now`,
     };
   }, [statusFilter, scopeLabel]);
@@ -764,14 +788,14 @@ export default function Andon() {
             </div>
             <div>
               <h1 className="text-2xl font-bold text-white">Andon Board</h1>
-              <p className="text-sm text-gray-400">Every help request from the floor — who is needed, where, and how long they have waited</p>
+              <p className="text-sm text-gray-400">Every call from the floor — who is needed, where, and how long they have waited</p>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <DepartmentFilter
               filter={deptFilter}
               matchCount={calls.length}
-              matchNoun={calls.length === 1 ? 'request' : 'requests'}
+              matchNoun={calls.length === 1 ? 'call' : 'calls'}
               onDark
             />
             <LastRefreshed
@@ -812,13 +836,13 @@ export default function Andon() {
             {deptFilter.active && (
               <p className="flex items-center gap-1.5 text-xs text-gray-500">
                 <Building2 size={12} className="shrink-0" />
-                Scoped to {deptFilter.selected?.name} — these four numbers and the team badges below count only this department's requests.
+                Scoped to {deptFilter.selected?.name} — these four numbers and the team badges below count only this department's calls.
               </p>
             )}
             <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
               <div className={`bg-gray-900 border border-gray-800 rounded-xl p-4 ${summary.open > 0 ? 'border-red-800/60' : ''}`}>
                 <div className="flex items-center justify-between mb-1">
-                  <span className="section-label">Open requests</span>
+                  <span className="section-label">Open calls</span>
                   {summary.open > 0 && (
                     <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
                   )}
@@ -862,7 +886,7 @@ export default function Andon() {
                   <p data-testid="stat-avg-response" className="text-3xl font-bold text-white flex items-baseline gap-2">
                     {formatAge(avgResponse)}
                     <span className="text-xs font-medium text-gray-500">
-                      over {summary.responded_today} request{summary.responded_today === 1 ? '' : 's'}
+                      over {plural(summary.responded_today, 'call')}
                     </span>
                   </p>
                 )}
@@ -1037,7 +1061,11 @@ export default function Andon() {
                     )}
                     {call.work_order_number && (
                       <span className="inline-flex items-center gap-1">
-                        <Hash size={11} /> {call.work_order_number}{call.part_name ? ` · ${call.part_name}` : ''}
+                        <Hash size={11} />
+                        <span title={hasCompanyTag(call.work_order_number) ? call.work_order_number : undefined}>
+                          {displayId(call.work_order_number)}
+                        </span>
+                        {call.part_name ? ` · ${call.part_name}` : ''}
                       </span>
                     )}
                     {call.app_name && (
@@ -1047,7 +1075,7 @@ export default function Andon() {
                   </div>
 
                   {call.message && (
-                    <p className="text-sm text-gray-400 leading-relaxed line-clamp-2">{call.message}</p>
+                    <p className="text-sm text-gray-400 leading-relaxed line-clamp-2" title={call.message}>{noteText(call.message)}</p>
                   )}
 
                   {/* Responder + measured time-to-respond */}
@@ -1148,7 +1176,7 @@ export default function Andon() {
                           ? 'Nobody acknowledged this call'
                           : `Acknowledged after ${formatAge(call.response_seconds)}${call.target_seconds ? ` of a ${fmtDuration(call.target_seconds)} target` : ''}`}
                       </p>
-                      {call.resolution && <p className="text-gray-500 line-clamp-2">{call.resolution}</p>}
+                      {call.resolution && <p className="text-gray-500 line-clamp-2" title={call.resolution}>{noteText(call.resolution)}</p>}
                     </div>
                   )}
                 </div>
@@ -1160,7 +1188,7 @@ export default function Andon() {
 
       {/* ── Raise Call Modal ── */}
       {showCreate && (
-        <RequestHelpModal
+        <CallForHelpModal
           departments={departments}
           onClose={() => setShowCreate(false)}
           onCreated={() => { void auto.refresh(); }}

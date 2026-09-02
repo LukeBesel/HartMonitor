@@ -84,7 +84,7 @@ describe('runDurationSeconds', () => {
     })).toBeNull();
   });
 
-  it('gives a run still on the bench no duration at all', () => {
+  it('gives a run that is still running no duration at all', () => {
     expect(runDurationSeconds({
       started_at: started, completed_at: null, step_times: {}, status: 'in_progress',
     })).toBeNull();

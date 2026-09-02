@@ -118,6 +118,12 @@ vi.mock('../../components/shared/ModuleOnboarding', () => ({
 vi.mock('../../components/analytics/StepMetricsPanel', () => ({ StepMetricsPanel: () => null }));
 vi.mock('../../utils/realtime', () => ({ subscribeRealtime: () => () => {}, isAndonEvent: () => false }));
 
+const getLosses = vi.fn();
+vi.mock('../../api/oee', async importOriginal => ({
+  ...(await importOriginal<typeof import('../../api/oee')>()),
+  getLosses: (...args: unknown[]) => getLosses(...args),
+}));
+
 import AppDetail from '../AppDetail';
 import Analytics from '../Analytics';
 import Dashboard from '../Dashboard';
@@ -438,7 +444,7 @@ describe('/apps/:id refuses to invent numbers', () => {
     expect(screen.getAllByText('no finished run was timed · last 30 days').length).toBeGreaterThan(0);
   });
 
-  it('shows a run still on the bench counting up rather than calling it zero', async () => {
+  it('shows a run that is still running counting up rather than calling it zero', async () => {
     getAppAnalytics.mockResolvedValue(analytics({
       recent_runs: [{
         id: 'c-live', started_at: '2026-08-20 16:00:00', completed_at: null, status: 'in_progress',
@@ -819,5 +825,93 @@ describe('the OEE tab carries the gate the OEE nav item had', () => {
     renderAnalytics();
     await screen.findByText('App comparison');
     expect(screen.queryByRole('button', { name: /OEE/ })).toBeNull();
+  });
+});
+
+
+// ─── What a field recorded, said once ────────────────────────────────────────
+
+describe('the app detail screen counts a field once', () => {
+  it('does not print "312 entries / 312 entries" for a text field', async () => {
+    getAppAnalytics.mockResolvedValue(analytics({
+      fields: [{
+        widget_id: 'w-notes', label: 'Notes', type: 'text-input', step_name: 'Clean',
+        kind: 'text', stats: { count: 312 },
+      }],
+    }));
+    renderDetail('/apps/a-weld?tab=data');
+
+    // A text field's whole summary IS its count — printing the sample under it
+    // said the same number twice and read as two measurements.
+    await waitFor(() => expect(screen.getAllByText('312 entries')).toHaveLength(1));
+  });
+
+  it('still shows the sample under a summary that is not the count', async () => {
+    renderDetail('/apps/a-weld?tab=data');
+    // A number field summarises as "avg 12.5 · range 10–15", so the 8 entries
+    // behind it are worth saying.
+    expect(await screen.findByText('8 entries')).toBeInTheDocument();
+  });
+});
+
+// ─── An app step holds FIELDS ────────────────────────────────────────────────
+// "7 widgets on this app record a value" is a sentence about the codebase.
+
+describe('the app detail screen says field, not widget', () => {
+  it('counts fields on the app-shape line and in the empty state', async () => {
+    const { container } = renderDetail('/apps/a-weld');
+    await screen.findByText('What this app does');
+    expect(screen.getByText('2 fields')).toBeInTheDocument();
+    expect(container.textContent?.toLowerCase()).not.toContain('widget');
+  });
+
+  it('says how many fields record a value', async () => {
+    renderDetail('/apps/a-weld');
+    await screen.findByText('What this app does');
+    expect(screen.getByText(/fields? on this app record a value/)).toBeInTheDocument();
+  });
+});
+
+// ─── The Pareto never says a word twice ──────────────────────────────────────
+
+describe('the downtime Pareto', () => {
+  const losses = (over: Partial<import('../../api/oee').LossesReport> = {}) => ({
+    days: 1, plant_date: '2026-09-02', station_id: null, station_name: null,
+    stops: 3, total_down_minutes: 42, classified_minutes: 42,
+    unclassified_minutes: 0, unclassified_events: 0,
+    buckets: [], six_big_losses: [], empty_reason: null,
+    pareto: [
+      { reason_code_id: 'r1', code: 'BD', label: 'Breakdown', loss_bucket: 'breakdown',
+        bucket_label: 'Breakdown', stops: 2, minutes: 30, pct: 71, cumulative_pct: 71 },
+      { reason_code_id: 'r2', code: 'CH', label: 'Die change', loss_bucket: 'setup',
+        bucket_label: 'Setup and adjustment', stops: 1, minutes: 12, pct: 29, cumulative_pct: 100 },
+    ],
+    ...over,
+  });
+
+  it('omits the loss bucket when it is the same word as the reason', async () => {
+    userRole = 'manager';
+    getLosses.mockResolvedValue(losses());
+    render(<MemoryRouter initialEntries={['/analytics?tab=oee']}><Analytics /></MemoryRouter>);
+
+    const row = await screen.findByText('Breakdown');
+    expect(row.textContent).toBe('Breakdown');
+    // A bucket that adds something still earns its place.
+    const other = screen.getByText('Die change');
+    expect(other.textContent).toBe('Die change · Setup and adjustment');
+  });
+
+  it('handles a reason the server mapped to no loss at all', async () => {
+    userRole = 'manager';
+    getLosses.mockResolvedValue(losses({
+      pareto: [{
+        reason_code_id: 'r3', code: 'X', label: 'Waiting on material',
+        loss_bucket: 'breakdown', bucket_label: null,
+        stops: 1, minutes: 5, pct: 100, cumulative_pct: 100,
+      }],
+    }));
+    render(<MemoryRouter initialEntries={['/analytics?tab=oee']}><Analytics /></MemoryRouter>);
+    const row = await screen.findByText('Waiting on material');
+    expect(row.textContent).toBe('Waiting on material');
   });
 });

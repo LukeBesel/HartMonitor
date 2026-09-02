@@ -238,14 +238,14 @@ export function CompanyTab() {
         {!isDeveloper && (
           <div className="mb-4 flex items-center gap-2 px-3 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs text-gray-500">
             <Key size={13} className="text-gray-400 flex-shrink-0" />
-            Company name and logo are managed by your developer. Contact them to update branding.
+            Company name and logo are managed by the Owner. Ask them to update branding.
           </div>
         )}
         <div className="space-y-4">
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Company Name
-              {!isDeveloper && <span className="ml-1.5 text-[10px] text-gray-400 font-normal">(developer only)</span>}
+              {!isDeveloper && <span className="ml-1.5 text-[10px] text-gray-400 font-normal">(Owner only)</span>}
             </label>
             <input
               className={`input-field w-full ${!isDeveloper ? 'opacity-60 cursor-not-allowed bg-gray-50' : ''}`}
@@ -267,7 +267,7 @@ export function CompanyTab() {
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">
               Logo URL
-              {!isDeveloper && <span className="ml-1.5 text-[10px] text-gray-400 font-normal">(developer only)</span>}
+              {!isDeveloper && <span className="ml-1.5 text-[10px] text-gray-400 font-normal">(Owner only)</span>}
             </label>
             <input
               className={`input-field w-full ${!isDeveloper ? 'opacity-60 cursor-not-allowed bg-gray-50' : ''}`}
@@ -279,7 +279,7 @@ export function CompanyTab() {
             <p className="text-xs text-gray-400 mt-1">
               Must be a direct image URL (ending in .png, .jpg, .svg, etc.). Shown in the top-left of the sidebar in place of the default mark.
             </p>
-            {/* Upload from computer — developer only */}
+            {/* Upload from computer — Owner only */}
             {isDeveloper && (
               <div className="mt-2 flex items-center gap-2">
                 <input

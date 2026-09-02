@@ -26,14 +26,14 @@ export function NavigationTab() {
     // This is not "reset my sidebar" any more — it turns every workspace back
     // on for every person in the company, which is not something to discover
     // afterwards.
-    if (confirm('Show every workspace for everyone in the company?')) resetWorkspaces();
+    if (confirm('Show every section for everyone in the company?')) resetWorkspaces();
   };
 
   return (
     <div className="space-y-6 max-w-2xl">
       <div>
         <SectionHeader
-          title="Workspaces"
+          title="Sections"
           subtitle="Pick the areas this plant actually uses. Turn one off and it disappears from the sidebar for everyone in the company -- keeping things simple."
         />
         {/* A refused save has already put the switches back; say why rather

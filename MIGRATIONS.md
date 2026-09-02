@@ -224,6 +224,7 @@ cancel each other, so every stream gets its own block and uses only its own.
 | 3413 | downtime |
 | 3414 | dispatch |
 | 3415 | demo-seed |
+| 3416 | demo-dead-ends (post-audit demo fixes) |
 
 Already in use elsewhere, do not reuse: existing tests hold **3171–3199**,
 **3231–3258**, **3306** and **3308**. The app's default port is **3001**
