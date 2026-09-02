@@ -107,6 +107,29 @@ const WORK_ORDER = {
   product_type_id: null,
 };
 
+/**
+ * A ROUTED job: released against a routing, so its app hangs off the OPERATION
+ * (`work_order_operations.app_id`) and `work_orders.app_id` is NULL — along
+ * with `product_type_id`, because the routing decides what each station runs.
+ *
+ * This is the shape that broke one-tap start: the picker filtered on
+ * `w.app_id === id`, so the job the operator had just tapped on the dispatch
+ * board was not in the list, the setup screen read "— No work order —", and the
+ * player then held the run demanding a product type nobody ever recorded.
+ */
+const ROUTED_WO = {
+  id: 'wo-routed', app_id: null, work_order_number: '158D03-WO-1042',
+  part_name: 'Weldment', part_number: 'WM-3', quantity: 25, quantity_completed: 4,
+  status: 'in_progress', product_type_id: null, released_at: '2026-09-01 08:00:00',
+  current_operation: { id: 'op-3', sequence: 3, of: 7 },
+};
+
+/** The operation of that job that runs THIS app. */
+const ROUTED_OP = {
+  id: 'op-3', work_order_id: ROUTED_WO.id, sequence: 3, of: 7, name: 'Weld',
+  app_id: APP_ID, app_name: 'Final QC Inspection', status: 'ready',
+};
+
 const STATION = { id: 'st-1', name: 'Cell 3', location: 'Bay A', status: 'active', department_id: null };
 
 function jobOnSameUnit(over: Record<string, unknown> = {}) {
@@ -170,6 +193,8 @@ beforeEach(() => {
       if (next instanceof Error) return Promise.reject(next);
       return Promise.resolve(next);
     }
+    if (path === `/work-orders/${ROUTED_WO.id}/operations`) return Promise.resolve([ROUTED_OP]);
+    if (/^\/work-orders\/[^/]+\/operations$/.test(path)) return Promise.resolve([]);
     return Promise.resolve({});
   });
   // window.confirm must never be reached again. If anything calls it, the
@@ -327,6 +352,31 @@ describe('a start refused because the operator is not signed off', () => {
     expect(pin).not.toHaveAttribute('autofocus');
   });
 
+  // A visitor exploring a sandbox has no supervisor to fetch and no way to
+  // guess the PIN — so the sandbox says it, on the strength of the SERVER
+  // calling this session a sandbox (GET /auth/me → demo_hints).
+  it('tells a SANDBOX visitor the supervisor PIN, and a real plant nothing', async () => {
+    startResponse = refuse();
+    const withHints = (hints: unknown) => {
+      const inner = request.getMockImplementation()!;
+      request.mockImplementation((path: string, ...rest: unknown[]) =>
+        (path === '/auth/me' ? Promise.resolve(hints) : inner(path, ...rest)));
+    };
+
+    withHints({ demo_hints: { operator_pin: '1234', supervisor_pin: '2468' } });
+    const sandbox = renderPlayer(`?uid=u-alex&name=Alex%20Operator&station=${STATION.id}&wo=${WORK_ORDER.id}&from=operator`);
+    const sheet = await screen.findByRole('dialog', { name: /not signed off/i });
+    expect(await within(sheet).findByTestId('demo-pin-hint')).toHaveTextContent('Demo: supervisor PIN 2468');
+    sandbox.unmount();
+
+    // The same screen in a real company, where /auth/me carries no hints.
+    startResponse = refuse();
+    withHints({ id: 'u-alex' });
+    renderPlayer(`?uid=u-alex&name=Alex%20Operator&station=${STATION.id}&wo=${WORK_ORDER.id}&from=operator`);
+    const real = await screen.findByRole('dialog', { name: /not signed off/i });
+    expect(within(real).queryByTestId('demo-pin-hint')).toBeNull();
+  });
+
   it('asks for the PIN against THIS app and operator, then retries with a bound token', async () => {
     startResponse = refuse();
     renderPlayer(`?uid=u-alex&name=Alex%20Operator&station=${STATION.id}&wo=${WORK_ORDER.id}&from=operator`);
@@ -361,5 +411,118 @@ describe('a start refused because the operator is not signed off', () => {
     expect(retry.headers!['X-Qualification-Override']).not.toBe('grant-1');
 
     expect(await screen.findByText('Weld inspection')).toBeInTheDocument();
+  });
+});
+
+// ─── 5. A routed job starts in one tap, like every other job ─────────────────
+//
+// The dispatch board sends a tablet to ONE operation of a released job:
+// /play/<app>?wo=…&op=…&station=…&uid=…. Everything the player needs is in that
+// link, so it must open on step one — and the run it books, and every screen
+// that reports it afterwards, must name the work order it is bound to.
+
+describe('a job routed to this app through one of its operations', () => {
+  beforeEach(() => {
+    getWorkOrders.mockResolvedValue([WORK_ORDER, ROUTED_WO]);
+    // The app offers a variant. A routed job did not pick one, and the routing
+    // is what says which station runs what — so this must not hold the run.
+    getProductTypes.mockResolvedValue([
+      { id: 'pt-1', name: 'Variant A', description: '', takt_overrides: {} },
+    ]);
+    flushCompletion.mockResolvedValue({});
+    updateCompletion.mockResolvedValue({ id: 'run-1', status: 'completed' });
+    closeCompletionSession.mockResolvedValue({});
+  });
+
+  const link = `?uid=u-alex&name=Alex%20Operator&station=${STATION.id}&wo=${ROUTED_WO.id}&op=${ROUTED_OP.id}&from=operator`;
+
+  it('opens on step one with no setup screen', async () => {
+    renderPlayer(link);
+
+    expect(await screen.findByText('Weld inspection')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /start process/i })).not.toBeInTheDocument();
+    expect(screen.queryByText(/no work order/i)).not.toBeInTheDocument();
+
+    // The run is booked against the job AND the operation the queue sent it to.
+    const body = JSON.parse((startCalls()[0][1] as { body: string }).body);
+    expect(body).toMatchObject({
+      app_id: APP_ID,
+      work_order_id: ROUTED_WO.id,
+      work_order_operation_id: ROUTED_OP.id,
+      station_id: STATION.id,
+      operator_user_id: 'u-alex',
+    });
+  });
+
+  it('names the work order on the running screen, without its company tag', async () => {
+    renderPlayer(link);
+    await screen.findByText('Weld inspection');
+
+    const chip = screen.getByText('WO-1042');
+    expect(chip).toBeInTheDocument();
+    // The stored id is one hover away; nobody has to read it on the floor.
+    expect(chip).toHaveAttribute('title', '158D03-WO-1042');
+    expect(screen.queryByText('158D03-WO-1042')).toBeNull();
+  });
+
+  it('names the work order on the finish summary, not "No work order"', async () => {
+    renderPlayer(link);
+    await screen.findByText('Weld inspection');
+
+    await userEvent.click(screen.getByRole('button', { name: /next/i }));
+    await userEvent.click(await screen.findByRole('button', { name: /^complete$/i }));
+    const sheet = await screen.findByRole('dialog', { name: /units this run/i });
+    await userEvent.click(within(sheet).getByRole('button', { name: /^complete$/i }));
+
+    expect(await screen.findByText('Complete!')).toBeInTheDocument();
+    expect(screen.getByText('WO-1042 · Weldment')).toBeInTheDocument();
+    expect(screen.queryByText(/no work order or part number/i)).toBeNull();
+  });
+
+  it('offers the routed job in the picker, which its own app_id column never would', async () => {
+    // No station in the link, so the setup screen is shown and the picker is
+    // the thing under test. No ?wo= either: the only way this job can appear is
+    // the operations lookup finding this app on one of its operations.
+    renderPlayer('?uid=u-alex&name=Alex%20Operator&from=operator');
+
+    const select = await screen.findByLabelText(/work order/i) as HTMLSelectElement;
+    await waitFor(() => {
+      expect([...select.options].some(o => o.value === ROUTED_WO.id)).toBe(true);
+    });
+    const option = [...select.options].find(o => o.value === ROUTED_WO.id)!;
+    expect(option.textContent).toContain('WO-1042');
+    expect(option.textContent).not.toContain('158D03');
+    // The unrouted job is still there — nothing was traded away for this.
+    expect([...select.options].some(o => o.value === WORK_ORDER.id)).toBe(true);
+  });
+});
+
+// ─── 6. The words on the screen are the floor's, and they count correctly ────
+
+describe('the setup screen describes the app in the operator\'s own words', () => {
+  it('counts fields, not "widgets" — and says "1 field", never "1 fields"', async () => {
+    // The app here is two steps with one input between them.
+    renderPlayer('?uid=u-alex&name=Alex%20Operator&from=operator');
+    expect(await screen.findByText('2 steps · 1 field')).toBeInTheDocument();
+    expect(screen.queryByText(/widget/i)).toBeNull();
+  });
+});
+
+describe('"Jobs in progress" names the job each run is bound to', () => {
+  it('prints the work order, not "No work order", for a routed job', async () => {
+    // The run is bound to a ROUTED work order — the one the old picker filter
+    // dropped, which is why this card used to read "No work order" about a job
+    // that plainly had one.
+    getWorkOrders.mockResolvedValue([WORK_ORDER, ROUTED_WO]);
+    getJobsInProgress.mockResolvedValue([
+      jobOnSameUnit({ id: 'job-r', work_order_id: ROUTED_WO.id }),
+    ]);
+    renderPlayer('?uid=u-alex&name=Alex%20Operator&from=operator');
+
+    await screen.findByRole('button', { name: /start process/i });
+    const row = await screen.findByText('WO-1042 · Weldment');
+    expect(row).toBeInTheDocument();
+    expect(row).toHaveAttribute('title', '158D03-WO-1042');
+    expect(screen.queryByText('No work order')).toBeNull();
   });
 });

@@ -689,3 +689,99 @@ describe('the history tiles count what the list shows', () => {
     expect(screen.getAllByTestId('history-row')).toHaveLength(2);
   });
 });
+
+// ─── Signing in, and the demo's own PINs ─────────────────────────────────────
+//
+// Two things a visitor dropped into a sandbox used to hit head-on:
+//
+//   1. The button said "Clock In". This product runs no attendance clock, and a
+//      shift-hours feature it does not have is exactly what that promises.
+//      Identifying yourself so the work is booked to you is SIGNING IN.
+//   2. The PIN pad asked for a PIN nobody had told them. The server knows the
+//      session is a sandbox and knows the PINs it minted (`demo_hints` on
+//      GET /api/auth/me), so the sandbox says them. A real company sends no
+//      hints and the line is not there at all.
+
+/** A roster of one operator who DOES have a PIN, so tapping reaches the pad. */
+function rosterWithPin() {
+  getOperatorRoster.mockResolvedValue([
+    { id: 'u-1', display_name: 'Ada Lovelace', has_pin: 1, has_badge: 0 },
+  ]);
+}
+
+/** What GET /auth/me answers, alongside the one call api/operator makes. */
+function me(payload: unknown) {
+  request.mockImplementation((path: string) => {
+    if (path === '/auth/me') return Promise.resolve(payload);
+    if (typeof path === 'string' && path.includes('status=in_progress')) return Promise.resolve([]);
+    return Promise.resolve([]);
+  });
+}
+
+describe('the sign-in screen', () => {
+  it('says Sign in — this product has no attendance clock to clock into', async () => {
+    rosterWithPin();
+    renderPortal();
+    fireEvent.click(await screen.findByText('Ada Lovelace'));
+
+    expect(await screen.findByRole('button', { name: /sign in/i })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /clock in/i })).toBeNull();
+  });
+
+  it('asks people to tap their name to sign in', async () => {
+    rosterWithPin();
+    renderPortal();
+    expect(await screen.findByText('Tap your name to sign in')).toBeTruthy();
+  });
+
+  it('shows the PINs a SANDBOX hands out, exactly as the server reported them', async () => {
+    rosterWithPin();
+    me({ id: 'mgr-1', demo_hints: { operator_pin: '1234', supervisor_pin: '2468', manager_pin: '1357' } });
+    renderPortal();
+    fireEvent.click(await screen.findByText('Ada Lovelace'));
+
+    const hint = await screen.findByTestId('demo-pin-hint');
+    expect(hint).toHaveTextContent('Demo PINs · operators 1234 · supervisor 2468');
+  });
+
+  it('shows nothing at all when the server sent no hints — a real plant never sees a PIN', async () => {
+    rosterWithPin();
+    me({ id: 'mgr-1' });
+    renderPortal();
+    fireEvent.click(await screen.findByText('Ada Lovelace'));
+
+    await screen.findByRole('button', { name: /sign in/i });
+    expect(screen.queryByTestId('demo-pin-hint')).toBeNull();
+  });
+
+  it('shows nothing when /auth/me fails — a PIN printed by accident is worse than none', async () => {
+    rosterWithPin();
+    request.mockImplementation((path: string) => {
+      if (path === '/auth/me') return Promise.reject(new Error('401'));
+      return Promise.resolve([]);
+    });
+    renderPortal();
+    fireEvent.click(await screen.findByText('Ada Lovelace'));
+
+    await screen.findByRole('button', { name: /sign in/i });
+    expect(screen.queryByTestId('demo-pin-hint')).toBeNull();
+  });
+});
+
+// ─── The id on the row is the id on the traveller ────────────────────────────
+
+describe('work order numbers on the jobs list', () => {
+  it('drops the company tag a sandbox minted the id with, and keeps it in the title', async () => {
+    getFloorDispatch.mockResolvedValue(dispatch([
+      operation({ work_order_number: '158D03-WO-1042' }),
+    ]));
+    renderPortal();
+    await clockIn();
+    await screen.findAllByTestId('job-row');
+
+    const idCell = screen.getByText(/WO-1042/);
+    expect(idCell.textContent).toContain('WO-1042');
+    expect(idCell.textContent).not.toContain('158D03');
+    expect(idCell).toHaveAttribute('title', '158D03-WO-1042');
+  });
+});

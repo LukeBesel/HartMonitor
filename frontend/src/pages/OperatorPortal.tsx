@@ -8,13 +8,14 @@ import {
 } from 'lucide-react';
 import { timeAgo } from '../utils/time';
 import {
-  fmtMinutes, fmtDuration, durationBasisLabel, runDurationSeconds,
+  fmtMinutes, fmtDuration, durationBasisLabel, pluralize, runDurationSeconds,
 } from '../components/apps/appModel';
 import { getFloorSnapshot, type FloorSnapshot, type DispatchRow } from '../api/floor';
 import {
-  getOperatorQueue, getOperatorRuns, dedupeRuns, stampIn, dispatchRowLabel,
-  type OperatorRun,
+  getOperatorQueue, getOperatorRuns, dedupeRuns, stampIn, dispatchRowLabel, getDemoHints,
+  type OperatorRun, type DemoHints,
 } from '../api/operator';
+import { displayId, hasCompanyTag } from '../utils/ids';
 import { tintedChipOn } from '../utils/contrast';
 import BarcodeScannerModal from '../components/shared/BarcodeScannerModal';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
@@ -131,9 +132,9 @@ const RESUME_VISIBLE = 5;
 
 type Tab = 'jobs' | 'history' | 'report' | 'profile';
 
-/** Where a verified clock-in is remembered for the length of this tab's shift.
+/** Where a verified sign-in is remembered for the length of this tab's shift.
  *  sessionStorage, deliberately: it dies with the tab, and it is what stops a
- *  hand-typed ?uid= from clocking somebody else in — the id in the URL is only
+ *  hand-typed ?uid= from signing somebody else in — the id in the URL is only
  *  honoured when it matches the identity THIS tab actually verified. */
 const IDENTITY_KEY = 'hm_operator_identity';
 
@@ -141,7 +142,7 @@ function rememberIdentity(who: OperatorIdentity) {
   try {
     if (who.id) sessionStorage.setItem(IDENTITY_KEY, JSON.stringify(who));
     else sessionStorage.removeItem(IDENTITY_KEY);
-  } catch { /* private mode — the operator just clocks in again */ }
+  } catch { /* private mode — the operator just signs in again */ }
 }
 
 function verifiedIdentity(): OperatorIdentity | null {
@@ -193,8 +194,11 @@ export default function OperatorPortal() {
   /** Runs this operator left open, one row per piece of work. */
   const [openRuns, setOpenRuns] = useState<OperatorRun[] | null>(null);
 
-  // Floor identity (clock-in) state.
+  // Floor identity (sign-in) state.
   const [roster, setRoster] = useState<RosterEntry[]>([]);
+  /** The PINs this SANDBOX hands out, straight from GET /api/auth/me. Null on
+   *  every real company, and null is what makes the hint render nothing. */
+  const [demoHints, setDemoHints] = useState<DemoHints | null>(null);
   const [rosterLoaded, setRosterLoaded] = useState(false);
   const [manualMode, setManualMode] = useState(false);
 
@@ -207,6 +211,13 @@ export default function OperatorPortal() {
   useEffect(() => {
     const saved = localStorage.getItem('hm_operator_name');
     if (saved) setOperatorName(saved);
+  }, []);
+
+  // Is this a sandbox, and which PINs does it hand out? The SERVER answers.
+  useEffect(() => {
+    let live = true;
+    void getDemoHints().then(h => { if (live) setDemoHints(h); });
+    return () => { live = false; };
   }, []);
 
   // Load the operator roster so staff can tap their name and verify with a PIN.
@@ -380,7 +391,7 @@ export default function OperatorPortal() {
       ? queue.find(r => r.work_order_operation_id === run.work_order_operation_id) ?? null
       : null;
     const title = wo
-      ? `${wo.work_order_number}${wo.part_name ? ` · ${wo.part_name}` : ''}`
+      ? `${displayId(wo.work_order_number)}${wo.part_name ? ` · ${wo.part_name}` : ''}`
       : run.app_name;
     const detail = [
       op ? dispatchRowLabel(op) : null,
@@ -418,7 +429,7 @@ export default function OperatorPortal() {
   // Two locks, because a URL is typed as easily as it is followed: the id must
   // be on the roster this portal already loaded, AND it must be the identity
   // this tab verified with a PIN or badge. Anything else falls through to the
-  // normal clock-in screen.
+  // normal sign-in screen.
   const restoredRef = useRef(false);
   useEffect(() => {
     if (restoredRef.current || step !== 'name' || !rosterLoaded) return;
@@ -463,6 +474,7 @@ export default function OperatorPortal() {
         onIdentify={identify}
         onExit={() => navigate('/dashboard')}
         identifyError={identifyError}
+        demoHints={demoHints}
       />
     );
   }
@@ -546,15 +558,19 @@ export default function OperatorPortal() {
   );
 }
 
-// ── Identify (clock-in) screen ────────────────────────────────────────────────
+// ── Identify (sign-in) screen ─────────────────────────────────────────────────
 // Operators verify their floor identity with a PIN or badge so their work is
 // attributed to a real account — not free-typed text. Falls back gracefully to
 // a name entry when no PINs are set up yet.
+//
+// It is SIGN IN, not "clock in": this screen books work to a person, it does
+// not run an attendance clock, and a shift-hours product this does not have is
+// exactly what "Clock In" promises a plant manager.
 
 function IdentifyScreen({
   roster, rosterLoaded, loading, currentUser, manualMode, setManualMode,
   operatorName, setOperatorName, onManualSubmit, onIdentify, onExit,
-  identifyError,
+  identifyError, demoHints,
 }: {
   roster: RosterEntry[];
   rosterLoaded: boolean;
@@ -568,6 +584,8 @@ function IdentifyScreen({
   onIdentify: (who: OperatorIdentity) => void;
   onExit: () => void;
   identifyError?: string;
+  /** The PINs a sandbox hands out, when the server says this is one. */
+  demoHints?: DemoHints | null;
 }) {
   const [selectedOp, setSelectedOp] = useState<RosterEntry | null>(null);
   const [pin, setPin] = useState('');
@@ -577,6 +595,17 @@ function IdentifyScreen({
   const [scanError, setScanError] = useState('');
 
   const anyBadges = roster.some(r => r.has_badge);
+
+  // A visitor dropped into a demo has nobody to ask for the PIN, so the sandbox
+  // tells them. Built only from PINs the server actually sent — a real company
+  // sends none, and this renders nothing at all.
+  const demoPinLine = (() => {
+    const parts = [
+      demoHints?.operator_pin ? `operators ${demoHints.operator_pin}` : null,
+      demoHints?.supervisor_pin ? `supervisor ${demoHints.supervisor_pin}` : null,
+    ].filter(Boolean);
+    return parts.length > 0 ? `Demo PINs · ${parts.join(' · ')}` : null;
+  })();
   const isSelfOperator = currentUser?.role === 'operator' && !!currentUser.display_name;
 
   const tapTile = (op: RosterEntry) => {
@@ -707,8 +736,11 @@ function IdentifyScreen({
               disabled={pin.length < 4 || verifying}
               className="mt-5 w-full h-14 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white rounded-xl font-bold text-lg transition-colors flex items-center justify-center gap-2"
             >
-              {verifying ? <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <>Clock In <ChevronRight size={20} /></>}
+              {verifying ? <span className="w-6 h-6 border-2 border-white/30 border-t-white rounded-full animate-spin" /> : <>Sign in <ChevronRight size={20} /></>}
             </button>
+            {demoPinLine && (
+              <p data-testid="demo-pin-hint" className="mt-3 text-center text-xs text-blue-200/80">{demoPinLine}</p>
+            )}
             {selectedOp.has_badge && (
               <button onClick={() => setShowScanner(true)} className="mt-3 w-full text-sm text-blue-200/80 hover:text-blue-200 flex items-center justify-center gap-1.5 transition-colors">
                 <ScanLine size={14} /> Scan badge instead
@@ -772,7 +804,7 @@ function IdentifyScreen({
     <div className="min-h-screen bg-gradient-to-br from-[#0a1628] via-[#0d1f3c] to-[#0a1628] flex flex-col">
       {brandBar}
       {showScanner && (
-        <BarcodeScannerModal title="Scan Badge" hint="Scan your operator badge to clock in" onClose={() => setShowScanner(false)} onScan={handleBadge} />
+        <BarcodeScannerModal title="Scan Badge" hint="Scan your operator badge to sign in" onClose={() => setShowScanner(false)} onScan={handleBadge} />
       )}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="w-full max-w-2xl mx-auto">
@@ -781,7 +813,7 @@ function IdentifyScreen({
               <UsersIcon size={30} className="text-blue-400" />
             </div>
             <h1 className="text-2xl font-bold text-white">Who's working?</h1>
-            <p className="text-blue-200/80 text-sm mt-1">Tap your name to clock in</p>
+            <p className="text-blue-200/80 text-sm mt-1">Tap your name to sign in</p>
           </div>
 
           {isSelfOperator && (
@@ -981,7 +1013,7 @@ function JobsTab({
             the list showed something else. */}
         <p className="text-blue-200/80 text-sm" data-testid="jobs-count">
           {rows.length > 0
-            ? `${rows.length} job${rows.length !== 1 ? 's' : ''} available`
+            ? `${pluralize(rows.length, 'job')} available`
             : 'No jobs scheduled yet'}
         </p>
         <div className="flex items-center gap-3">
@@ -1116,7 +1148,7 @@ function JobsTab({
             const isSelected = selectedRow ? rowKey(selectedRow) === rowKey(row) : false;
             const title = row.no_work_order
               ? (row.app_name ?? 'Standing job')
-              : (row.part_name || row.work_order_number || row.app_name || 'Job');
+              : (row.part_name || displayId(row.work_order_number) || row.app_name || 'Job');
             return (
               <button
                 key={rowKey(row)}
@@ -1140,8 +1172,11 @@ function JobsTab({
                         {/* The job's identity. A standing app has none — and
                             printing its own name twice reads as two facts. */}
                         {row.work_order_number && (
-                          <div className="text-blue-200/80 text-xs mt-0.5 font-mono truncate">
-                            {row.work_order_number}{row.part_number ? ` · ${row.part_number}` : ''}
+                          <div
+                            className="text-blue-200/80 text-xs mt-0.5 font-mono truncate"
+                            title={hasCompanyTag(row.work_order_number) ? row.work_order_number : undefined}
+                          >
+                            {displayId(row.work_order_number)}{row.part_number ? ` · ${row.part_number}` : ''}
                           </div>
                         )}
                       </div>
@@ -1233,7 +1268,7 @@ function JobsTab({
             <span className="truncate min-w-0">
               Start: {selectedRow.no_work_order
                 ? (selectedRow.app_name ?? 'this app')
-                : (selectedRow.part_name || selectedRow.work_order_number || 'this job')}
+                : (selectedRow.part_name || displayId(selectedRow.work_order_number) || 'this job')}
             </span>
             <ChevronRight size={22} className="flex-shrink-0" />
           </button>
@@ -1443,7 +1478,9 @@ function ReportTab({
         ) : (
           <>
             <div className="text-white font-bold text-lg">Issue reported</div>
-            <div className="text-blue-200/80 text-sm mt-1">NCR <span className="font-mono">{submitted}</span> has been created</div>
+            <div className="text-blue-200/80 text-sm mt-1">
+              NCR <span className="font-mono" title={hasCompanyTag(submitted) ? submitted : undefined}>{displayId(submitted)}</span> has been created
+            </div>
             <div className="text-blue-200/80 text-xs mt-2">Your supervisor and quality team will follow up.</div>
           </>
         )}
@@ -1511,15 +1548,18 @@ function ReportTab({
           >
             <option value="" className="text-gray-900">No specific job</option>
             {workOrders.map(wo => (
-              <option key={wo.id} value={wo.id} className="text-gray-900">
-                {wo.work_order_number} — {wo.part_name}
+              <option
+                key={wo.id} value={wo.id} className="text-gray-900"
+                title={hasCompanyTag(wo.work_order_number) ? wo.work_order_number : undefined}
+              >
+                {displayId(wo.work_order_number)} — {wo.part_name}
               </option>
             ))}
           </select>
         </div>
       )}
 
-      {/* Same as Clock In: a half-faded button takes its own label down with it
+      {/* Same as Sign in: a half-faded button takes its own label down with it
           (3.7:1 here). The deep fill carries "not yet"; the label stays readable
           so an operator can see what they are about to do. */}
       <button
@@ -1614,7 +1654,7 @@ function ProfileTab({
           <Briefcase size={18} className="text-blue-300" />
         </div>
         <div>
-          <div className="text-white font-semibold">{jobCount} job{jobCount !== 1 ? 's' : ''} assigned</div>
+          <div className="text-white font-semibold">{pluralize(jobCount, 'job')} assigned</div>
           <div className="text-blue-200/80 text-xs">Visible on the Jobs tab</div>
         </div>
       </div>
@@ -1625,7 +1665,7 @@ function ProfileTab({
             <WifiOff size={18} className="text-amber-400" />
           </div>
           <div>
-            <div className="text-white font-semibold">{pendingReports} report{pendingReports !== 1 ? 's' : ''} pending sync</div>
+            <div className="text-white font-semibold">{pluralize(pendingReports, 'report')} pending sync</div>
             <div className="text-amber-300/70 text-xs">Will be submitted automatically once you're online</div>
           </div>
         </div>
