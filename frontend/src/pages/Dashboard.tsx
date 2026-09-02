@@ -87,6 +87,48 @@ interface PlantViewData {
   }>;
 }
 
+/**
+ * The PLANT's calendar date for one of the floor list's hour buckets.
+ *
+ * The buckets arrive as UTC stamps ("2026-09-02T13:00:00", no zone marker), so
+ * they are parsed as UTC and re-read in the plant's own zone — the zone the
+ * snapshot names, never the browser's. A tablet in another timezone must file a
+ * run under the same day the tiles above the chart counted it in.
+ */
+function plantDateOf(hourUtc: string, timezone: string): string {
+  const at = new Date(`${hourUtc}Z`);
+  if (isNaN(at.getTime())) return '';
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: timezone || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(at);
+  } catch {
+    return at.toISOString().slice(0, 10);
+  }
+}
+
+/** The same bucket as a clock reading at the plant — "13:00". */
+function plantHourLabel(hourUtc: string, timezone: string): string {
+  const at = new Date(`${hourUtc}Z`);
+  if (isNaN(at.getTime())) return hourUtc.slice(11, 16);
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone || 'UTC', hour: '2-digit', minute: '2-digit', hour12: false,
+    }).format(at);
+  } catch {
+    return at.toISOString().slice(11, 16);
+  }
+}
+
+/** The ranges the Output card offers, in the order they are read. */
+const OUTPUT_RANGES = [
+  ['today', 'Today'],
+  ['day', 'Last 24 hours'],
+  ['week', 'Last 7 days'],
+] as const;
+
+type OutputRange = (typeof OUTPUT_RANGES)[number][0];
+
 function fmtAgo(iso: string) {
   const d = Date.now() - new Date(iso).getTime();
   if (d < 60000) return 'just now';
@@ -220,18 +262,80 @@ export default function Dashboard() {
   const [loadingSample, setLoadingSample] = useState(false);
   const [sampleError, setSampleError] = useState('');
 
-  // ── Page scope: department + app. Every section below is fetched with it.
-  const [filters, setFilters] = useState<DashboardFilters>(() => loadStoredScope(user?.id));
+  // ── Page scope: department + app, and it lives in the URL ──────────────────
+  //
+  // Not in this component's private state. A scoped Command Center has to be a
+  // link somebody can send ("look at Welding"), Back has to walk back through
+  // the scopes a supervisor just looked at, and the player's "Review this run"
+  // already arrives as one. localStorage is the DEFAULT for somebody who
+  // arrives with no scope in the URL — not the record of where they are.
+  const [searchParams, setSearchParams] = useSearchParams();
   const [departments, setDepartments] = useState<FilterOption[]>([]);
   const [departmentsLoaded, setDepartmentsLoaded] = useState(false);
   const [apps, setApps] = useState<FilterOption[]>([]);
+
+  // The scope this page opens with: what the URL carries, or — when it carries
+  // nothing — the scope this person left behind last time. Resolved on the very
+  // FIRST render, so the first request already goes out scoped and the page
+  // never flashes plant-wide numbers it is about to replace. (The URL cannot be
+  // written during mount: the router subscribes to history in ITS layout
+  // effect, which runs after this component's, so a push from here would be
+  // made to nobody. It is written in an effect below instead, and until then
+  // this value stands in for it.)
+  const initialStored = useRef<DashboardFilters | null>(null);
+  if (initialStored.current === null) {
+    initialStored.current = (searchParams.get('department_id') || searchParams.get('app_id'))
+      ? {}
+      : loadStoredScope(user?.id);
+  }
+  const [scopeSeeded, setScopeSeeded] = useState(() => Object.keys(initialStored.current!).length === 0);
+
+  // Keyed on the two STRINGS, not on the params object, so `filters` keeps one
+  // identity across the render where the URL catches up with the remembered
+  // scope — otherwise every loader would refetch the answer it already has.
+  const deptParam = searchParams.get('department_id')
+    ?? (scopeSeeded ? null : initialStored.current!.department_id ?? null);
+  const appParam = searchParams.get('app_id')
+    ?? (scopeSeeded ? null : initialStored.current!.app_id ?? null);
+
+  const filters = useMemo<DashboardFilters>(() => {
+    const out: DashboardFilters = {};
+    if (deptParam) out.department_id = deptParam;
+    if (appParam) out.app_id = appParam;
+    return out;
+  }, [deptParam, appParam]);
   const filtersActive = !!(filters.department_id || filters.app_id);
   const selectedDeptId = filters.department_id ?? '';
 
-  const applyFilters = useCallback((next: DashboardFilters) => {
-    setFilters(next);
-    storeScope(user?.id, next);
-  }, [user?.id]);
+  /**
+   * Write a scope.
+   *
+   * A scope the user CHOSE pushes a history entry, so Back returns them to what
+   * they were looking at a moment ago. `replace` is for the corrections they did
+   * not ask for — seeding their remembered scope on arrival, dropping an id that
+   * no longer exists — which must not leave an entry to walk back into.
+   * `remember: false` goes with those: a link, or a repair, is not this person's
+   * new default.
+   */
+  const applyFilters = useCallback((next: DashboardFilters, opts?: { replace?: boolean; remember?: boolean }) => {
+    setSearchParams(prev => {
+      const params = new URLSearchParams(prev);
+      if (next.department_id) params.set('department_id', next.department_id);
+      else params.delete('department_id');
+      if (next.app_id) params.set('app_id', next.app_id);
+      else params.delete('app_id');
+      return params;
+    }, { replace: opts?.replace ?? false });
+    if (opts?.remember !== false) storeScope(user?.id, next);
+  }, [setSearchParams, user?.id]);
+
+  // …and now that the router is listening, the remembered scope becomes the URL
+  // — replacing the entry, because the person did not ask to go anywhere.
+  useEffect(() => {
+    if (scopeSeeded) return;
+    applyFilters(initialStored.current!, { replace: true, remember: false });
+    setScopeSeeded(true);
+  }, [scopeSeeded, applyFilters]);
 
   const chooseDepartment = useCallback((id: string) => {
     const next = { ...filters };
@@ -245,8 +349,8 @@ export default function Dashboard() {
   useEffect(() => {
     if (lastUserRef.current === user?.id) return;
     lastUserRef.current = user?.id;
-    setFilters(loadStoredScope(user?.id));
-  }, [user?.id]);
+    applyFilters(loadStoredScope(user?.id), { replace: true, remember: false });
+  }, [user?.id, applyFilters]);
 
   // Options for the picker. Departments follow the active site, so it never
   // offers a department belonging to a plant the user isn't looking at.
@@ -277,40 +381,16 @@ export default function Dashboard() {
     if (next.app_id && apps.length > 0 && !apps.some(a => a.id === next.app_id)) {
       delete next.app_id; changed = true;
     }
-    if (changed) applyFilters(next);
+    // A repair, not a choice: it replaces the entry rather than adding one, and
+    // it DOES forget the stored id, which is now known to be gone.
+    if (changed) applyFilters(next, { replace: true });
   }, [departments, apps, filters, applyFilters]);
 
-  // ── Arriving from the player: /dashboard?department_id=…&app_id=…
-  //
-  // The run-complete screen offers "Review this run in the live report", and the
-  // operator has to land on the plant already narrowed to the run they just
-  // finished.
-  //
-  // Two deliberate choices here. The ids are checked against the option lists
-  // rather than trusted, so a deleted department (or one belonging to another
-  // tenant, or to a site this user isn't looking at) quietly falls back to the
-  // plant-wide view instead of scoping every card to nothing. And the scope is
-  // set with `setFilters`, NOT `applyFilters`: a link opens a view, it does not
-  // rewrite what this person's Command Center remembers. Then the params are
-  // consumed, so the picker — and only the picker — owns the scope from the
-  // next render on, and a hand-picked department is never overridden.
-  const [searchParams, setSearchParams] = useSearchParams();
-  const urlDeptId = searchParams.get('department_id');
-  const urlAppId = searchParams.get('app_id');
-  useEffect(() => {
-    if (!urlDeptId && !urlAppId) return;
-    if (!departmentsLoaded) return;
-    setFilters(prev => {
-      const next = { ...prev };
-      if (urlDeptId && departments.some(d => d.id === urlDeptId)) next.department_id = urlDeptId;
-      if (urlAppId && apps.some(a => a.id === urlAppId)) next.app_id = urlAppId;
-      return next;
-    });
-    const rest = new URLSearchParams(searchParams);
-    rest.delete('department_id');
-    rest.delete('app_id');
-    setSearchParams(rest, { replace: true });
-  }, [urlDeptId, urlAppId, departmentsLoaded, departments, apps, searchParams, setSearchParams]);
+  // Arriving from the player — /dashboard?department_id=…&app_id=… — needs no
+  // code of its own any more: the URL IS the scope, so the link simply opens the
+  // view it names. The effect above is what keeps an id that means nothing here
+  // (deleted, another tenant's, another site's) from scoping every tile to
+  // nothing; it falls back to the whole plant instead.
 
   const selectedDept = departments.find(d => d.id === selectedDeptId);
 
@@ -335,9 +415,11 @@ export default function Dashboard() {
   const [deptRows, setDeptRows] = useState<DepartmentSnapshot[]>([]);
   const [plantData, setPlantData] = useState<PlantViewData | null>(null);
   const [floorLoading, setFloorLoading] = useState(true);
-  // One output chart with two ranges instead of two charts side by side. The
-  // history is the point of the product, so it is one click away, not gone.
-  const [outputRange, setOutputRange] = useState<'day' | 'week'>('day');
+  // One output chart, three ranges. It opens on the PLANT'S day — the same day
+  // the tiles above it count — because "4 finished today" sitting above a chart
+  // summing to 8, both labelled runs finished, is two answers to one question.
+  // The other two ranges are a click away and say what they are.
+  const [outputRange, setOutputRange] = useState<OutputRange>('today');
 
   // Both loaders take the page scope, so a filter change re-fetches EVERY
   // section rather than narrowing one card and leaving the rest plant-wide. A
@@ -445,11 +527,36 @@ export default function Dashboard() {
 
   const behindCount = plantData?.active_alerts.length ?? 0;
   const recentRuns = plantData?.recent_completions ?? [];
-  // Both series only carry the periods that had a completion, so an empty array
-  // means "nothing finished in that window" rather than "not loaded yet".
-  const outputSeriesEmpty = outputRange === 'day'
-    ? (plantData?.hourly_throughput ?? []).length === 0
-    : (brief?.throughput_7d ?? []).length === 0;
+
+  /** The hourly buckets, each carrying the plant day and the plant hour it
+   *  belongs to, so the chart can be cut and labelled by the plant's clock. */
+  const hourlySeries = useMemo(() => {
+    const zone = snapshot?.timezone || 'UTC';
+    return (plantData?.hourly_throughput ?? []).map(h => ({
+      ...h,
+      label: plantHourLabel(h.hour, zone),
+      plant_date: plantDateOf(h.hour, zone),
+    }));
+  }, [plantData, snapshot?.timezone]);
+
+  /** Today = the plant's day, so this series totals exactly what the
+   *  Finished-today tile says. The 24-hour series answers a different question
+   *  (at 09:00 it still holds last night) and is labelled as one. */
+  const todaySeries = useMemo(
+    () => (snapshot?.plant_date ? hourlySeries.filter(h => h.plant_date === snapshot.plant_date) : hourlySeries),
+    [hourlySeries, snapshot?.plant_date],
+  );
+
+  const outputSeries: { count: number }[] = outputRange === 'today'
+    ? todaySeries
+    : outputRange === 'day'
+      ? hourlySeries
+      : (brief?.throughput_7d ?? []);
+  // Every series only carries the periods that had a completion, so an empty
+  // array means "nothing finished in that window", not "not loaded yet".
+  const outputSeriesEmpty = outputSeries.length === 0;
+  const outputTotal = outputSeries.reduce((n, row) => n + (row.count ?? 0), 0);
+  const outputRangeLabel = (OUTPUT_RANGES.find(([id]) => id === outputRange)?.[1] ?? '').toLowerCase();
 
   /** The heading over the tiles: the plant, or the slice of it being read. */
   const scopeHeading = selectedDept?.name ?? 'The whole plant';
@@ -742,8 +849,16 @@ export default function Dashboard() {
           somebody chooses otherwise. The two scope questions are one question —
           which slice am I looking at — so they read left to right on one row
           and shrink together. */}
-      {(departments.length > 1 || apps.length > 0) && (
-        <div className="card p-4 sm:p-5" data-testid="department-picker" data-tour="filters">
+      {/* The card is here whatever the company has in it. A tour step, and a
+          manager's eye, both need somewhere stable to land: on a brand-new
+          workspace with no departments and no apps this says what would make
+          filtering possible instead of vanishing. */}
+      <div className="card p-4 sm:p-5" data-testid="department-picker" data-tour="filters">
+        {departments.length <= 1 && apps.length === 0 ? (
+          <p className="text-sm text-gray-500" data-testid="filters-empty">
+            Add a department or publish an app to filter this screen. Until then it is the whole plant.
+          </p>
+        ) : (
           <div className="flex flex-wrap items-end gap-3">
             <div className="flex items-end gap-3 flex-1 min-w-[16rem]" data-testid="scope-selects">
               {departments.length > 1 && (
@@ -802,8 +917,8 @@ export default function Dashboard() {
               </div>
             )}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* ── The plant, right now ───────────────────────────────────────────────
           Five tiles, always on screen, plant-wide until somebody narrows them.
@@ -822,21 +937,27 @@ export default function Dashboard() {
           [1, 2, 3, 4, 5].map(i => <SkeletonBox key={i} className="h-24 w-full" />)
         ) : (
           <>
-            <div data-testid="kpi-finished-today">
+            {/* The count is the snapshot's. The comparison beside it is the
+                brief's `vs_7day_avg_pct`, measured over the same plant-day
+                definition of a finished run, so the two cannot disagree — and
+                it is simply absent (no 0%) on a plant with no week behind it.
+                The heading above already names the scope, so this line does not
+                repeat it: a tile that renames itself when you filter reads as a
+                different measurement. */}
+            <div data-testid="kpi-finished-today" className="h-full">
               <StatCard
                 label="Finished today"
+                className="h-full"
                 value={snapshot?.finished_today ?? '—'}
-                // The heading directly above already names the scope, so this
-                // line stays word-for-word the same whatever is selected: a
-                // tile that renames itself when you filter reads as a
-                // different measurement.
-                deltaLabel="runs completed today"
+                delta={brief?.kpis?.vs_7day_avg_pct ?? null}
+                deltaLabel={brief?.kpis?.vs_7day_avg_pct != null ? 'vs 7-day average' : 'runs completed today'}
                 icon={<CheckCircle size={18} />} iconBg="bg-green-50" iconColor="text-green-600"
               />
             </div>
-            <div data-testid="kpi-running-now">
+            <div data-testid="kpi-running-now" className="h-full">
               <StatCard
                 label="Running now"
+                className="h-full"
                 value={snapshot?.running_now ?? '—'}
                 deltaLabel="operators mid-run"
                 icon={<Activity size={18} />} iconBg="bg-blue-50" iconColor="text-blue-600"
@@ -849,9 +970,10 @@ export default function Dashboard() {
                 reads as two numbers. `avg_cycle_basis` names whether this is
                 hands-on time or wall clock, through the one shared vocabulary
                 in components/apps/appModel. */}
-            <div data-testid="kpi-avg-cycle">
+            <div data-testid="kpi-avg-cycle" className="h-full">
               <StatCard
                 label="Average cycle time"
+                className="h-full"
                 value={<span className="whitespace-nowrap" title={durationBasisNote(snapshot?.avg_cycle_basis ?? null)}>
                   {snapshot?.avg_cycle_seconds != null ? fmtDuration(snapshot.avg_cycle_seconds) : '—'}
                 </span>}
@@ -861,9 +983,10 @@ export default function Dashboard() {
                 icon={<Clock size={18} />} iconBg="bg-orange-50" iconColor="text-orange-600"
               />
             </div>
-            <div data-testid="kpi-pass-rate">
+            <div data-testid="kpi-pass-rate" className="h-full">
               <StatCard
                 label="Pass rate"
+                className="h-full"
                 value={snapshot?.pass_rate != null ? `${snapshot.pass_rate}%` : '—'}
                 deltaLabel={snapshot?.pass_rate != null
                   ? `${snapshot.pass_rate_sample} inspected run${snapshot.pass_rate_sample === 1 ? '' : 's'}`
@@ -871,12 +994,18 @@ export default function Dashboard() {
                 icon={<TrendingUp size={18} />} iconBg="bg-purple-50" iconColor="text-purple-600"
               />
             </div>
-            {/* One sentence, shared with the department page and its wall board
-                (utils/floorWording) so the three cannot word it differently. */}
-            <div data-testid="kpi-on-track">
+            {/* The same sentence the department page and its wall board print
+                (utils/floorWording), split across the tile's two lines so it is
+                said once: "6 of 8" at headline size, "open work orders on
+                track" as the label. Printing the whole sentence twice made this
+                tile a head taller than its four siblings. */}
+            <div data-testid="kpi-on-track" title={onTrack ?? undefined} className="h-full">
               <StatCard
-                label="Work orders on track"
-                value={<span className="text-base leading-snug block">{onTrack ?? '—'}</span>}
+                label="open work orders on track"
+                className="h-full"
+                value={<span className="whitespace-nowrap">
+                  {snapshot && snapshot.open_work_orders > 0 ? `${snapshot.on_track} of ${snapshot.open_work_orders}` : '—'}
+                </span>}
                 deltaLabel={onTrack
                   ? undefined
                   : `${snapshot?.on_track_reason ?? 'no open work order to be on track with'}${inScope}`}
@@ -893,7 +1022,12 @@ export default function Dashboard() {
       <div className="card p-5" data-tour="departments">
         <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
           <h2 className="font-semibold text-gray-900">Departments</h2>
-          <p className="text-xs text-gray-500">Open one for its stations, wall board and team</p>
+          {/* The cards are a directory, not a fifth tile: they stay plant-wide
+              while a filter is on, and say so, rather than looking like numbers
+              that failed to narrow. */}
+          <p className="text-xs text-gray-500" data-testid="departments-caption">
+            {filtersActive ? 'Every department, plant-wide' : 'Open one for its stations, wall board and team'}
+          </p>
         </div>
 
         {floorLoading && deptRows.length === 0 ? (
@@ -914,11 +1048,18 @@ export default function Dashboard() {
             {deptRows.map(dept => {
               const status = deptStatus(dept);
               const sentence = onTrackSentence(dept);
+              // Dimmed, not hidden: the one being read stays legible and the
+              // rest recede, so the directory cannot be mistaken for the tiles.
+              const outsideScope = !!selectedDeptId && dept.department_id !== selectedDeptId;
               return (
                 <Link
                   key={dept.department_id}
                   to={`/departments/${dept.department_id}`}
-                  className={`block bg-white rounded-xl border border-gray-200 border-l-4 ${deptBorderColor(status)} hover:shadow-md transition-shadow p-3.5`}
+                  data-testid="department-card"
+                  data-outside-scope={outsideScope ? 'true' : 'false'}
+                  className={`block bg-white rounded-xl border border-gray-200 border-l-4 ${deptBorderColor(status)} hover:shadow-md transition-all p-3.5 ${
+                    outsideScope ? 'opacity-40 hover:opacity-100' : ''
+                  }`}
                 >
                   <div className="flex items-center gap-2 mb-2 flex-wrap">
                     <span className="font-semibold text-gray-900 text-sm truncate">{dept.department_name}</span>
@@ -992,14 +1133,20 @@ export default function Dashboard() {
         )}
       </div>
 
-      {/* Output — one chart, two ranges. Today's shape and the week's trend
-          were two separate cards competing for the same glance. */}
+      {/* Output — one chart, three ranges, opening on the plant's own day so
+          the chart and the Finished-today tile answer with the same number.
+          Whichever range is on, the header says which and totals it. */}
       <div className="card p-5" data-tour="output">
         <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
-          <h2 className="font-semibold text-gray-900">Output</h2>
+          <div className="min-w-0">
+            <h2 className="font-semibold text-gray-900">Output</h2>
+            <p className="text-[11px] text-gray-500" data-testid="output-total">
+              {outputTotal} run{outputTotal === 1 ? '' : 's'} · {outputRangeLabel}
+            </p>
+          </div>
           <div className="flex items-center gap-2">
             <div className="inline-flex rounded-lg border border-gray-200 p-0.5 bg-gray-50">
-              {([['day', 'Last 24 hours'], ['week', 'Last 7 days']] as const).map(([id, label]) => (
+              {OUTPUT_RANGES.map(([id, label]) => (
                 <button
                   key={id}
                   type="button"
@@ -1025,16 +1172,19 @@ export default function Dashboard() {
           <EmptyState
             compact
             icon={BarChart2}
-            title={outputRange === 'day'
-              ? `No runs finished in the last 24 hours${inScope}`
-              : `No runs finished in the last 7 days${inScope}`}
+            title={outputRange === 'today'
+              ? `No runs finished today${inScope}`
+              : outputRange === 'day'
+                ? `No runs finished in the last 24 hours${inScope}`
+                : `No runs finished in the last 7 days${inScope}`}
             description="Every completed run is counted here the moment an operator finishes it."
           />
-        ) : outputRange === 'day' ? (
+        ) : outputRange !== 'week' ? (
           <ResponsiveContainer width="100%" height={210}>
-            <BarChart data={plantData?.hourly_throughput ?? []} barSize={12} margin={{ left: 0, right: 10, top: 5, bottom: 0 }}>
+            {/* The axis is the plant's clock, like the buckets under it. */}
+            <BarChart data={outputRange === 'today' ? todaySeries : hourlySeries} barSize={12} margin={{ left: 0, right: 10, top: 5, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-              <XAxis dataKey="hour" tick={{ fontSize: 10 }} tickFormatter={h => h.slice(11, 16)} interval="preserveStartEnd" minTickGap={24} />
+              <XAxis dataKey="label" tick={{ fontSize: 10 }} interval="preserveStartEnd" minTickGap={24} />
               <YAxis tick={{ fontSize: 11 }} allowDecimals={false} width={28} />
               <Tooltip labelFormatter={l => `${l}`} formatter={(v: any) => [v, 'Runs finished']} />
               <Bar dataKey="count" fill="#3b82f6" radius={[2, 2, 0, 0]} />

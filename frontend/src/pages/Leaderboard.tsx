@@ -367,15 +367,26 @@ function LeaderboardBoardTV({ period }: { period: LeaderboardPeriod }) {
   );
 }
 
+/**
+ * `?tv=1` is the wall board; anything else is the office page. The choice is
+ * made HERE, before either one's hooks exist, so a panel on the wall runs the
+ * board's fetches and only the board's: an early return further down still
+ * mounted the office page's effects first, and every board load fetched the
+ * department ranking nobody was going to see.
+ */
 export default function Leaderboard() {
-  // `?tv=1` is the wall board; `?period=` picks its range. Both are read from
-  // the URL so a browser on the wall can be pointed at one link and left there.
   const [searchParams] = useSearchParams();
-  const tv = searchParams.get('tv') === '1';
-  const tvPeriod = (['today', 'week', 'month', 'all'].includes(searchParams.get('period') ?? '')
-    ? searchParams.get('period')
-    : 'week') as LeaderboardPeriod;
+  if (searchParams.get('tv') === '1') {
+    const period = (['today', 'week', 'month', 'all'].includes(searchParams.get('period') ?? '')
+      ? searchParams.get('period')
+      : 'week') as LeaderboardPeriod;
+    return <LeaderboardBoardTV period={period} />;
+  }
+  return <LeaderboardPage />;
+}
 
+/** The leaderboard inside the management shell: departments, then operators. */
+function LeaderboardPage() {
   const [period, setPeriod] = useState<LeaderboardPeriod>('week');
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -441,8 +452,6 @@ export default function Leaderboard() {
   const boards = boardData?.boards ?? [];
   const appOptions = boardData?.apps ?? [];
   const champions = boards.filter(b => (b.leaders?.length ?? 0) > 0);
-
-  if (tv) return <LeaderboardBoardTV period={tvPeriod} />;
 
   return (
     <div className="p-6 space-y-6">

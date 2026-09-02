@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { MemoryRouter, useLocation, useNavigate } from 'react-router-dom';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -131,9 +131,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = TestResizeObserver;
   localStorage.clear();
-  // A fresh account: an app, three finished runs, and NO departments at all.
+  // A truly fresh account: no departments, no apps in the library, and three
+  // runs that have finished. Nothing on this page may depend on a company
+  // having set something up first.
   getDepartments.mockResolvedValue([]);
-  getApps.mockResolvedValue([{ id: 'a-1', name: 'Weld Check' }]);
+  getApps.mockResolvedValue([]);
   getDailyBrief.mockResolvedValue(BRIEF);
   getPlantView.mockResolvedValue(PLANT);
   getFloorSnapshot.mockResolvedValue(snapshot());
@@ -144,8 +146,26 @@ beforeEach(() => {
   });
 });
 
-const renderPage = () =>
-  render(<MemoryRouter initialEntries={['/dashboard']}><Dashboard /></MemoryRouter>);
+/** The current URL, on screen, so a test can assert what a link would carry. */
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location">{location.pathname + location.search}</div>;
+}
+
+/** The browser's Back button, in a component. */
+function BackButton() {
+  const navigate = useNavigate();
+  return <button type="button" onClick={() => navigate(-1)}>go back</button>;
+}
+
+const renderPage = (entry = '/dashboard') =>
+  render(
+    <MemoryRouter initialEntries={[entry]}>
+      <LocationProbe />
+      <BackButton />
+      <Dashboard />
+    </MemoryRouter>,
+  );
 
 // ── 1. The plant is the page ─────────────────────────────────────────────────
 
@@ -198,13 +218,85 @@ describe('the whole plant, with nothing selected', () => {
   });
 });
 
+describe('the filter card is on the page whatever the company has in it', () => {
+  it('says what would make filtering possible instead of vanishing', async () => {
+    renderPage();
+    await screen.findByTestId('kpi-finished-today');
+
+    // No departments and no apps: the card is still here, and so is the element
+    // the tour's filter step points at.
+    expect(screen.getByTestId('department-picker')).toBeInTheDocument();
+    expect(screen.getByTestId('filters-empty'))
+      .toHaveTextContent('Add a department or publish an app to filter this screen');
+    expect(screen.queryByLabelText('Department')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('App')).not.toBeInTheDocument();
+  });
+
+  it('offers the selects as soon as there is something to filter by', async () => {
+    getDepartments.mockResolvedValue([{ id: 'd-1', name: 'Welding' }, { id: 'd-2', name: 'Paint' }]);
+    getApps.mockResolvedValue([{ id: 'a-1', name: 'Weld Check' }]);
+    renderPage();
+
+    expect(await screen.findByLabelText('Department')).toBeInTheDocument();
+    expect(screen.getByLabelText('App')).toBeInTheDocument();
+    expect(screen.queryByTestId('filters-empty')).not.toBeInTheDocument();
+  });
+});
+
+describe('the scope is in the URL, so it can be shared and walked back', () => {
+  beforeEach(() => {
+    getDepartments.mockResolvedValue([{ id: 'd-1', name: 'Welding' }, { id: 'd-2', name: 'Paint' }]);
+    getFloorSnapshot.mockImplementation(async (f?: any) =>
+      snapshot(f?.department_id === 'd-1' ? { finished_today: 7, scope: { site_id: null, department_id: 'd-1', app_id: null, station_id: null, valid: true } } : {}));
+  });
+
+  it('puts the chosen department in the address bar', async () => {
+    renderPage();
+    fireEvent.change(await screen.findByLabelText('Department'), { target: { value: 'd-1' } });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('location')).toHaveTextContent('/dashboard?department_id=d-1'));
+    // …and it is a real scope, not just a decorated URL.
+    await waitFor(() => expect(screen.getByTestId('kpi-finished-today')).toHaveTextContent('7'));
+  });
+
+  it('walks Back to the scope that was on screen a moment ago', async () => {
+    renderPage();
+    await screen.findByTestId('kpi-finished-today');
+    fireEvent.change(await screen.findByLabelText('Department'), { target: { value: 'd-1' } });
+    await waitFor(() => expect(screen.getByTestId('kpi-finished-today')).toHaveTextContent('7'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'go back' }));
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/dashboard'));
+    expect(screen.getByTestId('location')).not.toHaveTextContent('department_id');
+    await waitFor(() => expect(screen.getByTestId('kpi-finished-today')).toHaveTextContent('3'));
+  });
+
+  it('opens the scope a link carries, without adopting it as the default', async () => {
+    localStorage.setItem('hm_command_center_filters_u-1', JSON.stringify({ department_id: 'd-2' }));
+    renderPage('/dashboard?department_id=d-1');
+
+    await waitFor(() =>
+      expect(getFloorSnapshot).toHaveBeenCalledWith(expect.objectContaining({ department_id: 'd-1' })));
+    // A link opens a view; it is not this person's new home.
+    expect(JSON.parse(localStorage.getItem('hm_command_center_filters_u-1')!))
+      .toEqual({ department_id: 'd-2' });
+  });
+});
+
 // ── 2. One sentence for the on-track share ───────────────────────────────────
 
 describe('the on-track share is one sentence', () => {
   it('reads "N of M open work orders on track"', async () => {
     renderPage();
-    await waitFor(() =>
-      expect(screen.getByTestId('kpi-on-track')).toHaveTextContent('6 of 8 open work orders on track'));
+    const tile = await screen.findByTestId('kpi-on-track');
+    // The number once, at headline size, over the words it belongs to — and the
+    // whole sentence, the one the department page and the wall board print, on
+    // the tile itself.
+    await waitFor(() => expect(tile).toHaveTextContent('6 of 8'));
+    expect(tile).toHaveTextContent('open work orders on track');
+    expect(tile).toHaveAttribute('title', '6 of 8 open work orders on track');
   });
 
   it('says why instead of printing 0% when nothing is open', async () => {
@@ -218,6 +310,7 @@ describe('the on-track share is one sentence', () => {
       expect(screen.getByTestId('kpi-on-track')).toHaveTextContent('no open work order to be on track with'));
     expect(screen.getByTestId('kpi-on-track')).toHaveTextContent('—');
     expect(screen.getByTestId('kpi-on-track')).not.toHaveTextContent('0%');
+    expect(screen.getByTestId('kpi-on-track')).not.toHaveAttribute('title');
   });
 
   it('is written once, so three screens cannot word it differently', () => {

@@ -156,7 +156,7 @@ const BRIEF = {
     ],
     attention_plant_wide_hidden: 0,
     attention_plant_wide_kinds: [],
-    kpis: { completed_today: 12, active_now: 4, work_orders_total: 12 },
+    kpis: { completed_today: 12, vs_7day_avg_pct: 20, active_now: 4, work_orders_total: 12 },
     due_soon: [
       { id: 'wo1', work_order_number: 'WO-1', part_name: 'Weldment', department_name: 'Welding', quantity: 10, quantity_completed: 2, completion_pct: 20, scheduled_end: '2026-09-01T10:00:00Z', priority: 'high', schedule_status: 'overdue' },
       { id: 'wo9', work_order_number: 'WO-9', part_name: 'Painted Frame', department_name: 'Paint', quantity: 5, quantity_completed: 0, completion_pct: 0, scheduled_end: '2026-09-01T12:00:00Z', priority: 'medium', schedule_status: 'overdue' },
@@ -172,7 +172,7 @@ const BRIEF = {
     ],
     attention_plant_wide_hidden: 2,
     attention_plant_wide_kinds: ['low stock', 'unrouted help requests'],
-    kpis: { completed_today: 7, active_now: 3, work_orders_total: 7 },
+    kpis: { completed_today: 7, vs_7day_avg_pct: 5, active_now: 3, work_orders_total: 7 },
     due_soon: [
       { id: 'wo1', work_order_number: 'WO-1', part_name: 'Weldment', department_name: 'Welding', quantity: 10, quantity_completed: 2, completion_pct: 20, scheduled_end: '2026-09-01T10:00:00Z', priority: 'high', schedule_status: 'overdue' },
     ],
@@ -185,7 +185,7 @@ const BRIEF = {
     attention: [],
     attention_plant_wide_hidden: 3,
     attention_plant_wide_kinds: ['low stock'],
-    kpis: { completed_today: 0, active_now: 0, work_orders_total: 0 },
+    kpis: { completed_today: 0, vs_7day_avg_pct: null, active_now: 0, work_orders_total: 0 },
     due_soon: [],
     throughput_7d: [{ date: '2026-08-25', count: 0 }],
     week_avg_per_day: 0,
@@ -196,7 +196,13 @@ const BRIEF = {
 const PLANT = {
   all: {
     scope: { site_id: null, department_id: null, app_id: null },
-    hourly_throughput: [{ hour: '2026-08-25T09:00:00', count: 12 }],
+    // Two buckets, UTC stamps, straddling the plant day — exactly the shape the
+    // endpoint sends. Yesterday evening is in the last 24 hours and is NOT in
+    // today.
+    hourly_throughput: [
+      { hour: '2026-09-01T22:00:00', count: 5 },
+      { hour: '2026-09-02T08:00:00', count: 12 },
+    ],
     active_alerts: [
       { id: 'wo1', work_order_number: 'WO-1', part_name: 'Weldment', department: 'Welding', status: 'overdue', scheduled_end: '2026-09-01T10:00:00Z', completion_pct: 20 },
       { id: 'wo9', work_order_number: 'WO-9', part_name: 'Painted Frame', department: 'Paint', status: 'behind', scheduled_end: '2026-09-01T12:00:00Z', completion_pct: 0 },
@@ -271,7 +277,12 @@ describe('the plant is on screen before anything is chosen', () => {
     expect(screen.getByTestId('kpi-running-now')).toHaveTextContent('4');
     expect(screen.getByTestId('kpi-avg-cycle')).toHaveTextContent('18m');
     expect(screen.getByTestId('kpi-pass-rate')).toHaveTextContent('96%');
-    expect(screen.getByTestId('kpi-on-track')).toHaveTextContent('6 of 8 open work orders on track');
+    // Said once: "6 of 8" at headline size over the label it belongs to. The
+    // whole sentence — the one the department page and the wall board print —
+    // is on the tile's title, and in utils/floorWording.
+    expect(screen.getByTestId('kpi-on-track')).toHaveTextContent('6 of 8');
+    expect(screen.getByTestId('kpi-on-track')).toHaveTextContent('open work orders on track');
+    expect(screen.getByTestId('kpi-on-track')).toHaveAttribute('title', '6 of 8 open work orders on track');
 
     // …and the three sections that used to be hidden behind the same gate.
     expect(screen.getByText('Latest runs')).toBeInTheDocument();
@@ -396,13 +407,15 @@ describe('the scope reaches every number on the page', () => {
     expect(screen.getByTestId('kpi-running-now')).toHaveTextContent('3');
     expect(screen.getByTestId('kpi-avg-cycle')).toHaveTextContent('14m');
     expect(screen.getByTestId('kpi-pass-rate')).toHaveTextContent('91%');
-    expect(screen.getByTestId('kpi-on-track')).toHaveTextContent('2 of 4 open work orders on track');
+    expect(screen.getByTestId('kpi-on-track')).toHaveTextContent('2 of 4');
+    expect(screen.getByTestId('kpi-on-track')).toHaveAttribute('title', '2 of 4 open work orders on track');
     expect(screen.getByRole('heading', { name: 'Welding' })).toBeInTheDocument();
 
     // The plant-wide readings are GONE, not sitting next to the scoped ones.
     expect(screen.getByTestId('kpi-finished-today')).not.toHaveTextContent('12');
     expect(screen.getByTestId('kpi-pass-rate')).not.toHaveTextContent('96%');
     expect(screen.getByTestId('kpi-on-track')).not.toHaveTextContent('6 of 8');
+    expect(screen.getByTestId('kpi-on-track')).not.toHaveAttribute('title', '6 of 8 open work orders on track');
 
     // And not one tile renamed itself on the way: same labels, new numbers.
     const labelOf = (text: string | null) => (text ?? '').replace(/[\d%]/g, '');
@@ -462,11 +475,74 @@ describe('the scope reaches every number on the page', () => {
     expect(screen.getByTestId('kpi-avg-cycle')).toHaveTextContent('—');
     expect(screen.getByText('No runs recorded yet in Paint')).toBeInTheDocument();
     // An empty series makes recharts draw nothing at all, not even axes, which
-    // reads as a broken card rather than a quiet day.
-    expect(screen.getByText('No runs finished in the last 24 hours in Paint')).toBeInTheDocument();
+    // reads as a broken card rather than a quiet day. The range it names is the
+    // plant's own day — the one the tiles above it count.
+    expect(screen.getByText('No runs finished today in Paint')).toBeInTheDocument();
 
     // An empty DEPARTMENT is not an empty company: the first-run CTA must not fire.
     expect(screen.queryByText(/build your first app/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('the Output chart answers the same question as the tile above it', () => {
+  it('opens on the plant\u2019s day, and totals exactly what Finished today says', async () => {
+    renderPage();
+    await screen.findByTestId('kpi-finished-today');
+
+    // "12 finished today" over a chart summing to 17, both labelled runs
+    // finished, was two answers to one question. The default range is the
+    // plant's own day and the header says so.
+    expect(screen.getByTestId('output-total')).toHaveTextContent('12 runs · today');
+    expect(screen.getByTestId('kpi-finished-today')).toHaveTextContent('12');
+  });
+
+  it('labels any other range, and totals that one instead', async () => {
+    renderPage();
+    await screen.findByTestId('output-total');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Last 24 hours' }));
+    // Yesterday evening is in the rolling window and not in today — the whole
+    // reason the two numbers differ, now said out loud.
+    expect(screen.getByTestId('output-total')).toHaveTextContent('17 runs · last 24 hours');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Last 7 days' }));
+    expect(screen.getByTestId('output-total')).toHaveTextContent('12 runs · last 7 days');
+  });
+});
+
+describe('the department directory while a filter is on', () => {
+  it('says it is still plant-wide, and dims what is out of scope', async () => {
+    renderPage();
+    await screen.findByTestId('kpi-finished-today');
+    expect(screen.getByTestId('departments-caption'))
+      .toHaveTextContent('Open one for its stations, wall board and team');
+
+    fireEvent.change(await deptSelect(), { target: { value: 'd-weld' } });
+
+    await waitFor(() =>
+      expect(screen.getByTestId('departments-caption')).toHaveTextContent('Every department, plant-wide'));
+    const cards = screen.getAllByTestId('department-card');
+    const outside = cards.map(c => c.getAttribute('data-outside-scope'));
+    expect(outside).toEqual(['false', 'true']);
+    expect(cards[1].className).toContain('opacity-40');
+    expect(cards[0].className).not.toContain('opacity-40');
+  });
+});
+
+describe('the comparison beside Finished today', () => {
+  it('prints the 7-day comparison when there is one', async () => {
+    renderPage();
+    await waitFor(() =>
+      expect(screen.getByTestId('kpi-finished-today')).toHaveTextContent('+20% vs 7-day average'));
+  });
+
+  it('prints nothing rather than 0% when there is no week behind it', async () => {
+    getDailyBrief.mockImplementation(async () => ({ ...BRIEF.all, kpis: { ...BRIEF.all.kpis, vs_7day_avg_pct: null } }));
+    renderPage();
+
+    await waitFor(() =>
+      expect(screen.getByTestId('kpi-finished-today')).toHaveTextContent('runs completed today'));
+    expect(screen.getByTestId('kpi-finished-today')).not.toHaveTextContent('0%');
   });
 });
 
