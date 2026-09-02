@@ -104,6 +104,52 @@ describe('who ran this job', () => {
     expect(q.get('from')).toBe('operator');
   });
 
+  it('names the OPERATION the queue sent the operator to, not just the job', () => {
+    // "Op 3 of 7" is what the dispatch list showed and what the operator
+    // pressed. Sending only `wo` makes the player infer which operation that
+    // was from the job's pointer, which is a different answer the moment a
+    // colleague advances the job in the next minute.
+    const link = buildPlayLink({
+      appId: 'app-1', workOrderId: 'wo-2', operationId: 'op-9',
+      operatorName: 'Maria Lopez', operatorUserId: 'user-7', stationId: 'st-3', fromOperator: true,
+    });
+    const q = new URLSearchParams(link.split('?')[1]);
+    expect(q.get('op')).toBe('op-9');
+    expect(q.get('wo')).toBe('wo-2');
+    // Nothing to say about an operation ⇒ nothing on the link.
+    expect(buildPlayLink({ appId: 'app-1', workOrderId: 'wo-2' })).toBe('/play/app-1?wo=wo-2');
+  });
+
+  it('names the OPEN RUN being picked back up, not just the job', () => {
+    // A tablet that reloads mid-run leaves its completion open. The row the
+    // operator taps is an offer to carry on with THAT unit; a link carrying
+    // only the job leaves the player to guess between the open runs on it —
+    // and guessing wrong starts a third one against the same unit.
+    const link = buildPlayLink({
+      appId: 'app-1', workOrderId: 'wo-2', operationId: 'op-9', runId: 'run-42',
+      operatorName: 'Maria Lopez', operatorUserId: 'user-7', stationId: 'st-3', fromOperator: true,
+    });
+    expect(link).toBe('/play/app-1?wo=wo-2&op=op-9&run=run-42&name=Maria+Lopez&uid=user-7&station=st-3&from=operator');
+    // The order is fixed — wo, op, run, name, uid, station, from — so two links
+    // are comparable by eye in a log, a screenshot or a test.
+    expect([...new URLSearchParams(link.split('?')[1]).keys()])
+      .toEqual(['wo', 'op', 'run', 'name', 'uid', 'station', 'from']);
+    // Nothing to resume ⇒ nothing on the link.
+    expect(buildPlayLink({ appId: 'app-1', workOrderId: 'wo-2' })).toBe('/play/app-1?wo=wo-2');
+    expect(buildPlayLink({ appId: 'app-1', runId: null })).toBe('/play/app-1');
+  });
+
+  it('says where a run was started from when it was not the portal', () => {
+    // The Schedule's Dispatch queue is a MANAGER pressing Start: their own
+    // identity applies, so the link carries no uid — and `from=dispatch` is
+    // what tells the player it did not come from a tablet with an exit.
+    const link = buildPlayLink({
+      appId: 'app-1', workOrderId: 'wo-2', operationId: 'op-9', stationId: 'st-3', from: 'dispatch',
+    });
+    expect(link).toBe('/play/app-1?wo=wo-2&op=op-9&station=st-3&from=dispatch');
+    expect(new URLSearchParams(link.split('?')[1]).get('uid')).toBeNull();
+  });
+
   it('comes back to the portal as the person who left it', () => {
     // Without this the portal asks "Who's working?" and demands the PIN again
     // after every single unit.

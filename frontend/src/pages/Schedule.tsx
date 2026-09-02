@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, Fragment } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import type { Kit } from '../types';
 import { useHighlight } from '../hooks/useHighlight';
@@ -12,9 +12,15 @@ import {
   Plus, Search, Filter, List, BarChart2, Edit2, Trash2, CheckSquare,
   X, ChevronDown, AlertTriangle, Calendar, Package, Building2, Clock, History,
   MessageSquare, Send, QrCode, Printer, Trash, PackageOpen, Flag, ExternalLink,
-  Upload, FileDown, CheckCircle2, XCircle, RefreshCw, GitBranch,
+  Upload, FileDown, CheckCircle2, XCircle, RefreshCw, GitBranch, PlayCircle, Factory,
 } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
+import DepartmentFilter from '../components/shared/DepartmentFilter';
+import WipSearch from '../components/shared/WipSearch';
+import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
+import { getFloorDispatch, type DispatchRow } from '../api/floor';
+import { dispatchRowLabel } from '../api/operator';
+import { buildPlayLink } from '../components/player/runtime';
 import {
   previewWorkOrderImport, commitWorkOrderImport, verdictLabel,
   IMPORT_COLUMNS, IMPORT_TEMPLATE_URL,
@@ -95,6 +101,14 @@ interface LocationOption {
   id: string;
   name: string;
   code: string;
+}
+
+/** A station the Dispatch queue can be narrowed to. */
+interface StationOption {
+  id: string;
+  name: string;
+  status?: string;
+  department_id?: string | null;
 }
 
 /** Kit list row — the server adds pick-progress rollups beyond the shared type. */
@@ -353,6 +367,7 @@ function WOCommentsPanel({ woId, currentUserId }: { woId: string; currentUserId?
   }, [woId]);
 
   useEffect(() => { load(); }, [load]);
+
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -971,7 +986,16 @@ function WOModal({
 
 // ── Main Component ─────────────────────────────────────────────────────────────
 
-type ViewMode = 'list' | 'gantt';
+type ViewMode = 'list' | 'gantt' | 'dispatch';
+
+/** How a priority reads on a dispatch row. The ORDER of the queue is the
+ *  server's (priority → due date → sequence); this is only its colour. */
+const DISPATCH_PRIORITY_CHIP: Record<string, string> = {
+  critical: 'bg-red-100 text-red-700',
+  high: 'bg-orange-100 text-orange-700',
+  medium: 'bg-blue-100 text-blue-700',
+  low: 'bg-gray-100 text-gray-600',
+};
 
 export default function Schedule() {
   const { selectedSiteId } = useSite();
@@ -994,6 +1018,25 @@ export default function Schedule() {
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [viewMode, setViewMode] = useState<ViewMode>('list');
+
+  // ── Dispatch: what to run next, here ────────────────────────────────────────
+  // The queue is the server's (/api/floor/dispatch) — ready and running
+  // operations in priority → due date → sequence order, plus the apps that need
+  // no work order. This screen never sorts it itself: the order IS the answer,
+  // and two screens ordering the same queue two ways is the bug the floor
+  // endpoints exist to stop.
+  const navigate = useNavigate();
+  const dispatchDept = useDepartmentFilter('dispatch');
+  const [dispatchStationId, setDispatchStationId] = useState('');
+  const [stations, setStations] = useState<StationOption[]>([]);
+  const [dispatchRows, setDispatchRows] = useState<DispatchRow[]>([]);
+  const [dispatchLoading, setDispatchLoading] = useState(false);
+  const [dispatchError, setDispatchError] = useState<string | null>(null);
+  /** How much the WHOLE plant has ready. Asked for only when the filtered list
+   *  came back empty, so the ordinary path never pays for it — and it is what
+   *  lets the empty state tell "nothing released" from "nothing here". */
+  const [dispatchElsewhere, setDispatchElsewhere] = useState(0);
+
   const [statusFilter, setStatusFilter] = useState('All');
   const [priorityFilter, setPriorityFilter] = useState('All');
   const [deptFilter, setDeptFilter] = useState('All');
@@ -1040,6 +1083,12 @@ export default function Schedule() {
       setKitsByWo(byWo);
       setLocations(Array.isArray(locList) ? (locList as LocationOption[]) : []);
       setRoutings(Array.isArray(routingList) ? (routingList as RoutingOption[]) : []);
+      // Best-effort: the Dispatch station picker is a narrowing, not a gate.
+      api.getStations(selectedSiteId ? { site_id: selectedSiteId } : undefined)
+        .then((rows: StationOption[]) => setStations(
+          (Array.isArray(rows) ? rows : []).filter(st => st.status !== 'inactive')
+        ))
+        .catch(() => setStations([]));
     } catch (e: any) {
       setWorkOrders([]);
       setLoadError(e?.message || 'Failed to load work orders');
@@ -1049,6 +1098,57 @@ export default function Schedule() {
   }, [selectedSiteId]);
 
   useEffect(() => { load(); }, [load]);
+
+  /** The queue for the picked department / station. Reloaded when either
+   *  changes, and when the tab is opened — a dispatch list is only useful if it
+   *  is what the floor looks like now. */
+  const loadDispatch = useCallback(async () => {
+    setDispatchLoading(true);
+    setDispatchError(null);
+    try {
+      const scoped = !!(dispatchDept.departmentId || dispatchStationId);
+      const res = await getFloorDispatch({
+        site_id: selectedSiteId || undefined,
+        department_id: dispatchDept.departmentId || undefined,
+        station_id: dispatchStationId || undefined,
+      });
+      setDispatchRows(res.rows);
+      // Only when this came back empty under a filter is the second question
+      // worth asking — and only then is the answer worth anything.
+      if (res.rows.length === 0 && scoped) {
+        const plant = await getFloorDispatch({ site_id: selectedSiteId || undefined })
+          .catch(() => null);
+        setDispatchElsewhere(plant?.rows.length ?? 0);
+      } else {
+        setDispatchElsewhere(0);
+      }
+    } catch (e: any) {
+      setDispatchRows([]);
+      setDispatchError(e?.message || 'Failed to load the dispatch queue');
+    } finally {
+      setDispatchLoading(false);
+    }
+  }, [selectedSiteId, dispatchDept.departmentId, dispatchStationId]);
+
+  useEffect(() => {
+    if (viewMode !== 'dispatch') return;
+    void loadDispatch();
+  }, [viewMode, loadDispatch]);
+
+  /** Start the top of the queue on the tablet. The MANAGER's own identity
+   *  applies — no uid on the link, because nobody has clocked in here — and the
+   *  operation id rides along so the run books against the operation the queue
+   *  offered, not whichever one the job's pointer names by then. */
+  const startDispatchRow = (row: DispatchRow) => {
+    if (!row.app_id) return;
+    navigate(buildPlayLink({
+      appId: row.app_id,
+      workOrderId: row.work_order_id,
+      operationId: row.work_order_operation_id,
+      stationId: row.station_id || dispatchStationId || null,
+      from: 'dispatch',
+    }));
+  };
 
   // Deep link from the Routings screen: /schedule?routing_id=… opens the create
   // form with that routing already picked, so "Release a job on this routing"
@@ -1353,6 +1453,15 @@ export default function Schedule() {
 
         {/* View toggle */}
         <div className="flex items-center gap-1 bg-gray-100 rounded-lg p-1 ml-auto">
+          {/* Dispatch is a THIRD view of the same schedule, not a second
+              screen: the plan, the chart, and what to run next out of it. */}
+          <button
+            onClick={() => setViewMode('dispatch')}
+            data-testid="tab-dispatch"
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${viewMode === 'dispatch' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
+          >
+            <PlayCircle size={13} /> Dispatch
+          </button>
           <button
             onClick={() => setViewMode('list')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${viewMode === 'list' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
@@ -1368,8 +1477,33 @@ export default function Schedule() {
         </div>
       </div>
 
+      {/* ── "Where is WO-1042?" ──────────────────────────────────────────────
+          One box, one sentence, written by the server. It sits above every view
+          of the Schedule because the question does not depend on which view is
+          open — and because the alternative, which is what the floor did until
+          now, was to find the row, open the drawer and count the operations. */}
+      <div className="card p-4">
+        <WipSearch className="max-w-xl" data-testid="schedule-wip-search" />
+      </div>
+
       {/* Content */}
-      {loading ? (
+      {viewMode === 'dispatch' ? (
+        <DispatchView
+          rows={dispatchRows}
+          loading={dispatchLoading}
+          error={dispatchError}
+          departmentFilter={dispatchDept}
+          stations={stations}
+          stationId={dispatchStationId}
+          onChooseStation={setDispatchStationId}
+          onRefresh={loadDispatch}
+          onStart={startDispatchRow}
+          onCreate={() => openCreate()}
+          canEdit={canEdit}
+          elsewhere={dispatchElsewhere}
+          onClearScope={() => { dispatchDept.setDepartmentId(''); setDispatchStationId(''); }}
+        />
+      ) : loading ? (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3">
           {[...Array(6)].map((_, i) => <Skeleton key={i} className="h-10" />)}
         </div>
@@ -1463,6 +1597,209 @@ export default function Schedule() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Dispatch ──────────────────────────────────────────────────────────────────
+//
+// "What should we run next in Weld?" — the question the Schedule could not
+// answer. It listed JOBS; the floor runs OPERATIONS, and which one is next
+// depends on priority, on what the customer was promised, and on where each job
+// already stands.
+//
+// The order on this screen is the SERVER's: priority → due date (nulls last) →
+// sequence, decided once in plantTruth.js so the tablet, the portal and this
+// list cannot each sort it their own way. Nothing here re-sorts, re-filters or
+// re-counts what came back.
+//
+// Start hands the operator's tablet the whole context — app, job, operation,
+// station — so the run books against the operation this row offered rather than
+// whichever one the job's pointer happens to name a minute later.
+
+function DispatchView({
+  rows, loading, error, departmentFilter, stations, stationId, onChooseStation,
+  onRefresh, onStart, onCreate, canEdit, elsewhere, onClearScope,
+}: {
+  rows: DispatchRow[];
+  loading: boolean;
+  error: string | null;
+  departmentFilter: ReturnType<typeof useDepartmentFilter>;
+  stations: StationOption[];
+  stationId: string;
+  onChooseStation: (id: string) => void;
+  onRefresh: () => void;
+  onStart: (row: DispatchRow) => void;
+  onCreate: () => void;
+  canEdit: boolean;
+  /** How much the whole plant has ready, asked for ONLY when this list came
+   *  back empty under a filter — so the ordinary path pays nothing for it. */
+  elsewhere: number;
+  onClearScope: () => void;
+}) {
+  // The station list is the picked department's when one is picked — offering
+  // a welder under a Paint filter is offering work that cannot be there.
+  const stationOptions = departmentFilter.departmentId
+    ? stations.filter(st => st.department_id === departmentFilter.departmentId)
+    : stations;
+
+  return (
+    <div className="space-y-4" data-testid="dispatch-view">
+      <div className="card p-4 flex flex-wrap items-center gap-3">
+        <DepartmentFilter
+          filter={departmentFilter}
+          allLabel="All departments"
+          matchCount={rows.length}
+          // "ready" was wrong twice over: the queue also carries the operations
+          // that are RUNNING, and the standing apps that need no work order at
+          // all. What the number counts is things you can start.
+          matchNoun="available"
+        />
+
+        {stationOptions.length > 0 && (
+          <label className="flex items-center gap-1.5">
+            <Factory size={13} className="text-gray-400" aria-hidden="true" />
+            <span className="sr-only">Station</span>
+            <select
+              aria-label="Station"
+              className="input-field text-sm py-1.5 w-auto min-w-[10rem]"
+              value={stationId}
+              onChange={e => onChooseStation(e.target.value)}
+            >
+              <option value="">All stations</option>
+              {stationOptions.map(st => <option key={st.id} value={st.id}>{st.name}</option>)}
+            </select>
+          </label>
+        )}
+
+        <button onClick={onRefresh} disabled={loading} className="btn-secondary ml-auto">
+          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
+          Refresh
+        </button>
+      </div>
+
+      {error && (
+        <div className="card p-4 flex items-center gap-2 text-sm text-red-700 bg-red-50 border-red-200">
+          <AlertTriangle size={16} className="flex-shrink-0" />
+          {error}
+        </div>
+      )}
+
+      {loading && rows.length === 0 ? (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 space-y-3">
+          {[...Array(4)].map((_, i) => <Skeleton key={i} className="h-14" />)}
+        </div>
+      ) : rows.length === 0 ? (
+        // Not a zeroed list — and not one sentence for two different situations
+        // either. "Nothing has been released anywhere" and "nothing is ready in
+        // Weld, though the plant is busy" want opposite actions, and telling a
+        // supervisor to go and create a work order when there are eleven of
+        // them one filter away is worse than saying nothing.
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm py-16 flex flex-col items-center gap-3 text-center px-6" data-testid="dispatch-empty">
+          <PlayCircle size={28} className="text-gray-300" />
+          {elsewhere > 0 ? (
+            <>
+              <p className="text-gray-700 font-medium">Nothing is ready here right now</p>
+              <p className="text-xs text-gray-500 max-w-md">
+                The plant has {elsewhere} thing{elsewhere === 1 ? '' : 's'} ready to run — just not
+                under this filter.
+              </p>
+              <button onClick={onClearScope} className="btn-secondary" data-testid="dispatch-empty-clear">
+                Show the whole plant
+              </button>
+            </>
+          ) : (
+            <>
+              <p className="text-gray-700 font-medium">Release a job with a routing to see it here</p>
+              <p className="text-xs text-gray-500 max-w-md">
+                A dispatch queue is made of a released job's operations. Create a work order,
+                pick a routing on it and press Release — every operation then appears here in
+                the order the floor should run it.
+              </p>
+              {canEdit && (
+                <button onClick={onCreate} className="btn-primary" data-testid="dispatch-empty-create">
+                  <Plus size={16} /> New Work Order
+                </button>
+              )}
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm divide-y divide-gray-100" data-testid="dispatch-queue">
+          {rows.map(row => {
+            const required = row.quantity_required ?? 0;
+            const done = row.quantity_completed ?? 0;
+            return (
+              <div
+                key={row.work_order_operation_id ?? `app:${row.app_id}`}
+                data-testid="dispatch-row"
+                className="p-4 flex flex-wrap items-center gap-x-4 gap-y-2"
+              >
+                <div className="min-w-[12rem] flex-1">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-semibold text-gray-900 [font-variant-numeric:tabular-nums]">
+                      {row.work_order_number ?? row.app_name}
+                    </span>
+                    {row.part_number && (
+                      <span className="text-xs text-gray-500 font-mono">{row.part_number}</span>
+                    )}
+                    {row.priority && (
+                      <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full capitalize ${DISPATCH_PRIORITY_CHIP[row.priority] ?? 'bg-gray-100 text-gray-600'}`}>
+                        {row.priority}
+                      </span>
+                    )}
+                    {row.status === 'running' && (
+                      <span className="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-green-100 text-green-700">
+                        Running now
+                      </span>
+                    )}
+                  </div>
+                  {/* The part this job makes. A standing app has none, and
+                      printing its own name twice reads as two facts. */}
+                  {row.part_name && (
+                    <div className="text-xs text-gray-600 mt-0.5 truncate">{row.part_name}</div>
+                  )}
+                </div>
+
+                {/* Which operation this is — the fact the job carries. */}
+                <div className="text-sm text-gray-700 min-w-[9rem]">
+                  {dispatchRowLabel(row)}
+                </div>
+
+                <div
+                  className="text-sm text-gray-700 [font-variant-numeric:tabular-nums] min-w-[5rem]"
+                  title={required > 0 ? undefined : 'no work order, so no ordered quantity'}
+                >
+                  {required > 0 ? `${done} / ${required}` : <span className="text-gray-400">—</span>}
+                </div>
+
+                <div className="text-sm text-gray-600 min-w-[6rem]">
+                  {row.due_date
+                    ? <>Due {formatDueDate(row.due_date)}</>
+                    : <span className="text-gray-400">no due date</span>}
+                </div>
+
+                {/* Which app the operator will open. On a standing row the app
+                    IS the row, so its name is already the heading. */}
+                <div className="text-sm text-gray-600 min-w-[8rem] truncate">
+                  {row.no_work_order
+                    ? null
+                    : (row.app_name ?? <span className="text-amber-600">{row.app_reason ?? 'no app on this operation'}</span>)}
+                </div>
+
+                <button
+                  onClick={() => onStart(row)}
+                  disabled={!row.app_id}
+                  title={row.app_id ? undefined : (row.app_reason ?? 'no app on this operation')}
+                  className="btn-primary flex-shrink-0 ml-auto disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <PlayCircle size={16} /> Start
+                </button>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

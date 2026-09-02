@@ -539,22 +539,57 @@ export function operatorAttribution(
 export interface PlayLinkParams {
   appId: string;
   workOrderId?: string | null;
+  /**
+   * The work_order_operation the run books against — "op 3 of 7", not just
+   * "somewhere on WO-1042". A dispatch list knows exactly which operation it
+   * sent the operator to start, and the player carries the id through to the
+   * completion so the booking lands on that operation rather than being
+   * inferred from the job's pointer a shift later.
+   */
+  operationId?: string | null;
+  /**
+   * An in-progress completion to CARRY ON, rather than a new run to start.
+   *
+   * A tablet that reloads mid-run leaves its completion open, and the operator
+   * coming back is resuming that unit — not starting a second one against the
+   * same job. The portal knows exactly which run it is offering, so it names
+   * it; the player resumes that id at its saved step instead of inferring
+   * which of several open runs was meant.
+   */
+  runId?: string | null;
   operatorName?: string | null;
   operatorUserId?: string | null;
   stationId?: string | null;
   fromOperator?: boolean;
+  /** Where the run was started from, when it was not the Operator Portal.
+   *  'dispatch' is the Schedule's queue: the manager's own identity applies, so
+   *  such a link carries no uid. */
+  from?: string | null;
 }
 
-/** Deep link from the Operator Portal into the player, carrying the VERIFIED
- *  identity (uid) so the run is attributed to the person, not to their typing. */
+/**
+ * Deep link into the player, carrying the VERIFIED identity (uid) so the run is
+ * attributed to the person, not to their typing — and, since the queue knows
+ * them, the exact operation the job is standing on and the open run being
+ * picked back up.
+ *
+ * Parameter order is fixed — wo, op, run, name, uid, station, from — so the
+ * links are comparable by eye in a log, a screenshot or a test.
+ */
 export function buildPlayLink(p: PlayLinkParams): string {
   const q = new URLSearchParams();
   if (p.workOrderId) q.set('wo', p.workOrderId);
+  if (p.operationId) q.set('op', p.operationId);
+  if (p.runId) q.set('run', p.runId);
   const name = (p.operatorName ?? '').trim();
   if (name) q.set('name', name);
   if (p.operatorUserId) q.set('uid', p.operatorUserId);
   if (p.stationId) q.set('station', p.stationId);
-  if (p.fromOperator) q.set('from', 'operator');
+  // `fromOperator` is the Operator Portal's shorthand for the way back it
+  // needs; anything else names itself. The portal wins if both are given,
+  // because it is the one with an exit to return to.
+  const from = p.fromOperator ? 'operator' : (p.from ?? '').trim();
+  if (from) q.set('from', from);
   const qs = q.toString();
   return `/play/${p.appId}${qs ? `?${qs}` : ''}`;
 }

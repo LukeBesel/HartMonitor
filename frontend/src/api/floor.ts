@@ -45,6 +45,16 @@ export interface FloorScope {
 
 /** The plant's state, for the plant's own day. */
 export interface FloorSnapshot {
+  /** Runs ONE operator finished on this same plant day, when the request named
+   *  one (`operator_user_id` / `operator_name`). null — never 0 — when nobody
+   *  said who is asking, or when the id belongs to no user this company owns.
+   *  The Operator Portal's TODAY tile reads this instead of counting the
+   *  tablet's own midnight, which is how it used to disagree with every
+   *  management screen after 8pm. */
+  finished_today_for_operator?: number | null;
+  /** Why it is null, for the tile to print in its place. */
+  finished_today_for_operator_reason?: string | null;
+
   /** 'YYYY-MM-DD' at the plant right now. What "today" means on this payload. */
   plant_date: string;
   /** The IANA zone that date was computed in; 'UTC' when none is configured. */
@@ -116,6 +126,10 @@ export interface FloorParams {
   app_id?: string | null;
   station_id?: string | null;
   product_type_id?: string | null;
+  /** Adds finished_today_for_operator to the snapshot. NOT a scope: the plant's
+   *  numbers do not change because an operator asked. */
+  operator_user_id?: string | null;
+  operator_name?: string | null;
 }
 
 /** Drop empty filters so `?department_id=` never reaches the server as a real
@@ -138,4 +152,171 @@ export function getFloorSnapshot(params?: FloorParams): Promise<FloorSnapshot> {
 /** The same snapshot for every department, answered in one round trip. */
 export function getFloorDepartments(params?: Pick<FloorParams, 'site_id'>): Promise<FloorDepartments> {
   return request<FloorDepartments>(`/floor/departments${query(params)}`);
+}
+
+// ─── Dispatch: what to run next, here ─────────────────────────────────────────
+//
+// The keystone wrote ordered operations onto every released work order and no
+// screen read them. These three calls are that data reaching a screen, under
+// the same honesty contract as the snapshot above: a scope is valid or empty,
+// a number nobody measured is null with a reason, and the plant's day is the
+// server's answer rather than the tablet's.
+
+/** What one dispatch row is. An operation belongs to a job; an app is a
+ *  standing one that needs no work order at all. */
+export type DispatchKind = 'operation' | 'app';
+
+/** One thing that can be started right now. */
+export interface DispatchRow {
+  kind: DispatchKind;
+  /** True for a published app that needs no work order — the row the Operator
+   *  Portal could never show, because it listed work orders. */
+  no_work_order: boolean;
+
+  /** The operation, when this row is one. Null on a standing app. */
+  work_order_operation_id: string | null;
+  work_order_id: string | null;
+  work_order_number: string | null;
+  part_number: string | null;
+  part_name: string | null;
+  priority: string | null;
+  due_date: string | null;
+
+  /** "Op 3 of 7 · Weld" — sequence, count and name, or nulls on a standing app. */
+  operation_sequence: number | null;
+  operation_count: number | null;
+  operation_name: string | null;
+  /** 'ready' | 'running' for an operation; 'ready' for a standing app. */
+  status: string;
+  started_at: string | null;
+
+  /** The order booked against this operation. Null on a standing app — no job
+   *  means no ordered quantity, and 0 would read as "none of them are done". */
+  quantity_required: number | null;
+  quantity_completed: number | null;
+  standard_seconds: number | null;
+
+  department_id: string | null;
+  department_name: string | null;
+  department_color: string | null;
+  station_id: string | null;
+  station_name: string | null;
+
+  /** The app to open. Null when the routing step named none — the row is still
+   *  the next thing due on that job, and `app_reason` says what is missing. */
+  app_id: string | null;
+  app_name: string | null;
+  app_reason: string | null;
+
+  /** Present on a standing app: why it needs no work order. */
+  reason?: string | null;
+}
+
+export interface FloorDispatch {
+  plant_date: string;
+  timezone: string;
+  /** The operation statuses this list was built from, named on the payload. */
+  statuses: string[];
+  /** The order the rows are in, in words. */
+  order: string;
+  rows: DispatchRow[];
+  scope: FloorScope;
+}
+
+/** Where one job stands, in the shape the search box prints. */
+export interface WipRow {
+  work_order_id: string;
+  work_order_number: string;
+  part_number: string;
+  part_name: string;
+  /** null on a job nobody released — never "operation 0 of 0". */
+  operation_sequence: number | null;
+  /** How many operations the job has. A count: 0 means it has none. */
+  operation_count: number;
+  operation_name: string | null;
+  department_name: string | null;
+  quantity_completed: number;
+  quantity_required: number;
+  /** The operation's status when released, else the work order's own. */
+  status: string;
+  /** The JOB's status, always — so a reader can see that the thing they
+   *  searched for is cancelled or finished without parsing the sentence. */
+  work_order_status: string;
+  started_at: string | null;
+  released: boolean;
+  /** The whole answer, in one sentence, written by the server so the Schedule,
+   *  the Command Center and anything else asking cannot word it differently. */
+  answer: string;
+}
+
+export interface WipAnswer {
+  plant_date: string;
+  timezone: string;
+  query: string;
+  match: 'work_order' | 'part_number' | 'none';
+  /** The one job, when the query resolved to exactly one. */
+  result: WipRow | null;
+  /** Every job that matched — several when a part number is shared. */
+  results: WipRow[];
+  answer: string | null;
+  /** Why there is no answer, for the screen to print instead of an empty box. */
+  reason: string | null;
+  /** How many jobs matched in total — which is not `results.length` once a
+   *  popular part is capped. */
+  total_matches: number;
+  /** True when the plant has more jobs on this part than the page shows. */
+  truncated: boolean;
+  /** Say so on screen: "25" read as "all of them" is a wrong answer. */
+  truncated_note: string | null;
+}
+
+/** One department's work in progress, by operation. */
+export interface WipDepartment {
+  /** null on the 'No department' bucket — the work that belongs to none. */
+  department_id: string | null;
+  department_name: string;
+  department_color: string | null;
+  running: number;
+  queued: number;
+  /** What `queued` counted, named so a strip cannot re-word it. */
+  queued_basis: string;
+  /** Today's counted units. null WITH A REASON until anybody counts any — a
+   *  plant that has recorded no scrap has not made zero scrap. */
+  good_today: number | null;
+  good_today_sample: number;
+  good_today_reason: string | null;
+  scrap_today: number | null;
+  scrap_today_sample: number;
+  scrap_today_reason: string | null;
+}
+
+/** The plant's totals. Taken ungrouped, so work belonging to no department is
+ *  in them — summing the rows is exactly how such work used to vanish. */
+export interface WipTotals extends Omit<WipDepartment, 'department_id' | 'department_name' | 'department_color'> {
+  /** What the totals are a total OF, said out loud. */
+  basis: string;
+}
+
+export interface WipSummary {
+  plant_date: string;
+  timezone: string;
+  departments: WipDepartment[];
+  totals: WipTotals;
+  scope: { site_id: string | null; department_id: string | null; valid: boolean };
+}
+
+/** The queue for a department / station: ready and running operations in
+ *  priority → due date → sequence order, plus the standing apps. */
+export function getFloorDispatch(params?: FloorParams): Promise<FloorDispatch> {
+  return request<FloorDispatch>(`/floor/dispatch${query(params)}`);
+}
+
+/** "Where is WO-1042?" — one sentence, written by the server. */
+export function getWip(q: string): Promise<WipAnswer> {
+  return request<WipAnswer>(`/floor/wip?q=${encodeURIComponent(q)}`);
+}
+
+/** Running / queued / good / scrap today, per department. */
+export function getWipSummary(params?: Pick<FloorParams, 'site_id' | 'department_id'>): Promise<WipSummary> {
+  return request<WipSummary>(`/floor/wip-summary${query(params)}`);
 }

@@ -1,7 +1,10 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
-import { getFloorSnapshot, getFloorDepartments } from '../api/floor';
+import {
+  getFloorSnapshot, getFloorDepartments, getWipSummary, type WipSummary,
+} from '../api/floor';
+import WipSearch from '../components/shared/WipSearch';
 import type { FloorSnapshot, DepartmentSnapshot } from '../api/floor';
 import { useAuth } from '../context/AuthContext';
 import { useBranding } from '../context/BrandingContext';
@@ -414,6 +417,9 @@ export default function Dashboard() {
   const [snapshot, setSnapshot] = useState<FloorSnapshot | null>(null);
   const [deptRows, setDeptRows] = useState<DepartmentSnapshot[]>([]);
   const [plantData, setPlantData] = useState<PlantViewData | null>(null);
+  /** Work in progress by operation, per department. Null until the first read
+   *  lands — the strip says so rather than drawing an empty rail. */
+  const [wip, setWip] = useState<WipSummary | null>(null);
   const [floorLoading, setFloorLoading] = useState(true);
   // One output chart, three ranges. It opens on the PLANT'S day — the same day
   // the tiles above it count — because "4 finished today" sitting above a chart
@@ -440,14 +446,24 @@ export default function Dashboard() {
 
   const loadFloor = useCallback(async () => {
     const scope = { ...filters, site_id: selectedSiteId || undefined };
-    const [snap, depts, plant] = await Promise.all([
+    const [snap, depts, plant, wip] = await Promise.all([
       getFloorSnapshot(scope).catch(() => null),
       getFloorDepartments(selectedSiteId ? { site_id: selectedSiteId } : undefined).catch(() => null),
       api.getPlantView(scope).catch(() => null),
+      // Work in progress BY OPERATION — how much is running and how much is
+      // waiting in each department. Best-effort like its siblings, and started
+      // inside a promise so that a synchronous throw cannot take the four
+      // parallel reads down with it: this page's tiles must render even when
+      // one of its reads is unavailable.
+      Promise.resolve().then(() => getWipSummary({
+        site_id: selectedSiteId || undefined,
+        department_id: filters.department_id || undefined,
+      })).catch(() => null),
     ]);
     if (snap) setSnapshot(snap);
     if (depts) setDeptRows(depts.departments ?? []);
     if (plant) setPlantData(plant);
+    if (wip) setWip(wip);
     setFloorLoading(false);
   }, [filters, selectedSiteId]);
 
@@ -854,6 +870,14 @@ export default function Dashboard() {
           workspace with no departments and no apps this says what would make
           filtering possible instead of vanishing. */}
       <div className="card p-4 sm:p-5" data-testid="department-picker" data-tour="filters">
+        {/* "Where is WO-1042?" — the same box, and the same server-written
+            sentence, the Schedule carries. It sits with the scope controls
+            because it is the other question a manager arrives with, and it
+            answers without narrowing anything on the page. */}
+        <div className="mb-4 pb-4 border-b border-gray-100">
+          <WipSearch className="max-w-xl" data-testid="dashboard-wip-search" />
+        </div>
+
         {departments.length <= 1 && apps.length === 0 ? (
           <p className="text-sm text-gray-500" data-testid="filters-empty">
             Add a department or publish an app to filter this screen. Until then it is the whole plant.
@@ -1015,6 +1039,54 @@ export default function Dashboard() {
           </>
         )}
       </div>
+
+      {/* ── Work in progress, by operation ─────────────────────────────────────
+          How much is running and how much is waiting in each department — the
+          question the tiles above cannot answer, because "running now" is a
+          plant total and the floor is organised by department.
+
+          Every value here is the server's. Good and scrap are null WITH A
+          REASON until somebody counts them: a plant that has recorded no scrap
+          has not made zero scrap, and a rail of confident zeros is how that
+          gets believed. */}
+      {wip && wip.departments.length > 0 && (
+        <div className="card p-5" data-testid="wip-strip">
+          <div className="flex items-baseline justify-between gap-3 mb-3 flex-wrap">
+            <h2 className="font-semibold text-gray-900">Work in progress</h2>
+            <span className="text-xs text-gray-500">
+              by operation{wip.plant_date ? ` · ${wip.plant_date}` : ''}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+            {wip.departments.map(dept => (
+              <div
+                key={dept.department_id}
+                data-testid="wip-department"
+                className="rounded-xl border border-gray-200 p-3"
+                style={{ borderLeft: `3px solid ${dept.department_color || '#94a3b8'}` }}
+              >
+                <div className="font-semibold text-gray-900 text-sm truncate">{dept.department_name}</div>
+                <div className="text-sm text-gray-700 mt-1 [font-variant-numeric:tabular-nums]">
+                  <span className="font-semibold">{dept.running}</span> running
+                  {' · '}
+                  <span className="font-semibold">{dept.queued}</span> queued
+                </div>
+                <div className="text-xs text-gray-500 mt-1 [font-variant-numeric:tabular-nums]">
+                  {dept.good_today != null || dept.scrap_today != null ? (
+                    <>
+                      {dept.good_today ?? '—'} good / {dept.scrap_today ?? '—'} scrap today
+                    </>
+                  ) : (
+                    // The reason, not a dash on its own — "—" alone leaves a
+                    // supervisor guessing whether the line is broken.
+                    <>— good / — scrap today · {dept.good_today_reason ?? 'not counted yet'}</>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── The departments, as doors ──────────────────────────────────────────
           The same figures the department's own page and its wall board show,

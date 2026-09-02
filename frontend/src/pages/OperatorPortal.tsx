@@ -7,7 +7,14 @@ import {
   MessageSquare, Lock, Delete, Users as UsersIcon, KeyRound, LayoutDashboard,
 } from 'lucide-react';
 import { timeAgo } from '../utils/time';
-import { fmtMinutes } from '../components/apps/appModel';
+import {
+  fmtMinutes, fmtDuration, durationBasisLabel, runDurationSeconds,
+} from '../components/apps/appModel';
+import { getFloorSnapshot, type FloorSnapshot, type DispatchRow } from '../api/floor';
+import {
+  getOperatorQueue, getOperatorRuns, dedupeRuns, stampIn, dispatchRowLabel,
+  type OperatorRun,
+} from '../api/operator';
 import { tintedChipOn } from '../utils/contrast';
 import BarcodeScannerModal from '../components/shared/BarcodeScannerModal';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
@@ -15,7 +22,7 @@ import { getQueuedNCRs, queueNCR, syncQueuedNCRs } from '../utils/offlineQueue';
 import { useMessages } from '../context/MessagesContext';
 import { useAuth } from '../context/AuthContext';
 import { buildPlayLink } from '../components/player/runtime';
-import type { MessageSeverity } from '../types';
+import type { MessageSeverity, Station } from '../types';
 
 /** A floor identity, as far as it is actually known. `id` is a real user this
  *  work can be booked to; null means the person typed a name and nothing more,
@@ -59,6 +66,10 @@ interface Completion {
   started_at: string;
   completed_at: string | null;
   status: 'in_progress' | 'completed' | 'abandoned';
+  /** Per-step timers. The canonical duration comes from appModel's
+   *  runDurationSeconds, which prefers these and falls back to the wall clock —
+   *  the same rule the run-history endpoint applies in SQL. */
+  step_times?: Record<string, unknown> | null;
 }
 
 const PRIORITY_COLORS: Record<string, string> = {
@@ -82,17 +93,41 @@ const SEVERITY_OPTIONS: { value: 'minor' | 'major' | 'critical'; label: string; 
  *  their ink against this, so the darker card states clear by more. */
 const CARD_SURFACE_LIGHTEST = '#324a73';
 
-function fmtDate(iso?: string) {
-  if (!iso) return '';
-  return new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
+/**
+ * A due DATE — 'YYYY-MM-DD', a calendar day with no time in it.
+ *
+ * Formatted in UTC on purpose: a date-only string is midnight UTC to
+ * `new Date()`, so rendering it in any zone west of Greenwich prints the day
+ * before. The plant promised the customer a DAY, and this prints that day.
+ */
+function dueLabel(due?: string | null) {
+  if (!due) return '';
+  const d = new Date(`${due}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) return due;
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' }).format(d);
 }
 
-function isToday(iso?: string | null) {
-  if (!iso) return false;
-  const d = new Date(iso);
-  const now = new Date();
-  return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
+/**
+ * NOTE — there is no `isToday` here any more, and there must never be one
+ * again. This screen used to decide what "today" meant from the TABLET's
+ * browser clock, so a second-shift crew's counter reset at their own midnight
+ * while every management screen carried on with the plant's day, and a kiosk
+ * nobody had set the region on was simply in the wrong week. "Today" is
+ * `finished_today_for_operator` on the floor snapshot, measured by the server
+ * against the plant's calendar — the same day the Command Center reports.
+ */
+
+/** One dispatch row's identity — the operation it offers, or the standing app.
+ *  Used to keep a selection alive across a refresh without holding a stale
+ *  object under the Start button. */
+function rowKey(row: DispatchRow): string {
+  return row.work_order_operation_id ?? `app:${row.app_id ?? ''}`;
 }
+
+/** How many resume rows a tablet shows before it asks. Five is a glance; the
+ *  uncapped list this replaces was however many times the shift had dropped
+ *  signal, all of them looking identical. */
+const RESUME_VISIBLE = 5;
 
 type Tab = 'jobs' | 'history' | 'report' | 'profile';
 
@@ -133,7 +168,30 @@ export default function OperatorPortal() {
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(false);
   const [identifyError, setIdentifyError] = useState('');
-  const [selectedWO, setSelectedWO] = useState<WorkOrder | null>(null);
+
+  // ── What this operator should actually run next ─────────────────────────────
+  // The queue is the SERVER's answer (/api/floor/dispatch) for the station this
+  // tablet is standing at: the ready and running operations, in priority → due
+  // date → sequence order, PLUS the published apps that need no work order.
+  // The portal used to list work orders, so a published app attached to no job
+  // was unreachable from the tablet meant to run it.
+  const [queue, setQueue] = useState<DispatchRow[]>([]);
+  const [queueError, setQueueError] = useState<string | null>(null);
+  const [selectedRow, setSelectedRow] = useState<DispatchRow | null>(null);
+
+  /** The station this tablet is at. Written by the player and by the return
+   *  deep link; chosen here so an operator can move without an admin. */
+  const [stations, setStations] = useState<Station[]>([]);
+  const [stationId, setStationId] = useState<string>(() => {
+    try { return localStorage.getItem('hm_station') || ''; } catch { return ''; }
+  });
+
+  /** The plant's own day, and the zone every stamp on this screen is printed
+   *  in. Never the tablet's. */
+  const [snapshot, setSnapshot] = useState<FloorSnapshot | null>(null);
+
+  /** Runs this operator left open, one row per piece of work. */
+  const [openRuns, setOpenRuns] = useState<OperatorRun[] | null>(null);
 
   // Floor identity (clock-in) state.
   const [roster, setRoster] = useState<RosterEntry[]>([]);
@@ -159,6 +217,14 @@ export default function OperatorPortal() {
       .finally(() => setRosterLoaded(true));
   }, []);
 
+  // The stations this tablet could be standing at. Best-effort: a company with
+  // none simply has no picker and gets the whole plant's queue.
+  useEffect(() => {
+    api.getStations()
+      .then((rows: Station[]) => setStations(Array.isArray(rows) ? rows.filter(st => st.status === 'active') : []))
+      .catch(() => setStations([]));
+  }, []);
+
   // Finalize a verified identity and enter the portal. The whole identity is
   // kept — the id as well as the name — because the id is what attributes the
   // work; a name alone is just text that happens to look like a person.
@@ -171,9 +237,14 @@ export default function OperatorPortal() {
     setLoading(true);
     setIdentifyError('');
     try {
-      await loadWorkOrders();
+      await loadQueue();
       setStep('main');
       setActiveTab('jobs');
+      // Everything else fills in behind the first screen — an operator waits
+      // for their queue, not for four round trips.
+      void loadWorkOrders();
+      void loadSnapshot(name, who.id);
+      void loadOpenRuns(name);
     } catch (err: any) {
       setIdentifyError(err?.message || "Couldn't load your jobs — please try again.");
     } finally {
@@ -187,6 +258,9 @@ export default function OperatorPortal() {
     syncQueuedNCRs().then(() => setPendingReports(getQueuedNCRs().length));
   }, [online, pendingReports]);
 
+  // The work orders behind the Report tab's job picker. NOT the jobs list any
+  // more — that is the dispatch queue below, which knows about operations and
+  // about the apps that need no work order at all.
   const loadWorkOrders = async () => {
     const wos: WorkOrder[] = await api.getWorkOrders();
     const active = wos.filter(wo =>
@@ -196,6 +270,46 @@ export default function OperatorPortal() {
       wo.quantity_completed < wo.quantity
     );
     setWorkOrders(active);
+  };
+
+  /** The queue for this station. The server derives the DEPARTMENT from the
+   *  station, so one parameter says both — and a station in no department gets
+   *  only the work that names it, rather than the whole plant's. */
+  const loadQueue = async (station = stationId) => {
+    try {
+      const res = await getOperatorQueue({ station_id: station || undefined });
+      setQueue(res.rows);
+      setQueueError(null);
+      // A row that vanished from the queue cannot stay selected under the
+      // Start button.
+      setSelectedRow(prev => prev && res.rows.some(r => rowKey(r) === rowKey(prev)) ? prev : null);
+    } catch (err: any) {
+      setQueue([]);
+      setQueueError(err?.message || "Couldn't load your jobs");
+    }
+  };
+
+  /** The plant's day, and this operator's share of it. One call, one answer —
+   *  the tile prints it verbatim. */
+  const loadSnapshot = async (name = operatorName, userId = operatorUserId) => {
+    try {
+      setSnapshot(await getFloorSnapshot({
+        operator_user_id: userId || undefined,
+        operator_name: name.trim() || undefined,
+      }));
+    } catch {
+      setSnapshot(null);
+    }
+  };
+
+  /** Runs this operator left open, deduplicated to one row per piece of work. */
+  const loadOpenRuns = async (name = operatorName) => {
+    if (!name.trim()) { setOpenRuns([]); return; }
+    try {
+      setOpenRuns(dedupeRuns(await getOperatorRuns(name.trim())));
+    } catch {
+      setOpenRuns([]);
+    }
   };
 
   const loadCompletions = async () => {
@@ -215,25 +329,86 @@ export default function OperatorPortal() {
   };
 
   const handleStartJob = () => {
-    if (!selectedWO?.app_id) return;
+    if (!selectedRow?.app_id) return;
     navigate(buildPlayLink({
-      appId: selectedWO.app_id,
-      workOrderId: selectedWO.id,
+      appId: selectedRow.app_id,
+      workOrderId: selectedRow.work_order_id,
+      // The exact operation this row offered. Sending only the job would let
+      // the player infer which operation that was from the job's pointer — a
+      // different answer the moment a colleague advances it.
+      operationId: selectedRow.work_order_operation_id,
       operatorName,
       operatorUserId,
-      stationId: localStorage.getItem('hm_station'),
+      stationId: stationId || null,
       // The way back: this run belongs to the floor, so Done, Exit and
       // Back all return here rather than dropping a tablet into /apps.
       fromOperator: true,
     }));
   };
 
+  /** Back to a run this operator left open, on the unit they left it on. */
+  const handleResume = (run: OperatorRun) => {
+    navigate(buildPlayLink({
+      appId: run.app_id,
+      workOrderId: run.work_order_id,
+      operationId: run.work_order_operation_id ?? null,
+      // THE run, by id. Without it the player has only the job to go on, and a
+      // job with two open runs on it is a guess — so it asks, or worse, starts
+      // a third. This row is an offer to carry on with a specific unit, and the
+      // link says which one.
+      runId: run.id,
+      operatorName,
+      operatorUserId,
+      stationId: run.station_id || stationId || null,
+      fromOperator: true,
+    }));
+  };
+
+  /**
+   * What ONE open run is, in words.
+   *
+   * A completion carries ids, not names: the work-order number lives on the
+   * work order (already loaded for the Report tab) and the operation's name and
+   * position live on the queue. Four Resume rows reading "Bracket Assembly ·
+   * 5:18 AM" are indistinguishable, and the deep link now resumes one specific
+   * run — so the row says which job, which operation when the run names one,
+   * and which app.
+   */
+  const describeRun = (run: OperatorRun) => {
+    const wo = workOrders.find(w => w.id === run.work_order_id) ?? null;
+    const op = run.work_order_operation_id
+      ? queue.find(r => r.work_order_operation_id === run.work_order_operation_id) ?? null
+      : null;
+    const title = wo
+      ? `${wo.work_order_number}${wo.part_name ? ` · ${wo.part_name}` : ''}`
+      : run.app_name;
+    const detail = [
+      op ? dispatchRowLabel(op) : null,
+      wo?.part_number ?? null,
+      wo ? run.app_name : null,
+    ].filter(Boolean).join(' · ');
+    return { title, detail };
+  };
+
+  /** Move the tablet to another station: the queue is the station's, so it is
+   *  reloaded, and the choice is remembered the way the player remembers it. */
+  const chooseStation = (next: string) => {
+    setStationId(next);
+    try {
+      if (next) localStorage.setItem('hm_station', next);
+      else localStorage.removeItem('hm_station');
+    } catch { /* private mode — the choice lasts this visit */ }
+    void loadQueue(next);
+  };
+
   const switchOperator = () => {
     setOperatorUserId(null);
     rememberIdentity({ id: null, display_name: '' });
     setStep('name');
-    setSelectedWO(null);
+    setSelectedRow(null);
     setCompletions(null);
+    setSnapshot(null);
+    setOpenRuns(null);
     setActiveTab('jobs');
     setManualMode(false);
   };
@@ -251,7 +426,10 @@ export default function OperatorPortal() {
     if (!uid) return;
     restoredRef.current = true;
     const station = searchParams.get('station');
-    if (station) localStorage.setItem('hm_station', station);
+    if (station) {
+      try { localStorage.setItem('hm_station', station); } catch { /* private mode */ }
+      setStationId(station);
+    }
     const onRoster = roster.find(r => r.id === uid);
     const verified = verifiedIdentity();
     if (!onRoster || !verified || verified.id !== uid) return;
@@ -263,6 +441,9 @@ export default function OperatorPortal() {
   useEffect(() => {
     if (activeTab === 'history' && completions === null && operatorName) {
       loadCompletions();
+      // The TODAY tile is the server's count for the plant's day; opening the
+      // tab is when it needs to be current.
+      void loadSnapshot();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
@@ -317,11 +498,21 @@ export default function OperatorPortal() {
       <main className="flex-1 overflow-y-auto px-4 sm:px-6 pb-28">
         {activeTab === 'jobs' && (
           <JobsTab
-            workOrders={workOrders}
-            selectedWO={selectedWO}
-            setSelectedWO={setSelectedWO}
+            rows={queue}
+            error={queueError}
+            selectedRow={selectedRow}
+            setSelectedRow={setSelectedRow}
             onStartJob={handleStartJob}
-            onRefresh={loadWorkOrders}
+            onRefresh={async () => { await Promise.all([loadQueue(), loadOpenRuns()]); }}
+            stations={stations}
+            stationId={stationId}
+            onChooseStation={chooseStation}
+            openRuns={openRuns}
+            onResume={handleResume}
+            describeRun={describeRun}
+            timezone={snapshot?.timezone ?? null}
+            filtered={!!stationId}
+            onClearStation={() => chooseStation('')}
           />
         )}
         {activeTab === 'history' && (
@@ -329,6 +520,7 @@ export default function OperatorPortal() {
             completions={completions}
             loading={completionsLoading}
             onRefresh={loadCompletions}
+            snapshot={snapshot}
           />
         )}
         {activeTab === 'report' && (
@@ -342,7 +534,7 @@ export default function OperatorPortal() {
         {activeTab === 'profile' && (
           <ProfileTab
             operatorName={operatorName}
-            jobCount={workOrders.length}
+            jobCount={queue.length}
             onSwitchOperator={switchOperator}
             pendingReports={pendingReports}
           />
@@ -698,19 +890,56 @@ function BottomNav({ active, onChange }: { active: Tab; onChange: (t: Tab) => vo
 }
 
 // ── Jobs tab ─────────────────────────────────────────────────────────────────
+//
+// What THIS operator should run next, at the station this tablet is standing
+// at — the server's dispatch queue, in priority → due date → sequence order.
+//
+// It used to list WORK ORDERS, which had two consequences on every floor that
+// runs anything but one app per job:
+//
+//   * 'Final QC Inspection' — published, runnable, attached to no work order —
+//     could not appear at all, so the header said "2 jobs available" about a
+//     floor with three things to do, and the tablet meant to run it had no way
+//     in.
+//   * A seven-operation job read as one row with no idea which operation was
+//     next, so an operator started whatever the job's app happened to be.
+//
+// Every row now says which operation it is ("Op 3 of 7 · Weld") or that it
+// needs no work order, and Start carries the operation id through to the
+// player so the booking lands where the queue said it would.
 
 function JobsTab({
-  workOrders, selectedWO, setSelectedWO, onStartJob, onRefresh,
+  rows, error, selectedRow, setSelectedRow, onStartJob, onRefresh,
+  stations, stationId, onChooseStation, openRuns, onResume, describeRun, timezone,
+  filtered, onClearStation,
 }: {
-  workOrders: WorkOrder[];
-  selectedWO: WorkOrder | null;
-  setSelectedWO: (wo: WorkOrder | null) => void;
+  rows: DispatchRow[];
+  error: string | null;
+  selectedRow: DispatchRow | null;
+  setSelectedRow: (row: DispatchRow | null) => void;
   onStartJob: () => void;
-  onRefresh: () => void;
+  onRefresh: () => Promise<void>;
+  stations: Station[];
+  stationId: string;
+  onChooseStation: (id: string) => void;
+  openRuns: OperatorRun[] | null;
+  onResume: (run: OperatorRun) => void;
+  /** What one open run IS, in words — the job it is on, the operation when the
+   *  run carries one, and the app. Resolved by the parent, which holds the work
+   *  orders and the queue. */
+  describeRun: (run: OperatorRun) => { title: string; detail: string };
+  /** The zone the SERVER reports the plant in. Every stamp below is printed in
+   *  it — never the tablet's own, which on an unboxed kiosk is a guess. */
+  timezone: string | null;
+  /** True when a station is chosen: an empty list then means "nothing here",
+   *  which is a different sentence from "nothing anywhere". */
+  filtered: boolean;
+  onClearStation: () => void;
 }) {
   const [refreshing, setRefreshing] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
   const [scanMessage, setScanMessage] = useState('');
+  const [allResume, setAllResume] = useState(false);
 
   const handleRefresh = async () => {
     setRefreshing(true);
@@ -720,17 +949,21 @@ function JobsTab({
   const handleScan = (code: string) => {
     setShowScanner(false);
     const normalized = code.trim().toLowerCase();
-    const match = workOrders.find(wo =>
-      wo.work_order_number.toLowerCase() === normalized ||
-      wo.part_number.toLowerCase() === normalized
+    const match = rows.find(row =>
+      (row.work_order_number ?? '').toLowerCase() === normalized ||
+      (row.part_number ?? '').toLowerCase() === normalized
     );
     if (match) {
-      setSelectedWO(match);
+      setSelectedRow(match);
       setScanMessage('');
     } else {
       setScanMessage(`No job found matching "${code}"`);
     }
   };
+
+  const resumable = openRuns ?? [];
+  const resumeShown = allResume ? resumable : resumable.slice(0, RESUME_VISIBLE);
+  const resumeHidden = resumable.length - resumeShown.length;
 
   return (
     <div>
@@ -743,14 +976,18 @@ function JobsTab({
         />
       )}
 
-      <div className="flex items-center justify-between mb-3">
-        <p className="text-blue-200/80 text-sm">
-          {workOrders.length > 0 ? `${workOrders.length} job${workOrders.length !== 1 ? 's' : ''} available` : 'No jobs scheduled yet'}
+      <div className="flex items-center justify-between gap-3 mb-3 flex-wrap">
+        {/* The count is what the LIST shows. It used to count work orders while
+            the list showed something else. */}
+        <p className="text-blue-200/80 text-sm" data-testid="jobs-count">
+          {rows.length > 0
+            ? `${rows.length} job${rows.length !== 1 ? 's' : ''} available`
+            : 'No jobs scheduled yet'}
         </p>
         <div className="flex items-center gap-3">
           <button
             onClick={() => { setScanMessage(''); setShowScanner(true); }}
-            className="flex items-center gap-1.5 text-xs text-blue-300 hover:text-white transition-colors"
+            className="flex items-center gap-1.5 text-xs text-blue-300 hover:text-white transition-colors min-h-[44px]"
           >
             <ScanLine size={13} />
             Scan
@@ -758,7 +995,7 @@ function JobsTab({
           <button
             onClick={handleRefresh}
             disabled={refreshing}
-            className="flex items-center gap-1.5 text-xs text-blue-300 hover:text-white transition-colors disabled:opacity-50"
+            className="flex items-center gap-1.5 text-xs text-blue-300 hover:text-white transition-colors disabled:opacity-50 min-h-[44px]"
           >
             <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
             Refresh
@@ -766,29 +1003,126 @@ function JobsTab({
         </div>
       </div>
 
+      {/* Where this tablet is standing. The queue is the STATION's — and the
+          server reads the department off the station, so one choice says both. */}
+      {stations.length > 0 && (
+        <label className="flex items-center gap-2 mb-3">
+          <Tablet size={14} className="text-blue-300 flex-shrink-0" aria-hidden="true" />
+          <span className="sr-only">Station</span>
+          <select
+            aria-label="Station"
+            value={stationId}
+            onChange={e => onChooseStation(e.target.value)}
+            className="dark flex-1 min-w-0 h-11 rounded-xl bg-white/10 border border-white/15 text-white text-sm px-3"
+          >
+            <option value="">All stations</option>
+            {stations.map(st => (
+              <option key={st.id} value={st.id}>{st.name}</option>
+            ))}
+          </select>
+        </label>
+      )}
+
       {scanMessage && (
         <div className="mb-3 bg-amber-500/15 border border-amber-500/30 text-amber-300 rounded-xl px-3 py-2 text-sm">
           {scanMessage}
         </div>
       )}
 
-      {workOrders.length === 0 ? (
+      {error && (
+        <div className="mb-3 bg-red-500/15 border border-red-500/30 text-red-200 rounded-xl px-3 py-2 text-sm">
+          {error}
+        </div>
+      )}
+
+      {/* ── Jobs in progress ────────────────────────────────────────────────
+          One row per piece of work, not one per row nobody has closed. A tablet
+          that reloads mid-run leaves a second completion open behind it, and
+          the reaper only closes an abandoned run after twelve hours — so this
+          used to be an uncapped pile of identical rows stamped in raw UTC.
+          These rows HIDE duplicates; nothing here closes anybody's run, least
+          of all another operator's. */}
+      {resumable.length > 0 && (
+        <div className="mb-4" data-testid="jobs-in-progress">
+          <div className="text-white font-semibold text-sm mb-2">Jobs in progress</div>
+          <div className="space-y-2">
+            {resumeShown.map(run => (
+              <div
+                key={run.id}
+                data-testid="resume-row"
+                className="bg-blue-500/10 border border-blue-400/30 rounded-xl p-3 flex items-center gap-3 min-h-[44px]"
+              >
+                <div className="flex-1 min-w-0">
+                  {/* WHICH job. Four rows reading "Bracket Assembly · 5:18 AM"
+                      are indistinguishable, and the link now resumes ONE
+                      specific run — so the row has to say which one it is
+                      before the operator taps it. */}
+                  <div className="text-white text-sm font-semibold truncate">
+                    {describeRun(run).title}
+                  </div>
+                  {describeRun(run).detail && (
+                    <div className="text-blue-200/80 text-xs truncate">{describeRun(run).detail}</div>
+                  )}
+                  <div className="text-blue-200/80 text-xs truncate">
+                    Started {stampIn(run.started_at, timezone ?? 'UTC')}
+                  </div>
+                </div>
+                <button
+                  onClick={() => onResume(run)}
+                  className="flex-shrink-0 min-h-[44px] px-4 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-sm font-bold transition-colors"
+                >
+                  Resume
+                </button>
+              </div>
+            ))}
+          </div>
+          {(resumeHidden > 0 || allResume) && (
+            <button
+              onClick={() => setAllResume(v => !v)}
+              className="w-full min-h-[44px] mt-2 text-xs font-semibold text-blue-300 hover:text-white transition-colors"
+            >
+              {allResume ? 'Show fewer' : `Show all ${resumable.length}`}
+            </button>
+          )}
+        </div>
+      )}
+
+      {rows.length === 0 ? (
         <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-10 text-center">
           <CheckCircle size={40} className="mx-auto mb-3 text-green-400" />
           <div className="text-white font-semibold text-lg">All caught up!</div>
-          <div className="text-blue-200/80 text-sm mt-1">No active work orders are scheduled right now</div>
-          <div className="text-blue-200/80 text-xs mt-3">Check with your supervisor for new assignments</div>
+          <div className="text-blue-200/80 text-sm mt-1">
+            {filtered
+              ? 'Nothing is ready at this station right now'
+              : 'Nothing is ready to run right now'}
+          </div>
+          {filtered ? (
+            <button
+              onClick={onClearStation}
+              className="mt-3 min-h-[44px] px-4 rounded-xl bg-white/10 hover:bg-white/15 border border-white/15 text-white text-sm font-semibold"
+            >
+              Show every station
+            </button>
+          ) : (
+            <div className="text-blue-200/80 text-xs mt-3">Check with your supervisor for new assignments</div>
+          )}
         </div>
       ) : (
         <div className="space-y-3">
-          {workOrders.map(wo => {
-            const pct = wo.quantity > 0 ? Math.round((wo.quantity_completed / wo.quantity) * 100) : 0;
-            const isSelected = selectedWO?.id === wo.id;
+          {rows.map(row => {
+            const required = row.quantity_required ?? 0;
+            const done = row.quantity_completed ?? 0;
+            const pct = required > 0 ? Math.round((done / required) * 100) : null;
+            const isSelected = selectedRow ? rowKey(selectedRow) === rowKey(row) : false;
+            const title = row.no_work_order
+              ? (row.app_name ?? 'Standing job')
+              : (row.part_name || row.work_order_number || row.app_name || 'Job');
             return (
               <button
-                key={wo.id}
-                onClick={() => setSelectedWO(isSelected ? null : wo)}
-                className={`w-full text-left rounded-2xl border-2 p-4 transition-all ${
+                key={rowKey(row)}
+                data-testid="job-row"
+                onClick={() => setSelectedRow(isSelected ? null : row)}
+                className={`w-full text-left rounded-2xl border-2 p-4 min-h-[44px] transition-all ${
                   isSelected
                     ? 'border-blue-400 bg-blue-600/20 shadow-lg shadow-blue-900/30'
                     : 'border-white/10 bg-white/10 hover:bg-white/15 hover:border-white/20'
@@ -797,13 +1131,19 @@ function JobsTab({
                 <div className="flex items-start gap-3">
                   <div
                     className="w-3 h-3 rounded-full flex-shrink-0 mt-1.5"
-                    style={{ backgroundColor: PRIORITY_COLORS[wo.priority] || '#9ca3af' }}
+                    style={{ backgroundColor: PRIORITY_COLORS[row.priority ?? ''] || '#9ca3af' }}
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <div className="text-white font-bold text-base leading-tight">{wo.part_name}</div>
-                        <div className="text-blue-200/80 text-xs mt-0.5 font-mono">{wo.work_order_number} · {wo.part_number}</div>
+                      <div className="min-w-0">
+                        <div className="text-white font-bold text-base leading-tight truncate">{title}</div>
+                        {/* The job's identity. A standing app has none — and
+                            printing its own name twice reads as two facts. */}
+                        {row.work_order_number && (
+                          <div className="text-blue-200/80 text-xs mt-0.5 font-mono truncate">
+                            {row.work_order_number}{row.part_number ? ` · ${row.part_number}` : ''}
+                          </div>
+                        )}
                       </div>
                       {isSelected && (
                         <div className="flex-shrink-0 w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center">
@@ -812,73 +1152,94 @@ function JobsTab({
                       )}
                     </div>
 
-                    <div className="mt-3 flex items-center gap-4 text-xs flex-wrap">
-                      <div className="flex items-center gap-1 text-blue-200/80">
-                        <Package size={12} />
-                        {wo.quantity_completed} / {wo.quantity} units
-                      </div>
-                      {wo.takt_time_minutes > 0 && (
+                    {/* Which operation this is — a fact the job carries, not a
+                        caption this screen invented. */}
+                    <div className="mt-2 text-xs font-semibold text-blue-100">
+                      {dispatchRowLabel(row)}
+                    </div>
+
+                    <div className="mt-2 flex items-center gap-4 text-xs flex-wrap">
+                      {required > 0 && (
                         <div className="flex items-center gap-1 text-blue-200/80">
-                          <Clock size={12} />
-                          {fmtMinutes(wo.takt_time_minutes)} takt
+                          <Package size={12} />
+                          {done} / {required} units
                         </div>
                       )}
-                      {wo.department_name && (
+                      {row.status === 'running' && (
+                        <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-green-500/20 text-green-200">
+                          Running now
+                        </span>
+                      )}
+                      {row.department_name && (
                         // A department's colour is picked from a colour well and
                         // then written on a chip tinted with itself, which for a
                         // mid-blue landed at 2.4:1. The tint stays; only the ink
                         // moves, and only as far as AA needs.
                         <span
                           className="text-xs font-medium px-2 py-0.5 rounded-full"
-                          style={tintedChipOn(wo.department_color, CARD_SURFACE_LIGHTEST)}
+                          style={tintedChipOn(row.department_color, CARD_SURFACE_LIGHTEST)}
                         >
-                          {wo.department_name}
+                          {row.department_name}
                         </span>
                       )}
-                      {wo.scheduled_end && (
+                      {row.app_id ? (
+                        row.app_name && !row.no_work_order && (
+                          <span className="text-blue-200/80 truncate">{row.app_name}</span>
+                        )
+                      ) : (
+                        // A routing step with no app is a gap somebody has to
+                        // fix, not a row to hide.
+                        <span className="text-amber-300">{row.app_reason ?? 'no app on this operation'}</span>
+                      )}
+                      {row.due_date && (
                         <div className="flex items-center gap-1 text-blue-200/80 ml-auto">
                           <AlertTriangle size={11} />
-                          Due {fmtDate(wo.scheduled_end)}
+                          Due {dueLabel(row.due_date)}
                         </div>
                       )}
                     </div>
 
-                    {/* Progress bar */}
-                    <div className="mt-2.5">
-                      <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-blue-400 rounded-full transition-all"
-                          style={{ width: `${pct}%` }}
-                        />
+                    {pct !== null && (
+                      <div className="mt-2.5">
+                        <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-blue-400 rounded-full transition-all"
+                            style={{ width: `${pct}%` }}
+                          />
+                        </div>
+                        <div className="text-xs text-blue-200/80 mt-0.5">{pct}% complete</div>
                       </div>
-                      <div className="text-xs text-blue-200/80 mt-0.5">{pct}% complete</div>
-                    </div>
+                    )}
                   </div>
                 </div>
               </button>
             );
           })}
           {/* Keep the last card reachable above the floating Start bar */}
-          {selectedWO && <div className="h-24" aria-hidden="true" />}
+          {selectedRow && <div className="h-24" aria-hidden="true" />}
         </div>
       )}
 
       {/* Start button — floats above the tab bar; on notched phones the tab bar
           grows by the safe-area inset, so the offset has to follow it. */}
-      {selectedWO && (
+      {selectedRow && (
         <div className="fixed inset-x-4 sm:inset-x-6 z-30" style={{ bottom: 'calc(5rem + env(safe-area-inset-bottom))' }}>
           <button
             onClick={onStartJob}
-            disabled={!selectedWO.app_id}
+            disabled={!selectedRow.app_id}
             className="w-full h-16 px-4 bg-blue-600 hover:bg-blue-500 disabled:bg-blue-900 disabled:cursor-not-allowed text-white rounded-2xl font-bold text-xl transition-colors flex items-center justify-center gap-3 shadow-2xl shadow-blue-900/50"
           >
             <Factory size={24} className="flex-shrink-0" />
-            <span className="truncate min-w-0">Start: {selectedWO.part_name}</span>
+            <span className="truncate min-w-0">
+              Start: {selectedRow.no_work_order
+                ? (selectedRow.app_name ?? 'this app')
+                : (selectedRow.part_name || selectedRow.work_order_number || 'this job')}
+            </span>
             <ChevronRight size={22} className="flex-shrink-0" />
           </button>
-          {!selectedWO.app_id && (
+          {!selectedRow.app_id && (
             <p className="text-center text-xs text-amber-300 mt-2">
-              No app assigned to this work order — contact your supervisor
+              {selectedRow.app_reason ?? 'No app on this operation'} — contact your supervisor
             </p>
           )}
         </div>
@@ -887,31 +1248,54 @@ function JobsTab({
   );
 }
 
+
 // ── History tab ──────────────────────────────────────────────────────────────
 
 function HistoryTab({
-  completions, loading, onRefresh,
+  completions, loading, onRefresh, snapshot,
 }: {
   completions: Completion[] | null;
   loading: boolean;
   onRefresh: () => void;
+  /** The plant's own day, and this operator's share of it. The tile prints the
+   *  server's number verbatim; it does not count rows for itself. */
+  snapshot: FloorSnapshot | null;
 }) {
   const list = completions ?? [];
-  const completedToday = list.filter(c => c.status === 'completed' && isToday(c.completed_at)).length;
   const totalCompleted = list.filter(c => c.status === 'completed').length;
+  // TODAY is the PLANT's day, measured server-side. This screen counted it off
+  // the tablet's browser clock, so a second-shift crew's tile reset at their
+  // own midnight while the Command Center carried on with the plant's — the
+  // same minute, two different answers, and the tablet's was the wrong one.
+  const finishedToday = snapshot?.finished_today_for_operator ?? null;
+  // Every stamp on this tab is printed in the zone the SERVER reports, never
+  // the tablet's. 'UTC' is the fallback the snapshot itself uses when a company
+  // has set no zone — it is the server's answer either way, not the device's.
+  const zone = snapshot?.timezone ?? 'UTC';
+  const todayReason = snapshot?.finished_today_for_operator_reason
+    ?? (snapshot ? null : 'today\u2019s count has not loaded yet');
 
   return (
     <div>
       <div className="grid grid-cols-2 gap-3 mb-4">
-        <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-4">
+        <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-4" data-testid="today-tile">
           <div className="text-blue-200/80 text-xs font-medium uppercase tracking-wide">Today</div>
-          <div className="text-white text-3xl font-bold mt-1">{completedToday}</div>
-          <div className="text-blue-200/80 text-xs mt-0.5">units completed</div>
+          <div className="text-white text-3xl font-bold mt-1">{finishedToday ?? '—'}</div>
+          <div className="text-blue-200/80 text-xs mt-0.5">
+            {finishedToday != null
+              ? `units completed${snapshot?.plant_date ? ` · ${snapshot.plant_date}` : ''}`
+              : (todayReason ?? 'not measured yet')}
+          </div>
         </div>
-        <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-4">
+        <div className="bg-white/10 backdrop-blur-sm rounded-2xl border border-white/10 p-4" data-testid="recent-tile">
           <div className="text-blue-200/80 text-xs font-medium uppercase tracking-wide">Recent</div>
           <div className="text-white text-3xl font-bold mt-1">{totalCompleted}</div>
-          <div className="text-blue-200/80 text-xs mt-0.5">total in history</div>
+          {/* It counts FINISHED runs; the list below also shows the ones still
+              open. "total in history" over a number that ignores half the rows
+              underneath it is a tile disagreeing with its own list. */}
+          <div className="text-blue-200/80 text-xs mt-0.5">
+            completed{list.length > totalCompleted ? ` of ${list.length} listed` : ' in this list'}
+          </div>
         </div>
       </div>
 
@@ -941,22 +1325,43 @@ function HistoryTab({
         </div>
       ) : (
         <div className="space-y-2">
-          {list.map(c => (
-            <div key={c.id} className="bg-white/10 rounded-xl border border-white/10 p-3 flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-blue-500/15 flex items-center justify-center flex-shrink-0">
-                <Factory size={16} className="text-blue-300" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="text-white text-sm font-medium truncate">{c.app_name}</div>
-                <div className="text-blue-200/80 text-xs">
-                  {c.status === 'completed' ? timeAgo(c.completed_at || c.started_at) : `Started ${timeAgo(c.started_at)}`}
+          {list.map(c => {
+            // How long the run took, by the ONE definition in appModel — the
+            // same one the run's own page and the app history print. A run
+            // nobody timed says so; it does not print 0s, and it does not print
+            // a bare dash either.
+            const seconds = runDurationSeconds(c);
+            const basis = durationBasisLabel(c.step_times && Object.keys(c.step_times).length > 0 ? 'hands_on' : 'elapsed');
+            return (
+              <div key={c.id} className="bg-white/10 rounded-xl border border-white/10 p-3 flex items-center gap-3 min-h-[44px]" data-testid="history-row">
+                <div className="w-9 h-9 rounded-lg bg-blue-500/15 flex items-center justify-center flex-shrink-0">
+                  <Factory size={16} className="text-blue-300" />
                 </div>
+                <div className="flex-1 min-w-0">
+                  <div className="text-white text-sm font-medium truncate">{c.app_name}</div>
+                  <div className="text-blue-200/80 text-xs">
+                    {/* The PLANT's clock. `timeAgo` reads a zone-less SQLite
+                        stamp as the TABLET's local time, so the same finished
+                        run read "8 minutes ago" on a kiosk set to UTC and "9
+                        hours ago" on the one somebody had left on Tokyo — the
+                        same class of mistake as counting "today" in the
+                        browser, three lines below a tile that now does not. */}
+                    {c.status === 'completed'
+                      ? `Finished ${stampIn(c.completed_at || c.started_at, zone)}`
+                      : `Started ${stampIn(c.started_at, zone)}`}
+                  </div>
+                  <div className="text-blue-200/80 text-xs" data-testid="history-duration">
+                    {seconds != null
+                      ? `${fmtDuration(seconds)}${basis ? ` · ${basis}` : ''}`
+                      : `— · ${c.status === 'in_progress' ? 'still running' : 'no timing was recorded'}`}
+                  </div>
+                </div>
+                <span className={`text-[11px] font-semibold px-2 py-1 rounded-full capitalize flex-shrink-0 ${COMPLETION_STATUS_BADGE[c.status] || 'bg-gray-500/15 text-gray-300'}`}>
+                  {c.status.replace('_', ' ')}
+                </span>
               </div>
-              <span className={`text-[11px] font-semibold px-2 py-1 rounded-full capitalize flex-shrink-0 ${COMPLETION_STATUS_BADGE[c.status] || 'bg-gray-500/15 text-gray-300'}`}>
-                {c.status.replace('_', ' ')}
-              </span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
