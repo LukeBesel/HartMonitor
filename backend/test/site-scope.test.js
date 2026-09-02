@@ -119,9 +119,12 @@ describe('daily brief honours the site selector', () => {
     // A station goes down by logging a machine event, not by writing `status` —
     // that column is the station's lifecycle (active/inactive/maintenance) and
     // its CHECK does not accept 'down'. The live floor state is current_status.
+    // A stop needs a coded reason (wave 4); the company's defaults seed on first read.
+    const downCodes = await api('GET', '/api/andon/reason-codes?kind=downtime', { token: T.token });
+    const downCode = downCodes.json[0].id;
     for (const st of [T.stNorth, T.stSouth, T.stNone]) {
       const r = await api('POST', `/api/oee/${st.id}/event`, {
-        token: T.token, body: { event_type: 'down', reason: 'test outage' },
+        token: T.token, body: { event_type: 'down', reason: 'test outage', reason_code_id: downCode },
       });
       assert.equal(r.status, 200, `marking ${st.name} down → ${r.status} ${JSON.stringify(r.json)}`);
     }

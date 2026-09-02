@@ -186,8 +186,10 @@ describe('Command Center department + app scope', () => {
     A.callFree = await create(A.token, '/api/andon', { team: 'maintenance', title: 'Compressor noise' });
 
     // Two down stations: one in Welding, one that belongs to no department.
-    await create(A.token, `/api/oee/${A.stW.id}/event`, { event_type: 'down', reason: 'tip change' });
-    await create(A.token, `/api/oee/${A.stFree.id}/event`, { event_type: 'down', reason: 'unknown' });
+    const downCodes = await api('GET', '/api/andon/reason-codes?kind=downtime', { token: A.token });
+    const downCode = downCodes.json[0].id;
+    await create(A.token, `/api/oee/${A.stW.id}/event`, { event_type: 'down', reason: 'tip change', reason_code_id: downCode });
+    await create(A.token, `/api/oee/${A.stFree.id}/event`, { event_type: 'down', reason: 'unknown', reason_code_id: downCode });
 
     // ── Company B, so a foreign id can be tried against A.
     const signupB = await api('POST', '/api/auth/signup', {
