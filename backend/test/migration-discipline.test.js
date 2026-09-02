@@ -12,7 +12,7 @@
 //   • a file that fails leaves NOTHING — no table, no bookkeeping row — and the
 //     runner throws, so the server refuses to boot on a bad file;
 //   • a file that succeeds is recorded and never runs again;
-//   • the five shipped migrations still apply cleanly and are no-ops on a
+//   • every shipped migration still applies cleanly and is a no-op on a
 //     database that already has them;
 //   • db.js runs them itself, before its seed, so a consumer that only requires
 //     db.js (no server) sees the migrated schema.
@@ -219,58 +219,43 @@ describe('a good migration applies exactly once', () => {
   });
 });
 
-describe('the five shipped migrations', () => {
-  it('apply cleanly to a fresh database and are no-ops on a migrated one', () => {
-    const db = freshDb('shipped.db');
-
-    quietly(() => runMigrations(db, REAL_MIGRATIONS_DIR));
-    const first = appliedFiles(db);
-    assert.deepStrictEqual(first, [
-      '001_baseline.sql',
-      '002_plan_billing_columns.sql',
-      '003_activity_log.sql',
-      '004_sessions_cleanup_index.sql',
-      '005_company_modules.sql',
-    ]);
-    assert.strictEqual(tableExists(db, 'company_modules'), true, '005 created its table');
-    assert.ok(db.prepare('PRAGMA table_info(plan)').all().map(c => c.name).includes('trial_ends_at'),
-      '002 added its columns');
-
-    const stamps = db.prepare('SELECT filename, id, applied_at FROM _schema_migrations ORDER BY id').all();
-    quietly(() => runMigrations(db, REAL_MIGRATIONS_DIR));
-    assert.deepStrictEqual(appliedFiles(db), first, 'second pass adds nothing');
-    assert.deepStrictEqual(
-      db.prepare('SELECT filename, id, applied_at FROM _schema_migrations ORDER BY id').all(),
-      stamps,
-      'second pass rewrites nothing — the files were skipped, not re-applied'
-    );
-    db.close();
-  });
-});
-
-describe('db.js runs the migrations itself', () => {
-  const DB_PATH = path.join(TMP, 'via-db-js.db');
+describe('every shipped migration', () => {
+  // The shipped files ALTER tables that db.js creates, so they are exercised
+  // the way production runs them: through a bare require of db.js (which
+  // calls the runner after its last CREATE), never against an empty file.
+  // The expected list is read from disk so a new numbered file never has to
+  // edit this test — the assertion is "every shipped file, once, in order".
+  const DB_PATH = path.join(TMP, 'shipped.db');
+  const SHIPPED = fs.readdirSync(REAL_MIGRATIONS_DIR).filter(f => f.endsWith('.sql')).sort();
 
   before(() => {
-    // db.js applies migrations at require time, before its demo seed, so a
-    // consumer that never starts a server still sees the migrated schema.
     execFileSync(process.execPath, ['-e', `require(${JSON.stringify(path.join(__dirname, '..', 'src', 'db.js'))})`], {
-      env: { ...process.env, NODE_ENV: 'test', DATABASE_PATH: DB_PATH, SEED_DEMO_DATA: 'false', BACKUP_DIR: '' },
+      env: { ...process.env, NODE_ENV: 'test', DATABASE_PATH: DB_PATH, SEED_DEMO_DATA: 'false', BACKUP_DIR: '', MIGRATIONS_DIR: '' },
       encoding: 'utf8',
       stdio: 'pipe',
     });
   });
 
-  it('leaves _schema_migrations holding 001-005 after a bare require of db.js', () => {
+  it('applies cleanly to a fresh database, once each, in filename order', () => {
     const db = new Database(DB_PATH, { readonly: true });
-    assert.deepStrictEqual(appliedFiles(db), [
-      '001_baseline.sql',
-      '002_plan_billing_columns.sql',
-      '003_activity_log.sql',
-      '004_sessions_cleanup_index.sql',
-      '005_company_modules.sql',
-    ]);
-    assert.strictEqual(tableExists(db, 'company_modules'), true);
+    assert.ok(SHIPPED.length >= 5, 'the five original files are still shipped');
+    assert.deepStrictEqual(appliedFiles(db), SHIPPED);
+    assert.strictEqual(tableExists(db, 'company_modules'), true, '005 created its table');
+    assert.ok(db.prepare('PRAGMA table_info(plan)').all().map(c => c.name).includes('trial_ends_at'),
+      '002 added its columns');
+    db.close();
+  });
+
+  it('is a no-op on an already-migrated database', () => {
+    const db = new Database(DB_PATH);
+    const stamps = db.prepare('SELECT filename, id, applied_at FROM _schema_migrations ORDER BY id').all();
+    quietly(() => runMigrations(db, REAL_MIGRATIONS_DIR));
+    assert.deepStrictEqual(appliedFiles(db), SHIPPED, 'second pass adds nothing');
+    assert.deepStrictEqual(
+      db.prepare('SELECT filename, id, applied_at FROM _schema_migrations ORDER BY id').all(),
+      stamps,
+      'second pass rewrites nothing — the files were skipped, not re-applied'
+    );
     db.close();
   });
 });
