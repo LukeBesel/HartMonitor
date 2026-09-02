@@ -6,6 +6,8 @@ const {
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { logActivity } = require('../activity');
+const appRevisions = require('../appRevisions');
+const { ROLE_LEVELS } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -489,7 +491,47 @@ router.post('/:id/duplicate', (req, res) => {
 router.get('/:id', (req, res) => {
   const app = db.prepare('SELECT * FROM apps WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!app) return res.status(404).json({ error: 'Not found' });
-  res.json({ ...app, steps: JSON.parse(app.steps), variables: JSON.parse(app.variables), step_groups: JSON.parse(app.step_groups || '[]') });
+  // Change-control state travels with the app: which numbered revision is live
+  // (0 = never published under change control), whether publishing needs a
+  // second name on it, and whether the draft in front of the builder has
+  // drifted from the revision operators are running right now.
+  const latest = appRevisions.latestRevision(req.companyId, app.id);
+  res.json({
+    ...app,
+    steps: JSON.parse(app.steps),
+    variables: JSON.parse(app.variables),
+    step_groups: JSON.parse(app.step_groups || '[]'),
+    current_revision: app.current_revision || 0,
+    requires_approval: app.requires_approval ? 1 : 0,
+    has_unpublished_changes: appRevisions.hasUnpublishedChanges(app, latest),
+  });
+});
+
+// ─── GET /:id/revisions — the change-control record ──────────────────────────
+// Newest first. `run_count` is how many runs each revision actually measured,
+// counted from completions.app_revision_id — the answer to "how many parts were
+// built to this instruction sheet". A published_by/approved_by that reads null
+// means that user has been deleted; the UI says so rather than inventing a name.
+router.get('/:id/revisions', (req, res) => {
+  const app = db.prepare('SELECT id, current_revision, requires_approval FROM apps WHERE id = ? AND company_id = ?')
+    .get(req.params.id, req.companyId);
+  if (!app) return res.status(404).json({ error: 'Not found' });
+  res.json({
+    current_revision: app.current_revision || 0,
+    requires_approval: app.requires_approval ? 1 : 0,
+    revisions: appRevisions.listRevisions(req.companyId, req.params.id),
+  });
+});
+
+// GET /:id/revisions/:n — the frozen snapshot, exactly as it was published.
+// This is what a run detail page renders to show an auditor the instructions
+// the operator followed, so it must never be recomputed from the live app.
+router.get('/:id/revisions/:n', (req, res) => {
+  const app = db.prepare('SELECT id FROM apps WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
+  if (!app) return res.status(404).json({ error: 'Not found' });
+  const row = appRevisions.getRevision(req.companyId, req.params.id, req.params.n);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  res.json(appRevisions.shapeRevision(row));
 });
 
 // ─── GET /:id/detail — everything the in-depth app page needs, in one call ────
@@ -675,7 +717,7 @@ router.get('/:id/detail', (req, res) => {
 });
 
 router.put('/:id', (req, res) => {
-  const { name, description, steps, variables, status, department_id, site_id, station_id, show_takt_warnings, step_groups, schema_version, require_run_context } = req.body;
+  const { name, description, steps, variables, status, department_id, site_id, station_id, show_takt_warnings, step_groups, schema_version, require_run_context, requires_approval } = req.body;
   const app = db.prepare('SELECT * FROM apps WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!app) return res.status(404).json({ error: 'Not found' });
 
@@ -697,6 +739,17 @@ router.put('/:id', (req, res) => {
     return res.status(400).json({ error: 'schema_version must be 1 or 2', code: 'INVALID_TRIGGER', path: 'schema_version' });
   }
 
+  // Whether an app needs a second signature to publish is a change-control
+  // policy, not an editing detail — a supervisor can edit and publish the app,
+  // but only a manager decides that publishing it needs an approver at all.
+  // (Turning it OFF is the dangerous direction, so the same bar guards both.)
+  if (requires_approval !== undefined && (requires_approval ? 1 : 0) !== (app.requires_approval ? 1 : 0)) {
+    const level = ROLE_LEVELS[req.user?.role] ?? 0;
+    if (level < ROLE_LEVELS.manager) {
+      return res.status(403).json({ error: 'Requires manager role or higher', code: 'FORBIDDEN' });
+    }
+  }
+
   const updates = {
     name: name ?? app.name,
     description: description ?? app.description,
@@ -710,22 +763,116 @@ router.put('/:id', (req, res) => {
     require_run_context: require_run_context !== undefined ? (require_run_context ? 1 : 0) : app.require_run_context,
     step_groups: step_groups !== undefined ? JSON.stringify(step_groups) : (app.step_groups ?? '[]'),
     schema_version: schema_version !== undefined ? schema_version : (app.schema_version ?? 1),
+    requires_approval: requires_approval !== undefined ? (requires_approval ? 1 : 0) : (app.requires_approval ? 1 : 0),
   };
 
-  db.prepare(`UPDATE apps SET name=?, description=?, steps=?, variables=?, status=?, department_id=?, site_id=?, station_id=?, show_takt_warnings=?, require_run_context=?, step_groups=?, schema_version=?, updated_at=datetime('now') WHERE id=?`)
-    .run(updates.name, updates.description, updates.steps, updates.variables, updates.status, updates.department_id, updates.site_id, updates.station_id, updates.show_takt_warnings, updates.require_run_context ?? null, updates.step_groups, updates.schema_version, req.params.id);
+  // NOTE: this writes the DRAFT only. It never touches app_revisions — a
+  // published revision is frozen, so editing an app can no longer change what
+  // an operator ran against or what a past run was measured by.
+  db.prepare(`UPDATE apps SET name=?, description=?, steps=?, variables=?, status=?, department_id=?, site_id=?, station_id=?, show_takt_warnings=?, require_run_context=?, step_groups=?, schema_version=?, requires_approval=?, updated_at=datetime('now') WHERE id=?`)
+    .run(updates.name, updates.description, updates.steps, updates.variables, updates.status, updates.department_id, updates.site_id, updates.station_id, updates.show_takt_warnings, updates.require_run_context ?? null, updates.step_groups, updates.schema_version, updates.requires_approval, req.params.id);
 
   const updated = db.prepare('SELECT * FROM apps WHERE id = ?').get(req.params.id);
-  res.json({ ...updated, steps: JSON.parse(updated.steps), variables: JSON.parse(updated.variables), step_groups: JSON.parse(updated.step_groups || '[]') });
+  const latestRev = appRevisions.latestRevision(req.companyId, req.params.id);
+  res.json({
+    ...updated,
+    steps: JSON.parse(updated.steps),
+    variables: JSON.parse(updated.variables),
+    step_groups: JSON.parse(updated.step_groups || '[]'),
+    current_revision: updated.current_revision || 0,
+    requires_approval: updated.requires_approval ? 1 : 0,
+    has_unpublished_changes: appRevisions.hasUnpublishedChanges(updated, latestRev),
+  });
 });
 
+// ─── POST /:id/publish — cut a numbered revision ─────────────────────────────
+// Publishing is a change-control event, not a status flip. It demands a change
+// note, and on an app marked requires_approval a named approver who is NOT the
+// person publishing — one pair of hands cannot both write and sign off a work
+// instruction. What lands is an immutable snapshot; the response carries the
+// new revision number and what changed since the last one.
+//
+// An app that already has runs but no revision (every app in every existing
+// customer's database) cuts revision 1 from what is being published NOW.
+// Historical runs are never backdated onto it: nobody knows what those
+// operators saw, and inventing it is exactly the failure this feature exists to
+// end. They keep app_revision_id NULL and read "Revision not recorded".
 router.post('/:id/publish', (req, res) => {
   const app = db.prepare('SELECT * FROM apps WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!app) return res.status(404).json({ error: 'Not found' });
-  db.prepare(`UPDATE apps SET status='published', updated_at=datetime('now') WHERE id=?`).run(req.params.id);
-  logActivity(req.companyId, 'app', req.params.id, `App "${app.name}" published`, req.user?.display_name);
+
+  const changeNote = typeof req.body?.change_note === 'string' ? req.body.change_note.trim() : '';
+  if (!changeNote) {
+    return res.status(400).json({
+      error: 'A change note is required',
+      code: 'CHANGE_NOTE_REQUIRED',
+      message: 'A change note is required — say what changed, so the revision has a record.',
+    });
+  }
+  if (changeNote.length > 2000) {
+    return res.status(400).json({ error: 'A change note is limited to 2000 characters', code: 'CHANGE_NOTE_TOO_LONG' });
+  }
+
+  let approverUserId = null;
+  if (app.requires_approval) {
+    const requested = req.body?.approved_by_user_id;
+    if (!requested || typeof requested !== 'string') {
+      return res.status(400).json({
+        error: 'This app requires approval — choose an approver',
+        code: 'APPROVER_REQUIRED',
+      });
+    }
+    if (req.user && requested === req.user.id) {
+      return res.status(400).json({
+        error: 'an approver must be someone other than the author',
+        code: 'APPROVER_IS_AUTHOR',
+        message: 'This app requires approval, and an approver must be someone other than the author.',
+      });
+    }
+    // Tenant-scoped: another company's user can never sign off this app.
+    const approver = db.prepare('SELECT id, display_name FROM users WHERE id = ? AND company_id = ? AND is_active = 1')
+      .get(requested, req.companyId);
+    if (!approver) {
+      return res.status(400).json({
+        error: 'The approver must be an active user in this company',
+        code: 'APPROVER_NOT_FOUND',
+      });
+    }
+    approverUserId = approver.id;
+  }
+
+  // The diff is computed against the previous snapshot BEFORE the new one is
+  // cut, so it describes what this publish changed for operators.
+  const previous = appRevisions.latestRevision(req.companyId, app.id);
+  const change = previous ? appRevisions.diff(previous, app) : null;
+
+  const { revision, id: revisionId } = appRevisions.publish(req.companyId, app.id, {
+    userId: req.user?.id ?? null,
+    changeNote,
+    approverUserId,
+  });
+
+  logActivity(
+    req.companyId, 'app', req.params.id,
+    `App "${app.name}" published as Rev ${revision}: ${changeNote}`,
+    req.user?.display_name,
+  );
+
   const updated = db.prepare('SELECT * FROM apps WHERE id = ?').get(req.params.id);
-  res.json({ ...updated, steps: JSON.parse(updated.steps), variables: JSON.parse(updated.variables), step_groups: JSON.parse(updated.step_groups || '[]') });
+  res.json({
+    ...updated,
+    steps: JSON.parse(updated.steps),
+    variables: JSON.parse(updated.variables),
+    step_groups: JSON.parse(updated.step_groups || '[]'),
+    current_revision: updated.current_revision || 0,
+    requires_approval: updated.requires_approval ? 1 : 0,
+    has_unpublished_changes: false,
+    revision,
+    revision_id: revisionId,
+    change_note: changeNote,
+    approved_by_user_id: approverUserId,
+    diff: change,
+  });
 });
 
 router.delete('/:id', (req, res) => {

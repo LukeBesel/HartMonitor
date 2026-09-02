@@ -28,13 +28,27 @@ import VariablesPanel, { autoRegisterVariables } from '../components/builder/Var
 import { arrayMove } from '@dnd-kit/sortable';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { useAuth } from '../context/AuthContext';
+import {
+  publishRevision, getAppRevision, describeDiff, diffSteps, setRequiresApproval,
+  type RevisionDiff,
+} from '../api/revisions';
 
 type ZoomMode = 'fit' | number;
+
+/** Change-control state the API sends alongside the app. */
+interface ControlState {
+  current_revision: number;
+  requires_approval: 0 | 1;
+  has_unpublished_changes: boolean;
+}
+
+/** A colleague who could sign off a publish. */
+interface CompanyUser { id: string; display_name: string; role: string }
 const ZOOM_STEPS = [0.5, 0.65, 0.8, 1, 1.25, 1.5];
 
 export default function AppBuilder() {
   const { id } = useParams<{ id: string }>();
-  const { canEdit } = useAuth();
+  const { canEdit, user, isAtLeast } = useAuth();
   const [app, setApp] = useState<App | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeStepIdx, setActiveStepIdx] = useState(0);
@@ -51,12 +65,25 @@ export default function AppBuilder() {
   const [productTypes, setProductTypes] = useState<ProductType[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [stations, setStations] = useState<Station[]>([]);
+  // Change control, straight off GET /apps/:id. `current_revision` 0 means this
+  // app has never been published as a numbered revision; that is a real state
+  // (every app predating change control is in it) and the UI says so rather
+  // than calling it Rev 1.
+  const [control, setControl] = useState<ControlState>({
+    current_revision: 0, requires_approval: 0, has_unpublished_changes: false,
+  });
+  const [companyUsers, setCompanyUsers] = useState<CompanyUser[]>([]);
 
   const loadApp = useCallback(() => {
     if (!id) return;
     setLoadError(null);
     api.getApp(id)
-      .then((raw: App) => {
+      .then((raw: App & Partial<ControlState>) => {
+        setControl({
+          current_revision: raw.current_revision ?? 0,
+          requires_approval: raw.requires_approval ?? 0,
+          has_unpublished_changes: !!raw.has_unpublished_changes,
+        });
         // v1 → v2 in memory; dormant variables column activated by
         // auto-registering legacy free-text variable names (spec §4.1).
         setApp(autoRegisterVariables(normalizeApp(raw)));
@@ -82,6 +109,15 @@ export default function AppBuilder() {
     api.getStations().then(setStations).catch(() => {});
   }, []);
 
+  // Who could approve a publish. Only needed on an app under approval, but the
+  // list is small and shared, and fetching it here keeps the modal instant.
+  useEffect(() => {
+    if (!control.requires_approval) return;
+    api.getUsers()
+      .then((rows: CompanyUser[]) => setCompanyUsers(rows.filter(u => u.id !== user?.id)))
+      .catch(() => {});
+  }, [control.requires_approval, user?.id]);
+
   // ── Save: whole-blob PUT via the typed client; flips schema_version to 2 ────
   const save = useCallback(async (appData: App): Promise<boolean> => {
     if (!id) return false;
@@ -104,6 +140,9 @@ export default function AppBuilder() {
         require_run_context: effectiveRequireRunContext(appData),
       };
       await api.saveApp(id, payload);
+      // A save writes the DRAFT. If a revision is live, the app now differs
+      // from what operators are running — the banner has to say so.
+      setControl(prev => prev.current_revision > 0 ? { ...prev, has_unpublished_changes: true } : prev);
       setDirty(false);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
@@ -275,18 +314,36 @@ export default function AppBuilder() {
 
   // ── Publish ─────────────────────────────────────────────────────────────────
 
-  const handlePublish = async (target: { department_id: string | null; station_id: string | null }) => {
+  // Publishing is a change-control event: it saves the draft, then cuts a
+  // numbered revision carrying the note (and, on an approval app, the approver)
+  // the modal collected. What operators run is that frozen snapshot — editing
+  // afterwards writes the draft and leaves the live revision alone.
+  const handlePublish = async (target: {
+    department_id: string | null; station_id: string | null;
+    change_note: string; approved_by_user_id: string | null;
+  }) => {
     if (!id || !app) return;
     const next = { ...app, department_id: target.department_id, station_id: target.station_id };
     setApp(next);
     const ok = await save(next);
     if (!ok) return;
     try {
-      await api.publishApp(id);
+      const result = await publishRevision(id, {
+        change_note: target.change_note,
+        approved_by_user_id: target.approved_by_user_id,
+      });
       setApp(prev => prev ? { ...prev, status: 'published', department_id: target.department_id, station_id: target.station_id } : prev);
+      setControl(prev => ({
+        ...prev,
+        current_revision: result.current_revision ?? result.revision,
+        has_unpublished_changes: false,
+      }));
       setShowPublishModal(false);
+      return;
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Failed to publish app');
+      // Rethrown, not swallowed: the modal stays open holding what the person
+      // typed so a missing note or approver can be fixed in place.
+      throw err instanceof Error ? err : new Error('Failed to publish app');
     }
   };
 
@@ -338,6 +395,20 @@ export default function AppBuilder() {
         </div>
       )}
 
+      {/* The banner that makes change control visible: a published app whose
+          draft has moved on. Operators are still running the last revision —
+          nothing here reaches the floor until it is published. */}
+      {control.current_revision > 0 && control.has_unpublished_changes && (
+        <div
+          data-testid="unpublished-changes-banner"
+          className="border-b px-4 py-1.5 flex-shrink-0 flex items-center justify-center gap-2 text-center"
+          style={{ background: 'var(--gold-wash)', borderColor: 'rgba(240,180,41,0.35)', color: 'var(--warn-ink)', fontSize: 12, fontWeight: 550 }}
+        >
+          <AlertTriangle size={12} />
+          Editing draft — revision {control.current_revision} is live. Operators keep running it until you publish.
+        </div>
+      )}
+
       {/* ── Top bar ── */}
       {/* flex-wrap: on narrow screens the action cluster drops to its own row
           instead of pushing Save/Publish off-screen. */}
@@ -364,6 +435,7 @@ export default function AppBuilder() {
               : { fontSize: 11, fontWeight: 650, color: 'var(--warn-ink)', background: 'var(--gold-wash)', border: '1px solid rgba(240,180,41,0.35)' }}
           >
             {app.status}
+            {control.current_revision > 0 && ` · Rev ${control.current_revision}`}
           </span>
         </div>
 
@@ -564,6 +636,14 @@ export default function AppBuilder() {
         departments={departments}
         stations={stations}
         saving={saving}
+        control={control}
+        canSetApproval={isAtLeast('manager')}
+        approvers={companyUsers}
+        onToggleApproval={async (next) => {
+          if (!id) return;
+          await setRequiresApproval(id, next);
+          setControl(prev => ({ ...prev, requires_approval: next ? 1 : 0 }));
+        }}
         onClose={() => setShowPublishModal(false)}
         onPublish={handlePublish}
       />
@@ -573,17 +653,58 @@ export default function AppBuilder() {
 }
 
 // ── Publish Modal ──────────────────────────────────────────────────────────────
+// Publishing is the change-control event, so this is where the record is made:
+// what changed (a note, required), what it changes for operators (the diff
+// against the live revision), and — on an app under approval — who signed it
+// off, who may not be the person publishing.
+//
+// No autoFocus anywhere: the modal must not steal the caret from someone
+// mid-keystroke, and a screen reader announces the dialog on its own terms.
 
-function PublishModal({ app, departments, stations, saving, onClose, onPublish }: {
+function PublishModal({
+  app, departments, stations, saving, control, canSetApproval, approvers,
+  onToggleApproval, onClose, onPublish,
+}: {
   app: App;
   departments: Department[];
   stations: Station[];
   saving: boolean;
+  control: ControlState;
+  canSetApproval: boolean;
+  approvers: CompanyUser[];
+  onToggleApproval: (next: boolean) => Promise<void>;
   onClose: () => void;
-  onPublish: (target: { department_id: string | null; station_id: string | null }) => void;
+  onPublish: (target: {
+    department_id: string | null; station_id: string | null;
+    change_note: string; approved_by_user_id: string | null;
+  }) => Promise<void>;
 }) {
   const [departmentId, setDepartmentId] = useState<string>(app.department_id || '');
   const [stationId, setStationId] = useState<string>(app.station_id || '');
+  const [changeNote, setChangeNote] = useState('');
+  const [approverId, setApproverId] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [diff, setDiff] = useState<RevisionDiff | null>(null);
+  const [diffUnavailable, setDiffUnavailable] = useState(false);
+
+  const nextRevision = control.current_revision + 1;
+  const isFirst = control.current_revision === 0;
+
+  // What this publish changes for operators, measured against the snapshot they
+  // are running right now — not against the last thing this browser saved.
+  useEffect(() => {
+    let cancelled = false;
+    if (isFirst) { setDiff(null); setDiffUnavailable(false); return; }
+    getAppRevision(app.id, control.current_revision)
+      .then(snapshot => {
+        if (cancelled) return;
+        setDiff(diffSteps(snapshot.steps ?? [], app.steps ?? []));
+        setDiffUnavailable(false);
+      })
+      .catch(() => { if (!cancelled) { setDiff(null); setDiffUnavailable(true); } });
+    return () => { cancelled = true; };
+  }, [app.id, app.steps, control.current_revision, isFirst]);
 
   const availableStations = departmentId
     ? stations.filter(s => s.department_id === departmentId)
@@ -596,17 +717,110 @@ function PublishModal({ app, departments, stations, saving, onClose, onPublish }
     }
   };
 
+  const summary = describeDiff(diff);
+  const noteMissing = !changeNote.trim();
+  const approverMissing = !!control.requires_approval && !approverId;
+
+  const submit = async () => {
+    setError('');
+    if (noteMissing) { setError('A change note is required — say what changed.'); return; }
+    if (approverMissing) { setError('This app requires approval — choose an approver.'); return; }
+    setBusy(true);
+    try {
+      await onPublish({
+        department_id: departmentId || null,
+        station_id: stationId || null,
+        change_note: changeNote.trim(),
+        approved_by_user_id: approverId || null,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to publish app');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(22, 35, 61, 0.45)' }}>
-      <div className="bg-surface-1 rounded-card shadow-pop border border-border-subtle w-full max-w-lg">
+      <div className="bg-surface-1 rounded-card shadow-pop border border-border-subtle w-full max-w-lg max-h-[92vh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-4 border-b border-grid">
           <div className="flex items-center gap-2">
             <Globe size={17} className="text-good" />
-            <h2 className="text-ink" style={{ fontSize: 16, fontWeight: 750 }}>Publish App</h2>
+            <h2 className="text-ink" style={{ fontSize: 16, fontWeight: 750 }}>
+              Publish {isFirst ? 'Rev 1' : `Rev ${nextRevision}`}
+            </h2>
           </div>
           <button onClick={onClose} className="wb-btn-ghost !min-h-0 p-1.5" aria-label="Close"><X size={16} /></button>
         </div>
+
         <div className="px-5 py-4 space-y-4">
+          {/* What this publish does to the instructions on the floor. */}
+          <div className="wb-well px-2.5 py-2" data-testid="publish-diff" style={{ fontSize: 12 }}>
+            {isFirst ? (
+              <span className="text-ink-2" style={{ fontWeight: 650 }}>First revision</span>
+            ) : (
+              <>
+                <span className="text-ink-2" style={{ fontWeight: 650 }}>
+                  Rev {control.current_revision} → Rev {nextRevision}
+                </span>
+                <span className="text-muted">
+                  {diffUnavailable
+                    ? ' · changes not compared — the live revision could not be read'
+                    : summary ? `: ${summary}` : ': no step changes'}
+                </span>
+              </>
+            )}
+            <p className="text-muted mt-1" style={{ fontSize: 11 }}>
+              Runs started from now on record this revision. Past runs keep the one they ran against.
+            </p>
+          </div>
+
+          <Field label="What changed? (required)">
+            <textarea
+              className="wb-input"
+              rows={3}
+              value={changeNote}
+              placeholder="e.g. added torque check to step 2"
+              maxLength={2000}
+              onChange={e => setChangeNote(e.target.value)}
+            />
+          </Field>
+
+          {/* Approval: only a real policy on this app shows a picker, and the
+              person publishing is never in the list. */}
+          {!!control.requires_approval && (
+            <Field label="Approved by (required)" hint="An approver must be someone other than you.">
+              <select className="wb-input" value={approverId} onChange={e => setApproverId(e.target.value)}>
+                <option value="">— Choose an approver —</option>
+                {approvers.map(u => (
+                  <option key={u.id} value={u.id}>{u.display_name} · {u.role}</option>
+                ))}
+              </select>
+              {approvers.length === 0 && (
+                <p className="mt-1 text-warn-ink" style={{ fontSize: 11 }}>
+                  Nobody else is on this account yet — add a colleague before publishing this app.
+                </p>
+              )}
+            </Field>
+          )}
+
+          {canSetApproval && (
+            <label className="flex items-start gap-2 cursor-pointer" style={{ fontSize: 12 }}>
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={!!control.requires_approval}
+                onChange={e => { void onToggleApproval(e.target.checked); }}
+              />
+              <span>
+                <span className="text-ink" style={{ fontWeight: 650 }}>Requires approval</span>
+                <span className="text-muted block" style={{ fontSize: 11 }}>
+                  Every publish of this app must name an approver who is not the person publishing.
+                </span>
+              </span>
+            </label>
+          )}
+
           <p className="text-muted" style={{ fontSize: 12.5 }}>
             Choose where to publish <span className="text-ink" style={{ fontWeight: 650 }}>{app.name}</span>. Operators at the selected
             department / workstation will see it. You can leave these blank to publish without a target.
@@ -632,16 +846,23 @@ function PublishModal({ app, departments, stations, saving, onClose, onPublish }
               </p>
             )}
           </Field>
+
+          {error && (
+            <p className="flex items-start gap-1.5 text-bad" style={{ fontSize: 12, fontWeight: 550 }} role="alert">
+              <AlertTriangle size={13} className="flex-shrink-0 mt-0.5" /> {error}
+            </p>
+          )}
         </div>
+
         <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-grid">
           <button onClick={onClose} className="wb-btn">Cancel</button>
           <button
-            onClick={() => onPublish({ department_id: departmentId || null, station_id: stationId || null })}
-            disabled={saving}
+            onClick={() => { void submit(); }}
+            disabled={saving || busy || noteMissing || approverMissing}
             className="wb-btn-primary"
           >
-            {saving ? <Loader2 size={13} className="animate-spin" /> : <Globe size={13} />}
-            Publish
+            {saving || busy ? <Loader2 size={13} className="animate-spin" /> : <Globe size={13} />}
+            Publish {isFirst ? 'Rev 1' : `Rev ${nextRevision}`}
           </button>
         </div>
       </div>

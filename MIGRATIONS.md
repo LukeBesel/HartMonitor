@@ -139,7 +139,7 @@ picking `006` in parallel worktrees is a merge conflict that only shows up at bo
 | 007 | `007_andon_escalation_and_reason_codes.sql` | calls-escalate-and-pm-raises-jobs | andon calls + reason_codes (see note) |
 | 008 | `008_pm_auto_raise.sql` | calls-escalate-and-pm-raises-jobs | preventive maintenance (PM) |
 | 009 | `009_*.sql` | work-orders-carry-operations | operations on work orders |
-| 010 | `010_*.sql` | app-revisions-and-approval | app revisions + approval |
+| 010 | `010_app_revisions.sql` | app-revisions-and-approval | app_revisions snapshots + `apps.current_revision` / `apps.requires_approval` / `completions.app_revision_id` |
 | 011 | `011_*.sql` | run-start-gated-and-one-tap | qualification gate on run start |
 | 012 | `012_*.sql` | scrap-rework-and-coded-downtime | scrap/rework + coded downtime |
 
