@@ -249,7 +249,7 @@ export default function AuditLog() {
         <div className="flex flex-col items-center justify-center py-24 gap-3 text-center">
           <AlertCircle size={40} className="text-red-400" />
           <div>
-            <p className="font-medium text-gray-500">Couldn't load the transaction log</p>
+            <p className="font-medium text-gray-500">Couldn't load the audit log</p>
             <p className="text-sm text-gray-400 mt-1">{error}</p>
           </div>
           <button className="btn-secondary" onClick={() => fetchEntries()}>Retry</button>

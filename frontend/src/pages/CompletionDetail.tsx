@@ -10,7 +10,7 @@
 // It reads several endpoints because no single one carries all of that today —
 // what each is here for is noted at the fetch. Nothing on the page is derived
 // from a number the server did not measure: an unknown reads "—" with the
-// reason, and a run still on the bench is shown as running rather than dressed
+// reason, and a run that is still going is shown as running rather than dressed
 // up as a finished one.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -434,7 +434,7 @@ export default function CompletionDetail() {
             </div>
             <p className="text-[11px] text-gray-400 mt-1">
               {isLive
-                ? `started ${fmtRelative(run.started_at).toLowerCase()} · still on the bench`
+                ? `started ${fmtRelative(run.started_at).toLowerCase()} · still running`
                 : total === null
                   ? 'nobody timed this run'
                   : timedSteps.length > 0

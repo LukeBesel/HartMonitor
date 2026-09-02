@@ -122,6 +122,25 @@ test('operator identity: set PIN/badge, then verify by PIN and by badge', async 
   assert.equal(created.status, 201);
   const opId = created.json.id;
 
+  // Every user row the API hands a screen carries `display_role` — the ONE
+  // name a screen prints for a role — beside the stored permission level. The
+  // list, the create response and the EDIT response all carry it: a row that
+  // was just edited must not fall back to printing the database's word.
+  assert.equal(created.json.role, 'operator');
+  assert.equal(created.json.display_role, 'Operator');
+  const list = await api('GET', '/api/users', { token });
+  assert.equal(list.status, 200);
+  const ownerRow = list.json.find(u => u.role === 'developer');
+  assert.ok(ownerRow, 'the account creator is stored as developer');
+  assert.equal(ownerRow.display_role, 'Owner', 'and is shown as Owner');
+  const promoted = await api('PUT', `/api/users/${opId}`, { token, body: { role: 'supervisor' } });
+  assert.equal(promoted.status, 200);
+  assert.equal(promoted.json.role, 'supervisor');
+  assert.equal(promoted.json.display_role, 'Supervisor');
+  const restored = await api('PUT', `/api/users/${opId}`, { token, body: { role: 'operator' } });
+  assert.equal(restored.status, 200);
+  assert.equal(restored.json.display_role, 'Operator');
+
   // Set a PIN + badge.
   const setPin = await api('PUT', `/api/users/${opId}/pin`, { token, body: { pin: '4321', badge_code: 'CARD-99' } });
   assert.equal(setPin.status, 200);

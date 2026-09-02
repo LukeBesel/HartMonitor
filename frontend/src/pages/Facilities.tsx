@@ -14,7 +14,7 @@ import { DAY_LETTERS, formatShiftRange, parseDays } from '../utils/shifts';
 import type { SiteShift } from '../utils/shifts';
 
 // Enterprise multi-level drill-down:
-//   Facility (site) → Department → Work Center (station) → Operations (completions)
+//   Facility (site) → Department → Station → Operations (completions)
 // Reuses the existing sites / departments / stations / completions data so there
 // are no schema changes — it's a roll-up view for multi-facility operators.
 

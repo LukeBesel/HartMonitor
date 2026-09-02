@@ -4,49 +4,57 @@ import { dirname, join, relative, sep } from 'node:path';
 
 // ─── One name per thing ───────────────────────────────────────────────────────
 // A plant manager should never meet a word this product invented, and never
-// meet two words for one thing. Four names for a station (Stations, WORKSTATIONS,
-// "work centers", "machines"), two for a help call ("Request help" on the
-// sidebar, "Call for help" on the page), two for a company ("Create Company",
-// "Create Workspace"), an acronym for maintenance (CMMS) and a job title no
-// plant uses for a person (developer) were all found by reading the screens —
-// which is exactly the method that lets the next one back in.
+// meet two words for one thing. Four names for a station (Stations,
+// WORKSTATIONS, "work centers", "machines"), two for a help call ("Request
+// help" on the sidebar, "Call for help" on the page), two for a company
+// ("Create Company", "Create Workspace"), an acronym for maintenance (CMMS) and
+// a job title no plant uses for a person (developer) were all found by reading
+// the screens — which is exactly the method that lets the next one back in.
 //
 // So the vocabulary is a test. Every entry below names a word the product does
-// not use, the ONE word it uses instead, and where the second one came from.
-// Adding a banned string is how a rename becomes permanent; the ALLOWLIST
-// underneath it is the short, argued list of places a banned string may still
-// appear, each with the reason it may.
+// not use, the ONE word it uses instead, and the ALLOWLIST underneath is the
+// short, argued list of places a banned word may still appear.
 //
-// Scope: every .ts/.tsx under frontend/src except tests. Comments count. A
-// comment naming a screen that no longer exists is how the old vocabulary gets
-// copied back into new code by someone reading around for context.
+// Two rules about the scan itself:
+//   • It is CASE-INSENSITIVE. "Work Center" in a heading slipped past a
+//     case-sensitive list once already.
+//   • COMMENTS COUNT. A comment naming a retired screen is how the old
+//     vocabulary gets copied back into new code by someone reading around for
+//     context — and half the strings this file bans started as one.
+//
+// Scope: every .ts/.tsx under frontend/src except tests.
 
-type Banned = { term: string; instead: string };
+type Banned = {
+  term: string;
+  instead: string;
+  /** Match on word boundaries instead of as a substring. Needed where a word
+   *  is also part of a legitimate identifier — `MachineStatus` is not the word
+   *  "machines", and a substring scan flagged it. */
+  word?: boolean;
+};
 
 const BANNED: Banned[] = [
   // ── One physical thing: a station ──────────────────────────────────────────
-  { term: 'Workstation',   instead: 'Station' },
-  { term: 'workstation',   instead: 'station' },
-  { term: 'Work center',   instead: 'Station' },
-  { term: 'work center',   instead: 'station' },
-  // Two words, and it read as a different thing again in the Settings header.
-  { term: 'Work station',  instead: 'Station' },
-  { term: 'work station',  instead: 'station' },
+  { term: 'workstation',    instead: 'station' },
+  { term: 'work station',   instead: 'station' },
+  { term: 'work center',    instead: 'station' },
+  { term: 'machines',       instead: 'stations', word: true },
   { term: 'Total Machines', instead: 'Stations' },
   // ── Maintenance is not an acronym ──────────────────────────────────────────
-  { term: 'CMMS',          instead: 'Maintenance' },
+  { term: 'CMMS',           instead: 'Maintenance' },
   // ── One help call, cancelled one way ───────────────────────────────────────
-  { term: 'Stand down',    instead: 'Cancel call' },
-  { term: 'Request help',  instead: 'Call for help' },
-  // ── A run in progress is running, not "on the bench" ───────────────────────
-  { term: 'On the bench',  instead: 'Running now' },
-  // ── One company, created once ──────────────────────────────────────────────
-  // "Workspaces" survives for the SIDEBAR GROUPINGS (Production, Quality, …),
-  // which is a different concept and the only thing Settings → Navigation calls
-  // by that name. What is banned is the company being called a workspace.
-  { term: 'Create Workspace', instead: 'Create Company' },
-  { term: 'your workspace', instead: 'your company' },
-  { term: 'Your workspace', instead: 'Your company' },
+  { term: 'Stand down',     instead: 'Cancel call' },
+  { term: 'Request help',   instead: 'Call for help' },
+  // ── A run in progress is running ───────────────────────────────────────────
+  { term: 'on the bench',   instead: 'running' },
+  // ── One company, and it is called a company ────────────────────────────────
+  // "Workspace" survives for the SIDEBAR GROUPINGS (Production, Quality, …),
+  // which is a different concept — see the allowlist entry that names every
+  // file allowed to say it, and why. A COMPANY is never a workspace.
+  { term: 'workspace',      instead: 'company' },
+  // ── A role is a permission level, not a job title ──────────────────────────
+  { term: 'your developer',   instead: 'the Owner' },
+  { term: 'developer only',   instead: 'Owner only' },
   // ── Screens that no longer exist, under the names they had ─────────────────
   { term: 'Select an operation',  instead: 'Select an app…' },
   { term: 'Operation Analytics',  instead: 'App comparison' },
@@ -58,34 +66,64 @@ const BANNED: Banned[] = [
   { term: 'App History',          instead: 'App Details' },
   { term: 'App Analytics',        instead: 'App Details' },
   // ── A duration is formatted, never labelled with its unit ──────────────────
-  // The metric payload carries `unit`; the view formats seconds through
-  // fmtDuration. A metric NAMED "(min)" is the label-sniffing this replaced.
-  { term: 'Avg Cycle Time (min)', instead: "the metric's `unit` field" },
+  // The card payload carries `unit`; the view formats seconds through
+  // fmtDuration and minutes through fmtMinutes. A metric or a chart series
+  // NAMED "(min)" is the label-sniffing this replaced.
+  { term: 'Avg Cycle Time (min)', instead: "the card's `unit` field" },
+  { term: 'Avg Cycle (min)',      instead: "the card's `unit` field" },
 ];
 
-/** Where a banned string may still appear, and why. Anything not listed here
- *  is a failure — the point is that each exception is argued once, in writing,
- *  rather than discovered later in a screenshot. */
-const ALLOWLIST: { file: string; terms: string[]; why: string }[] = [
+/** Where a banned word may still appear, and why. Terms are written with the
+ *  casing they actually have in the files; matching, like the scan, ignores
+ *  case. One entry may cover several files when they share one reason. */
+const ALLOWLIST: { files: string[]; terms: string[]; why: string }[] = [
   {
-    file: 'pages/Landing.tsx',
-    terms: ['CMMS', 'your workspace'],
+    files: ['pages/Landing.tsx'],
+    terms: ['CMMS', 'workspace'],
     why: 'Public marketing copy, outside the product shell. A buyer searching for "CMMS" has to find the page; the plant manager inside the app never sees it.',
   },
   {
-    file: 'api/client.ts',
-    terms: ['CMMS', 'Transaction Log'],
+    files: ['api/client.ts'],
+    terms: ['CMMS', 'Transaction Log', 'App Analytics', 'workspace'],
     why: 'Section comments in the shared API client — no user ever reads them, and the file is owned by another workstream this wave.',
   },
   {
-    file: 'App.tsx',
-    terms: ['Apps Dashboard'],
-    why: 'A route comment recording which retired screen a redirect exists for. The routing table is off-limits this wave; the name appears nowhere on screen.',
+    files: ['App.tsx'],
+    terms: ['Apps Dashboard', 'App Analytics', 'workspace'],
+    why: 'Route comments recording which retired screen a redirect exists for, and the workspace tab bar the shell renders. The routing table is off-limits this wave; neither name appears on screen.',
   },
   {
-    file: 'pages/AppPlayer.tsx',
-    terms: ['Request help'],
-    why: 'Two code comments in the operator player (off-limits this wave). Its on-screen labels come from components/player/*, which say "Call for help".',
+    files: ['pages/AppPlayer.tsx', 'pages/OperatorPortal.tsx'],
+    terms: ['Request help', 'App History'],
+    why: 'Code comments in the operator player and portal (both off-limits this wave). Their on-screen labels come from components/player/*, which say "Call for help", and neither screen prints a retired screen name.',
+  },
+  {
+    // The ONE surviving meaning of the word: the sidebar's groupings of screens
+    // (Production, Quality, Planning …), which Settings → Navigation lets a
+    // company switch on and off. These files define it, render it, or explain a
+    // screen's relationship to it. A COMPANY is never a workspace anywhere.
+    files: [
+      'config/navigation.tsx',
+      'config/pageTitles.ts',
+      'components/shared/Layout.tsx',
+      'components/shared/TabBar.tsx',
+      'components/shared/SetupChecklist.tsx',
+      'components/shared/DashboardFilterBar.tsx',
+      'components/apps/AppTrainingCoach.tsx',
+      'context/NavPrefsContext.tsx',
+      'api/settings.ts',
+      'pages/settings/NavigationTab.tsx',
+      'pages/settings/CompanySettings.tsx',
+      'pages/settings/groups.ts',
+      'pages/CategoryReports.tsx',
+      'pages/DashboardView.tsx',
+      'pages/AppBuilder.tsx',
+      'pages/CIProjects.tsx',
+      'pages/Inventory.tsx',
+      'types.ts',
+    ],
+    terms: ['workspace'],
+    why: 'The sidebar grouping of screens — a real, separate concept the product names on screen ("WORKSPACES"), switchable per company in Settings → Navigation. These files define it, render it, or say which grouping a screen belongs to.',
   },
 ];
 
@@ -116,9 +154,12 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+const posix = (relPath: string) => relPath.split(sep).join('/');
+
 function allowed(relPath: string, term: string): boolean {
-  const posix = relPath.split(sep).join('/');
-  return ALLOWLIST.some(a => a.file === posix && a.terms.includes(term));
+  const file = posix(relPath);
+  const wanted = term.toLowerCase();
+  return ALLOWLIST.some(a => a.files.includes(file) && a.terms.some(t => t.toLowerCase() === wanted));
 }
 
 describe('product vocabulary', () => {
@@ -129,16 +170,18 @@ describe('product vocabulary', () => {
     expect(files.some(f => f.endsWith(`${sep}App.tsx`))).toBe(true);
   });
 
-  it('uses one name per thing, everywhere', () => {
+  it('uses one name per thing, everywhere, whatever the casing', () => {
     const violations: string[] = [];
     for (const file of files) {
-      const rel = relative(SRC, file);
+      const rel = posix(relative(SRC, file));
       const lines = readFileSync(file, 'utf-8').split('\n');
-      for (const { term, instead } of BANNED) {
+      for (const { term, instead, word } of BANNED) {
         if (allowed(rel, term)) continue;
+        const needle = term.toLowerCase();
+        const rx = word ? new RegExp(`\\b${needle}\\b`, 'i') : null;
         lines.forEach((line, i) => {
-          if (line.includes(term)) {
-            violations.push(`${rel.split(sep).join('/')}:${i + 1} says "${term}" — this product says "${instead}"`);
+          if (rx ? rx.test(line) : line.toLowerCase().includes(needle)) {
+            violations.push(`${rel}:${i + 1} says "${term}" — this product says "${instead}"`);
           }
         });
       }
@@ -151,12 +194,13 @@ describe('product vocabulary', () => {
     // following any more — delete it, so the list stays short enough to read.
     const stale: string[] = [];
     for (const entry of ALLOWLIST) {
-      const full = join(SRC, ...entry.file.split('/'));
-      const text = existsSync(full) ? readFileSync(full, 'utf-8') : '';
-      for (const term of entry.terms) {
-        if (!text.includes(term)) stale.push(`${entry.file} no longer contains "${term}"`);
+      expect(entry.why.length, `${entry.files[0]} needs a reason`).toBeGreaterThan(20);
+      for (const file of entry.files) {
+        const full = join(SRC, ...file.split('/'));
+        const text = (existsSync(full) ? readFileSync(full, 'utf-8') : '').toLowerCase();
+        const used = entry.terms.some(t => text.includes(t.toLowerCase()));
+        if (!used) stale.push(`${file} no longer contains any of ${entry.terms.join(', ')}`);
       }
-      expect(entry.why.length, `${entry.file} needs a reason`).toBeGreaterThan(20);
     }
     expect(stale).toEqual([]);
   });

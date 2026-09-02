@@ -1,7 +1,7 @@
 // The one screen for one app: /apps/:id.
 //
 // This app's cycle time used to be reported on five screens — a detail page, a
-// run history, a per-app analytics page, an apps overview and a per-operation
+// run history, a per-app statistics page, an apps overview and a per-operation
 // breakdown — under four different labels, at three different precisions, each
 // behind its own filter bar. The numbers came from the same runs, so the disagreements were
 // all presentation, and the one genuinely useful comparison ("who ran it") was
@@ -262,7 +262,7 @@ export default function AppDetail() {
     setQuery({ days: String(filters.days) }, true);
   }, [askedFor, filters.days, setQuery]);
 
-  // Runs still on the bench report how long they have been open, so the clock
+  // Runs still running report how long they have been open, so the clock
   // has to move between polls or a live row reads as frozen.
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {

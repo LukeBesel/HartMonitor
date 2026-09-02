@@ -111,7 +111,11 @@ router.put('/:id', requireRole('developer'), (req, res) => {
     logActivity(req.companyId, 'user', req.params.id, `User "${updates.display_name}" ${updates.is_active ? 'activated' : 'deactivated'}`, req.user.display_name);
   }
 
-  res.json(db.prepare('SELECT id, email, display_name, role, is_active, last_login, created_at, updated_at, department_id, job_title FROM users WHERE id = ?').get(req.params.id));
+  // Same shape the grid listed: `display_role` travels with every user row, so
+  // a row that has just been edited does not fall back to the stored word.
+  res.json(withDisplayRole(
+    db.prepare('SELECT id, email, display_name, role, is_active, last_login, created_at, updated_at, department_id, job_title FROM users WHERE id = ?').get(req.params.id),
+  ));
 });
 
 // ─── PUT /:id/pin — set or clear an operator's floor PIN / badge (manager+) ───

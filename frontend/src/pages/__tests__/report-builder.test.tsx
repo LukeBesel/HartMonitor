@@ -54,7 +54,7 @@ vi.mock('../../context/PlanContext', () => ({
   usePlan: () => ({ isFree: false, isPro: true, refresh: () => {}, plan: null }),
 }));
 
-import DashboardView from '../DashboardView';
+import DashboardView, { seriesValueText } from '../DashboardView';
 import CategoryReports from '../CategoryReports';
 import Dashboards from '../Dashboards';
 
@@ -73,6 +73,7 @@ const REPORT = {
   cards: [
     { id: 'c-cycle', type: 'metric', title: 'Avg Cycle Time', metric_key: 'avg_cycle', size: 'sm' },
     { id: 'c-pass',  type: 'metric', title: 'Pass Rate',      metric_key: 'pass_rate', size: 'sm' },
+    { id: 'c-trend', type: 'time_series', title: 'Cycle Time Trend', series: 'cycle_time', size: 'md' },
   ],
 };
 
@@ -90,6 +91,11 @@ function cardData(over: Record<string, unknown> = {}) {
       {
         card_id: 'c-pass',
         data: { unit: 'percent', value: null, empty_reason: 'No pass/fail results recorded yet' },
+      },
+      {
+        // The same 30 seconds the tile shows, as the chart carries it: minutes.
+        card_id: 'c-trend',
+        data: { unit: 'minutes', series: [{ name: 'Avg Cycle', data: [{ date: '2026-09-01', value: 0.5 }] }] },
       },
     ],
     ...over,
@@ -148,7 +154,7 @@ describe('a workspace Reports page IS a saved report', () => {
     const fromId = await cardTitles();
     viaId.unmount();
 
-    expect(fromCategory).toEqual(['Avg Cycle Time', 'Pass Rate']);
+    expect(fromCategory).toEqual(['Avg Cycle Time', 'Pass Rate', 'Cycle Time Trend']);
     expect(fromId).toEqual(fromCategory);
   });
 });
@@ -164,6 +170,19 @@ describe('a duration in a report card', () => {
     expect(expected).toBe('30s');
     await waitFor(() => expect(screen.getByText(expected)).toBeTruthy());
     expect(screen.queryByText('0.5')).toBeNull();
+  });
+
+  it('reads the same in the chart beside it — axis, tooltip and tile agree', async () => {
+    // jsdom gives a Recharts chart no width, so the tooltip cannot be read from
+    // the DOM. Both the axis tickFormatter and the tooltip formatter are this
+    // one function, and it is compared here against the string the per-app
+    // screen prints for the same fixture.
+    expect(seriesValueText('minutes', 0.5)).toBe(fmtDuration(30));
+    expect(seriesValueText('minutes', 0.5)).toBe('30s');
+    expect(seriesValueText('minutes', 6.0167)).toBe(fmtDuration(361));
+    // A count is not a duration and is not dressed up as one.
+    expect(seriesValueText('count', 63)).toBe('63');
+    expect(seriesValueText(undefined, 63)).toBe('63');
   });
 
   it('formats an older payload (no unit field) exactly the same way', async () => {

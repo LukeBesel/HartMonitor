@@ -81,9 +81,9 @@ const STEPS: Step[] = [
     kind: 'tour',
     icon: BarChart3,
     title: 'The data comes back',
-    body: 'Every value an operator enters is stored against that run. App analytics turns it into cycle times, pass rates and per-field trends you can export — and the rest of the MES reads the same runs.',
+    body: 'Every value an operator enters is stored against that run. The app\'s own screen turns it into cycle times, pass rates and per-field trends you can export — and the rest of the MES reads the same runs.',
     bullets: [
-      'Per-app analytics: runs, durations, first-pass yield, field-by-field stats',
+      'Per-app data: runs, durations, first-pass yield, field-by-field stats',
       'Work orders, OEE, quality and the Command Center all read these runs',
       'Everything exports to CSV, nothing is locked in',
     ],

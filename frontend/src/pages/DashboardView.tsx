@@ -68,6 +68,20 @@ function clockReading(iso: string) {
   return isNaN(t.getTime()) ? '—' : t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
+/**
+ * How one value on a card reads, given the unit the card says it is in.
+ *
+ * ONE function, so a chart's axis, that chart's tooltip and the tile beside it
+ * cannot disagree: a minutes series goes through fmtMinutes (which is
+ * fmtDuration on seconds), and everything else prints as the number it is.
+ * Exported so the test can compare a chart's text against the per-app screen's
+ * string for the same fixture — jsdom gives a Recharts chart no width, so the
+ * rendered tooltip itself cannot be read there.
+ */
+export function seriesValueText(unit: string | undefined, value: number): string {
+  return unit === 'minutes' ? fmtMinutes(value) : String(value);
+}
+
 function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
   if (!data) return <div className="flex items-center justify-center h-24 text-gray-400 text-sm">No data</div>;
 
@@ -111,13 +125,22 @@ function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
     case 'time_series': {
       const series = data.series?.[0];
       if (!series?.data?.length) return <div className="text-center py-8 text-gray-400 text-sm">No trend data yet</div>;
+      // A cycle-time trend is plotted in minutes, and a minute is a duration:
+      // its axis and its tooltip read "30s" and "6m 1s", exactly like the tile
+      // beside it and like the same runs on the per-app screen. The card SAYS
+      // it is minutes (`unit`) — nothing here reads the series name to guess.
+      const minutes = data.unit === 'minutes';
+      const axis = minutes ? (v: number) => seriesValueText(data.unit, v) : undefined;
       return (
         <ResponsiveContainer width="100%" height={180}>
           <LineChart data={series.data} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="date" tick={{ fontSize: 10 }} tickFormatter={d => d?.slice(5) || d} />
-            <YAxis tick={{ fontSize: 10 }} />
-            <Tooltip labelFormatter={d => `Date: ${d}`} />
+            <YAxis tick={{ fontSize: 10 }} tickFormatter={axis} width={minutes ? 52 : undefined} />
+            <Tooltip
+              labelFormatter={d => `Date: ${d}`}
+              formatter={(v: number) => [seriesValueText(data.unit, v), series.name]}
+            />
             <Line type="monotone" dataKey="value" stroke="var(--accent)" strokeWidth={2} dot={false} name={series.name} />
           </LineChart>
         </ResponsiveContainer>
@@ -159,10 +182,10 @@ function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
     case 'leaderboard': {
       const rows = data.rows || [];
       // The card says what its rows are in — `unit: 'minutes'` — so the minutes
-      // adapter is chosen from a fact rather than from the word "min" appearing
-      // in a label. (A pre-`unit` payload still labels itself "Avg Cycle (min)";
-      // that fallback comes out one release from now.)
-      const isMinutes = data.unit === 'minutes' || /\bmin\b/i.test(data.label ?? '');
+      // adapter is chosen from a fact. Sniffing the label for the word "min"
+      // was the bug: "Admin Actions" contains it and is not a duration, and a
+      // renamed label silently changed how numbers were formatted.
+      const isMinutes = data.unit === 'minutes';
       return (
         <div className="space-y-1.5 py-2">
           {rows.slice(0, 6).map((r: any, i: number) => (

@@ -438,7 +438,7 @@ describe('/apps/:id refuses to invent numbers', () => {
     expect(screen.getAllByText('no finished run was timed · last 30 days').length).toBeGreaterThan(0);
   });
 
-  it('shows a run still on the bench counting up rather than calling it zero', async () => {
+  it('shows a run that is still running counting up rather than calling it zero', async () => {
     getAppAnalytics.mockResolvedValue(analytics({
       recent_runs: [{
         id: 'c-live', started_at: '2026-08-20 16:00:00', completed_at: null, status: 'in_progress',

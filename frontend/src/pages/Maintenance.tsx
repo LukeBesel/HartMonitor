@@ -1,4 +1,4 @@
-import { displayId } from '../utils/ids';
+import { displayId, hasCompanyTag } from '../utils/ids';
 import { useEffect, useState, useCallback } from 'react';
 import {
   Wrench, Plus, Search, AlertTriangle, CheckCircle2, Clock,
@@ -843,7 +843,7 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
                 <div key={wo.id} className="flex items-start justify-between gap-3 p-3 bg-gray-50 rounded-lg border border-gray-300">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-xs font-mono text-gray-500" title={wo.wo_number}>{displayId(wo.wo_number)}</span>
+                      <span className="text-xs font-mono text-gray-500" title={hasCompanyTag(wo.wo_number) ? wo.wo_number : undefined}>{displayId(wo.wo_number)}</span>
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${priorityColor(wo.priority)}`}>
                         {capitalize(wo.priority)}
                       </span>
@@ -1001,7 +1001,7 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO, onOpenPM }: WorkOrder
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <span className="text-xs font-mono text-gray-500" title={wo.wo_number}>{displayId(wo.wo_number)}</span>
+                    <span className="text-xs font-mono text-gray-500" title={hasCompanyTag(wo.wo_number) ? wo.wo_number : undefined}>{displayId(wo.wo_number)}</span>
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${woTypeColor(wo.type)}`}>
                       {woTypeLabel(wo.type)}
                     </span>
@@ -1387,7 +1387,7 @@ function PMSchedulesTab({ pms, loading, onRefresh, onNewPM, highlightId }: PMSch
                           </span>
                         )}
                         {pm.open_wo_number && (
-                          <div className="text-xs text-blue-700 mt-0.5" title={pm.open_wo_number}>Job raised: {displayId(pm.open_wo_number)}</div>
+                          <div className="text-xs text-blue-700 mt-0.5" title={hasCompanyTag(pm.open_wo_number) ? pm.open_wo_number : undefined}>Job raised: {displayId(pm.open_wo_number)}</div>
                         )}
                       </td>
                       {/* Deliberately narrow: two controls and no prose. The

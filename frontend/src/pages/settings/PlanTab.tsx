@@ -466,7 +466,7 @@ export function PlanTab() {
               { icon: BarChart3,   label: 'Advanced Analytics',   desc: 'Deep throughput and efficiency reports' },
               { icon: AppWindow,   label: '50 App Slots',         desc: 'Scale up to 50 production apps' },
               { icon: LayoutGrid,  label: '10 Dashboard Slots',   desc: 'Build up to 10 custom dashboards' },
-              { icon: CalendarRange, label: 'Scheduling & Planning', desc: 'Manager view, capacity planning, work order scheduling' },
+              { icon: CalendarRange, label: 'Scheduling & Planning', desc: 'Command Center, capacity planning, work order scheduling' },
               { icon: ClipboardList, label: 'Tables & Data',       desc: 'Custom data tables with full import/export' },
             ] as Array<{ icon: React.ElementType; label: string; desc: string }>).map(({ icon: Icon, label, desc }) => (
               <div key={label} className="flex items-start gap-2.5 p-2.5 bg-white rounded-xl border border-amber-100">

@@ -156,7 +156,7 @@ export default function Pricing() {
           </div>
           <Reveal className="text-center mt-8">
             <p className="text-sm text-gray-500">
-              Add-ons are purchased from your <Link to={user ? '/settings' : '/login?mode=signup'} className="text-pink-400 hover:text-pink-300">workspace settings</Link>.
+              Add-ons are purchased from your <Link to={user ? '/settings' : '/login?mode=signup'} className="text-pink-400 hover:text-pink-300">company settings</Link>.
             </p>
           </Reveal>
         </section>
@@ -188,7 +188,7 @@ export default function Pricing() {
               <h2 className="text-3xl md:text-4xl font-semibold tracking-tight">Everything is free during early access.</h2>
               <p className="mt-4 text-gray-300">No credit card required. Set up your company in minutes and see results on your first shift.</p>
               <Link to="/login?mode=signup" className="mt-8 inline-flex items-center gap-2 px-8 py-4 rounded-full bg-white text-gray-900 font-semibold transition-all hover:scale-[1.03] shadow-xl">
-                Create your free workspace <ArrowRight size={18} />
+                Create your free company <ArrowRight size={18} />
               </Link>
               <p className="mt-4 text-sm text-gray-500">Questions? Email us at <a href="mailto:sales@hartmonitor.io" className="text-pink-400 hover:text-pink-300">sales@hartmonitor.io</a></p>
             </div>

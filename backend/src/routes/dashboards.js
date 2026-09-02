@@ -352,7 +352,7 @@ function computeCardData(card, companyId, filters = {}) {
             AND c.completed_at >= date('now','-'||?||' days')${scope.where}
           GROUP BY date(c.completed_at) ORDER BY date ASC
         `).all(companyId, days, ...scope.params);
-        return { series: [{ name: 'Completions', data: rows.map(r => ({ date: r.date, value: r.count })) }] };
+        return { unit: 'count', series: [{ name: 'Completions', data: rows.map(r => ({ date: r.date, value: r.count })) }] };
       }
       if (metric === 'cycle_time') {
         const rows = db.prepare(`
@@ -362,7 +362,11 @@ function computeCardData(card, companyId, filters = {}) {
             AND c.completed_at >= date('now','-'||?||' days')${scope.where}
           GROUP BY date(c.completed_at) ORDER BY date ASC
         `).all(companyId, days, ...scope.params);
-        return { series: [{ name: 'Avg Cycle (min)', data: rows }] };
+        // The values are minutes; `unit` says so, so the chart formats them
+        // through the one duration formatter instead of the view sniffing the
+        // series NAME for the word "min". A tooltip reading "30s" beside a tile
+        // reading "30s" is the whole point.
+        return { unit: 'minutes', series: [{ name: 'Avg Cycle', data: rows }] };
       }
       if (metric === 'quality') {
         const rows = db.prepare(`
@@ -385,7 +389,7 @@ function computeCardData(card, companyId, filters = {}) {
         }
         const data = Object.entries(byDate).sort(([a],[b])=>a.localeCompare(b))
           .map(([date, v]) => ({ date, value: Math.round((v.pass/v.total)*100) }));
-        return { series: [{ name: 'Pass Rate %', data }] };
+        return { unit: 'percent', series: [{ name: 'Pass Rate %', data }] };
       }
       // Workspace-report series (seeded by the /category/:category endpoint)
       if (metric === 'ncr_trend') {
@@ -396,7 +400,7 @@ function computeCardData(card, companyId, filters = {}) {
           WHERE n.company_id = ? AND n.created_at >= date('now','-'||?||' days')${n.where}
           GROUP BY date(n.created_at) ORDER BY date ASC
         `).all(companyId, days, ...n.params);
-        return { series: [{ name: 'NCRs Opened', data: rows }] };
+        return { unit: 'count', series: [{ name: 'NCRs Opened', data: rows }] };
       }
       if (metric === 'stock_movements') {
         // Movements carry a location, so only site is meaningful here.
@@ -409,9 +413,9 @@ function computeCardData(card, companyId, filters = {}) {
           WHERE i.company_id = ? AND m.created_at >= date('now','-'||?||' days')${where}
           GROUP BY date(m.created_at) ORDER BY date ASC
         `).all(companyId, days, ...params);
-        return { series: [{ name: 'Stock Movements', data: rows }] };
+        return { unit: 'count', series: [{ name: 'Stock Movements', data: rows }] };
       }
-      return { series: [] };
+      return { unit: 'count', series: [] };
     }
 
     case 'distribution': {

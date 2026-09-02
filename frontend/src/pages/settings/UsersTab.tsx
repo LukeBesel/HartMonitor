@@ -284,7 +284,7 @@ export function UsersTab() {
                 {[
                   { label: 'View dashboards & apps', levels: [1,1,1,1,1] },
                   { label: 'Run production apps', levels: [1,1,1,1,0] },
-                  { label: 'Manager view & analytics', levels: [1,1,1,0,0] },
+                  { label: 'Command Center & analytics', levels: [1,1,1,0,0] },
                   { label: 'OEE & step metrics', levels: [1,1,1,0,0] },
                   { label: 'Inventory & quality', levels: [1,1,1,0,0] },
                   { label: 'Purchasing & vendors', levels: [1,1,1,0,0] },

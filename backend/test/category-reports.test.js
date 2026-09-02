@@ -269,6 +269,22 @@ describe('Per-category Reports dashboards', () => {
     assert.equal(payload.sample_size, 1);
   });
 
+  it('says a cycle-time CHART is in minutes, so its axis and tooltip read like a duration', async () => {
+    // The tile and the chart beside it are the same average. While the series
+    // was named "Avg Cycle (min)" and the view sniffed that name, the tile read
+    // "30s" and the chart read "0.5" — one number, two readings.
+    const d = await api('GET', '/api/dashboards/category/production', { token: tokenB });
+    const chart = d.json.cards.find(c => c.type === 'time_series' && c.series === 'cycle_time');
+    assert.ok(chart, 'production reports must include a cycle time trend');
+    const data = await api('GET', `/api/dashboards/${d.json.id}/data`, { token: tokenB });
+    const payload = data.json.cards.find(c => c.card_id === chart.id).data;
+    assert.equal(payload.unit, 'minutes');
+    assert.equal(payload.series[0].name, 'Avg Cycle');
+    assert.ok(!/\bmin\b/i.test(payload.series[0].name), 'the unit is a field, not a word in the series name');
+    // The one run seeded above averaged 30 seconds = 0.5 minutes.
+    assert.deepEqual(payload.series[0].data.map(r => r.value), [0.5]);
+  });
+
   it('says a leaderboard of cycle times is in minutes instead of hiding it in the label', async () => {
     const d = await api('GET', '/api/dashboards/category/production', { token: tokenB });
     const cards = [
