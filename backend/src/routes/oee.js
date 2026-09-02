@@ -176,12 +176,26 @@ function calcOEE(station, context = null) {
   // What a supervisor must do to make this station's OEE real.
   const missing = [];
   if (!hasIdealCycle) missing.push('ideal cycle time');
-  // Either one of these makes Quality real, and the screen says both rather
-  // than sending a supervisor to set up inspection steps when typing the units
-  // at the end of a run would do.
+  // Either one of these makes Quality real. They stay as two entries because
+  // that is what the array has always been, but a screen must not join them
+  // with "and": doing so sends a supervisor off to build inspection steps when
+  // typing the units at the end of a run would have done. `missing_hint` below
+  // is the sentence to print, written once here rather than assembled
+  // differently on every screen.
   if (quality === null) missing.push('an inspected run today');
   if (quality === null) missing.push('a recorded good/scrap count');
   if (availability === null) missing.push('any activity today');
+
+  const needs = [];
+  if (!hasIdealCycle) needs.push('an ideal cycle time');
+  if (quality === null) needs.push('either an inspected run or a good/scrap count today');
+  if (availability === null) needs.push('any activity today');
+  // Joined as a list, not as a chain of "and"s: one of these clauses already
+  // contains an "or", and "a and either b or c and d" is a sentence nobody can
+  // parse on a tile they glanced at.
+  const missingHint = needs.length === 0 ? null
+    : `Needs ${needs.length <= 2 ? needs.join(' and ')
+        : `${needs.slice(0, -1).join(', ')} and ${needs[needs.length - 1]}`}`;
 
   // OEE is the product of the three numbers the screen SHOWS, so it is computed
   // from the rounded factors rather than from the raw fractions. Multiplying the
@@ -202,6 +216,10 @@ function calcOEE(station, context = null) {
       : null,
     measurable,
     missing,
+    /** The sentence a screen prints when OEE cannot be stated. One wording, so
+     *  the station page and the OEE tab cannot describe the same gap
+     *  differently — and never "and" where the truth is "either". */
+    missing_hint: missingHint,
     uptime_minutes: Math.round(uptimeMinutes),
     downtime_minutes: Math.round(downtimeMinutes),
     /** Planned time elapsed so far today — the denominator actually used. */
@@ -261,7 +279,12 @@ router.get('/', (req, res) => {
 // invents its own top cause.
 router.get('/losses', (req, res) => {
   const day = plantDayShift(req.companyId);
-  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 1, 1), 365);
+  // A bad window is refused, not silently replaced: `days=0` coming back as
+  // "today" under a heading that says otherwise is a wrong number nobody can
+  // see is wrong.
+  const window = scrapModel.parseDays(req.query.days, 1);
+  if (!window.ok) return res.status(400).json({ error: window.error, field: 'days' });
+  const days = window.days;
   const stationId = req.query.station_id ? String(req.query.station_id) : '';
 
   // An id from another tenant selects nothing rather than everything.
@@ -400,8 +423,9 @@ router.get('/losses', (req, res) => {
 // ─── GET /scrap - first-pass yield and scrap by part ─────────────────────────
 // Also before '/:id'. The arithmetic is backend/src/scrap.js; this is a door.
 router.get('/scrap', (req, res) => {
-  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 365);
-  res.json(scrapModel.scrapByPart({ companyId: req.companyId, days }));
+  const window = scrapModel.parseDays(req.query.days, 30);
+  if (!window.ok) return res.status(400).json({ error: window.error, field: 'days' });
+  res.json(scrapModel.scrapByPart({ companyId: req.companyId, days: window.days }));
 });
 
 // ─── GET /:id - single machine detail ─────────────────────────────────────────
@@ -444,13 +468,18 @@ router.post('/:id/event', requireRole('operator'), (req, res) => {
   // company that owns the STATION, so that is where the code's owner is checked
   // from. A code from another tenant, or one that explains scrap rather than a
   // stoppage, is refused and nothing is written.
+  //
+  // A RETIRED code is refused too. Retiring one takes it out of the picker but
+  // never out of history, so last month's Pareto still reads correctly — what
+  // must not happen is new minutes continuing to arrive under a cause the plant
+  // has decided it no longer uses.
   let codeId = null;
   if (reason_code_id) {
-    const rc = db.prepare('SELECT id, kind FROM reason_codes WHERE id = ? AND company_id = ?')
+    const rc = db.prepare('SELECT id, kind, is_active FROM reason_codes WHERE id = ? AND company_id = ?')
       .get(reason_code_id, station.company_id);
-    if (!rc || rc.kind !== 'downtime') {
+    if (!rc || rc.kind !== 'downtime' || !rc.is_active) {
       return res.status(400).json({
-        error: 'reason_code_id must be one of this company\'s downtime reason codes',
+        error: 'reason_code_id must be one of this company\'s active downtime reason codes',
         field: 'reason_code_id',
       });
     }

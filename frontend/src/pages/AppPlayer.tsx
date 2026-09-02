@@ -805,6 +805,8 @@ export default function AppPlayer() {
     const check = unitsBalance({
       unitsRun, good: unitsGood, scrap: unitsScrap, rework: unitsRework,
       scrapReasonCodeId: unitsReasonId,
+      // A company whose manager has not set the list up has nothing to pick.
+      scrapCodesOffered: scrapCodes.length,
     });
     if (!check.ok) { setUnitsError(check.reason); return; }
     setUnitsError('');
@@ -836,7 +838,12 @@ export default function AppPlayer() {
     recordStepTime(idx);
     captureStepExitValues(a.steps[idx]);
 
-    if (intent.to === 'complete') { setUnitsError(''); setFinishOpen(true); return; }
+    // Preview writes nothing, so asking a builder to count units they did not
+    // make is a screen with no purpose and no consequence.
+    if (intent.to === 'complete') {
+      if (previewMode) { void doComplete(null); return; }
+      setUnitsError(''); setFinishOpen(true); return;
+    }
 
     let target = idx;
     if (intent.to === 'next') target = idx + 1;
@@ -847,7 +854,10 @@ export default function AppPlayer() {
       if (t === -1) return;
       target = t;
     }
-    if (intent.to === 'next' && target >= a.steps.length) { setUnitsError(''); setFinishOpen(true); return; }
+    if (intent.to === 'next' && target >= a.steps.length) {
+      if (previewMode) { void doComplete(null); return; }
+      setUnitsError(''); setFinishOpen(true); return;
+    }
     if (intent.to !== 'prev') historyRef.current.push(idx);
 
     // Saved position for resume-by-another-operator (jobs in progress).
@@ -883,7 +893,7 @@ export default function AppPlayer() {
       }
     }
     if (nav && !blocked) commitNavigate(nav, depth + 1);
-  }, [recordStepTime, captureStepExitValues, doComplete, flushValues, buildState, applyNonNavEffect]);
+  }, [recordStepTime, captureStepExitValues, doComplete, flushValues, buildState, applyNonNavEffect, previewMode]);
 
   const requestNavigate = useCallback((intent: NavIntent) => {
     const a = appRef.current;
@@ -1413,12 +1423,15 @@ export default function AppPlayer() {
     if (!runParam) { resumeParamRef.current = true; return; }
     if (!operatorName.trim()) return;   // wait for the identity to settle
     resumeParamRef.current = true;
-    const target = resumeTarget(jobs, runParam);
-    if (target.kind === 'gone') { setLinkNotice(target.notice); return; }
+    const target = resumeTarget(jobs, runParam, { operatorUserId, operatorName });
+    // Somebody else's run, or a run that has closed: land on setup and say so.
+    // The concurrent-run card below offers "Resume their run" — joining a job
+    // is a decision two people share, not something a link does quietly.
+    if (target.kind === 'gone' || target.kind === 'theirs') { setLinkNotice(target.notice); return; }
     if (target.kind !== 'resume') return;
     void resumeJob(target.job);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, app, previewMode, status, jobsLoaded, jobs, operatorName, searchParams]);
+  }, [loading, app, previewMode, status, jobsLoaded, jobs, operatorName, operatorUserId, searchParams]);
 
   useEffect(() => {
     if (autoStartedRef.current) return;
@@ -2781,8 +2794,12 @@ function UnitsSheet({
                   ))}
                 </select>
               ) : (
+                // Nothing to pick, so the run is NOT held hostage to a list a
+                // manager has not made. The scrap is still counted; the yield
+                // report labels it "No reason recorded" rather than guessing.
                 <p style={{ fontSize: 14, color: 'var(--p-warn)' }}>
-                  No scrap reasons have been set up yet. A manager adds them on the Andon board.
+                  A manager has not set up scrap reasons yet — the scrap is still counted,
+                  it just cannot say why.
                 </p>
               )}
             </div>

@@ -247,8 +247,7 @@ function resolveOperationId(companyId, workOrderId, operationId) {
   return { ok: true, id: op.id };
 }
 
-const OPERATION_FIELD_ERROR =
-  'work_order_operation_id must be an operation of this run\'s work order';
+const OPERATION_FIELD_ERROR = 'This link points at an operation from another job';
 
 router.post('/', (req, res) => {
   const {
@@ -396,32 +395,79 @@ router.put('/:id', (req, res) => {
   // partial:true = autosave flush — it must never flip the run's status.
   const effectiveStatus = partial === true ? completion.status : (status ?? completion.status);
 
+  // ── An abandoned run stays abandoned ───────────────────────────────────────
+  // A run that was stopped never produced a unit. Talking it back into being a
+  // completed one books output against a job hours after the fact, stamped with
+  // a completed_at of "now" — every duration and OEE figure derived from it is
+  // then measuring a run nobody made.
+  if (partial !== true && effectiveStatus === 'completed' && completion.status === 'abandoned') {
+    return res.status(400).json({ error: 'an abandoned run cannot be completed' });
+  }
+
   // ── Units this run ─────────────────────────────────────────────────────────
   // Only ever read off a deliberate save, never off an autosave flush: the
   // player's background timer does not carry counts, and a flush that arrived
   // without them must not be read as "the operator counted nothing".
+  const COUNT_FIELDS = [
+    'quantity_good', 'quantity_scrap', 'quantity_rework',
+    'scrap_reason_code_id', 'work_order_operation_id',
+  ];
+  const terminal = completion.status === 'completed' || completion.status === 'abandoned';
+
+  // ── Counts are frozen once a run is finished ───────────────────────────────
+  // The units were BOOKED against the operation when the run closed. Letting a
+  // later PUT rewrite the numbers changes what the scrap report says without
+  // changing what the job was told — 50 good typed onto a finished run of a
+  // five-piece order reads as fifty pieces made, against an operation that took
+  // one. A correction has to travel through advance() as a delta, and that is a
+  // workflow with its own screen and its own audit trail, not a silent PUT.
+  //
+  // RE-SENDING THE SAME NUMBERS IS NOT A REWRITE. A tablet whose reply was lost
+  // replays its finishing PUT verbatim, and refusing that would wedge the
+  // offline outbox on a run the server has in fact already finished — the
+  // player would say "saved locally" forever about work that is safely stored.
+  // So only a DIFFERENT value is refused; an identical one is a retry, and a
+  // retry changes nothing and books nothing.
+  if (partial !== true && terminal) {
+    const same = (field) => {
+      const incoming = req.body[field];
+      const stored = completion[field];
+      if (incoming === null || incoming === '') return stored === null;
+      if (field.startsWith('quantity_')) return Number(incoming) === stored;
+      return String(incoming) === String(stored ?? '');
+    };
+    const changed = COUNT_FIELDS.filter(f => req.body[f] !== undefined && !same(f));
+    if (changed.length > 0) {
+      return res.status(400).json({
+        error: 'counts are frozen once a run is finished',
+        fields: changed,
+      });
+    }
+  }
+
   let countUpdates = null;   // null = this request touches no count column
   let advanceWith = null;    // set when a finishing run has an operation to book to
-  if (partial !== true) {
+  if (partial !== true && !terminal) {
     const errors = [];
     const inGood   = readCount(req.body, 'quantity_good', errors);
     const inScrap  = readCount(req.body, 'quantity_scrap', errors);
     const inRework = readCount(req.body, 'quantity_rework', errors);
     if (errors.length) return res.status(400).json({ error: errors[0] });
 
-    // The coded reason. Another company's code, or a code that explains
-    // something other than scrap, is refused — and refused BEFORE anything is
-    // written, so a rejected run stores nothing at all.
+    // The coded reason. Another company's code, a code that explains something
+    // other than scrap, and a RETIRED code are all refused — and refused BEFORE
+    // anything is written, so a rejected run stores nothing at all. A retired
+    // code never leaves history, but nothing new may be filed under it.
     let reasonId;
     if (req.body.scrap_reason_code_id !== undefined) {
       const raw = req.body.scrap_reason_code_id;
       if (raw === null || raw === '') reasonId = null;
       else {
-        const rc = db.prepare('SELECT id, kind FROM reason_codes WHERE id = ? AND company_id = ?')
+        const rc = db.prepare('SELECT id, kind, is_active FROM reason_codes WHERE id = ? AND company_id = ?')
           .get(raw, req.companyId);
-        if (!rc || rc.kind !== 'scrap') {
+        if (!rc || rc.kind !== 'scrap' || !rc.is_active) {
           return res.status(400).json({
-            error: 'scrap_reason_code_id must be one of this company\'s scrap reason codes',
+            error: 'scrap_reason_code_id must be one of this company\'s active scrap reason codes',
             field: 'scrap_reason_code_id',
           });
         }
@@ -446,21 +492,61 @@ router.put('/:id', (req, res) => {
     const effGood   = pick(inGood,   completion.quantity_good);
     const effScrap  = pick(inScrap,  completion.quantity_scrap);
     const effRework = pick(inRework, completion.quantity_rework);
-    const effReason = pick(reasonId, completion.scrap_reason_code_id);
-    const effOpId   = pick(opId,     completion.work_order_operation_id);
+    let   effReason = pick(reasonId, completion.scrap_reason_code_id);
+    let   effOpId   = pick(opId,     completion.work_order_operation_id);
 
-    // Scrap without a reason is the number that makes every scrap report
-    // useless: it says how much was thrown away and nothing about why, and
-    // nobody goes back to fill it in afterwards.
+    // ── Scrap needs a reason, unless the company has none to offer ───────────
+    // Scrap with no reason is the number that makes every scrap report useless:
+    // it says how much was thrown away and nothing about why, and nobody goes
+    // back to fill it in afterwards. But a company whose manager has not set up
+    // the list yet has no reason to give, and refusing the save there does not
+    // produce a better number — it produces an operator who cannot close a run,
+    // and a plant that goes back to not counting scrap at all. So the rule is
+    // relaxed EXACTLY when there is nothing to pick from; the yield report then
+    // labels those units "No reason recorded" rather than pretending to know.
     if ((effScrap || 0) > 0 && !effReason) {
+      const offered = db.prepare(
+        "SELECT COUNT(*) AS n FROM reason_codes WHERE company_id = ? AND kind = 'scrap' AND is_active = 1"
+      ).get(req.companyId).n;
+      if (offered > 0) {
+        return res.status(400).json({
+          error: 'scrap_reason_code_id is required when quantity_scrap is more than 0',
+          field: 'scrap_reason_code_id',
+        });
+      }
+    }
+
+    // ── …and a reason needs scrap ───────────────────────────────────────────
+    // A reason code filed against no scrap is a defect record for a defect that
+    // did not happen: it lands in the Pareto with zero minutes behind it and
+    // makes the list of causes longer without making it truer.
+    if (effReason && !((effScrap || 0) > 0)) {
       return res.status(400).json({
-        error: 'scrap_reason_code_id is required when quantity_scrap is more than 0',
+        error: 'scrap_reason_code_id needs a quantity_scrap of 1 or more',
         field: 'scrap_reason_code_id',
       });
     }
 
+    const finishing = effectiveStatus === 'completed' && completion.status !== 'completed';
+
+    // ── Which operation the units land on ────────────────────────────────────
+    // The link usually says (?op=, stored at run start). When it does not and
+    // the job HAS been released, the answer is the operation the job is
+    // standing on — not "no operation": booking a released job's output nowhere
+    // is how a work order's quantity climbs while every one of its operations
+    // stays at zero, and the routing screen quietly stops describing reality.
+    if (!effOpId && finishing && completion.work_order_id) {
+      const wo = db.prepare('SELECT current_operation_id, released_at FROM work_orders WHERE id = ? AND company_id = ?')
+        .get(completion.work_order_id, req.companyId);
+      if (wo && wo.released_at && wo.current_operation_id) {
+        const fallback = resolveOperationId(req.companyId, completion.work_order_id, wo.current_operation_id);
+        if (fallback.ok) effOpId = fallback.id;
+      }
+    }
+
     if (inGood !== undefined || inScrap !== undefined || inRework !== undefined
-        || reasonId !== undefined || opId !== undefined) {
+        || reasonId !== undefined || opId !== undefined
+        || effOpId !== completion.work_order_operation_id) {
       countUpdates = {
         quantity_good: effGood ?? null,
         quantity_scrap: effScrap ?? null,
@@ -474,7 +560,7 @@ router.put('/:id', (req, res) => {
     // Only on the REAL transition into 'completed'. A re-PUT of an already
     // finished run advances nothing — that is how a retried save used to book
     // a second piece against a work order that had only made one.
-    if (effectiveStatus === 'completed' && completion.status !== 'completed') {
+    if (finishing) {
       // A run that recorded nothing books one unit, exactly as it always has.
       // A run that recorded something books what it recorded, INCLUDING zero:
       // "0 good, 3 scrap" is a real answer and must not become "1 good".
@@ -485,26 +571,6 @@ router.put('/:id', (req, res) => {
         scrap:  counted ? (effScrap  ?? 0) : 0,
         rework: counted ? (effRework ?? 0) : 0,
       };
-    }
-  }
-
-  // Book the operation BEFORE anything on this row changes, so a refusal —
-  // more pieces than the operation has left, an operation on hold — leaves the
-  // run open and re-finishable rather than closed against a job that never
-  // took the units.
-  if (advanceWith && advanceWith.operation_id) {
-    try {
-      workOrderOperations.advance(req.companyId, advanceWith.operation_id, {
-        good: advanceWith.good, scrap: advanceWith.scrap, rework: advanceWith.rework,
-      });
-    } catch (err) {
-      if (err instanceof workOrderOperations.OperationError) {
-        // 404 here means the operation vanished between start and finish; to
-        // the client that is a bad field, not a missing page.
-        return res.status(err.status === 404 ? 400 : err.status)
-          .json({ error: err.message, code: err.code });
-      }
-      throw err;
     }
   }
 
@@ -526,9 +592,24 @@ router.put('/:id', (req, res) => {
       ? 'operator' : (completion.abandoned_reason || ''),
   };
 
-  // Legacy blob update (dual-write — byte-identical to the pre-v2 behavior)
-  // plus the structured completion_values upsert, atomically.
+  // ── One transaction: the booking and the row that says it happened ────────
+  // The units MUST be booked in the same transaction that closes the run. When
+  // advance() committed on its own and the completion UPDATE ran afterwards, a
+  // failure in between left the operation booked with the run still open — and
+  // the tablet's retry, seeing an open run, booked the very same pieces a
+  // second time. Four made, eight booked, and nothing on any screen to say so.
+  //
+  // better-sqlite3 nests transactions as SAVEPOINTs, so advance()'s own
+  // transaction joins this one instead of fighting it: any throw from here —
+  // an OperationError refusing the count, or a failure writing the row — rolls
+  // back the whole thing, booking included.
   const applyUpdate = db.transaction(() => {
+    if (advanceWith && advanceWith.operation_id) {
+      workOrderOperations.advance(req.companyId, advanceWith.operation_id, {
+        good: advanceWith.good, scrap: advanceWith.scrap, rework: advanceWith.rework,
+      });
+    }
+
     // last_activity_at is stamped on EVERY write, autosave flushes included —
     // that is what tells the stale-run reaper the difference between a job
     // someone is still working and one a dead tablet left open.
@@ -564,7 +645,20 @@ router.put('/:id', (req, res) => {
       }
     }
   });
-  applyUpdate();
+  try {
+    applyUpdate();
+  } catch (err) {
+    // A refusal the operator can act on — "only 3 left on this operation", "the
+    // operation is on hold" — answered as a 400/409 with NOTHING written: the
+    // run is still open and still finishable once the numbers are right.
+    if (err instanceof workOrderOperations.OperationError) {
+      // 404 here means the operation vanished between start and finish; to the
+      // client that is a bad field, not a missing page.
+      return res.status(err.status === 404 ? 400 : err.status)
+        .json({ error: err.message, code: err.code });
+    }
+    throw err;
+  }
 
   // A run transitioning to 'completed' is a production advance: log the job
   // finish and (when linked) the unit counted against its work order.
@@ -640,8 +734,9 @@ const listSessionsStmt = () => db.prepare(`
 // supervisor has always typed a scrap count by hand — is a screen every plan
 // has. One definition in backend/src/scrap.js, two doors; never two sums.
 router.get('/scrap', (req, res) => {
-  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 30, 1), 365);
-  res.json(scrapModel.scrapByPart({ companyId: req.companyId, days }));
+  const window = scrapModel.parseDays(req.query.days, 30);
+  if (!window.ok) return res.status(400).json({ error: window.error, field: 'days' });
+  res.json(scrapModel.scrapByPart({ companyId: req.companyId, days: window.days }));
 });
 
 // GET /:id — one completion, with its operator sessions attached.

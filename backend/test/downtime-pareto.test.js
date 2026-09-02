@@ -193,6 +193,21 @@ describe('a stop carries a coded reason', () => {
     assert.equal(eventCount(stationId), before, 'a refused stop was written anyway');
   });
 
+  it('refuses a retired code — history keeps it, nothing new joins it', async () => {
+    const codes = await api('GET', '/api/andon/reason-codes?kind=downtime', { token });
+    const doomed = codes.json.find(r => r.code === 'no_operator');
+    assert.ok(doomed, `no no_operator code: ${JSON.stringify(codes.json.map(x => x.code))}`);
+    const retired = await api('DELETE', `/api/andon/reason-codes/${doomed.id}`, { token });
+    assert.equal(retired.status, 200, `retiring: ${JSON.stringify(retired.json)}`);
+
+    const before = eventCount(stationId);
+    const res = await api('POST', `/api/oee/${stationId}/event`, {
+      token, body: { event_type: 'down', reason_code_id: doomed.id },
+    });
+    assert.equal(res.status, 400, `expected a refusal, got ${JSON.stringify(res.json)}`);
+    assert.equal(eventCount(stationId), before, 'a stop was filed under a retired cause');
+  });
+
   it("lets a station go up or idle with no code at all", async () => {
     const up = await api('POST', `/api/oee/${stationId}/event`, { token, body: { event_type: 'running' } });
     assert.equal(up.status, 200, JSON.stringify(up.json));
@@ -296,6 +311,16 @@ describe('the downtime Pareto and the six big losses', () => {
     assert.equal(l.empty_reason, 'No stops recorded today');
   });
 
+  it('refuses a nonsense ?days= rather than quietly answering a different question', async () => {
+    for (const bad of ['0', 'abc', '-3', '2.5', '400']) {
+      const res = await api('GET', `/api/oee/losses?days=${bad}`, { token });
+      assert.equal(res.status, 400, `days=${bad} should be refused, got ${JSON.stringify(res.json)}`);
+      assert.match(res.json.error, /days/);
+    }
+    assert.equal((await api('GET', '/api/oee/losses?days=7', { token })).status, 200);
+    assert.equal((await api('GET', '/api/oee/losses', { token })).status, 200);
+  });
+
   it('never reaches into another tenant, and an unknown station selects nothing', async () => {
     const l = (await api('GET', `/api/oee/losses?station_id=${randomUUID()}`, { token })).json;
     assert.equal(l.total_down_minutes, 0);
@@ -364,6 +389,22 @@ describe('OEE quality counts units, and says which basis it used', () => {
     assert.ok(oee.missing.includes('a recorded good/scrap count'),
       `the screen should say what would make it real: ${JSON.stringify(oee.missing)}`);
     assert.ok(oee.missing.includes('an inspected run today'), 'the older route to a quality figure still counts');
+    // The two are ALTERNATIVES. A sentence that joins them with "and" sends a
+    // supervisor off to build inspection steps when typing the units at the end
+    // of a run would have done.
+    assert.equal(oee.missing_hint,
+      'Needs an ideal cycle time and either an inspected run or a good/scrap count today',
+      `the printed sentence is wrong: ${oee.missing_hint}`);
+  });
+
+  it('reads as a list, not a chain of "and"s, when three things are missing', async () => {
+    // A station nothing has happened on at all: no cycle time, no quality, no
+    // day yet. "a and either b or c and d" is a sentence nobody can parse.
+    const fresh = await api('POST', '/api/stations', { token, body: { name: 'Untouched Cell' } });
+    const oee = await oeeFor(fresh.json.id);
+    assert.equal(oee.missing_hint,
+      'Needs an ideal cycle time, either an inspected run or a good/scrap count today and any activity today',
+      `the printed sentence is wrong: ${oee.missing_hint}`);
   });
 });
 

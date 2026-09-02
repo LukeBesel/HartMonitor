@@ -20,9 +20,13 @@
 //      the units control has a yield of `null` with a reason, never a
 //      fabricated 0% or 100%.
 //
-//   2. The window is the PLANT'S day, bound on both sides through plantDay.js.
-//      `days: 1` means today at the plant, not the last 24 hours and not
-//      today-in-Greenwich.
+//   2. The window is the PLANT'S day, and it is CLOSED AT BOTH ENDS. Each
+//      comparison binds plantDay's modifier to both sides — `date(completed_at,
+//      ?) >= date('now', ?, ?)` — so `days: 1` means today at the plant, not
+//      the last 24 hours and not today-in-Greenwich. The upper end is bound
+//      too: a row stamped in the future by a skewed tablet clock or an import
+//      belongs to the day it claims, not to every window that has not reached
+//      it yet.
 //
 // Rework is reported but is deliberately NOT in the first-pass-yield
 // denominator: FPY asks how many pieces came through right the first time, so
@@ -53,14 +57,41 @@ function windowDays(days) {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-/** The `AND date(...) >= ...` fragment plus its bindings, or nothing at all. */
-function windowClause(companyId, days, shift) {
+/**
+ * The window fragment plus its bindings, or nothing at all.
+ *
+ * Closed at BOTH ends and shifted on BOTH sides of each comparison: the lower
+ * end is `days - 1` plant days back, the upper end is today at the plant. The
+ * upper bound is not decoration — a completed_at stamped in the future (a
+ * tablet with a wrong clock, an imported row) would otherwise sit inside every
+ * window forever, inflating today's scrap with work that has not happened.
+ */
+function windowClause(days, shift) {
   const n = windowDays(days);
   if (n === null) return { sql: '', params: [] };
   return {
-    sql: ` AND date(c.completed_at, ?) >= date('now', ?, ?)`,
-    params: [shift, shift, `-${n - 1} days`],
+    sql: ` AND date(c.completed_at, ?) >= date('now', ?, ?)`
+       + ` AND date(c.completed_at, ?) <= date('now', ?)`,
+    params: [shift, shift, `-${n - 1} days`, shift, shift],
   };
+}
+
+/**
+ * Read a `?days=` query parameter for the endpoints that take one.
+ *
+ * A bad value is REFUSED rather than quietly replaced by the default: `days=0`
+ * and `days=abc` both used to come back as a full month of data under a heading
+ * that said something else, which is a wrong number nobody can see is wrong.
+ *
+ * @returns {{ok: true, days: number} | {ok: false, error: string}}
+ */
+function parseDays(raw, fallback = 30, max = 365) {
+  if (raw === undefined || raw === null || raw === '') return { ok: true, days: fallback };
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n < 1 || n > max) {
+    return { ok: false, error: `days must be a whole number between 1 and ${max}` };
+  }
+  return { ok: true, days: n };
 }
 
 /**
@@ -82,7 +113,7 @@ function windowClause(companyId, days, shift) {
  */
 function yieldFor({ companyId, appId, workOrderId, operationId, days } = {}) {
   const shift = plantDayShift(companyId);
-  const win = windowClause(companyId, days, shift);
+  const win = windowClause(days, shift);
 
   const clauses = [`c.company_id = ?`, `c.status = 'completed'`, HAS_COUNTS];
   const params = [companyId];
@@ -140,7 +171,7 @@ function shapeYield(row, days, plantDate) {
  */
 function scrapByPart({ companyId, days } = {}) {
   const shift = plantDayShift(companyId);
-  const win = windowClause(companyId, days, shift);
+  const win = windowClause(days, shift);
   const n = windowDays(days);
   const plantDate = plantToday(companyId);
 
@@ -208,4 +239,4 @@ function scrapByPart({ companyId, days } = {}) {
   return { parts, totals, window_days: n, plant_date: plantDate };
 }
 
-module.exports = { yieldFor, scrapByPart, HAS_COUNTS, REASONS };
+module.exports = { yieldFor, scrapByPart, parseDays, HAS_COUNTS, REASONS };

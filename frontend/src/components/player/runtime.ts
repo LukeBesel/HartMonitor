@@ -583,11 +583,53 @@ export function buildPlayLink(p: PlayLinkParams): string {
   return `/play/${p.appId}${qs ? `?${qs}` : ''}`;
 }
 
-/** What a ?run= link resolved to: a job to pick up, or why it could not. */
+/** Who is holding the tablet, as far as the link and the session know. */
+export interface RunIdentity {
+  operatorUserId?: string | null;
+  operatorName?: string | null;
+}
+
+/** A run in progress, as the jobs list reports it. */
+export interface ResumableJob {
+  id: string;
+  operator_name?: string | null;
+  operator_user_id?: string | null;
+  last_session?: { operator_name?: string | null; operator_user_id?: string | null } | null;
+}
+
+/**
+ * What a ?run= link resolved to.
+ *
+ *   resume — the operator's OWN run: pick it straight up.
+ *   theirs — somebody else has it. Not resumed silently; the setup screen
+ *            shows the concurrent-run card so the choice is made on purpose.
+ *   gone   — finished, handed on, or not this app's / this company's.
+ *   none   — no ?run= at all.
+ */
 export type ResumeTarget<J> =
   | { kind: 'resume'; job: J }
+  | { kind: 'theirs'; job: J; notice: string }
   | { kind: 'none' }
   | { kind: 'gone'; notice: string };
+
+/**
+ * Is this run the current operator's own?
+ *
+ * The verified user id decides it whenever both sides have one — a name is
+ * typed and two people on a shift can share one. The most recent stint wins
+ * over whoever started the job, because that is who is holding it now.
+ */
+export function isOwnRun(job: ResumableJob, me: RunIdentity): boolean {
+  const holderId = job.last_session?.operator_user_id ?? job.operator_user_id ?? null;
+  const myId = me.operatorUserId ?? null;
+  if (holderId && myId) return holderId === myId;
+  const holderName = String(job.last_session?.operator_name ?? job.operator_name ?? '').trim().toLowerCase();
+  const myName = String(me.operatorName ?? '').trim().toLowerCase();
+  // No id on either side and no name to compare: not provably yours, so it is
+  // treated as somebody else's and the choice goes to the operator.
+  if (!holderName || !myName) return false;
+  return holderName === myName;
+}
 
 /**
  * Resolve a ?run= parameter against the runs the SERVER says are open for this
@@ -598,14 +640,29 @@ export type ResumeTarget<J> =
  * cannot be resumed — it degrades to the normal setup flow with a plain notice
  * rather than an error nobody can act on.
  */
-export function resumeTarget<J extends { id: string }>(jobs: J[], runParam: string | null | undefined): ResumeTarget<J> {
+export function resumeTarget<J extends ResumableJob>(
+  jobs: J[],
+  runParam: string | null | undefined,
+  me: RunIdentity = {},
+): ResumeTarget<J> {
   const wanted = String(runParam ?? '').trim();
   if (!wanted) return { kind: 'none' };
   const job = jobs.find(j => j.id === wanted);
-  if (job) return { kind: 'resume', job };
+  if (!job) {
+    return {
+      kind: 'gone',
+      notice: 'That run is no longer open — somebody finished or handed it on. Start it again below.',
+    };
+  }
+  if (isOwnRun(job, me)) return { kind: 'resume', job };
+  // Somebody else's job. Joining it is a real choice — the two of them will be
+  // recording one unit together — and a link is not a place to make it
+  // silently. The setup screen already has the card that asks.
+  const holder = String(job.last_session?.operator_name ?? job.operator_name ?? '').trim();
   return {
-    kind: 'gone',
-    notice: 'That run is no longer open — somebody finished or handed it on. Start it again below.',
+    kind: 'theirs',
+    job,
+    notice: `${holder || 'Somebody else'} has this run open. Resume theirs to carry on together, or start a separate run.`,
   };
 }
 
@@ -820,8 +877,19 @@ export interface UnitsEntry {
   good: number;
   scrap: number;
   rework: number;
-  /** The coded reason. Required the moment scrap is non-zero. */
+  /** The coded reason. Required the moment scrap is non-zero — unless the
+   *  company has no scrap reasons to pick from (see `scrapCodesOffered`). */
   scrapReasonCodeId?: string;
+  /**
+   * How many active scrap reasons this company offers.
+   *
+   * Zero means a manager has not set the list up yet, and there is nothing for
+   * the operator to pick. Demanding a reason there does not produce a better
+   * number — it produces an operator who cannot close a run, and a plant that
+   * goes back to not counting scrap at all. Undefined is treated as "some",
+   * which keeps the rule on wherever the count is unknown.
+   */
+  scrapCodesOffered?: number;
 }
 
 export interface UnitsCheck {
@@ -857,10 +925,14 @@ export function unitsBalance(e: UnitsEntry): UnitsCheck {
   if (sum !== e.unitsRun) {
     return {
       ok: false,
-      reason: `You entered ${e.unitsRun} units but ${e.good} + ${e.scrap} + ${e.rework} = ${sum}`,
+      // "1 units" is the kind of detail that makes an operator distrust the
+      // number the sentence is about.
+      reason: `You entered ${e.unitsRun} ${e.unitsRun === 1 ? 'unit' : 'units'}`
+        + ` but ${e.good} + ${e.scrap} + ${e.rework} = ${sum}`,
     };
   }
-  if (e.scrap > 0 && !(e.scrapReasonCodeId || '').trim()) {
+  const offered = e.scrapCodesOffered ?? 1;
+  if (e.scrap > 0 && offered > 0 && !(e.scrapReasonCodeId || '').trim()) {
     return { ok: false, reason: 'Pick what the scrap was — scrap with no reason cannot be reported on' };
   }
   return { ok: true, reason: '' };

@@ -286,7 +286,7 @@ describe('step helpers', () => {
 
 // ─── Nothing the portal already knows is asked twice ─────────────────────────
 
-import { setupNeeded, concurrentRun, buildPlayLink, resumeTarget } from '../runtime';
+import { setupNeeded, concurrentRun, buildPlayLink, resumeTarget, isOwnRun } from '../runtime';
 
 const FULL = {
   operatorUserId: 'u1',
@@ -420,6 +420,23 @@ describe('unitsBalance', () => {
     expect(unitsBalance(entry({ unitsRun: 2, good: 1, scrap: 1, scrapReasonCodeId: 'rc1' })).ok).toBe(true);
   });
 
+  // A rule nobody can satisfy is not a rule, it is a trap: the operator cannot
+  // close the run, so the plant goes back to not counting scrap at all.
+  it('does not trap an operator whose company has no scrap reasons yet', () => {
+    expect(unitsBalance(entry({ unitsRun: 2, good: 1, scrap: 1, scrapCodesOffered: 0 })).ok).toBe(true);
+    // One code on offer and the rule is back on.
+    expect(unitsBalance(entry({ unitsRun: 2, good: 1, scrap: 1, scrapCodesOffered: 1 })).ok).toBe(false);
+    // Unknown means "assume there are some" — the rule stays on.
+    expect(unitsBalance(entry({ unitsRun: 2, good: 1, scrap: 1 })).ok).toBe(false);
+  });
+
+  it('says "1 unit", not "1 units"', () => {
+    expect(unitsBalance(entry({ unitsRun: 1, good: 2 })).reason)
+      .toBe('You entered 1 unit but 2 + 0 + 0 = 2');
+    expect(unitsBalance(entry({ unitsRun: 2, good: 3 })).reason)
+      .toBe('You entered 2 units but 3 + 0 + 0 = 3');
+  });
+
   it('refuses fractions, negatives and a run of nothing', () => {
     expect(unitsBalance(entry({ good: 1.5, unitsRun: 1.5 })).ok).toBe(false);
     expect(unitsBalance(entry({ good: -1 })).ok).toBe(false);
@@ -469,22 +486,62 @@ describe('buildPlayLink — the param contract', () => {
 });
 
 describe('resumeTarget — a link that names a run', () => {
-  const jobs = [{ id: 'c1' }, { id: 'c2' }];
+  const ADA = { operatorUserId: 'u-ada', operatorName: 'Ada' };
+  const mine = { id: 'c1', operator_name: 'Ada', operator_user_id: 'u-ada', last_session: null };
+  const theirs = { id: 'c2', operator_name: 'Bo', operator_user_id: 'u-bo', last_session: null };
+  const jobs = [mine, theirs];
 
-  it('picks the named run up', () => {
-    expect(resumeTarget(jobs, 'c2')).toEqual({ kind: 'resume', job: { id: 'c2' } });
+  it('picks the operator’s own run straight up', () => {
+    expect(resumeTarget(jobs, 'c1', ADA)).toEqual({ kind: 'resume', job: mine });
   });
 
   it('is not asked for at all without the parameter', () => {
-    expect(resumeTarget(jobs, null).kind).toBe('none');
-    expect(resumeTarget(jobs, '  ').kind).toBe('none');
+    expect(resumeTarget(jobs, null, ADA).kind).toBe('none');
+    expect(resumeTarget(jobs, '  ', ADA).kind).toBe('none');
   });
 
   // The list is the server's own in-progress runs for THIS app and company, so
   // a finished, abandoned, foreign-app or other-tenant id is simply not in it.
   it('falls back with a plain notice when the run is gone or not ours', () => {
-    const gone = resumeTarget(jobs, 'c-finished');
+    const gone = resumeTarget(jobs, 'c-finished', ADA);
     expect(gone.kind).toBe('gone');
     expect(gone.kind === 'gone' && gone.notice).toMatch(/no longer open/);
+  });
+
+  // Joining somebody else's job means two people recording one unit together.
+  // That is a decision they share, not something a link makes for them.
+  it('will not silently resume somebody else’s run', () => {
+    const t = resumeTarget(jobs, 'c2', ADA);
+    expect(t.kind).toBe('theirs');
+    expect(t.kind === 'theirs' && t.notice).toMatch(/^Bo has this run open/);
+    expect(t.kind === 'theirs' && t.job).toEqual(theirs);
+  });
+});
+
+describe('isOwnRun — whose job is this', () => {
+  it('trusts the verified id over the typed name', () => {
+    const job = { id: 'c1', operator_name: 'Ada', operator_user_id: 'u-bo' };
+    expect(isOwnRun(job, { operatorUserId: 'u-ada', operatorName: 'Ada' })).toBe(false);
+    expect(isOwnRun(job, { operatorUserId: 'u-bo', operatorName: 'Someone else' })).toBe(true);
+  });
+
+  it('reads the LAST stint, not whoever started the job', () => {
+    const handedOn = {
+      id: 'c1', operator_name: 'Ada', operator_user_id: 'u-ada',
+      last_session: { operator_name: 'Bo', operator_user_id: 'u-bo' },
+    };
+    expect(isOwnRun(handedOn, { operatorUserId: 'u-ada', operatorName: 'Ada' })).toBe(false);
+    expect(isOwnRun(handedOn, { operatorUserId: 'u-bo', operatorName: 'Bo' })).toBe(true);
+  });
+
+  it('falls back to the name when nobody badged in', () => {
+    const job = { id: 'c1', operator_name: 'Ada', operator_user_id: null };
+    expect(isOwnRun(job, { operatorName: 'ada' })).toBe(true);
+    expect(isOwnRun(job, { operatorName: 'Bo' })).toBe(false);
+  });
+
+  it('is not provably yours when there is nothing to compare', () => {
+    expect(isOwnRun({ id: 'c1' }, {})).toBe(false);
+    expect(isOwnRun({ id: 'c1', operator_name: '  ' }, { operatorName: 'Ada' })).toBe(false);
   });
 });

@@ -30,6 +30,10 @@ interface OEEData {
   quality_basis?: 'quantities' | 'inspection' | null;
   quality_reason?: string | null;
   quality_sample?: number;
+  /** The sentence to print when OEE cannot be stated. Written server-side, so
+   *  every screen describes the same gap the same way — and never "and" where
+   *  the truth is "either an inspected run or a good/scrap count". */
+  missing_hint?: string | null;
 }
 
 interface OEEMachine {
@@ -136,10 +140,10 @@ function MachineCard({
     availability: null, performance: null, quality: null, oee: null,
     measurable: false, missing: [],
     uptime_minutes: 0, downtime_minutes: 0, planned_minutes: 0, completions_today: 0,
-    quality_basis: null, quality_reason: null, quality_sample: 0,
+    quality_basis: null, quality_reason: null, quality_sample: 0, missing_hint: null,
   };
-  const missingHint = oee.missing?.length
-    ? `Needs ${oee.missing.join(' and ')} to measure OEE`
+  const missingHint = oee.missing_hint
+    ? `${oee.missing_hint} to measure OEE`
     : 'Not enough data to measure OEE yet';
 
   const handleSave = async () => {

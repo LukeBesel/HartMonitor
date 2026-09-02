@@ -29,6 +29,9 @@ interface StationViewData {
   oee: {
     availability: number | null; performance: number | null; quality: number | null; oee: number | null;
     measurable?: boolean; missing?: string[];
+    /** The sentence to print when OEE cannot be stated — written server-side so
+     *  this page and the OEE tab describe the same gap the same way. */
+    missing_hint?: string | null;
     uptime_minutes: number; downtime_minutes: number; planned_minutes: number;
     completions_today: number;
     /** 'quantities' | 'inspection' | null — what the quality figure counted.
@@ -220,7 +223,7 @@ export default function StationView() {
           factor NAMES what it counted. */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <OEECard label="OEE" value={oee.oee} highlight
-          hint={oee.missing?.length ? `Needs ${oee.missing.join(' or ')}` : 'Not enough data yet'} />
+          hint={oee.missing_hint || 'Not enough data yet'} />
 
         <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm p-5">
           <div className="grid grid-cols-3 gap-4">

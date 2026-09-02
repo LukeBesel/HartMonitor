@@ -241,8 +241,17 @@ describe('units this run book against the work order operation', () => {
     const after1 = await api('GET', `/api/work-orders/${woId}/operations`, { token });
     const op1 = after1.json.find(o => o.id === opId);
 
+    // The identical retry a flaky tablet sends when its reply was lost: accepted
+    // (refusing it would wedge the offline outbox on a run the server has in
+    // fact finished) and it books nothing.
     const second = await api('PUT', `/api/completions/${run.json.id}`, { token, body });
-    assert.equal(second.status, 200, JSON.stringify(second.json));
+    assert.equal(second.status, 200, `an identical retry must not be refused: ${JSON.stringify(second.json)}`);
+
+    // And a re-send carrying no counts at all — the shape a late flush takes —
+    // is accepted and still books nothing.
+    const third = await api('PUT', `/api/completions/${run.json.id}`, { token, body: { status: 'completed' } });
+    assert.equal(third.status, 200, JSON.stringify(third.json));
+
     const after2 = await api('GET', `/api/work-orders/${woId}/operations`, { token });
     const op2 = after2.json.find(o => o.id === opId);
     assert.equal(op2.quantity_completed, op1.quantity_completed,
@@ -367,6 +376,139 @@ describe('units this run book against the work order operation', () => {
       'the next operation was not handed the job');
   });
 
+  it('freezes the counts once the run is finished', async () => {
+    // No operation named: by now the first one is full, and this test is about
+    // the freeze, not about where the unit lands.
+    const run = await startRun({ work_order_operation_id: undefined });
+    const done = await api('PUT', `/api/completions/${run.json.id}`, {
+      token, body: { status: 'completed', quantity_good: 1 },
+    });
+    assert.equal(done.status, 200, JSON.stringify(done.json));
+
+    // The units were BOOKED when the run closed. Rewriting them afterwards
+    // changes what the scrap report says without changing what the job was
+    // told — fifty good typed onto a finished run of a ten-piece order.
+    const rewrite = await api('PUT', `/api/completions/${run.json.id}`, {
+      token, body: { quantity_good: 50 },
+    });
+    assert.equal(rewrite.status, 400, `expected a refusal, got ${JSON.stringify(rewrite.json)}`);
+    assert.match(rewrite.json.error, /frozen/i);
+    assert.deepEqual(rewrite.json.fields, ['quantity_good'], 'the refusal must name what it refused');
+    assert.equal(rawCompletion(run.json.id).quantity_good, 1, 'the finished run was rewritten anyway');
+
+    // The same numbers again are a RETRY, not a rewrite — a tablet whose reply
+    // was lost replays its finishing PUT verbatim, and wedging its outbox on a
+    // run the server has already finished is the worse failure.
+    const replay = await api('PUT', `/api/completions/${run.json.id}`, {
+      token, body: { status: 'completed', quantity_good: 1 },
+    });
+    assert.equal(replay.status, 200, `an identical replay must be accepted: ${JSON.stringify(replay.json)}`);
+    assert.equal(rawCompletion(run.json.id).quantity_good, 1);
+
+    // Everything else about a finished run still saves — this is a rule about
+    // the counts, not a freeze on the whole row.
+    const note = await api('PUT', `/api/completions/${run.json.id}`, {
+      token, body: { data: { note: 'a later comment' } },
+    });
+    assert.equal(note.status, 200, JSON.stringify(note.json));
+  });
+
+  it('refuses a reason code with no scrap behind it', async () => {
+    const run = await startRun();
+    const done = await api('PUT', `/api/completions/${run.json.id}`, {
+      token, body: { status: 'completed', quantity_good: 1, scrap_reason_code_id: scrapCode.id },
+    });
+    assert.equal(done.status, 400, `expected a refusal, got ${JSON.stringify(done.json)}`);
+    assert.match(JSON.stringify(done.json), /scrap_reason_code_id/);
+    assert.equal(rawCompletion(run.json.id).status, 'in_progress');
+  });
+
+  it('refuses a retired reason code — history keeps it, nothing new joins it', async () => {
+    const codes = await api('GET', '/api/andon/reason-codes?kind=scrap', { token });
+    const doomed = codes.json.find(r => r.code === 'handling_damage');
+    assert.ok(doomed, `no handling_damage code: ${JSON.stringify(codes.json.map(c => c.code))}`);
+    const retired = await api('DELETE', `/api/andon/reason-codes/${doomed.id}`, { token });
+    assert.equal(retired.status, 200, `retiring: ${JSON.stringify(retired.json)}`);
+
+    const run = await startRun();
+    const done = await api('PUT', `/api/completions/${run.json.id}`, {
+      token,
+      body: { status: 'completed', quantity_good: 1, quantity_scrap: 1, scrap_reason_code_id: doomed.id },
+    });
+    assert.equal(done.status, 400, `expected a refusal, got ${JSON.stringify(done.json)}`);
+    assert.strictEqual(rawCompletion(run.json.id).scrap_reason_code_id, null);
+  });
+
+  it('will not let an abandoned run be talked back into a completed one', async () => {
+    const run = await startRun();
+    const stopped = await api('PUT', `/api/completions/${run.json.id}`, {
+      token, body: { status: 'abandoned' },
+    });
+    assert.equal(stopped.status, 200, JSON.stringify(stopped.json));
+    const revived = await api('PUT', `/api/completions/${run.json.id}`, {
+      token, body: { status: 'completed' },
+    });
+    assert.equal(revived.status, 400, `expected a refusal, got ${JSON.stringify(revived.json)}`);
+    assert.equal(rawCompletion(run.json.id).status, 'abandoned');
+  });
+
+  it('says what a foreign operation id means, in words an operator can act on', async () => {
+    const bad = await api('POST', '/api/completions', {
+      token,
+      body: {
+        app_id: appId, station_id: stationId, operator_name: 'Ada',
+        work_order_id: woId, work_order_operation_id: otherWoOpId,
+      },
+    });
+    assert.equal(bad.status, 400);
+    assert.equal(bad.json.error, 'This link points at an operation from another job');
+    assert.equal(bad.json.field, 'work_order_operation_id');
+  });
+
+  it('refuses a nonsense ?days= rather than quietly answering a different question', async () => {
+    for (const bad of ['0', 'abc', '-3', '2.5', '400']) {
+      const res = await api('GET', `/api/completions/scrap?days=${bad}`, { token });
+      assert.equal(res.status, 400, `days=${bad} should be refused, got ${JSON.stringify(res.json)}`);
+      assert.match(res.json.error, /days/);
+    }
+    assert.equal((await api('GET', '/api/completions/scrap?days=7', { token })).status, 200);
+    assert.equal((await api('GET', '/api/completions/scrap', { token })).status, 200);
+  });
+
+  it('books a released job with no ?op= onto the operation it is standing on', async () => {
+    // The decision this pins: a work order whose quantity climbs while every
+    // one of its operations sits at zero is a routing screen that has quietly
+    // stopped describing reality.
+    const wo3 = await api('POST', '/api/work-orders', {
+      token, body: { part_number: 'PN-FALLBACK', part_name: 'Fallback Bracket', quantity: 6, app_id: appId },
+    });
+    const routing = await api('GET', '/api/routings', { token });
+    const released = await api('POST', `/api/work-orders/${wo3.json.id}/release`, {
+      token, body: { routing_id: routing.json[0].id },
+    });
+    assert.equal(released.status, 201, `release: ${JSON.stringify(released.json)}`);
+    const ops3 = (await api('GET', `/api/work-orders/${wo3.json.id}/operations`, { token })).json;
+
+    const run = await api('POST', '/api/completions', {
+      token,
+      body: { app_id: appId, station_id: stationId, operator_name: 'Ada', work_order_id: wo3.json.id },
+    });
+    assert.equal(run.status, 201, JSON.stringify(run.json));
+    assert.strictEqual(run.json.work_order_operation_id, null, 'no operation was named at start');
+
+    const done = await api('PUT', `/api/completions/${run.json.id}`, {
+      token, body: { status: 'completed', quantity_good: 2 },
+    });
+    assert.equal(done.status, 200, JSON.stringify(done.json));
+
+    const after = (await api('GET', `/api/work-orders/${wo3.json.id}/operations`, { token })).json;
+    assert.equal(after[0].quantity_completed, 2, 'the current operation was not booked');
+    assert.equal(rawCompletion(run.json.id).work_order_operation_id, ops3[0].id,
+      'the run does not remember which operation took its units');
+    const wo3After = await api('GET', `/api/work-orders/${wo3.json.id}`, { token });
+    assert.equal(wo3After.json.quantity_completed, 2);
+  });
+
   it('reports scrap grouped by the part number of the job it came off', async () => {
     const byPart = await api('GET', '/api/completions/scrap?days=1', { token });
     assert.equal(byPart.status, 200, JSON.stringify(byPart.json));
@@ -384,6 +526,64 @@ describe('units this run book against the work order operation', () => {
       byPart.json.parts.map(p => [p.part_number, p.scrap]),
       'two doors onto the same numbers disagreed',
     );
+  });
+});
+
+describe('a company with no scrap reasons yet', () => {
+  // A rule nobody can satisfy is not a rule, it is a trap: the operator cannot
+  // close the run, so the plant stops counting scrap altogether. The relaxation
+  // is EXACTLY as wide as the gap — the moment a manager adds one code, the
+  // reason is required again.
+  let token, appId, runId;
+
+  before(async () => {
+    const signup = await api('POST', '/api/auth/signup', {
+      body: { company_name: 'Bare Co', email: 'admin@bare.test', password: 'SecretPass1', display_name: 'Admin' },
+    });
+    assert.equal(signup.status, 201, `signup: ${JSON.stringify(signup.json)}`);
+    token = signup.json.token;
+    appId = (await api('POST', '/api/apps', { token, body: { name: 'Bare Press' } })).json.id;
+  });
+
+  it('counts the scrap anyway, and stores no reason rather than a made-up one', async () => {
+    const run = await api('POST', '/api/completions', {
+      token, body: { app_id: appId, operator_name: 'Ada' },
+    });
+    assert.equal(run.status, 201, JSON.stringify(run.json));
+    runId = run.json.id;
+    const done = await api('PUT', `/api/completions/${runId}`, {
+      token, body: { status: 'completed', quantity_good: 1, quantity_scrap: 1 },
+    });
+    assert.equal(done.status, 200, `a company with no codes cannot close a run: ${JSON.stringify(done.json)}`);
+    const raw = rawCompletion(runId);
+    assert.equal(raw.quantity_scrap, 1, 'the scrap was not counted');
+    assert.strictEqual(raw.scrap_reason_code_id, null, 'a reason was invented');
+  });
+
+  it('says the scrap has no reason recorded rather than guessing one', async () => {
+    const report = await api('GET', '/api/completions/scrap?days=1', { token });
+    assert.equal(report.status, 200, JSON.stringify(report.json));
+    const group = report.json.parts[0];
+    assert.equal(group.scrap, 1);
+    assert.equal(group.reasons.length, 1);
+    assert.equal(group.reasons[0].reason_code_id, null);
+    assert.equal(group.reasons[0].label, 'No reason recorded');
+  });
+
+  it('requires a reason again the moment the company has one to offer', async () => {
+    // Reading the list seeds the company's defaults — which is exactly the
+    // manager setting it up.
+    const codes = await api('GET', '/api/andon/reason-codes?kind=scrap', { token });
+    assert.ok(codes.json.length > 0, 'the default list did not seed');
+
+    const run = await api('POST', '/api/completions', {
+      token, body: { app_id: appId, operator_name: 'Ada' },
+    });
+    const done = await api('PUT', `/api/completions/${run.json.id}`, {
+      token, body: { status: 'completed', quantity_good: 1, quantity_scrap: 1 },
+    });
+    assert.equal(done.status, 400, `expected the rule to be back on, got ${JSON.stringify(done.json)}`);
+    assert.match(JSON.stringify(done.json), /scrap_reason_code_id/);
   });
 });
 
@@ -478,5 +678,112 @@ describe('yieldFor and scrapByPart', () => {
     // PN-B's only run counted nothing, so it has no yield — not a zero one.
     assert.ok(!b || b.fpy === null, 'a part nobody counted was given a yield');
     assert.equal(parts[0].part_number, 'PN-A', 'the worst part is not first');
+  });
+});
+
+// ─── The booking and the row that says it happened are one transaction ───────
+//
+// This is the failure the whole design turns on. advance() used to commit on
+// its own and the completion UPDATE ran afterwards: a failure in between left
+// the operation booked with the run still open, and the tablet's retry — seeing
+// an open run — booked the very same pieces a second time. Four made, eight
+// booked, and nothing on any screen to say so.
+//
+// It cannot be provoked over HTTP, so the router is driven IN PROCESS here and
+// the completion UPDATE is made to throw. Nothing about the route changes for
+// the test: there is no test-only branch in the shipped code.
+describe('a failed write books nothing', () => {
+  let db, router, realPrepare;
+  const CO = 'co-txn';
+
+  /** Drive the completions router directly: one request, one answer. */
+  function call(method, url, body) {
+    return new Promise((resolve, reject) => {
+      const req = { method, url, body, companyId: CO, headers: {}, query: {} };
+      const res = {
+        statusCode: 200,
+        status(code) { this.statusCode = code; return this; },
+        json(payload) { resolve({ status: this.statusCode, json: payload }); return this; },
+      };
+      router.handle(req, res, err => (err ? reject(err) : resolve({ status: 0, json: null })));
+    });
+  }
+
+  const operation = () => db.prepare('SELECT * FROM work_order_operations WHERE id = ?').get('op-txn');
+
+  before(() => {
+    // The model database from the describe above — already migrated, and no
+    // server is holding it.
+    process.env.DATABASE_PATH = DB_MODEL;
+    db = require('../src/db');
+    router = require('../src/routes/completions');
+    realPrepare = db.prepare.bind(db);
+
+    db.prepare('INSERT INTO organizations (id, name, slug) VALUES (?, ?, ?)').run(CO, 'Txn Co', 'txn-co');
+    db.prepare('INSERT INTO apps (id, name, company_id) VALUES (?, ?, ?)').run('app-txn', 'Weld', CO);
+    db.prepare(`INSERT INTO work_orders (id, work_order_number, part_number, part_name, quantity,
+                                         quantity_completed, company_id, released_at, current_operation_id)
+                VALUES ('wo-txn', 'WO-TXN', 'PN-TXN', 'Txn Bracket', 10, 0, ?, datetime('now'), 'op-txn')`).run(CO);
+    db.prepare(`INSERT INTO work_order_operations
+                  (id, company_id, work_order_id, sequence, name, quantity_required, status)
+                VALUES ('op-txn', ?, 'wo-txn', 1, 'Weld', 10, 'ready')`).run(CO);
+  });
+
+  after(() => { if (realPrepare) db.prepare = realPrepare; });
+
+  function newRun(id) {
+    db.prepare(`INSERT INTO completions (id, app_id, app_name, company_id, work_order_id,
+                                         work_order_operation_id, status)
+                VALUES (?, 'app-txn', 'Weld', ?, 'wo-txn', 'op-txn', 'in_progress')`).run(id, CO);
+    return id;
+  }
+
+  it('rolls the booking back when the row that closes the run cannot be written', async () => {
+    const id = newRun('c-txn-1');
+    const before = operation();
+    assert.equal(before.quantity_completed, 0);
+
+    // Fail the statement that closes the run — the exact window the old code
+    // left open between advance()'s commit and this write.
+    db.prepare = (sql) => {
+      if (/UPDATE completions\s+SET status=/.test(sql)) throw new Error('injected write failure');
+      return realPrepare(sql);
+    };
+    await assert.rejects(() => call('PUT', `/${id}`, { status: 'completed', quantity_good: 4 }),
+      /injected write failure/);
+    db.prepare = realPrepare;
+
+    const after = operation();
+    assert.equal(after.quantity_completed, 0,
+      'the operation was booked even though the run never closed');
+    assert.equal(after.quantity_scrapped, 0);
+    assert.equal(after.status, 'ready', 'the operation was moved by a write that failed');
+    assert.equal(db.prepare('SELECT status FROM completions WHERE id = ?').get(id).status, 'in_progress');
+    assert.equal(db.prepare('SELECT quantity_completed FROM work_orders WHERE id = ?').get('wo-txn').quantity_completed, 0);
+  });
+
+  it('books exactly once when the tablet retries', async () => {
+    const res = await call('PUT', '/c-txn-1', { status: 'completed', quantity_good: 4 });
+    assert.equal(res.status, 200, JSON.stringify(res.json));
+    const after = operation();
+    assert.equal(after.quantity_completed, 4, 'the retry did not book the units');
+
+    // And the retry of the retry books nothing more: an identical replay is
+    // accepted (the outbox must not wedge) and changes nothing at all.
+    const again = await call('PUT', '/c-txn-1', { status: 'completed', quantity_good: 4 });
+    assert.equal(again.status, 200, JSON.stringify(again.json));
+    assert.equal(operation().quantity_completed, 4, 'four made, more than four booked');
+  });
+
+  it('leaves nothing written when the operation refuses the count', async () => {
+    const id = newRun('c-txn-2');
+    const before = operation();
+    const res = await call('PUT', `/${id}`, { status: 'completed', quantity_good: 99 });
+    assert.equal(res.status, 400, JSON.stringify(res.json));
+    assert.match(res.json.error, /left on this operation/);
+    assert.equal(operation().quantity_completed, before.quantity_completed);
+    assert.equal(db.prepare('SELECT status, quantity_good FROM completions WHERE id = ?').get(id).status, 'in_progress');
+    assert.strictEqual(db.prepare('SELECT quantity_good FROM completions WHERE id = ?').get(id).quantity_good, null,
+      'a refused run stored its counts anyway');
   });
 });
