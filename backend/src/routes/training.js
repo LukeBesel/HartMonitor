@@ -1,9 +1,191 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const vocab = require('../vocab');
 const { plantDayShift } = require('../plantDay');
+const { requireRole } = require('../middleware/auth');
+const { logActivity } = require('../activity');
+const { redeemGrant } = require('../authorization');
+const {
+  enforcementMode, setEnforcementMode, checkQualification, overridePurpose,
+  issueOverrideToken, blockedStartsByApp, OVERRIDE_TTL_MS,
+} = require('../qualification');
 
 const router = express.Router();
+
+// ─── The three routes that must NOT sit behind this file's own mount ─────────
+//
+// `/api/training` is mounted in index.js behind requirePlan('pro') AND
+// writeRole('supervisor'). Both are right for a training module and both are
+// wrong for these three:
+//
+//   GET/PUT /enforcement — the plan gate would build a TRAPDOOR. A company on
+//     Pro sets Block, then downgrades to Free; the gate keeps stopping every
+//     start, and the one screen that could turn it off answers 402. The plant
+//     is locked out of its own floor by a billing state. A safety switch has to
+//     be reachable in both directions, always.
+//   POST /overrides — the supervisor write role would put the override door
+//     out of reach of the very session that needs it. A tablet signed in as an
+//     operator is exactly the case the override exists for; an override an
+//     operator can never obtain is not an override.
+//
+// So they live on their own router, mounted one line earlier in index.js, each
+// carrying the role it actually needs. Everything else keeps both gates.
+const gateRouter = express.Router();
+
+// ─── The enforcement gate ─────────────────────────────────────────────────────
+// Everything in this section serves ONE promise: a company that has not chosen
+// an enforcement mode is unaffected by all of it. Reading the mode of a company
+// that never set one returns 'off', and 'off' is a hard short circuit in
+// backend/src/qualification.js — no training row is read at run start at all.
+
+// GET /enforcement — what this company does when someone unqualified starts.
+gateRouter.get('/enforcement', (req, res) => {
+  res.json({
+    enforcement: enforcementMode(req.companyId),
+    options: vocab.values('TRAINING_ENFORCEMENT'),
+  });
+});
+
+// PUT /enforcement — manager and above. Supervisors run the floor; deciding
+// that the floor can be STOPPED by a missing certificate is a plant policy.
+gateRouter.put('/enforcement', requireRole('manager'), (req, res) => {
+  const value = req.body?.enforcement;
+  if (!vocab.isValid('TRAINING_ENFORCEMENT', value)) {
+    return res.status(400).json({
+      error: `enforcement must be one of: ${vocab.values('TRAINING_ENFORCEMENT').join(', ')}`,
+    });
+  }
+  setEnforcementMode(req.companyId, value);
+  logActivity(req.companyId, 'settings', req.companyId,
+    `Training enforcement set to ${value}`, req.user?.display_name);
+  res.json({ enforcement: value, options: vocab.values('TRAINING_ENFORCEMENT') });
+});
+
+// GET /records/check?app_id=&user_id=|operator_name= — exactly what the gate
+// would decide for this person and this app, without starting anything. The
+// player can ask before it offers a job; a supervisor can ask before a shift.
+router.get('/records/check', (req, res) => {
+  const { app_id, user_id, operator_name } = req.query;
+  if (!app_id) return res.status(400).json({ error: 'app_id required' });
+  res.json(checkQualification(req.companyId, {
+    userId: user_id || null,
+    operatorName: operator_name || '',
+    appId: String(app_id),
+  }));
+});
+
+// POST /overrides — a supervisor lets one uncertified start through.
+//
+// The PIN is NOT checked here. POST /api/operators/verify-authorizer already
+// does that (roster scan, role gate, brute-force lockout) and mints a single
+// use grant; this endpoint redeems that grant and hands back a token scoped to
+// one app and one operator for ten minutes. Reusing the existing proof is the
+// point: there is one place in this codebase that compares a PIN.
+//
+// The grant is redeemed for the purpose it was RAISED for, and that purpose
+// names this app and this operator (overridePurpose). Three things follow, and
+// all three matter:
+//
+//   • a grant minted for an in-run NCR sign-off ('ncr') buys nothing here, so
+//     one quality sign-off is not a twelve-hour licence to start any app;
+//   • a qualification grant raised for Cara on app 2 cannot be spent on Maria
+//     on app 1 — the strings differ and redeemGrant refuses;
+//   • the supervisor's PIN prompt and the thing it authorizes are the same
+//     statement, which is what makes the audit row honest.
+gateRouter.post('/overrides', requireRole('operator'), (req, res) => {
+  const { app_id, user_id, operator_name = '', authorizer_proof, reason = '' } = req.body || {};
+  if (!app_id) return res.status(400).json({ error: 'app_id required' });
+  if (!user_id && !String(operator_name).trim()) {
+    return res.status(400).json({ error: 'user_id or operator_name required' });
+  }
+  if (!authorizer_proof) {
+    return res.status(400).json({
+      error: 'authorizer_proof required — verify a supervisor PIN at POST /api/operators/verify-authorizer first',
+    });
+  }
+  const app = db.prepare('SELECT id, name FROM apps WHERE id = ? AND company_id = ?')
+    .get(app_id, req.companyId);
+  if (!app) return res.status(404).json({ error: 'App not found' });
+
+  // Recomputed here from OUR body, never taken from the client: the grant only
+  // opens if the supervisor was asked about this exact app and this exact
+  // person.
+  const purpose = overridePurpose(app.id, user_id || null, operator_name);
+  const grant = redeemGrant(authorizer_proof, req.companyId, purpose);
+  if (!grant) {
+    return res.status(403).json({
+      error: 'That supervisor authorization is not valid for this app and operator, '
+        + 'has expired, or has already been used.',
+      code: 'AUTHORIZATION_INVALID',
+    });
+  }
+
+  const token = issueOverrideToken({
+    companyId: req.companyId,
+    appId: app.id,
+    userId: user_id || null,
+    operatorName: String(operator_name || ''),
+    approvedBy: { user_id: grant.user_id, display_name: grant.display_name },
+    reason: String(reason || ''),
+  });
+
+  res.status(201).json({
+    token,
+    expires_in_seconds: Math.round(OVERRIDE_TTL_MS / 1000),
+    app_id: app.id,
+    app_name: app.name,
+    approved_by: grant.display_name,
+  });
+});
+
+// GET /overrides — every exception that was actually used, newest first. This
+// is the record an auditor asks for: who ran what without a sign-off, who let
+// them, and which run it was.
+router.get('/overrides', (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+  res.json(db.prepare(`
+    SELECT o.*,
+           a.name  AS app_name,
+           u.display_name AS operator_display_name
+    FROM qualification_overrides o
+    LEFT JOIN apps  a ON a.id = o.app_id
+    LEFT JOIN users u ON u.id = o.user_id
+    WHERE o.company_id = ?
+    ORDER BY o.created_at DESC, o.rowid DESC
+    LIMIT ?
+  `).all(req.companyId, limit));
+});
+
+// GET /blocked-starts?days=7 — what the setting is costing, per app.
+//
+// An app that has refused nobody is reported with blocked: null, not 0. "No
+// starts were blocked" and "nothing has been measured here" are different
+// facts and the screen prints '—' for the second.
+router.get('/blocked-starts', (req, res) => {
+  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 7, 1), 365);
+  const counts = blockedStartsByApp(req.companyId, days);
+  const apps = db.prepare(
+    `SELECT id, name FROM apps WHERE company_id = ? AND status = 'published' ORDER BY name`
+  ).all(req.companyId);
+  const measured = Object.keys(counts).length > 0;
+  res.json({
+    days,
+    enforcement: enforcementMode(req.companyId),
+    // Nothing has ever been refused anywhere: say so once, rather than printing
+    // a column of confident zeroes for a gate that may never have been on.
+    empty_reason: measured ? null : 'no starts have been blocked yet',
+    // Per app, absence is the answer. An app that has refused nobody reads '—'
+    // even while the app beside it reads 4 — writing 0 there would claim the
+    // gate has been watching this app and found nothing, which is a different
+    // and unproven statement.
+    apps: apps.map(a => ({
+      app_id: a.id,
+      app_name: a.name,
+      blocked: Object.hasOwn(counts, a.id) ? counts[a.id] : null,
+    })),
+  });
+});
 
 // ─── GET /summary ─────────────────────────────────────────────────────────────
 
@@ -427,3 +609,6 @@ router.delete('/plans/:id', (req, res) => {
 });
 
 module.exports = router;
+// Mounted one line earlier in index.js, outside the plan gate and the
+// supervisor write role. See the comment at the top of this file.
+module.exports.gateRouter = gateRouter;

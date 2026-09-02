@@ -140,8 +140,19 @@ picking `006` in parallel worktrees is a merge conflict that only shows up at bo
 | 008 | `008_pm_auto_raise.sql` | calls-escalate-and-pm-raises-jobs | preventive maintenance (PM) |
 | 009 | `009_work_order_operations.sql` | work-orders-carry-operations | work_order_operations + release/hold columns on work_orders (see note) |
 | 010 | `010_app_revisions.sql` | app-revisions-and-approval | app_revisions snapshots + `apps.current_revision` / `apps.requires_approval` / `completions.app_revision_id` |
-| 011 | `011_*.sql` | run-start-gated-and-one-tap | qualification gate on run start |
+| 011 | `011_qualification_overrides.sql` | run-start-gated-and-one-tap | qualification_overrides + completions.qualification_state (see note) |
 | 012 | `012_*.sql` | scrap-rework-and-coded-downtime | scrap/rework + coded downtime |
+
+**Note on 011's `completions.qualification_state`.** It carries a value from
+`vocab.QUALIFICATION_STATE` or `''`, and it has **no CHECK constraint** — the
+only column in this schema that quotes a vocabulary without one. Two reasons,
+both deliberate. `''` means *not measured* (the company has enforcement off, or
+the app asks for no certification), which is a real answer and not a vocabulary
+value; and unlike a status word this list is expected to grow, while a CHECK
+could never be altered afterwards without rebuilding `completions` on live
+customer data. `backend/src/qualification.js` validates the value in JS at the
+one place that writes it. The enforcement mode itself is not a column at all:
+it is an `org_settings` row, key `training_enforcement`, absent meaning `off`.
 
 **Note on 007's `reason_codes.loss_bucket`.** Its CHECK list is `''` followed by
 `vocab.LOSS_BUCKET`, in that order. The empty string is not a vocabulary value

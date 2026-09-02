@@ -12,6 +12,11 @@ import {
   Hash, Loader2, Lock, MessageSquare, Package, ScanLine, ShieldCheck, Tag, X, Zap,
 } from 'lucide-react';
 import { api } from '../api/client';
+import {
+  startRun as startRunRequest, notQualified, verifyOverrideAuthorizer, mintOverrideToken,
+} from '../api/training';
+import type { NotQualified } from '../api/training';
+import { fmtDuration } from '../components/apps/appModel';
 import { useAuth } from '../context/AuthContext';
 import { setRunActive } from '../utils/staleChunk';
 import type { CompletionFlushPayload, CompletionSession, JobInProgress, KitLineUpdate } from '../api/client';
@@ -37,15 +42,16 @@ import KitPanel, { KitSummaryBar } from '../components/player/KitPanel';
 import RunSummary from '../components/player/RunSummary';
 import PlayerWidget from '../components/player/PlayerWidgets';
 import RequestHelpSheet from '../components/player/RequestHelpSheet';
+import QualificationSheet from '../components/player/QualificationSheet';
 import AlertBanner from '../components/player/AlertBanner';
 import { targetLabel, targetPayload } from '../config/andonTeams';
 import type { AlertTarget } from '../config/andonTeams';
 import { subscribeRealtime, isAndonEvent } from '../utils/realtime';
 import {
-  claimSideEffect, collectStepTriggers, evaluateKitScan, exitTarget, formatDur,
+  claimSideEffect, collectStepTriggers, concurrentRun, evaluateKitScan, exitTarget, formatDur,
   getStepBlocks, kitProgress, kitWidgetFor, legacyKey, operatorAttribution,
-  operatorDisplayName, operatorReturnLink, runContextGate, runContextRequired, sideEffectKey,
-  stepHidesFooterNav, stepShowsKit, stepTaktSeconds as taktOfStep,
+  operatorDisplayName, operatorReturnLink, runContextGate, runContextRequired, setupNeeded,
+  sideEffectKey, stepHidesFooterNav, stepShowsKit, stepTaktSeconds as taktOfStep,
   stepValueSignature, summarizeBlocks, taktBarState, valueInputFor,
 } from '../components/player/runtime';
 import type { BlockItem } from '../components/player/runtime';
@@ -115,8 +121,35 @@ export default function AppPlayer() {
   // and whether this app enforces context (raw require_run_context / schema_version).
   const [manualPartNumber, setManualPartNumber] = useState('');
   const [requireContext, setRequireContext] = useState(false);
+  // Qualification gate (only ever engaged when the company set Warn or Block).
+  // qualBlock holds the server's refusal verbatim so the sheet can name the
+  // app, the operator and the expiry date rather than paraphrasing them.
+  const [qualBlock, setQualBlock] = useState<NotQualified | null>(null);
+  const [qualSubmitting, setQualSubmitting] = useState(false);
+  const [qualError, setQualError] = useState('');
+  /** A single-use supervisor proof, spent by the very next start attempt. */
+  const overrideProofRef = useRef<string | null>(null);
+  /** The run is skipped straight past setup at most once per visit. */
+  const autoStartedRef = useRef(false);
+  /**
+   * Did the deep link name the station, or is this just the last station this
+   * browser happened to use? Only the first is a fact about where the operator
+   * is standing. hm_station is a helpful default to PRESELECT; silently booking
+   * a run to it — on a tablet that was carried to another cell, or a spare
+   * picked off a bench — attributes work to the wrong machine and nobody sees
+   * a screen that says so.
+   */
+  const stationFromLink = searchParams.get('station') !== null;
+  /** The operator has seen the concurrent-run warning and chosen to go on. */
+  const [concurrentAck, setConcurrentAck] = useState(false);
+  /** Abandoning is a destructive choice, so it gets a sheet that says what is
+   *  lost — not a browser confirm() next to "Leave job (save progress)". */
+  const [abandonOpen, setAbandonOpen] = useState(false);
   // Multi-operator sessions (player batch C)
   const [jobs, setJobs] = useState<JobInProgress[]>([]);
+  /** Whether the in-progress list has come back yet. Auto-start waits for it,
+   *  so a silent skip can never step over a concurrent run on the same unit. */
+  const [jobsLoaded, setJobsLoaded] = useState(false);
   const [resumingId, setResumingId] = useState<string | null>(null);
   const [handoffNote, setHandoffNote] = useState<string | null>(null);
   const [leaveOpen, setLeaveOpen] = useState(false);
@@ -255,7 +288,9 @@ export default function AppPlayer() {
         // The verified identity the Operator Portal signed in — carried through
         // so the run is booked to the person, not to their typing.
         const uidParam = searchParams.get('uid');
+        const partParam = searchParams.get('part') || searchParams.get('pn');
         if (woParam) setSelectedWorkOrderId(woParam);
+        if (!woParam && partParam) setManualPartNumber(partParam);
         if (nameParam) setOperatorName(nameParam);
         if (uidParam) setOperatorUserId(uidParam);
         if (stationParam) setSelectedStationId(stationParam);
@@ -282,8 +317,8 @@ export default function AppPlayer() {
   const refreshJobs = useCallback(() => {
     if (!id || previewMode) return;
     api.getJobsInProgress(id)
-      .then(list => setJobs(list))
-      .catch(() => setJobs([]));
+      .then(list => { setJobs(list); setJobsLoaded(true); })
+      .catch(() => { setJobs([]); setJobsLoaded(true); });
   }, [id, previewMode]);
 
   useEffect(() => {
@@ -1088,13 +1123,19 @@ export default function AppPlayer() {
       if (!previewMode) {
         // Whoever actually ran it, or nobody — never an invented "Operator".
         const who = operatorAttribution(operatorName, operatorUserId);
-        const c = await api.createCompletion({
+        // Same POST /completions the player has always made. The only
+        // difference is an optional one-shot supervisor proof in a header,
+        // which is absent for every company that has not turned the gate on.
+        const c = await startRunRequest<{ id: string }>({
           app_id: id,
           ...who,
           work_order_id: selectedWorkOrderId || undefined,
           product_type_id: selectedProductTypeId || undefined,
           station_id: selectedStationId || undefined,
-        });
+        }, overrideProofRef.current);
+        overrideProofRef.current = null;   // single use — the server spent it
+        setQualBlock(null);
+        setQualError('');
         setCompletionId(c.id);
         completionIdRef.current = c.id;
         // Open this operator's session stint (best-effort). A stint belongs to
@@ -1138,6 +1179,16 @@ export default function AppPlayer() {
         applyEffects(runTriggers(collectStepTriggers(a.steps[0]), 'step_enter', buildState()));
       }
     } catch (err) {
+      // The plant has training enforcement on Block and this person is not
+      // signed off. That is not an error to apologise for — it is a decision
+      // the company made, and the sheet says whose sign-off is missing.
+      const refused = notQualified(err);
+      if (refused) {
+        overrideProofRef.current = null;
+        setQualError('');
+        setQualBlock(refused);
+        return;
+      }
       // Starting a run is a server round trip (it books the completion row), so
       // it is one of the few things offline genuinely cannot do. Say that,
       // instead of a bare network error.
@@ -1151,6 +1202,77 @@ export default function AppPlayer() {
   }, [id, starting, previewMode, operatorName, operatorUserId, selectedWorkOrderId, selectedProductTypeId,
     selectedStationId, requireContext, manualPartNumber, resetRunState, loadKitForWO, setKitState,
     applyEffects, buildState, debug]);
+
+  /**
+   * A supervisor types their PIN on the blocked-start sheet. The PIN is
+   * verified server-side by POST /api/operators/verify-authorizer — the same
+   * mechanism an in-run NCR uses, and the only place in the product that
+   * compares a PIN. What comes back is a single-use proof; the retry carries it
+   * and the server writes the permanent override record itself.
+   */
+  const approveQualification = useCallback(async (pin: string) => {
+    if (qualSubmitting || !id) return;
+    setQualSubmitting(true);
+    setQualError('');
+    try {
+      // Two bound steps, not one loose credential. The PIN is verified FOR THIS
+      // app and this operator (the purpose string carries both), and the grant
+      // that comes back is immediately exchanged for a token scoped to the same
+      // pair. Nothing the tablet holds afterwards would start anything else.
+      const who = { appId: id, userId: operatorUserId, operatorName };
+      const auth = await verifyOverrideAuthorizer(pin, who);
+      const minted = await mintOverrideToken({
+        appId: id,
+        userId: operatorUserId,
+        operatorName,
+        authorizerProof: auth.authorization_id,
+      });
+      overrideProofRef.current = minted.token;
+      await startRun();
+      pushToast('info', `Approved by ${auth.display_name}`);
+    } catch (err) {
+      overrideProofRef.current = null;
+      setQualError(err instanceof Error ? err.message : 'Authorization failed');
+    } finally {
+      setQualSubmitting(false);
+    }
+  }, [qualSubmitting, id, operatorUserId, operatorName, startRun, pushToast]);
+
+  // ── Nothing the portal already knows is asked twice ───────────────────────
+  // The Operator Portal deep link carries who (uid), where (station) and what
+  // (wo). When it carries all three and the app has no further choice to make,
+  // the setup screen has nothing left to ask, so it is not shown at all: one
+  // tap on a job and the operator is on step one.
+  //
+  // It waits for the in-progress list, because skipping setup must never skip
+  // the concurrent-run warning — a silent auto-start onto a unit somebody else
+  // already has open would be worse than the screen it replaces. And it counts
+  // only a station the LINK named: a station merely remembered in this
+  // browser's localStorage is offered as a preselected default on the setup
+  // screen, never used to book a run nobody was shown.
+  useEffect(() => {
+    if (autoStartedRef.current) return;
+    if (loading || !app || previewMode || status !== 'setup' || starting) return;
+    if (!jobsLoaded) return;
+    const needed = setupNeeded(
+      {
+        operatorUserId,
+        stationId: stationFromLink ? selectedStationId : '',
+        workOrderId: selectedWorkOrderId,
+        partNumber: manualPartNumber,
+        productTypeId: selectedProductTypeId,
+      },
+      { productTypeCount: productTypes.length, productTypeLocked, preview: previewMode },
+    );
+    if (needed) return;
+    if (concurrentRun(jobs, selectedWorkOrderId, manualPartNumber)) return;
+    autoStartedRef.current = true;
+    void startRun();
+  }, [
+    loading, app, previewMode, status, starting, jobsLoaded, jobs, stationFromLink,
+    operatorUserId, selectedStationId, selectedWorkOrderId, manualPartNumber,
+    selectedProductTypeId, productTypes.length, productTypeLocked, startRun,
+  ]);
 
   // ── Request help (Andon alerts) ────────────────────────────────────────────
   // One andon_call carries the whole run context, so the responder knows where
@@ -1526,40 +1648,55 @@ export default function AppPlayer() {
   }
 
   // ── Setup screen ───────────────────────────────────────────────────────────
+  // Only reached when something genuinely still has to be asked (see
+  // setupNeeded in components/player/runtime.ts). Everything below is laid out
+  // so that Start Process is INSIDE a 1024x768 viewport without scrolling: the
+  // fields sit two-up, the app's shape is a chip row rather than a panel, and
+  // "Jobs in progress" — a list, not a decision — comes after the button.
   if (status === 'setup') {
     const setupGate = runContextGate(requireContext && !previewMode, selectedWorkOrderId, manualPartNumber);
+    // A run already open on THIS unit. Joining it is legitimate and often
+    // right, but it must be a decision made before starting, not something
+    // discovered afterwards — so it sits above the button and holds it.
+    const concurrent = previewMode ? null : concurrentRun(jobs, selectedWorkOrderId, manualPartNumber);
+    const heldByConcurrent = !!concurrent && !concurrentAck;
+    const startBlockedReason = !setupGate.ok
+      ? setupGate.reason
+      : heldByConcurrent
+        ? 'Someone else already has this unit open — choose whether to join them.'
+        : '';
+
     return (
-      <div className="p-root items-center justify-center p-4 sm:p-6">
-        <div className="p-card w-full max-w-md p-6 sm:p-8">
-          <div className="text-center mb-6">
-            <div className="mx-auto mb-3 flex items-center justify-center rounded-2xl" style={{ width: 56, height: 56, background: 'var(--p-accent-tint)' }}>
-              <Factory size={26} style={{ color: 'var(--p-accent)' }} />
-            </div>
-            <h1 style={{ fontSize: 24, fontWeight: 800, color: 'var(--p-ink)' }}>{app.name}</h1>
-            {app.description && <p style={{ fontSize: 14, color: 'var(--p-muted)', marginTop: 4 }}>{app.description}</p>}
-            {previewMode && <span className="p-chip p-chip-gold mt-3" style={{ fontWeight: 750 }}>PREVIEW — nothing will be saved</span>}
+      <div className="p-root p-3 sm:p-5" style={{ overflowY: 'auto' }}>
+        <div className="p-card w-full max-w-3xl mx-auto my-auto p-4 sm:p-6">
+          {/* Compact header: name, description and the app's shape on one
+              band. The old 56px badge plus a three-tile panel cost ~180px of
+              a 768px screen and told the operator nothing they act on. */}
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-4">
+            <Factory size={20} className="flex-shrink-0" style={{ color: 'var(--p-accent)' }} />
+            <h1 className="flex-1 min-w-0" style={{ fontSize: 22, fontWeight: 800, color: 'var(--p-ink)' }}>
+              {app.name}
+            </h1>
+            <span className="p-chip tnum" style={{ fontSize: 12.5 }}>
+              {app.steps.length} steps · {app.steps.reduce((a, s) => a + s.widgets.length, 0)} widgets
+              {app.steps.filter(s => s.takt_time_seconds).length > 0
+                ? ` · ${app.steps.filter(s => s.takt_time_seconds).length} timed`
+                : ''}
+            </span>
+            {previewMode && <span className="p-chip p-chip-gold" style={{ fontWeight: 750, fontSize: 12.5 }}>PREVIEW — nothing saved</span>}
           </div>
+          {app.description && (
+            <p style={{ fontSize: 13.5, color: 'var(--p-muted)', marginTop: -8, marginBottom: 14 }}>{app.description}</p>
+          )}
 
-          <div className="space-y-4">
-            <div className="p-well grid grid-cols-3 gap-2 text-center p-3">
-              {[
-                { n: app.steps.length, l: 'Steps' },
-                { n: app.steps.reduce((a, s) => a + s.widgets.length, 0), l: 'Widgets' },
-                { n: app.steps.filter(s => s.takt_time_seconds).length, l: 'Timed' },
-              ].map(x => (
-                <div key={x.l}>
-                  <div className="tnum" style={{ fontSize: 20, fontWeight: 750, color: 'var(--p-ink)' }}>{x.n}</div>
-                  <div style={{ fontSize: 12, color: 'var(--p-muted)' }}>{x.l}</div>
-                </div>
-              ))}
-            </div>
-
+          {/* Two-up fields. Each cell is one question; on a phone they stack. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-3">
             <div>
-              <label className="p-label">Operator</label>
+              <label className="p-label" htmlFor="setup-operator">Operator</label>
               {operatorUserId ? (
                 <div className="p-well flex items-center gap-2.5 px-4" style={{ minHeight: 56 }}>
                   <BadgeCheck size={19} style={{ color: 'var(--p-good)' }} />
-                  <span style={{ fontSize: 17, fontWeight: 650, color: 'var(--p-ink)' }} className="flex-1">{operatorName}</span>
+                  <span style={{ fontSize: 17, fontWeight: 650, color: 'var(--p-ink)' }} className="flex-1 truncate">{operatorName}</span>
                   <button
                     onClick={() => { setOperatorUserId(null); setOperatorName(''); }}
                     style={{ color: 'var(--p-muted)' }} aria-label="Clear operator"
@@ -1567,6 +1704,7 @@ export default function AppPlayer() {
                 </div>
               ) : (
                 <input
+                  id="setup-operator"
                   className="p-input" placeholder="Enter your name…" value={operatorName}
                   onChange={e => setOperatorName(e.target.value)}
                   onKeyDown={e => { if (e.key === 'Enter') void startRun(); }}
@@ -1576,14 +1714,12 @@ export default function AppPlayer() {
 
             {!operatorUserId && (
               <div>
-                <label className="p-label" style={{ fontSize: 13, color: 'var(--p-muted)' }}>
-                  Badge code (optional) — scan or type, then Enter
-                </label>
+                <label className="p-label">Badge code (optional)</label>
                 <div className="relative">
                   <ScanLine size={17} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: 'var(--p-accent)' }} />
                   <input
-                    className="p-input p-mono" style={{ paddingLeft: 42, minHeight: 48, fontSize: 15 }}
-                    placeholder="Badge…" value={badgeInput}
+                    className="p-input p-mono" style={{ paddingLeft: 42 }}
+                    placeholder="Scan or type, then Enter" value={badgeInput}
                     onChange={e => { setBadgeInput(e.target.value); setBadgeError(''); }}
                     onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void tryBadge(); } }}
                   />
@@ -1594,8 +1730,8 @@ export default function AppPlayer() {
 
             {stations.length > 0 && (
               <div>
-                <label className="p-label">Station (optional)</label>
-                <select className="p-input" value={selectedStationId} onChange={e => setSelectedStationId(e.target.value)}>
+                <label className="p-label" htmlFor="setup-station">Station (optional)</label>
+                <select id="setup-station" className="p-input" value={selectedStationId} onChange={e => setSelectedStationId(e.target.value)}>
                   <option value="">— No station —</option>
                   {stations.map(s => (
                     <option key={s.id} value={s.id}>{s.name}{s.location ? ` · ${s.location}` : ''}</option>
@@ -1606,8 +1742,8 @@ export default function AppPlayer() {
 
             {workOrders.length > 0 && (
               <div>
-                <label className="p-label">Work Order {requireContext ? '' : '(optional)'}</label>
-                <select className="p-input" value={selectedWorkOrderId} onChange={e => setSelectedWorkOrderId(e.target.value)}>
+                <label className="p-label" htmlFor="setup-work-order">Work Order {requireContext ? '' : '(optional)'}</label>
+                <select id="setup-work-order" className="p-input" value={selectedWorkOrderId} onChange={e => { setSelectedWorkOrderId(e.target.value); setConcurrentAck(false); }}>
                   <option value="">— No work order —</option>
                   {workOrders.map(wo => (
                     <option key={wo.id} value={wo.id}>{wo.work_order_number} · {wo.part_name} ({wo.quantity_completed}/{wo.quantity})</option>
@@ -1620,9 +1756,11 @@ export default function AppPlayer() {
                 Scan-friendly: mono font, Enter starts the run. */}
             {!selectedWorkOrderId && (
               <div>
-                <label className="p-label flex items-center gap-1.5">
-                  <Hash size={14} style={{ color: 'var(--p-accent)' }} /> Part number
-                  {requireContext && !previewMode && <span style={{ color: 'var(--p-bad)' }}>*</span>}
+                <label className="p-label">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Hash size={14} style={{ color: 'var(--p-accent)' }} /> Part number
+                    {requireContext && !previewMode && <span style={{ color: 'var(--p-bad)' }}>*</span>}
+                  </span>
                 </label>
                 <div className="relative">
                   <ScanLine size={17} className="absolute left-4 top-1/2 -translate-y-1/2" style={{ color: 'var(--p-accent)' }} />
@@ -1631,26 +1769,24 @@ export default function AppPlayer() {
                     style={{ paddingLeft: 42 }}
                     placeholder="Scan or type a part number…"
                     value={manualPartNumber}
-                    onChange={e => { setManualPartNumber(e.target.value); setActionError(null); }}
+                    onChange={e => { setManualPartNumber(e.target.value); setActionError(null); setConcurrentAck(false); }}
                     onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void startRun(); } }}
                     autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
                   />
                 </div>
-                {requireContext && !previewMode && (
-                  <p style={{ fontSize: 12.5, color: 'var(--p-muted)', marginTop: 6 }}>
-                    Required — select a work order above or enter the part number being built.
-                  </p>
-                )}
               </div>
             )}
 
             {productTypes.length > 0 && (
               <div>
-                <label className="p-label flex items-center gap-1.5">
-                  <Tag size={14} style={{ color: 'var(--p-accent)' }} /> Product Type
+                <label className="p-label flex flex-wrap items-center gap-x-1.5 gap-y-1" htmlFor="setup-product-type">
+                  <span className="inline-flex items-center gap-1.5">
+                    <Tag size={14} style={{ color: 'var(--p-accent)' }} /> Product Type
+                  </span>
                   {productTypeLocked && <span className="p-chip p-chip-gold" style={{ fontSize: 11 }}><Lock size={10} /> from work order</span>}
                 </label>
                 <select
+                  id="setup-product-type"
                   className="p-input" value={selectedProductTypeId} disabled={productTypeLocked}
                   onChange={e => setSelectedProductTypeId(e.target.value)}
                 >
@@ -1661,87 +1797,151 @@ export default function AppPlayer() {
                 </select>
               </div>
             )}
-
-            {actionError && (
-              <div className="p-well flex items-center gap-2 px-4 py-3" style={{ color: 'var(--p-bad)', fontSize: 14 }}>
-                <AlertCircle size={15} className="flex-shrink-0" />
-                {actionError}
-              </div>
-            )}
-
-            <button
-              className="p-btn p-btn-primary w-full"
-              onClick={() => void startRun()}
-              disabled={starting || !setupGate.ok}
-              title={setupGate.ok ? undefined : setupGate.reason}
-            >
-              {starting ? 'Starting…' : previewMode ? 'Start Preview' : 'Start Process'}
-            </button>
-            {!setupGate.ok && (
-              <p className="text-center" style={{ fontSize: 13, color: 'var(--p-warn)', marginTop: -6 }}>
-                {setupGate.reason}
-              </p>
-            )}
-
-            {/* Jobs in progress (player batch C): resume any operator's run at
-                its saved position — with the last stint's handoff comment. */}
-            {!previewMode && jobs.length > 0 && (
-              <div className="pt-2">
-                <div className="p-label flex items-center gap-1.5" style={{ marginBottom: 10 }}>
-                  <Package size={14} style={{ color: 'var(--p-gold)' }} /> Jobs in progress
-                </div>
-                <div className="space-y-2">
-                  {jobs.map(job => {
-                    const jobWO = workOrders.find(w => w.id === job.work_order_id);
-                    const jobPN = typeof job.data?._part_number === 'string' ? job.data._part_number : '';
-                    const stepIdxRaw = Number(job.data?._step_index ?? 0);
-                    const stepPos = Number.isFinite(stepIdxRaw) ? Math.min(Math.max(0, stepIdxRaw), app.steps.length - 1) : 0;
-                    const last = job.last_session;
-                    const lastWhen = (last?.ended_at || last?.started_at || job.started_at || '').slice(0, 16);
-                    return (
-                      <div key={job.id} className="p-well p-3">
-                        <div className="flex items-center gap-2.5">
-                          <div className="flex-1 min-w-0">
-                            <div className="truncate" style={{ fontSize: 15, fontWeight: 650, color: 'var(--p-ink)' }}>
-                              {jobWO ? `${jobWO.work_order_number} · ${jobWO.part_name}` : jobPN ? `PN ${jobPN}` : 'No work order'}
-                            </div>
-                            <div className="truncate" style={{ fontSize: 12.5, color: 'var(--p-muted)', marginTop: 2 }}>
-                              Step {stepPos + 1}/{app.steps.length}
-                              {' · '}{last?.operator_name || job.operator_name}
-                              {lastWhen ? ` · ${lastWhen}` : ''}
-                            </div>
-                          </div>
-                          <button
-                            className="p-btn p-btn-ghost flex-shrink-0"
-                            style={{ minHeight: 44, fontSize: 15 }}
-                            onClick={() => void resumeJob(job)}
-                            disabled={resumingId !== null}
-                          >
-                            {resumingId === job.id ? 'Resuming…' : 'Resume'}
-                          </button>
-                        </div>
-                        {last?.handoff_comment && (
-                          <div className="flex items-start gap-1.5 mt-2" style={{ fontSize: 12.5, color: 'var(--p-warn-ink)' }}>
-                            <MessageSquare size={13} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--p-gold)' }} />
-                            <span>{last.handoff_comment}</span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-            <button
-              className="w-full py-2 text-sm" style={{ color: 'var(--p-muted)' }}
-              onClick={leavePlayer}
-            >← {exitPath === '/operator' ? 'Back to jobs' : 'Back to Library'}</button>
           </div>
+
+          {actionError && (
+            <div className="p-well flex items-center gap-2 px-4 py-3 mt-4" style={{ color: 'var(--p-bad)', fontSize: 14 }}>
+              <AlertCircle size={15} className="flex-shrink-0" />
+              {actionError}
+            </div>
+          )}
+
+          {/* The concurrent-run warning. ABOVE the button, and it holds the
+              button, because "two people are on this unit" is a fact you have
+              to answer before starting — not one to find out afterwards. */}
+          {concurrent && (
+            <div
+              className="mt-4 p-3 sm:p-4"
+              data-testid="concurrent-run-warning"
+              style={{
+                background: 'var(--p-gold-wash)',
+                border: '1px solid rgba(245, 194, 74, 0.45)',
+                borderRadius: 'var(--p-r-ctrl)',
+                color: 'var(--p-warn-ink)',
+              }}
+            >
+              <div className="flex items-start gap-2.5">
+                <AlertTriangle size={17} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--p-gold)' }} />
+                <div className="flex-1 min-w-0">
+                  <p style={{ fontSize: 15, fontWeight: 650 }}>
+                    {concurrent.operatorName || 'Someone'} started this
+                    {concurrent.ageSeconds === null ? '' : ` ${fmtDuration(concurrent.ageSeconds)} ago`}
+                    {' '}— joining will share the run
+                  </p>
+                  <p style={{ fontSize: 13.5, marginTop: 3 }}>
+                    Resume it to carry on where they left off, or start a separate run to
+                    record this unit twice.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-2 mt-3">
+                <button
+                  className="p-btn p-btn-ghost"
+                  style={{ minHeight: 48, fontSize: 15, minWidth: 0 }}
+                  onClick={() => void resumeJob(concurrent.job)}
+                  disabled={resumingId !== null}
+                >
+                  {resumingId === concurrent.job.id ? 'Resuming…' : 'Resume their run'}
+                </button>
+                {!concurrentAck && (
+                  <button
+                    className="p-btn p-btn-ghost"
+                    style={{ minHeight: 48, fontSize: 15, minWidth: 0 }}
+                    onClick={() => setConcurrentAck(true)}
+                  >Start a separate run anyway</button>
+                )}
+              </div>
+            </div>
+          )}
+
+          <button
+            className="p-btn p-btn-primary w-full mt-4"
+            onClick={() => void startRun()}
+            disabled={starting || !setupGate.ok || heldByConcurrent}
+            title={startBlockedReason || undefined}
+          >
+            {starting ? 'Starting…' : previewMode ? 'Start Preview' : 'Start Process'}
+          </button>
+          {startBlockedReason && (
+            <p className="text-center" style={{ fontSize: 13, color: 'var(--p-warn)', marginTop: 8 }}>
+              {startBlockedReason}
+            </p>
+          )}
+
+          {/* Jobs in progress (player batch C): resume any operator's run at
+              its saved position — with the last stint's handoff comment. */}
+          {!previewMode && jobs.length > 0 && (
+            <div className="pt-4">
+              <div className="p-label" style={{ marginBottom: 10 }}>
+                <span className="inline-flex items-center gap-1.5">
+                  <Package size={14} style={{ color: 'var(--p-gold)' }} /> Jobs in progress
+                </span>
+              </div>
+              <div className="space-y-2">
+                {jobs.map(job => {
+                  const jobWO = workOrders.find(w => w.id === job.work_order_id);
+                  const jobPN = typeof job.data?._part_number === 'string' ? job.data._part_number : '';
+                  const stepIdxRaw = Number(job.data?._step_index ?? 0);
+                  const stepPos = Number.isFinite(stepIdxRaw) ? Math.min(Math.max(0, stepIdxRaw), app.steps.length - 1) : 0;
+                  const last = job.last_session;
+                  const lastWhen = (last?.ended_at || last?.started_at || job.started_at || '').slice(0, 16);
+                  return (
+                    <div key={job.id} className="p-well p-3">
+                      <div className="flex items-center gap-2.5">
+                        <div className="flex-1 min-w-0">
+                          <div className="truncate" style={{ fontSize: 15, fontWeight: 650, color: 'var(--p-ink)' }}>
+                            {jobWO ? `${jobWO.work_order_number} · ${jobWO.part_name}` : jobPN ? `PN ${jobPN}` : 'No work order'}
+                          </div>
+                          <div className="truncate" style={{ fontSize: 12.5, color: 'var(--p-muted)', marginTop: 2 }}>
+                            Step {stepPos + 1}/{app.steps.length}
+                            {' · '}{last?.operator_name || job.operator_name}
+                            {lastWhen ? ` · ${lastWhen}` : ''}
+                          </div>
+                        </div>
+                        <button
+                          className="p-btn p-btn-ghost flex-shrink-0"
+                          style={{ minHeight: 44, fontSize: 15 }}
+                          onClick={() => void resumeJob(job)}
+                          disabled={resumingId !== null}
+                        >
+                          {resumingId === job.id ? 'Resuming…' : 'Resume'}
+                        </button>
+                      </div>
+                      {last?.handoff_comment && (
+                        <div className="flex items-start gap-1.5 mt-2" style={{ fontSize: 12.5, color: 'var(--p-warn-ink)' }}>
+                          <MessageSquare size={13} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--p-gold)' }} />
+                          <span>{last.handoff_comment}</span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          <button
+            className="w-full py-2 text-sm mt-2" style={{ color: 'var(--p-muted)' }}
+            onClick={leavePlayer}
+          >← {exitPath === '/operator' ? 'Back to jobs' : 'Back to Library'}</button>
         </div>
+
+        {qualBlock && (
+          <QualificationSheet
+            appName={qualBlock.app_name || app.name}
+            operatorName={qualBlock.operator_name}
+            state={qualBlock.state}
+            expiryDate={qualBlock.expiry_date}
+            submitting={qualSubmitting}
+            error={qualError}
+            onCancel={() => { setQualBlock(null); leavePlayer(); }}
+            onApprove={pin => void approveQualification(pin)}
+          />
+        )}
       </div>
     );
   }
+
 
   // ── Completed screen (spec §5.6) ───────────────────────────────────────────
   if (status === 'completed') {
@@ -1837,7 +2037,7 @@ export default function AppPlayer() {
             preview={previewMode}
             hasPartsList={(currentStep?.parts_list?.length ?? 0) > 0}
             onTogglePause={togglePause}
-            onAbandon={() => { if (window.confirm('Stop this process?')) abandonRun(); }}
+            onAbandon={() => setAbandonOpen(true)}
             onShowParts={() => setShowPartsOverlay(o => !o)}
             onReportProblem={() => setReportOpen(true)}
             onRequestHelp={() => { setHelpError(''); setHelpOpen(true); }}
@@ -2121,6 +2321,19 @@ export default function AppPlayer() {
         />
       )}
 
+      {/* Stopping the run. A separate, destructive sheet — never a browser
+          confirm() sitting one menu row away from "Leave job". */}
+      {abandonOpen && (
+        <AbandonRunSheet
+          stepPosition={currentStepIdx + 1}
+          stepCount={app.steps.length}
+          stepsTimed={Object.keys(stepTimes).length}
+          valuesCaptured={capturedRef.current.size}
+          onClose={() => setAbandonOpen(false)}
+          onAbandon={() => { setAbandonOpen(false); abandonRun(); }}
+        />
+      )}
+
       {/* Preview debug drawer (outbox actions land here instead of the API) */}
       {previewMode && (
         <div className="p-debug-drawer">
@@ -2247,6 +2460,73 @@ function ReportProblemSheet({ preview, onClose, onSubmit }: {
             {submitting ? <Loader2 size={20} className="animate-spin" /> : null}
             {submitting ? 'Authorizing…' : preview ? 'Submit report' : 'Authorize & submit'}
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Stop-the-run bottom sheet ───────────────────────────────────────────────
+// This used to be window.confirm('Stop this process?'), which is a browser
+// dialog with an OK button: it does not say what is lost, it cannot be styled
+// to look destructive, and it sat one menu row below "Leave job (save
+// progress)" — two adjacent taps, one of which throws the work away.
+//
+// The sheet states the actual, measured cost: how far in the run got, how many
+// steps were timed, how many values were captured. Never a fabricated figure —
+// a run with nothing recorded says so.
+
+function AbandonRunSheet({ stepPosition, stepCount, stepsTimed, valuesCaptured, onClose, onAbandon }: {
+  stepPosition: number;
+  stepCount: number;
+  stepsTimed: number;
+  valuesCaptured: number;
+  onClose: () => void;
+  onAbandon: () => void;
+}) {
+  const lost = [
+    stepsTimed > 0 ? `${stepsTimed} step ${stepsTimed === 1 ? 'time' : 'times'}` : null,
+    valuesCaptured > 0 ? `${valuesCaptured} captured ${valuesCaptured === 1 ? 'value' : 'values'}` : null,
+  ].filter(Boolean) as string[];
+
+  return (
+    <div className="p-sheet-backdrop" role="dialog" aria-modal="true" aria-label="Stop this run">
+      <div className="p-sheet" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2" style={{ fontSize: 18, fontWeight: 650, color: 'var(--p-ink)' }}>
+            <AlertTriangle size={19} style={{ color: 'var(--p-bad)' }} /> Stop this run?
+          </div>
+          <button onClick={onClose} aria-label="Close" style={{ color: 'var(--p-muted)', width: 44, height: 44 }} className="flex items-center justify-center">
+            <X size={20} />
+          </button>
+        </div>
+        <div className="space-y-4">
+          <p style={{ fontSize: 15, color: 'var(--p-ink-2)' }}>
+            The run is marked <strong style={{ color: 'var(--p-ink)' }}>abandoned</strong> at
+            step {stepPosition} of {stepCount}. It stays in Run History as a stopped run and
+            cannot be picked up again.
+          </p>
+          <p style={{ fontSize: 15, color: 'var(--p-ink-2)' }}>
+            {lost.length > 0
+              ? `${lost.join(' and ')} recorded so far will not count as production.`
+              : 'Nothing has been recorded on this run yet.'}
+          </p>
+          <p style={{ fontSize: 14, color: 'var(--p-muted)' }}>
+            To hand the job on instead, close this and choose Leave job — that saves your
+            progress for the next operator.
+          </p>
+          <div className="flex gap-3">
+            <button className="p-btn p-btn-primary flex-1" style={{ minWidth: 0 }} onClick={onClose}>
+              Keep working
+            </button>
+            <button
+              className="p-btn p-btn-ghost flex-1"
+              style={{ minWidth: 0, color: 'var(--p-bad)', borderColor: 'var(--p-bad)' }}
+              onClick={onAbandon}
+            >
+              Stop and discard
+            </button>
+          </div>
         </div>
       </div>
     </div>
