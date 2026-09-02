@@ -138,7 +138,7 @@ picking `006` in parallel worktrees is a merge conflict that only shows up at bo
 | 006 | `006_work_order_import_fields.sql` | erp-door | ERP import/export door |
 | 007 | `007_andon_escalation_and_reason_codes.sql` | calls-escalate-and-pm-raises-jobs | andon calls + reason_codes (see note) |
 | 008 | `008_pm_auto_raise.sql` | calls-escalate-and-pm-raises-jobs | preventive maintenance (PM) |
-| 009 | `009_*.sql` | work-orders-carry-operations | operations on work orders |
+| 009 | `009_work_order_operations.sql` | work-orders-carry-operations | work_order_operations + release/hold columns on work_orders (see note) |
 | 010 | `010_*.sql` | app-revisions-and-approval | app revisions + approval |
 | 011 | `011_*.sql` | run-start-gated-and-one-tap | qualification gate on run start |
 | 012 | `012_*.sql` | scrap-rework-and-coded-downtime | scrap/rework + coded downtime |
@@ -152,6 +152,21 @@ The column is `NOT NULL DEFAULT ''`, so "unbucketed" is a stated value and never
 a NULL to be interpreted. `backend/test/andon-escalation.test.js` asserts the
 file's list equals `['', ...vocab.LOSS_BUCKET]`, so the two cannot drift — and
 the CHECK cannot be altered later without rebuilding the table.
+
+**Note on 009's `work_order_operations.status`.** Its CHECK list is
+`vocab.OPERATION_STATUS`, quoted verbatim and in order.
+`backend/test/wo-operations.test.js` compares the file's list to the array, so
+the two cannot drift — and, as with every CHECK, it cannot be changed later
+without rebuilding the table on live data. Note what is **not** in that list:
+there is no `hold` status. A job on hold keeps whatever operation status it had
+and carries `work_orders.hold_reason`, because a status word cannot say *why* —
+and `work_orders.status` has its own frozen CHECK that could not have taken a
+new word in any case.
+
+The file also adds `quantity_rework` alongside `quantity_scrapped`.
+`workOrderOperations.advance()` accepts `{ good, scrap, rework }` today and
+stores all three; wave 4's coded scrap/rework screens write them. A count with
+nowhere to be stored is a count that gets folded into "good".
 
 ### Reserved test ports
 

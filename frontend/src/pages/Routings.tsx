@@ -1,7 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
 import {
   GitBranch, Plus, Trash2, Edit2, ChevronUp, ChevronDown, X,
   Check, AlertCircle, AppWindow, Users, Clock, ArrowRight, Star, ChevronLeft,
+  Play, Package,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { usePlan } from '../context/PlanContext';
@@ -10,6 +12,7 @@ import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
 import DepartmentFilter from '../components/shared/DepartmentFilter';
 import { fmtDuration } from '../components/apps/appModel';
+import { getRoutingUsage, type RoutingUsage } from '../api/operations';
 
 interface RoutingStep {
   id: string;
@@ -20,8 +23,13 @@ interface RoutingStep {
   app_id: string | null;
   department_id: string | null;
   estimated_cycle_seconds: number;
+  /** The same number the server also answers as `standard_seconds` — the word a
+   *  released operation uses. One value, two names, no second column. */
+  standard_seconds?: number;
+  station_id?: string | null;
   app_name?: string;
   department_name?: string;
+  station_name?: string | null;
 }
 
 interface Routing {
@@ -29,6 +37,10 @@ interface Routing {
   name: string;
   description: string;
   step_count: number;
+  /** Work orders released against this routing that are still open. This is
+   *  what makes the screen true: a routing is a plan until something runs on
+   *  it, and until now the page never said whether anything did. */
+  open_work_orders?: number;
   steps?: RoutingStep[];
 }
 
@@ -54,6 +66,7 @@ export default function Routings() {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [apps, setApps] = useState<any[]>([]);
+  const [usage, setUsage] = useState<RoutingUsage | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   // A routing itself has no department — the department lives on each step
@@ -126,6 +139,17 @@ export default function Routings() {
       setRoutings(prev => prev.map(x => x.id === id ? { ...x, step_count: r.steps?.length ?? 0 } : x));
     } catch {
       showToast('Failed to load routing', 'error');
+      return;
+    }
+    // Which live jobs run on this routing. Loaded separately so a failure here
+    // never costs the planner the steps they came to edit.
+    setUsage(null);
+    try {
+      const u = await getRoutingUsage(id);
+      setUsage(u);
+      setRoutings(prev => prev.map(x => x.id === id ? { ...x, open_work_orders: u.open_work_orders } : x));
+    } catch {
+      setUsage(null);
     }
   };
 
@@ -374,6 +398,19 @@ export default function Routings() {
               <div className="min-w-0">
                 <div className="text-sm font-semibold text-gray-800 truncate">{r.name}</div>
                 <div className="text-xs text-gray-400 mt-0.5">{r.step_count} step{r.step_count !== 1 ? 's' : ''}</div>
+                {/* A routing nothing runs on gets an em dash and a reason, not
+                    "used by 0 work orders" dressed up as a measurement. */}
+                <div className="text-xs mt-0.5">
+                  {r.open_work_orders && r.open_work_orders > 0 ? (
+                    <span className="text-emerald-700 font-medium">
+                      used by {r.open_work_orders} open work order{r.open_work_orders !== 1 ? 's' : ''}
+                    </span>
+                  ) : (
+                    <span className="text-gray-400" title="No open work order has been released on this routing">
+                      — no open work orders
+                    </span>
+                  )}
+                </div>
               </div>
               {canEdit && (
                 <button
@@ -408,7 +445,20 @@ export default function Routings() {
                 <h2 className="text-lg font-bold text-gray-900">{selected.name}</h2>
                 {selected.description && <p className="text-sm text-gray-500 mt-0.5">{selected.description}</p>}
               </div>
-              <div className="flex items-center gap-3 flex-shrink-0">
+              <div className="flex items-center gap-3 flex-wrap flex-shrink-0">
+                {/* The one action that turns a routing into work. It lands on
+                    the Schedule's create form with this routing already picked,
+                    because "release a job" is a work-order action and the
+                    Routings screen has no business owning a second one. */}
+                {canEdit && (
+                  <Link
+                    to={`/schedule?routing_id=${encodeURIComponent(selected.id)}`}
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 text-sm font-semibold transition-colors flex-shrink-0"
+                  >
+                    <Play size={13} />
+                    Release a job on this routing
+                  </Link>
+                )}
                 {/* Steps are narrowed by the page-wide department picker in the
                     routing-list header; the count and empty states below reflect it. */}
                 {deptFilter.active && (
@@ -426,6 +476,50 @@ export default function Routings() {
                   </button>
                 )}
               </div>
+            </div>
+
+            {/* What actually runs on this routing today. The Routings screen
+                used to describe a sequence and never say whether anything was
+                following it — an execution model with no evidence. */}
+            <div className="mb-5 bg-white rounded-xl border border-gray-200 p-4">
+              <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+                <Package size={12} />
+                Live jobs
+              </div>
+              {usage === null ? (
+                <p className="text-xs text-gray-400">—<span className="ml-1.5">job list unavailable</span></p>
+              ) : usage.open_work_orders === 0 ? (
+                <p className="text-xs text-gray-400">
+                  —<span className="ml-1.5">no open work order has been released on this routing</span>
+                </p>
+              ) : (
+                <ul className="space-y-1.5">
+                  {usage.work_orders.map(wo => (
+                    <li key={wo.id} className="flex flex-wrap items-center gap-2 text-xs">
+                      <Link
+                        to={`/schedule?highlight=${wo.id}`}
+                        className="font-mono font-semibold text-blue-700 hover:text-blue-800"
+                      >
+                        {wo.work_order_number}
+                      </Link>
+                      <span className="text-gray-600">{wo.part_name || wo.part_number || '—'}</span>
+                      {wo.current_operation ? (
+                        <span className="text-gray-500 [font-variant-numeric:tabular-nums]">
+                          op {wo.current_operation.sequence} of {wo.current_operation.of} · {wo.current_operation.name}
+                          {' · '}{wo.current_operation.qty_good}/{wo.current_operation.qty_required}
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">— not released</span>
+                      )}
+                      {wo.hold_reason && (
+                        <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                          on hold: {wo.hold_reason}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
 
             {sortedSteps.length === 0 ? (

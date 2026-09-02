@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef, Fragment } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
 import type { Kit } from '../types';
 import { useHighlight } from '../hooks/useHighlight';
@@ -12,7 +12,7 @@ import {
   Plus, Search, Filter, List, BarChart2, Edit2, Trash2, CheckSquare,
   X, ChevronDown, AlertTriangle, Calendar, Package, Building2, Clock, History,
   MessageSquare, Send, QrCode, Printer, Trash, PackageOpen, Flag, ExternalLink,
-  Upload, FileDown, CheckCircle2, XCircle, RefreshCw,
+  Upload, FileDown, CheckCircle2, XCircle, RefreshCw, GitBranch,
 } from 'lucide-react';
 import ModuleOnboarding from '../components/shared/ModuleOnboarding';
 import {
@@ -20,6 +20,12 @@ import {
   IMPORT_COLUMNS, IMPORT_TEMPLATE_URL,
   type ImportOutcome, type ImportRowVerdict,
 } from '../api/workOrders';
+import {
+  releaseWorkOrder, getOperations, updateOperation,
+  operationLine, OPERATION_STATUS_LABELS,
+  type WorkOrderOperation, type CurrentOperation,
+} from '../api/operations';
+import { fmtDuration } from '../components/apps/appModel';
 import QRCodeLib from 'qrcode';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -49,6 +55,23 @@ interface WorkOrder {
   customer_ref?: string | null;
   /** The ERP's own id for this job — the key a re-import matches on. */
   external_id?: string | null;
+  /** The routing this job runs on, and its name. null until one is picked. */
+  routing_id?: string | null;
+  routing_name?: string | null;
+  /** When the routing became this job's operations. null = never released. */
+  released_at?: string | null;
+  /** Why the job is stopped. A column, not a status word — a status cannot
+   *  say why, and work_orders.status is frozen behind a CHECK. */
+  hold_reason?: string | null;
+  /** Where the job stands. null for a job with no operations — never a zeroed
+   *  object, which would read as "operation 0 of 0". */
+  current_operation?: CurrentOperation | null;
+}
+
+interface RoutingOption {
+  id: string;
+  name: string;
+  step_count?: number;
 }
 
 interface App {
@@ -96,6 +119,8 @@ interface WOFormData {
   notes: string;
   due_date: string;
   customer_ref: string;
+  routing_id: string;
+  hold_reason: string;
 }
 
 interface ScheduleViewFilters {
@@ -139,6 +164,16 @@ const GANTT_BAR_CLASSES: Record<string, string> = {
   in_progress: 'bg-blue-500',
   completed:   'bg-green-500',
   overdue:     'bg-red-500',
+};
+// The six words vocab.OPERATION_STATUS allows, and nothing else — a chip with
+// no entry falls back to grey rather than inventing a seventh state.
+const OP_STATUS_CLASSES: Record<string, string> = {
+  queued:   'bg-gray-100 text-gray-600',
+  ready:    'bg-blue-100 text-blue-700',
+  running:  'bg-indigo-100 text-indigo-700',
+  complete: 'bg-green-100 text-green-700',
+  skipped:  'bg-gray-100 text-gray-500',
+  on_hold:  'bg-amber-100 text-amber-700',
 };
 const KIT_STATUS_CLASSES: Record<string, string> = {
   open:      'bg-gray-100 text-gray-600',
@@ -190,6 +225,8 @@ function defaultForm(): WOFormData {
     notes: '',
     due_date: '',
     customer_ref: '',
+    routing_id: '',
+    hold_reason: '',
   };
 }
 
@@ -209,6 +246,8 @@ function toPayload(form: WOFormData) {
     product_type_id: form.product_type_id || null,
     due_date: form.due_date || null,
     customer_ref: form.customer_ref || null,
+    routing_id: form.routing_id || null,
+    hold_reason: form.hold_reason.trim() || null,
   };
 }
 
@@ -412,6 +451,12 @@ function WOModal({
   locations,
   generatingKit,
   onGenerateKit,
+  routings,
+  workOrder,
+  operations,
+  releasing,
+  onRelease,
+  onSkipOperation,
 }: {
   title: string;
   form: WOFormData;
@@ -428,9 +473,30 @@ function WOModal({
   locations?: LocationOption[];
   generatingKit?: boolean;
   onGenerateKit?: (locationId: string) => void;
+  /** Routings this company has. Empty on a Free account — designing a routing
+   *  is a Pro feature, even though releasing and running a job is not. */
+  routings: RoutingOption[];
+  /** The stored work order, when editing — released_at is the fact that
+   *  decides whether this drawer offers Release or lists operations. */
+  workOrder?: WorkOrder | null;
+  operations?: WorkOrderOperation[];
+  releasing?: boolean;
+  onRelease?: () => void;
+  onSkipOperation?: (operationId: string) => void;
 }) {
   const [showQR, setShowQR] = useState(false);
   const [kitLocationId, setKitLocationId] = useState('');
+
+  // Released is a FACT off the stored work order, never a guess from the form:
+  // picking a routing in the drawer does not release anything until Release is
+  // pressed, and a released job must never offer the button again.
+  const released = Boolean(workOrder?.released_at);
+  const opList = operations ?? [];
+  // How many operations Release will actually create — the routing's step
+  // count, straight off the list the server sent. A routing with no steps
+  // cannot be released, and the line under the button says so instead of
+  // promising "Creates 0 operations".
+  const pickedSteps = routings.find(r => r.id === form.routing_id)?.step_count ?? 0;
 
   // Product types for the selected app — drives BOM resolution at kit generation.
   const [productTypes, setProductTypes] = useState<ProductTypeOption[]>([]);
@@ -563,6 +629,138 @@ function WOModal({
             <p className="text-[11px] text-gray-400 mt-1">
               The product type resolves the active BOM for kit generation and locks the operator's selection at run start.
             </p>
+          </div>
+
+          {/* ── Routing and operations ──
+              A work order with no routing behaves exactly as it always has: one
+              app, one department, no operations. Picking a routing and pressing
+              Release turns it into N operations in sequence — which is what a
+              seven-operation job actually is, instead of seven unrelated work
+              orders sharing nothing. Released once: the operations are a
+              snapshot of what the floor is running, and rebuilding them would
+              throw away booked quantity. */}
+          <div className="pt-3 border-t border-gray-100">
+            <div className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-gray-500 mb-2">
+              <GitBranch size={12} />
+              Routing &amp; Operations
+            </div>
+
+            {released ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-gray-600">
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 font-semibold">
+                    <CheckCircle2 size={11} /> Released
+                  </span>
+                  <span className="text-gray-500">
+                    {workOrder?.routing_name || 'Routing'} · {opList.length} operation{opList.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+
+                <ol className="space-y-1.5">
+                  {opList.map(op => (
+                    <li
+                      key={op.id}
+                      className={`flex flex-wrap items-center gap-2 rounded-lg border px-2.5 py-2 ${
+                        op.id === workOrder?.current_operation?.id
+                          ? 'border-blue-200 bg-blue-50'
+                          : 'border-gray-100 bg-gray-50'
+                      }`}
+                    >
+                      <span className="text-xs text-gray-800 [font-variant-numeric:tabular-nums]">
+                        {operationLine(op, fmtDuration)}
+                      </span>
+                      <span className="inline-flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
+                        <Building2 size={10} />
+                        {op.department_name || 'No department'}
+                      </span>
+                      <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${OP_STATUS_CLASSES[op.status] ?? 'bg-gray-100 text-gray-600'}`}>
+                        {OPERATION_STATUS_LABELS[op.status]}
+                      </span>
+                      {onSkipOperation && op.status !== 'complete' && op.status !== 'skipped' && (
+                        <button
+                          onClick={() => onSkipOperation(op.id)}
+                          className="ml-auto text-[11px] font-semibold text-gray-400 hover:text-gray-700"
+                        >
+                          Skip
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+                {opList.length === 0 && (
+                  <p className="text-xs text-gray-400">This job is released but its operations have not loaded.</p>
+                )}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <div className="relative">
+                  <select
+                    className="input-field appearance-none pr-8"
+                    value={form.routing_id}
+                    onChange={e => onChange('routing_id', e.target.value)}
+                    aria-label="Routing"
+                  >
+                    <option value="">
+                      {routings.length === 0 ? '— No routings available —' : '— No routing (single operation) —'}
+                    </option>
+                    {routings.map(r => (
+                      <option key={r.id} value={r.id}>
+                        {r.name}{r.step_count !== undefined ? ` (${r.step_count} step${r.step_count === 1 ? '' : 's'})` : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown size={14} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                </div>
+
+                {entityId && onRelease && (
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={onRelease}
+                      disabled={releasing || !form.routing_id || pickedSteps === 0}
+                      className="btn-secondary text-xs !py-1.5"
+                    >
+                      <GitBranch size={13} />
+                      {releasing ? 'Releasing…' : 'Release'}
+                    </button>
+                    {/* Say what the button will do before it is pressed. A
+                        release cannot be undone, so "Creates 7 operations for
+                        quantity 50" is the whole confirmation. */}
+                    <span className="text-[11px] text-gray-500">
+                      {!form.routing_id
+                        ? 'Pick a routing to release this job into operations.'
+                        : pickedSteps === 0
+                          ? 'That routing has no steps yet — add one on the Routings screen.'
+                          : `Creates ${pickedSteps} operation${pickedSteps === 1 ? '' : 's'} for quantity ${form.quantity}.`}
+                    </span>
+                  </div>
+                )}
+                {!entityId && form.routing_id && (
+                  <p className="text-[11px] text-gray-500">
+                    {pickedSteps > 0
+                      ? `Saving creates ${pickedSteps} operation${pickedSteps === 1 ? '' : 's'} for quantity ${form.quantity}.`
+                      : 'That routing has no steps yet, so this job will be created without operations.'}
+                  </p>
+                )}
+                {routings.length === 0 && (
+                  <p className="text-[11px] text-gray-400">
+                    No routings on this account. A job with no routing runs exactly as it always has.
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="mt-3">
+              <label className="block text-xs font-medium text-gray-700 mb-1">Hold Reason</label>
+              <input
+                className="input-field"
+                placeholder="Blank unless the job is stopped"
+                value={form.hold_reason}
+                onChange={e => onChange('hold_reason', e.target.value)}
+              />
+              <p className="text-[11px] text-gray-400 mt-1">
+                Why this job is stopped, in words the next shift can act on. A status word cannot say why.
+              </p>
+            </div>
           </div>
 
           <div className="field-row-3 gap-4">
@@ -776,6 +974,9 @@ export default function Schedule() {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [kitsByWo, setKitsByWo] = useState<Record<string, KitRow>>({});
   const [locations, setLocations] = useState<LocationOption[]>([]);
+  const [routings, setRoutings] = useState<RoutingOption[]>([]);
+  const [operations, setOperations] = useState<WorkOrderOperation[]>([]);
+  const [releasing, setReleasing] = useState(false);
   const [generatingKit, setGeneratingKit] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -806,12 +1007,16 @@ export default function Schedule() {
     setLoadError(null);
     try {
       const siteParams = { site_id: selectedSiteId || undefined };
-      const [wos, appList, deptList, kitList, locList] = await Promise.all([
+      const [wos, appList, deptList, kitList, locList, routingList] = await Promise.all([
         api.getWorkOrders(siteParams),
         api.getApps(),
         api.getDepartments(siteParams).catch(() => []),
         api.getKits().catch(() => [] as KitRow[]),
         api.getLocations().catch(() => []),
+        // Designing a routing is a Pro feature, so this 403s on a Free account.
+        // Releasing a job is not, which is why the failure is an empty picker
+        // rather than an error on the page.
+        api.getRoutings().catch(() => [] as RoutingOption[]),
       ]);
       setWorkOrders(Array.isArray(wos) ? wos : []);
       setApps(Array.isArray(appList) ? appList : []);
@@ -822,6 +1027,7 @@ export default function Schedule() {
       }
       setKitsByWo(byWo);
       setLocations(Array.isArray(locList) ? (locList as LocationOption[]) : []);
+      setRoutings(Array.isArray(routingList) ? (routingList as RoutingOption[]) : []);
     } catch (e: any) {
       setWorkOrders([]);
       setLoadError(e?.message || 'Failed to load work orders');
@@ -832,12 +1038,35 @@ export default function Schedule() {
 
   useEffect(() => { load(); }, [load]);
 
+  // Deep link from the Routings screen: /schedule?routing_id=… opens the create
+  // form with that routing already picked, so "Release a job on this routing"
+  // lands somewhere that can actually do it instead of a blank page.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const linkedRoutingId = searchParams.get('routing_id') || '';
+  useEffect(() => {
+    if (!linkedRoutingId) return;
+    setForm({ ...defaultForm(), routing_id: linkedRoutingId });
+    setShowCreate(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [linkedRoutingId]);
+
+  /** Closing the create form also drops the deep-link parameter, so pressing
+   *  New Work Order afterwards does not silently re-pick the same routing. */
+  const closeCreate = () => {
+    setShowCreate(false);
+    if (linkedRoutingId) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('routing_id');
+      setSearchParams(next, { replace: true });
+    }
+  };
+
   const handleChange = (field: keyof WOFormData, value: any) => {
     setForm(prev => ({ ...prev, [field]: value }));
   };
 
-  const openCreate = () => {
-    setForm(defaultForm());
+  const openCreate = (routingId?: string) => {
+    setForm({ ...defaultForm(), routing_id: routingId ?? '' });
     setShowCreate(true);
   };
 
@@ -858,15 +1087,63 @@ export default function Schedule() {
       notes: wo.notes,
       due_date: wo.due_date ?? '',
       customer_ref: wo.customer_ref ?? '',
+      routing_id: wo.routing_id ?? '',
+      hold_reason: wo.hold_reason ?? '',
     });
     setEditTarget(wo);
+    setOperations([]);
+    getOperations(wo.id)
+      .then(rows => setOperations(Array.isArray(rows) ? rows : []))
+      .catch(() => setOperations([]));
+  };
+
+  /** Turn the picked routing into this job's operations. Once, and only from
+   *  the button — saving the form never releases anything. */
+  const handleRelease = async () => {
+    if (!editTarget) return;
+    setReleasing(true);
+    try {
+      const result = await releaseWorkOrder(editTarget.id, form.routing_id || undefined);
+      setOperations(result.operations ?? []);
+      setEditTarget(prev => (prev ? {
+        ...prev,
+        routing_id: result.routing_id ?? prev.routing_id ?? null,
+        routing_name: result.routing_name ?? prev.routing_name ?? null,
+        released_at: result.released_at ?? null,
+        current_operation: result.current_operation ?? null,
+      } : prev));
+      const n = result.operations?.length ?? 0;
+      addToast(`${editTarget.work_order_number} released — ${n} operation${n === 1 ? '' : 's'}`, 'success');
+      await load();
+    } catch (e: any) {
+      addToast(e?.data?.message || e?.message || 'Failed to release this work order', 'error');
+    } finally {
+      setReleasing(false);
+    }
+  };
+
+  const handleSkipOperation = async (operationId: string) => {
+    if (!editTarget) return;
+    try {
+      await updateOperation(editTarget.id, operationId, { status: 'skipped' });
+      const rows = await getOperations(editTarget.id);
+      setOperations(Array.isArray(rows) ? rows : []);
+      await load();
+    } catch (e: any) {
+      addToast(e?.data?.message || e?.message || 'Failed to update the operation', 'error');
+    }
   };
 
   const handleSaveCreate = async () => {
     setSaving(true);
     try {
-      await api.createWorkOrder(toPayload(form));
-      setShowCreate(false);
+      // A job created WITH a routing comes back already released — the server
+      // does it in the same request, so there is no second button to press.
+      const created = await api.createWorkOrder(toPayload(form));
+      closeCreate();
+      if (created?.released_at && created?.current_operation) {
+        addToast(`${created.work_order_number} released — ${created.current_operation.of} operations`, 'success');
+      }
       await load();
     } catch (e: any) {
       alert(e.message ?? 'Failed to create work order');
@@ -1009,7 +1286,7 @@ export default function Schedule() {
                 Import work orders
               </button>
             )}
-            <button onClick={openCreate} className="btn-primary flex-shrink-0 whitespace-nowrap">
+            <button onClick={() => openCreate()} className="btn-primary flex-shrink-0 whitespace-nowrap">
               <Plus size={16} />
               New Work Order
             </button>
@@ -1102,7 +1379,7 @@ export default function Schedule() {
           highlightRef={highlightRef}
           canEdit={canEdit}
           hasActiveFilters={hasActiveFilters}
-          onCreate={openCreate}
+          onCreate={() => openCreate()}
         />
       ) : (
         <GanttView
@@ -1119,10 +1396,11 @@ export default function Schedule() {
           form={form}
           apps={apps}
           departments={departments}
+          routings={routings}
           saving={saving}
           onChange={handleChange}
           onSave={handleSaveCreate}
-          onClose={() => setShowCreate(false)}
+          onClose={closeCreate}
           currentUserId={user?.id}
         />
       )}
@@ -1144,6 +1422,12 @@ export default function Schedule() {
           locations={locations}
           generatingKit={generatingKit}
           onGenerateKit={canEdit ? handleGenerateKit : undefined}
+          routings={routings}
+          workOrder={editTarget}
+          operations={operations}
+          releasing={releasing}
+          onRelease={canEdit ? handleRelease : undefined}
+          onSkipOperation={canEdit ? handleSkipOperation : undefined}
         />
       )}
 
@@ -1498,6 +1782,14 @@ function ListView({
                 >
                   <td className="px-4 py-3">
                     <span className="font-mono text-xs font-semibold text-blue-700">{wo.work_order_number}</span>
+                    {/* Where the job stands, on the row itself. Only for a
+                        released job — a work order with no operations says
+                        nothing here rather than "op 0 of 0". */}
+                    {wo.current_operation && (
+                      <div className="text-[11px] text-gray-500 [font-variant-numeric:tabular-nums]">
+                        op {wo.current_operation.sequence} of {wo.current_operation.of}
+                      </div>
+                    )}
                   </td>
                   <td className="px-4 py-3">
                     <div className="font-medium text-gray-900 text-xs">{wo.part_name}</div>
