@@ -104,6 +104,7 @@ beforeEach(() => {
     id: 'rev-1', app_id: 'app-1', revision: 1, change_note: 'added torque check',
     steps: [{ id: 's0', name: 'Safety Check', order: 0, widgets: [] }],
     variables: [], step_groups: [], schema_version: 2,
+    approval_required: 0,
     published_by_user_id: 'u1', approved_by_user_id: null,
     published_by_name: 'Dana', approved_by_name: null,
     effective_at: '2026-08-12 09:00:00', created_at: '2026-08-12 09:00:00', run_count: 3,
@@ -278,5 +279,39 @@ describe('CompletionDetail says which revision the operator followed', () => {
     expect(snapshot.textContent).toContain('Safety Check');
     expect(snapshot.textContent).toContain('added torque check');
     expect(snapshot.textContent).not.toContain('Safety Check (revised)');
+  });
+
+  it('does not report a missing approver on a revision that never needed one', async () => {
+    // "No approver recorded" on an app that never required approval reads as a
+    // skipped signature. The revision froze the policy, so say which it was.
+    getCompletionWithSessions.mockResolvedValue({
+      sessions: [],
+      app_revision_id: 'rev-1',
+      app_revision: { revision: 1, published_by_name: 'Dana', effective_at: '2026-08-12 09:00:00' },
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /Ran against Rev 1/ }));
+    expect(await screen.findByText('Approval was not required for this app')).toBeTruthy();
+    expect(screen.queryByText('No approver recorded')).toBeNull();
+  });
+
+  it('names the approver on a revision that required one', async () => {
+    getCompletionWithSessions.mockResolvedValue({
+      sessions: [],
+      app_revision_id: 'rev-1',
+      app_revision: { revision: 1, published_by_name: 'Dana', effective_at: '2026-08-12 09:00:00' },
+    });
+    getAppRevision.mockResolvedValue({
+      id: 'rev-1', app_id: 'app-1', revision: 1, change_note: 'added torque check',
+      steps: [{ id: 's0', name: 'Safety Check', order: 0, widgets: [] }],
+      variables: [], step_groups: [], schema_version: 2,
+      approval_required: 1,
+      published_by_user_id: 'u1', approved_by_user_id: 'u2',
+      published_by_name: 'Dana', approved_by_name: 'Quality Lead',
+      effective_at: '2026-08-12 09:00:00', created_at: '2026-08-12 09:00:00', run_count: 3,
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: /Ran against Rev 1/ }));
+    expect(await screen.findByText('Approved by Quality Lead')).toBeTruthy();
   });
 });

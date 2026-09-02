@@ -361,7 +361,7 @@ describe('An app with runs but no revision starts at Rev 1, and nothing is backd
     });
     token = signup.json.token;
     appId = (await api('POST', '/api/apps', { token, body: { name: 'Legacy App' } })).json.id;
-    await api('PUT', `/api/apps/${appId}`, { token, body: { steps: stepsV1(), status: 'published' } });
+    await api('PUT', `/api/apps/${appId}`, { token, body: { steps: stepsV1() } });
     // A run from before change control existed: no revision was live.
     oldRun = (await api('POST', '/api/completions', { token, body: { app_id: appId, operator_name: 'Ada' } })).json.id;
   });
@@ -410,5 +410,307 @@ describe('The 010 migration is additive and idempotent', () => {
       d.close();
       for (const ext of ['', '-shm', '-wal']) { try { fs.unlinkSync(copy + ext); } catch { /* ignore */ } }
     }
+  });
+});
+
+
+// ── What the app SERVES vs what the builder EDITS ────────────────────────────
+// The bug this closes: the player loads GET /api/apps/:id, which used to return
+// the edited draft, while the run was stamped with the app's current revision.
+// An operator followed unpublished steps and the run page then confidently
+// showed them Rev 1's steps instead — the stamp was a lie and the builder's
+// "operators keep running revision N" banner promised the opposite.
+
+describe('An app serves the revision operators run, not the draft', () => {
+  let token, appId, opToken;
+
+  before(async () => {
+    const signup = await api('POST', '/api/auth/signup', {
+      body: { company_name: 'Served Co', email: 'admin@served.test', password: 'SecretPass1', display_name: 'Sam' },
+    });
+    token = signup.json.token;
+    appId = (await api('POST', '/api/apps', { token, body: { name: 'Served App' } })).json.id;
+    await api('PUT', `/api/apps/${appId}`, { token, body: { steps: stepsV1(), schema_version: 2 } });
+    await api('POST', `/api/apps/${appId}/publish`, { token, body: { change_note: 'rev 1' } });
+
+    const op = await api('POST', '/api/users', {
+      token, body: { email: 'op@served.test', display_name: 'Olga Operator', password: 'SecretPass1', role: 'operator' },
+    });
+    assert.equal(op.status, 201, JSON.stringify(op.json));
+    const login = await api('POST', '/api/auth/login', { body: { email: 'op@served.test', password: 'SecretPass1' } });
+    assert.equal(login.status, 200, JSON.stringify(login.json));
+    opToken = login.json.token;
+  });
+
+  it('serves the published snapshot after the draft is edited', async () => {
+    const edited = stepsV1();
+    edited[0].name = 'Torque the bracket HARDER';
+    await api('PUT', `/api/apps/${appId}`, { token, body: { steps: edited } });
+
+    const served = await api('GET', `/api/apps/${appId}`, { token });
+    assert.equal(served.status, 200);
+    assert.equal(served.json.steps[0].name, 'Torque the bracket',
+      'the player must receive the published steps, never the unpublished draft');
+    assert.equal(served.json.served_revision, 1);
+    assert.equal(served.json.is_draft, false);
+    assert.equal(served.json.has_unpublished_changes, true);
+
+    const snap = await api('GET', `/api/apps/${appId}/revisions/1`, { token });
+    assert.equal(JSON.stringify(served.json.steps), JSON.stringify(snap.json.steps),
+      'what the player receives must be byte-identical to the snapshot the run page shows');
+  });
+
+  it('gives the builder the draft, and only the builder', async () => {
+    const draft = await api('GET', `/api/apps/${appId}?draft=1`, { token });
+    assert.equal(draft.status, 200);
+    assert.equal(draft.json.steps[0].name, 'Torque the bracket HARDER');
+    assert.equal(draft.json.is_draft, true);
+
+    const asOperator = await api('GET', `/api/apps/${appId}?draft=1`, { token: opToken });
+    assert.equal(asOperator.status, 403, 'an operator client cannot read unpublished work');
+
+    const operatorRead = await api('GET', `/api/apps/${appId}`, { token: opToken });
+    assert.equal(operatorRead.status, 200);
+    assert.equal(operatorRead.json.steps[0].name, 'Torque the bracket');
+  });
+
+  it('stamps a run started after the edit with the revision it was actually served', async () => {
+    const run = await api('POST', '/api/completions', { token, body: { app_id: appId, operator_name: 'Ada' } });
+    const detail = await api('GET', `/api/completions/${run.json.id}`, { token });
+    assert.equal(detail.json.app_revision.revision, 1);
+
+    const served = await api('GET', `/api/apps/${appId}`, { token });
+    const snap = await api('GET', `/api/apps/${appId}/revisions/${detail.json.app_revision.revision}`, { token });
+    assert.equal(JSON.stringify(snap.json.steps), JSON.stringify(served.json.steps),
+      'the stamp names the definition the operator was handed');
+  });
+
+  it('keeps every run of a next-unit loop on the same served revision', async () => {
+    // The player starts each unit through the same POST /api/completions, so a
+    // batch of units cannot straddle two definitions unless somebody publishes
+    // mid-batch — and then the next unit is stamped with the new one, honestly.
+    const ids = [];
+    for (let i = 0; i < 3; i++) {
+      const r = await api('POST', '/api/completions', { token, body: { app_id: appId, operator_name: 'Ada' } });
+      ids.push(r.json.id);
+    }
+    const stamps = [];
+    for (const runId of ids) {
+      const d = await api('GET', `/api/completions/${runId}`, { token });
+      stamps.push(d.json.app_revision_id);
+    }
+    assert.equal(new Set(stamps).size, 1, `the loop straddled revisions: ${JSON.stringify(stamps)}`);
+    assert.ok(stamps[0], 'every unit carries a revision');
+
+    // Publish the drifted draft: units started after it record Rev 2.
+    const pub = await api('POST', `/api/apps/${appId}/publish`, { token, body: { change_note: 'harder torque' } });
+    assert.equal(pub.json.revision, 2);
+    const next = await api('POST', '/api/completions', { token, body: { app_id: appId, operator_name: 'Ada' } });
+    const nextDetail = await api('GET', `/api/completions/${next.json.id}`, { token });
+    assert.equal(nextDetail.json.app_revision.revision, 2);
+    const first = await api('GET', `/api/completions/${ids[0]}`, { token });
+    assert.equal(first.json.app_revision.revision, 1, 'the earlier units did not move');
+  });
+
+  it('serves the app as-is while it has never been published under change control', async () => {
+    const plain = (await api('POST', '/api/apps', { token, body: { name: 'Never Published' } })).json.id;
+    await api('PUT', `/api/apps/${plain}`, { token, body: { steps: stepsV1() } });
+    const served = await api('GET', `/api/apps/${plain}`, { token });
+    assert.equal(served.json.steps[0].name, 'Torque the bracket');
+    assert.equal(served.json.served_revision, null);
+    assert.equal(served.json.is_draft, true);
+    const run = await api('POST', '/api/completions', { token, body: { app_id: plain, operator_name: 'Ada' } });
+    const detail = await api('GET', `/api/completions/${run.json.id}`, { token });
+    assert.equal(detail.json.app_revision_id, null, 'no revision was served, so none is claimed');
+  });
+});
+
+// ── The back doors ───────────────────────────────────────────────────────────
+
+describe('Publishing has one door', () => {
+  let token, appId;
+
+  before(async () => {
+    const signup = await api('POST', '/api/auth/signup', {
+      body: { company_name: 'One Door Co', email: 'admin@onedoor.test', password: 'SecretPass1', display_name: 'Dee' },
+    });
+    token = signup.json.token;
+    appId = (await api('POST', '/api/apps', { token, body: { name: 'Door App' } })).json.id;
+    await api('PUT', `/api/apps/${appId}`, { token, body: { steps: stepsV1() } });
+  });
+
+  it('refuses to publish through PUT /:id', async () => {
+    const put = await api('PUT', `/api/apps/${appId}`, { token, body: { status: 'published' } });
+    assert.equal(put.status, 400, `PUT published the app: ${JSON.stringify(put.json)}`);
+    assert.equal(put.json.code, 'USE_PUBLISH_ENDPOINT');
+    const app = await api('GET', `/api/apps/${appId}`, { token });
+    assert.equal(app.json.status, 'draft');
+    assert.equal(app.json.current_revision, 0);
+  });
+
+  it('refuses it on an app that is already published, rather than answering 200 to a no-op', async () => {
+    const live = (await api('POST', '/api/apps', { token, body: { name: 'Already Live' } })).json.id;
+    await api('PUT', `/api/apps/${live}`, { token, body: { steps: stepsV1() } });
+    await api('POST', `/api/apps/${live}/publish`, { token, body: { change_note: 'rev 1' } });
+    // Drift the draft, then try the old back door. A 200 here would tell the
+    // caller it had published the edit; it would not have.
+    const edited = stepsV1();
+    edited[0].name = 'Changed but not published';
+    await api('PUT', `/api/apps/${live}`, { token, body: { steps: edited } });
+    const put = await api('PUT', `/api/apps/${live}`, { token, body: { status: 'published' } });
+    assert.equal(put.status, 400, `a no-op publish answered ${put.status}`);
+    assert.equal(put.json.code, 'USE_PUBLISH_ENDPOINT');
+    const served = await api('GET', `/api/apps/${live}`, { token });
+    assert.equal(served.json.current_revision, 1, 'no revision was cut');
+    assert.equal(served.json.steps[0].name, 'Torque the bracket', 'operators still run Rev 1');
+  });
+
+  it('still lets a PUT unpublish, which destroys nothing', async () => {
+    await api('POST', `/api/apps/${appId}/publish`, { token, body: { change_note: 'live' } });
+    const down = await api('PUT', `/api/apps/${appId}`, { token, body: { status: 'draft' } });
+    assert.equal(down.status, 200, JSON.stringify(down.json));
+    assert.equal(down.json.status, 'draft');
+    assert.equal(down.json.current_revision, 1, 'unpublishing keeps the revision history');
+    const list = await api('GET', `/api/apps/${appId}/revisions`, { token });
+    assert.equal(list.json.revisions.length, 1);
+  });
+
+  it('refuses to delete an app that has runs or revisions', async () => {
+    const del = await api('DELETE', `/api/apps/${appId}`, { token });
+    assert.equal(del.status, 409, `an audit trail was deletable: ${JSON.stringify(del.json)}`);
+    assert.equal(del.json.code, 'HAS_HISTORY');
+    const still = await api('GET', `/api/apps/${appId}`, { token });
+    assert.equal(still.status, 200, 'the app survived');
+  });
+
+  it('still deletes an app that has no history at all', async () => {
+    const fresh = (await api('POST', '/api/apps', { token, body: { name: 'Nothing Happened Here' } })).json.id;
+    const del = await api('DELETE', `/api/apps/${fresh}`, { token });
+    assert.equal(del.status, 200, JSON.stringify(del.json));
+    assert.equal((await api('GET', `/api/apps/${fresh}`, { token })).status, 404);
+  });
+});
+
+describe('The approval gate travels with the app', () => {
+  let token, appId, viewerId, supervisorId;
+
+  before(async () => {
+    const signup = await api('POST', '/api/auth/signup', {
+      body: { company_name: 'Gate Co', email: 'admin@gate.test', password: 'SecretPass1', display_name: 'Gina' },
+    });
+    token = signup.json.token;
+    viewerId = (await api('POST', '/api/users', {
+      token, body: { email: 'viewer@gate.test', display_name: 'Vic Viewer', password: 'SecretPass1', role: 'viewer' },
+    })).json.id;
+    supervisorId = (await api('POST', '/api/users', {
+      token, body: { email: 'sup@gate.test', display_name: 'Sue Supervisor', password: 'SecretPass1', role: 'supervisor' },
+    })).json.id;
+
+    appId = (await api('POST', '/api/apps', { token, body: { name: 'Gated SOP' } })).json.id;
+    await api('PUT', `/api/apps/${appId}`, { token, body: { steps: stepsV1(), requires_approval: true } });
+  });
+
+  it('refuses an approver who could not edit the app themselves', async () => {
+    const pub = await api('POST', `/api/apps/${appId}/publish`, {
+      token, body: { change_note: 'issue 1', approved_by_user_id: viewerId },
+    });
+    assert.equal(pub.status, 400, `a viewer signed off a work instruction: ${JSON.stringify(pub.json)}`);
+    assert.equal(pub.json.code, 'APPROVER_ROLE_TOO_LOW');
+  });
+
+  it('accepts a supervisor', async () => {
+    const pub = await api('POST', `/api/apps/${appId}/publish`, {
+      token, body: { change_note: 'issue 1', approved_by_user_id: supervisorId },
+    });
+    assert.equal(pub.status, 200, JSON.stringify(pub.json));
+    const list = await api('GET', `/api/apps/${appId}/revisions`, { token });
+    assert.equal(list.json.revisions[0].approved_by_name, 'Sue Supervisor');
+    assert.equal(list.json.revisions[0].approval_required, 1, 'the policy in force is frozen with the revision');
+  });
+
+  it('carries the gate onto a duplicate', async () => {
+    const copy = await api('POST', `/api/apps/${appId}/duplicate`, { token, body: { name: 'Gated SOP copy' } });
+    assert.equal(copy.status, 201, JSON.stringify(copy.json));
+    const fetched = await api('GET', `/api/apps/${copy.json.id}`, { token });
+    assert.equal(fetched.json.requires_approval, 1, 'duplicating an app must not drop its approval gate');
+    const pub = await api('POST', `/api/apps/${copy.json.id}/publish`, { token, body: { change_note: 'copy live' } });
+    assert.equal(pub.status, 400);
+    assert.equal(pub.json.code, 'APPROVER_REQUIRED');
+  });
+
+  it('carries the gate through a saved template', async () => {
+    const tpl = await api('POST', `/api/apps/${appId}/save-as-template`, { token, body: { name: 'Gated template' } });
+    assert.equal(tpl.status, 201, JSON.stringify(tpl.json));
+    const made = await api('POST', '/api/apps/from-template', {
+      token, body: { template_id: tpl.json.id, name: 'From Gated Template' },
+    });
+    assert.equal(made.status, 201, JSON.stringify(made.json));
+    const fetched = await api('GET', `/api/apps/${made.json.id}`, { token });
+    assert.equal(fetched.json.requires_approval, 1, 'a template of a gated app makes gated apps');
+  });
+
+  it('records approval_required = 0 on a revision of an ungated app', async () => {
+    const plain = (await api('POST', '/api/apps', { token, body: { name: 'Ungated' } })).json.id;
+    await api('PUT', `/api/apps/${plain}`, { token, body: { steps: stepsV1() } });
+    await api('POST', `/api/apps/${plain}/publish`, { token, body: { change_note: 'first' } });
+    const snap = await api('GET', `/api/apps/${plain}/revisions/1`, { token });
+    assert.equal(snap.json.approval_required, 0);
+    assert.equal(snap.json.approved_by_name, null);
+  });
+});
+
+describe('The diff describes what actually changed', () => {
+  let token, appId;
+
+  before(async () => {
+    const signup = await api('POST', '/api/auth/signup', {
+      body: { company_name: 'Diff Co', email: 'admin@diff.test', password: 'SecretPass1', display_name: 'Dot' },
+    });
+    token = signup.json.token;
+    appId = (await api('POST', '/api/apps', { token, body: { name: 'Diff App' } })).json.id;
+    await api('PUT', `/api/apps/${appId}`, { token, body: { steps: stepsV1() } });
+    await api('POST', `/api/apps/${appId}/publish`, { token, body: { change_note: 'rev 1' } });
+  });
+
+  it('says nothing changed when nothing changed', async () => {
+    const preview = await api('GET', `/api/apps/${appId}/revisions/diff`, { token });
+    assert.equal(preview.status, 200);
+    assert.deepEqual(preview.json.diff, { added: [], removed: [], renamed: [], moved: [], changed_widgets: 0 });
+    assert.equal(preview.json.has_unpublished_changes, false);
+  });
+
+  it('reports a pure reorder as moved, not as nothing', async () => {
+    const reordered = [stepsV1()[1], stepsV1()[0]];
+    await api('PUT', `/api/apps/${appId}`, { token, body: { steps: reordered } });
+    const preview = await api('GET', `/api/apps/${appId}/revisions/diff`, { token });
+    assert.equal(preview.json.diff.moved.length, 2, `a reorder read as ${JSON.stringify(preview.json.diff)}`);
+    assert.deepEqual(preview.json.diff.added, []);
+    assert.deepEqual(preview.json.diff.removed, []);
+    assert.equal(preview.json.has_unpublished_changes, true);
+
+    const pub = await api('POST', `/api/apps/${appId}/publish`, { token, body: { change_note: 'reordered' } });
+    assert.equal(pub.json.diff.moved.length, 2, 'the recorded diff matches the preview');
+  });
+
+  it('does not call regenerated step ids a full rewrite', async () => {
+    // Duplicating an app — or pasting its steps back in — regenerates every
+    // step id. Pairing on ids alone would report an identical definition as
+    // two additions and two removals, and a publisher would read "the whole
+    // instruction sheet was replaced" when nothing changed.
+    const fresh = (await api('POST', '/api/apps', { token, body: { name: 'Regenerated Ids' } })).json.id;
+    await api('PUT', `/api/apps/${fresh}`, { token, body: { steps: stepsV1() } });
+    await api('POST', `/api/apps/${fresh}/publish`, { token, body: { change_note: 'rev 1' } });
+
+    const regenerated = stepsV1().map((step, i) => ({
+      ...step,
+      id: `regenerated-${i}`,
+      widgets: (step.widgets || []).map(w => ({ ...w, id: `regenerated-w-${i}` })),
+    }));
+    await api('PUT', `/api/apps/${fresh}`, { token, body: { steps: regenerated } });
+
+    const preview = await api('GET', `/api/apps/${fresh}/revisions/diff`, { token });
+    assert.deepEqual(preview.json.diff.added, [], `added: ${JSON.stringify(preview.json.diff)}`);
+    assert.deepEqual(preview.json.diff.removed, [], `removed: ${JSON.stringify(preview.json.diff)}`);
+    assert.deepEqual(preview.json.diff.renamed, []);
   });
 });

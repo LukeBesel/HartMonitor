@@ -376,7 +376,7 @@ router.post('/from-template', (req, res) => {
   if (built_in_key) {
     const t = MODEL_TEMPLATES.find(m => m.key === built_in_key);
     if (!t) return res.status(404).json({ error: 'Unknown built-in template' });
-    snapshot = { steps: t.steps, variables: t.variables, step_groups: [], description: t.description, sourceLabel: t.name };
+    snapshot = { steps: t.steps, variables: t.variables, step_groups: [], description: t.description, sourceLabel: t.name, requires_approval: 0 };
   } else {
     const row = db.prepare('SELECT * FROM app_templates WHERE id = ? AND company_id = ?')
       .get(template_id, req.companyId);
@@ -388,6 +388,7 @@ router.post('/from-template', (req, res) => {
         step_groups: JSON.parse(row.step_groups || '[]'),
         description: row.description,
         sourceLabel: row.name,
+        requires_approval: row.requires_approval ? 1 : 0,
       };
     } catch {
       return res.status(500).json({ error: 'Template snapshot is corrupted' });
@@ -399,11 +400,11 @@ router.post('/from-template', (req, res) => {
 
   const { steps, step_groups } = regenerateIds(snapshot.steps, snapshot.step_groups);
   const id = uuidv4();
-  db.prepare(`INSERT INTO apps (id, name, description, status, steps, variables, step_groups, company_id)
-              VALUES (?, ?, ?, 'draft', ?, ?, ?, ?)`)
+  db.prepare(`INSERT INTO apps (id, name, description, status, steps, variables, step_groups, company_id, requires_approval)
+              VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?)`)
     .run(id, name.trim(), snapshot.description || '',
       JSON.stringify(steps), JSON.stringify(Array.isArray(snapshot.variables) ? snapshot.variables : []),
-      JSON.stringify(step_groups), req.companyId);
+      JSON.stringify(step_groups), req.companyId, snapshot.requires_approval ? 1 : 0);
   logActivity(req.companyId, 'app', id, `App "${name.trim()}" created from template "${snapshot.sourceLabel}"`, req.user?.display_name);
   const app = db.prepare('SELECT * FROM apps WHERE id = ?').get(id);
   res.status(201).json({ ...app, steps: JSON.parse(app.steps), variables: JSON.parse(app.variables), step_groups: JSON.parse(app.step_groups || '[]') });
@@ -421,13 +422,16 @@ router.post('/:id/save-as-template', (req, res) => {
   }
 
   const id = uuidv4();
-  db.prepare(`INSERT INTO app_templates (id, company_id, name, description, steps, variables, step_groups, created_by)
-              VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
+  // The approval policy travels with the snapshot: a template taken from a
+  // gated app makes gated apps, or the gate is one "Save as template" away from
+  // being gone.
+  db.prepare(`INSERT INTO app_templates (id, company_id, name, description, steps, variables, step_groups, created_by, requires_approval)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, req.companyId,
       (name && name.trim()) || app.name,
       typeof description === 'string' ? description : (app.description || ''),
       app.steps || '[]', app.variables || '[]', app.step_groups || '[]',
-      req.user?.display_name || '');
+      req.user?.display_name || '', app.requires_approval ? 1 : 0);
   logActivity(req.companyId, 'app', app.id, `App "${app.name}" saved as template`, req.user?.display_name);
   const row = db.prepare('SELECT * FROM app_templates WHERE id = ?').get(id);
   res.status(201).json(templateSummary(row));
@@ -470,14 +474,16 @@ router.post('/:id/duplicate', (req, res) => {
   const { steps, step_groups } = regenerateIds(parsedSteps, parsedGroups);
 
   const id = uuidv4();
+  // A copy of a gated app is a gated app. Otherwise "Duplicate" is a one-click
+  // way to publish the same work instruction with nobody's signature on it.
   db.prepare(`INSERT INTO apps (id, name, description, status, steps, variables, step_groups, company_id,
-              department_id, site_id, station_id, show_takt_warnings, schema_version)
-              VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+              department_id, site_id, station_id, show_takt_warnings, schema_version, requires_approval)
+              VALUES (?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(id, name, app.description || '', JSON.stringify(steps), app.variables || '[]',
       JSON.stringify(step_groups), req.companyId,
       app.department_id || null, app.site_id || null, app.station_id || null,
       app.show_takt_warnings === undefined ? 1 : app.show_takt_warnings,
-      app.schema_version ?? 1);
+      app.schema_version ?? 1, app.requires_approval ? 1 : 0);
   logActivity(req.companyId, 'app', id, `App "${name}" duplicated from "${app.name}"`, req.user?.display_name);
   const created = db.prepare('SELECT * FROM apps WHERE id = ?').get(id);
   res.status(201).json({
@@ -488,9 +494,28 @@ router.post('/:id/duplicate', (req, res) => {
   });
 });
 
+// ─── GET /:id — WHAT OPERATORS RUN, unless you ask for the draft ─────────────
+// This endpoint feeds the player, the kiosk, station screens, previews and the
+// run-detail page, and a run is stamped with the app's current revision at
+// start. So it serves the LIVE REVISION'S FROZEN SNAPSHOT: if it handed back an
+// edited draft, an operator would follow unpublished steps while the run
+// claimed — and the run page displayed — the published ones. The builder is the
+// only caller that wants the draft, and asks for it with ?draft=1.
+//
+// An app that has never been published under change control has no snapshot, so
+// it serves itself; runs against it are stamped NULL ("Revision not recorded").
 router.get('/:id', (req, res) => {
   const app = db.prepare('SELECT * FROM apps WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!app) return res.status(404).json({ error: 'Not found' });
+
+  const wantsDraft = req.query.draft === '1' || req.query.draft === 'true';
+  if (wantsDraft && (ROLE_LEVELS[req.user?.role] ?? 0) < ROLE_LEVELS.supervisor) {
+    // An operator's client has no business reading unpublished work — and if it
+    // could, it would run steps no revision vouches for.
+    return res.status(403).json({ error: 'Requires supervisor role or higher', code: 'FORBIDDEN' });
+  }
+
+  const { definition, revision, isDraft } = appRevisions.servedDefinition(app, { draft: wantsDraft });
   // Change-control state travels with the app: which numbered revision is live
   // (0 = never published under change control), whether publishing needs a
   // second name on it, and whether the draft in front of the builder has
@@ -498,12 +523,16 @@ router.get('/:id', (req, res) => {
   const latest = appRevisions.latestRevision(req.companyId, app.id);
   res.json({
     ...app,
-    steps: JSON.parse(app.steps),
-    variables: JSON.parse(app.variables),
-    step_groups: JSON.parse(app.step_groups || '[]'),
+    steps: JSON.parse(definition.steps || '[]'),
+    variables: JSON.parse(definition.variables || '[]'),
+    step_groups: JSON.parse(definition.step_groups || '[]'),
+    schema_version: definition.schema_version ?? app.schema_version ?? 1,
     current_revision: app.current_revision || 0,
     requires_approval: app.requires_approval ? 1 : 0,
     has_unpublished_changes: appRevisions.hasUnpublishedChanges(app, latest),
+    /** The revision these steps ARE, or null when this is the draft. */
+    served_revision: revision,
+    is_draft: isDraft,
   });
 });
 
@@ -520,6 +549,28 @@ router.get('/:id/revisions', (req, res) => {
     current_revision: app.current_revision || 0,
     requires_approval: app.requires_approval ? 1 : 0,
     revisions: appRevisions.listRevisions(req.companyId, req.params.id),
+  });
+});
+
+// GET /:id/revisions/diff — what publishing right now would change.
+// Computed by the SAME function that records the diff at publish time, against
+// the SAME stored blobs, so the preview in the publish modal and the diff in
+// the change-control record can never disagree — and a client-side comparison
+// against a differently-normalised copy of the steps cannot invent changes
+// nobody made.
+// ROUTE ORDER: registered before /:id/revisions/:n so "diff" is never read as a
+// revision number.
+router.get('/:id/revisions/diff', (req, res) => {
+  const app = db.prepare('SELECT * FROM apps WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
+  if (!app) return res.status(404).json({ error: 'Not found' });
+  const latest = appRevisions.latestRevision(req.companyId, req.params.id);
+  res.json({
+    current_revision: app.current_revision || 0,
+    next_revision: (app.current_revision || 0) + 1,
+    // Null on a first publish: there is nothing to compare against, and an
+    // empty diff would read as "nothing changed".
+    diff: latest ? appRevisions.diff(latest, app) : null,
+    has_unpublished_changes: appRevisions.hasUnpublishedChanges(app, latest),
   });
 });
 
@@ -739,6 +790,26 @@ router.put('/:id', (req, res) => {
     return res.status(400).json({ error: 'schema_version must be 1 or 2', code: 'INVALID_TRIGGER', path: 'schema_version' });
   }
 
+  // Publishing is a change-control event, not a field. A PUT could otherwise
+  // flip an app live with no revision, no change note and no approver — the
+  // exact back door this feature exists to close. Unpublishing (→ 'draft') is
+  // still a plain edit: it takes the app off the floor and destroys nothing.
+  // Refused even when the app is ALREADY published: answering 200 to a caller
+  // that believes it just published something — while no revision was cut and
+  // operators keep running the old one — is the same lie in a quieter voice.
+  if (status !== undefined) {
+    if (status === 'published') {
+      return res.status(400).json({
+        error: 'Publish through the publish endpoint so the change is recorded',
+        code: 'USE_PUBLISH_ENDPOINT',
+        message: 'Publishing cuts a numbered revision with a change note — POST /api/apps/:id/publish.',
+      });
+    }
+    if (status !== 'draft') {
+      return res.status(400).json({ error: "status must be 'draft' or 'published'", code: 'INVALID_STATUS' });
+    }
+  }
+
   // Whether an app needs a second signature to publish is a change-control
   // policy, not an editing detail — a supervisor can edit and publish the app,
   // but only a manager decides that publishing it needs an approver at all.
@@ -830,12 +901,21 @@ router.post('/:id/publish', (req, res) => {
       });
     }
     // Tenant-scoped: another company's user can never sign off this app.
-    const approver = db.prepare('SELECT id, display_name FROM users WHERE id = ? AND company_id = ? AND is_active = 1')
+    const approver = db.prepare('SELECT id, display_name, role FROM users WHERE id = ? AND company_id = ? AND is_active = 1')
       .get(requested, req.companyId);
     if (!approver) {
       return res.status(400).json({
         error: 'The approver must be an active user in this company',
         code: 'APPROVER_NOT_FOUND',
+      });
+    }
+    // An approval is only worth the authority behind it. A viewer cannot even
+    // edit an app; naming one as the approver would make the signature
+    // decorative, which is worse than having none.
+    if ((ROLE_LEVELS[approver.role] ?? 0) < ROLE_LEVELS.supervisor) {
+      return res.status(400).json({
+        error: 'An approver must be a supervisor or above',
+        code: 'APPROVER_ROLE_TOO_LOW',
       });
     }
     approverUserId = approver.id;
@@ -875,9 +955,29 @@ router.post('/:id/publish', (req, res) => {
   });
 });
 
+// ─── DELETE /:id — only an app with no history ───────────────────────────────
+// `completions` cascades on app_id, so deleting an app that has been run erases
+// every record of the parts built with it, and its published revisions become
+// snapshots nothing points at. That is an audit trail deleted by one click on a
+// list screen. An app that has been run is retired by unpublishing it — it
+// leaves the floor and its history survives.
 router.delete('/:id', (req, res) => {
   const app = db.prepare('SELECT * FROM apps WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!app) return res.status(404).json({ error: 'Not found' });
+
+  const runs = db.prepare('SELECT COUNT(*) AS c FROM completions WHERE app_id = ? AND company_id = ?')
+    .get(req.params.id, req.companyId).c;
+  const revisions = db.prepare('SELECT COUNT(*) AS c FROM app_revisions WHERE app_id = ? AND company_id = ?')
+    .get(req.params.id, req.companyId).c;
+  if (runs > 0 || revisions > 0) {
+    return res.status(409).json({
+      error: 'This app has history and cannot be deleted',
+      code: 'HAS_HISTORY',
+      message: 'This app has recorded runs or published revisions — deleting it would erase the record of what operators ran. Unpublish it to take it off the floor instead.',
+      runs, revisions,
+    });
+  }
+
   db.prepare('DELETE FROM apps WHERE id = ? AND company_id = ?').run(req.params.id, req.companyId);
   logActivity(req.companyId, 'app', req.params.id, `App "${app.name}" deleted`, req.user?.display_name);
   res.json({ success: true });

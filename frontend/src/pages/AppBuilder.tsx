@@ -5,7 +5,7 @@
 // the typed saveApp client; v1 apps load through normalizeApp.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, useSearchParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
 import type { AppSavePayload } from '../api/client';
 import {
@@ -29,7 +29,7 @@ import { arrayMove } from '@dnd-kit/sortable';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { useAuth } from '../context/AuthContext';
 import {
-  publishRevision, getAppRevision, describeDiff, diffSteps, setRequiresApproval,
+  publishRevision, getAppDraft, getRevisionDiff, describeDiff, setRequiresApproval,
   type RevisionDiff,
 } from '../api/revisions';
 
@@ -43,11 +43,16 @@ interface ControlState {
 }
 
 /** A colleague who could sign off a publish. */
-interface CompanyUser { id: string; display_name: string; role: string }
+interface CompanyUser { id: string; display_name: string; role: string; is_active?: number }
+
+/** Roles whose approval carries authority — mirrors the server's supervisor+
+ *  check in routes/apps.js. */
+const APPROVER_ROLES = ['supervisor', 'manager', 'developer'];
 const ZOOM_STEPS = [0.5, 0.65, 0.8, 1, 1.25, 1.5];
 
 export default function AppBuilder() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { canEdit, user, isAtLeast } = useAuth();
   const [app, setApp] = useState<App | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -77,7 +82,10 @@ export default function AppBuilder() {
   const loadApp = useCallback(() => {
     if (!id) return;
     setLoadError(null);
-    api.getApp(id)
+    // ?draft=1: the builder is the one caller that edits, so it is the one
+    // caller that must see unpublished work. Everybody else — the player, a
+    // station screen, a preview, the run detail page — gets the live revision.
+    getAppDraft(id)
       .then((raw: App & Partial<ControlState>) => {
         setControl({
           current_revision: raw.current_revision ?? 0,
@@ -114,7 +122,12 @@ export default function AppBuilder() {
   useEffect(() => {
     if (!control.requires_approval) return;
     api.getUsers()
-      .then((rows: CompanyUser[]) => setCompanyUsers(rows.filter(u => u.id !== user?.id)))
+      // Never the author, never an inactive account, and never someone who
+      // could not edit the app themselves — an approval is worth the authority
+      // behind it. The server enforces the same bar.
+      .then((rows: CompanyUser[]) => setCompanyUsers(
+        rows.filter(u => u.id !== user?.id && u.is_active !== 0 && APPROVER_ROLES.includes(u.role)),
+      ))
       .catch(() => {});
   }, [control.requires_approval, user?.id]);
 
@@ -347,6 +360,31 @@ export default function AppBuilder() {
     }
   };
 
+  // Opening the publish modal SAVES first, so the diff it shows and the
+  // revision it cuts describe the same thing. (Publishing saves anyway; doing
+  // it here means the preview cannot be a step behind the editor.)
+  const openPublishModal = useCallback(async () => {
+    const current = appRef.current;
+    if (canEdit && dirty && current) {
+      const ok = await save(current);
+      if (!ok) return;
+    }
+    setShowPublishModal(true);
+  }, [canEdit, dirty, save]);
+
+  // Deep link: /apps/:id/build?publish=1 lands straight in the publish modal,
+  // so a "Publish in builder" button elsewhere can hand the job over.
+  const publishParam = searchParams.get('publish');
+  const publishDeepLinkDone = useRef(false);
+  useEffect(() => {
+    if (publishParam !== '1' || !app || !canEdit || publishDeepLinkDone.current) return;
+    publishDeepLinkDone.current = true;
+    setShowPublishModal(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete('publish');
+    setSearchParams(next, { replace: true });
+  }, [publishParam, app, canEdit, searchParams, setSearchParams]);
+
   // ── Zoom helpers ────────────────────────────────────────────────────────────
 
   const zoomIdx = typeof zoom === 'number' ? ZOOM_STEPS.indexOf(zoom) : -1;
@@ -466,7 +504,7 @@ export default function AppBuilder() {
             </button>
           )}
           {canEdit && (
-            <button onClick={() => setShowPublishModal(true)} className="wb-btn-primary !min-h-[34px] !text-[12.5px]">
+            <button onClick={() => { void openPublishModal(); }} className="wb-btn-primary !min-h-[34px] !text-[12.5px]">
               <Globe size={13} /> Publish
             </button>
           )}
@@ -691,20 +729,22 @@ function PublishModal({
   const nextRevision = control.current_revision + 1;
   const isFirst = control.current_revision === 0;
 
-  // What this publish changes for operators, measured against the snapshot they
-  // are running right now — not against the last thing this browser saved.
+  // What this publish changes for operators. Computed BY THE SERVER, from the
+  // same stored blobs and the same function that will record the diff when the
+  // revision is cut — a comparison done here against a differently-normalised
+  // copy of the steps invented "3 fields changed" on apps nobody had touched.
   useEffect(() => {
     let cancelled = false;
     if (isFirst) { setDiff(null); setDiffUnavailable(false); return; }
-    getAppRevision(app.id, control.current_revision)
-      .then(snapshot => {
+    getRevisionDiff(app.id)
+      .then(result => {
         if (cancelled) return;
-        setDiff(diffSteps(snapshot.steps ?? [], app.steps ?? []));
+        setDiff(result.diff);
         setDiffUnavailable(false);
       })
       .catch(() => { if (!cancelled) { setDiff(null); setDiffUnavailable(true); } });
     return () => { cancelled = true; };
-  }, [app.id, app.steps, control.current_revision, isFirst]);
+  }, [app.id, control.current_revision, isFirst]);
 
   const availableStations = departmentId
     ? stations.filter(s => s.department_id === departmentId)
@@ -778,6 +818,7 @@ function PublishModal({
           <Field label="What changed? (required)">
             <textarea
               className="wb-input"
+              aria-label="What changed? (required)"
               rows={3}
               value={changeNote}
               placeholder="e.g. added torque check to step 2"
@@ -790,7 +831,12 @@ function PublishModal({
               person publishing is never in the list. */}
           {!!control.requires_approval && (
             <Field label="Approved by (required)" hint="An approver must be someone other than you.">
-              <select className="wb-input" value={approverId} onChange={e => setApproverId(e.target.value)}>
+              <select
+                className="wb-input"
+                aria-label="Approved by (required)"
+                value={approverId}
+                onChange={e => setApproverId(e.target.value)}
+              >
                 <option value="">— Choose an approver —</option>
                 {approvers.map(u => (
                   <option key={u.id} value={u.id}>{u.display_name} · {u.role}</option>

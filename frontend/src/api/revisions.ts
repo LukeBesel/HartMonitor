@@ -12,7 +12,7 @@
 // failure change control exists to prevent.
 
 import { request } from './client';
-import type { Step, StepGroup, AppVariable } from '../types';
+import type { App, Step, StepGroup, AppVariable } from '../types';
 
 /** One row of an app's change-control record. `published_by_name` /
  *  `approved_by_name` are null when that user has since been deleted — print
@@ -27,6 +27,8 @@ export interface AppRevisionSummary {
   approved_by_user_id: string | null;
   published_by_name: string | null;
   approved_by_name: string | null;
+  /** The approval policy in force when this revision was cut. */
+  approval_required?: 0 | 1;
   /** How many runs this revision measured. */
   run_count: number;
 }
@@ -41,6 +43,10 @@ export interface AppRevisionList {
 /** The frozen snapshot — exactly the definition that was published. */
 export interface AppRevisionSnapshot extends AppRevisionSummary {
   app_id: string;
+  /** Whether approval was required WHEN THIS REVISION WAS CUT — not the app's
+   *  policy today. Without it, "no approver recorded" would misread a revision
+   *  that never needed one. */
+  approval_required: 0 | 1;
   steps: Step[];
   variables: AppVariable[];
   step_groups: StepGroup[];
@@ -53,6 +59,9 @@ export interface RevisionDiff {
   added: string[];
   removed: string[];
   renamed: { from: string; to: string }[];
+  /** Steps whose position changed. A pure reorder changes what an operator does
+   *  and must never read as "no step changes". */
+  moved: string[];
   changed_widgets: number;
 }
 
@@ -86,6 +95,30 @@ export interface RunRevisionStamp {
 export const publishRevision = (appId: string, input: PublishInput) =>
   request<PublishResult>(`/apps/${appId}/publish`, { method: 'POST', body: JSON.stringify(input) });
 
+/** The app AS THE BUILDER EDITS IT — the draft, including changes not yet
+ *  published. Plain GET /apps/:id serves the live revision's frozen snapshot
+ *  instead, because that is what operators run and what a run is stamped with.
+ *  Supervisor and above; anyone lower gets 403. */
+export const getAppDraft = (appId: string) =>
+  request<App & {
+    current_revision: number;
+    requires_approval: 0 | 1;
+    has_unpublished_changes: boolean;
+    served_revision: number | null;
+    is_draft: boolean;
+  }>(`/apps/${appId}?draft=1`);
+
+/** What publishing right now would change, computed by the server from the same
+ *  blobs and the same function that records the diff at publish time — so the
+ *  preview and the record cannot disagree. */
+export const getRevisionDiff = (appId: string) =>
+  request<{
+    current_revision: number;
+    next_revision: number;
+    diff: RevisionDiff | null;
+    has_unpublished_changes: boolean;
+  }>(`/apps/${appId}/revisions/diff`);
+
 /** An app's change-control record, newest revision first. */
 export const getAppRevisions = (appId: string) =>
   request<AppRevisionList>(`/apps/${appId}/revisions`);
@@ -109,39 +142,8 @@ export function describeDiff(diff: RevisionDiff | null): string | null {
   if (diff.added.length) parts.push(`${diff.added.length} step${diff.added.length === 1 ? '' : 's'} added`);
   if (diff.removed.length) parts.push(`${diff.removed.length} step${diff.removed.length === 1 ? '' : 's'} removed`);
   if (diff.renamed.length) parts.push(`${diff.renamed.length} renamed`);
+  if (diff.moved?.length) parts.push(`${diff.moved.length} step${diff.moved.length === 1 ? '' : 's'} moved`);
   if (diff.changed_widgets) parts.push(`${diff.changed_widgets} field${diff.changed_widgets === 1 ? '' : 's'} changed`);
   return parts.length ? parts.join(', ') : null;
 }
 
-/** The same comparison the server makes when it cuts a revision, run in the
- *  browser so the publish modal can show what is about to change BEFORE
- *  anybody commits it. Steps are matched on id — the builder keeps step ids
- *  across a rename, which is what makes a rename read as a rename rather than
- *  as an add plus a remove. */
-export function diffSteps(before: Step[], after: Step[]): RevisionDiff {
-  const key = (s: Step, i: number) => (s.id ? `id:${s.id}` : `idx:${i}:${s.name ?? ''}`);
-  const beforeMap = new Map((before ?? []).map((s, i) => [key(s, i), s]));
-  const afterMap = new Map((after ?? []).map((s, i) => [key(s, i), s]));
-  const added: string[] = [];
-  const removed: string[] = [];
-  const renamed: { from: string; to: string }[] = [];
-  let changedWidgets = 0;
-
-  afterMap.forEach((step, k) => {
-    const was = beforeMap.get(k);
-    if (!was) { added.push(step.name || 'Untitled step'); return; }
-    if ((was.name ?? '') !== (step.name ?? '')) {
-      renamed.push({ from: was.name || 'Untitled step', to: step.name || 'Untitled step' });
-    }
-    const wasWidgets = new Map((was.widgets ?? []).map((w, i) => [w.id || `idx:${i}`, w]));
-    const nowWidgets = new Map((step.widgets ?? []).map((w, i) => [w.id || `idx:${i}`, w]));
-    nowWidgets.forEach((widget, id) => {
-      const previous = wasWidgets.get(id);
-      if (!previous || JSON.stringify(previous) !== JSON.stringify(widget)) changedWidgets++;
-    });
-    wasWidgets.forEach((_w, id) => { if (!nowWidgets.has(id)) changedWidgets++; });
-  });
-  beforeMap.forEach((step, k) => { if (!afterMap.has(k)) removed.push(step.name || 'Untitled step'); });
-
-  return { added, removed, renamed, changed_widgets: changedWidgets };
-}

@@ -538,10 +538,18 @@ export default function CompletionDetail() {
                             <span className="font-semibold">Change note:</span> {snapshot.change_note}
                           </p>
                         )}
+                        {/* The policy that applied WHEN THIS REVISION WAS CUT.
+                            An app that never required approval must not read as
+                            one that skipped it, and a deleted approver must not
+                            read as no approver at all. */}
                         <p className="text-[11px] text-gray-500 mt-1">
                           {snapshot.approved_by_name
                             ? `Approved by ${snapshot.approved_by_name}`
-                            : 'No approver recorded'}
+                            : snapshot.approval_required
+                              ? snapshot.approved_by_user_id
+                                ? 'Approved by a user whose account has since been removed'
+                                : 'No approver recorded'
+                              : 'Approval was not required for this app'}
                         </p>
                         <ol className="mt-2 space-y-1.5">
                           {(snapshot.steps ?? []).map((step, i) => (
