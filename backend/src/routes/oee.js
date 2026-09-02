@@ -20,11 +20,16 @@ const router = express.Router();
 // station has no basis to measure. Nothing here is ever guessed: Performance
 // needs a configured ideal cycle time, Quality needs at least one run today,
 // and OEE itself is only reported when all three factors are real.
-function calcOEE(station) {
+function calcOEE(station, context = null) {
   const fullDayMinutes = (station.planned_hours_per_day || 8) * 60;
   // "Today" means the plant's today. Against UTC, a second-shift crew watched
   // every counter on this screen reset in the middle of their shift.
-  const day = plantDayShift(station.company_id);
+  //
+  // A caller looping over stations passes ONE context in, so a fleet of thirty
+  // machines resolves the company's day once instead of thirty times — and so
+  // every tile on the screen is measured against the same instant.
+  const ctx = context || plantTruth.plantContext(station.company_id);
+  const day = ctx.day;
 
   // Planned time ELAPSED SO FAR today, not the whole shift. Dividing today's
   // output by a full eight hours at ten in the morning reports a station
@@ -82,7 +87,7 @@ function calcOEE(station) {
   // Completions today for this station — the plant's day, counted once, by the
   // module that defines what "today" is.
   const scope = plantTruth.stationScope(station);
-  const completionsToday = plantTruth.finishedToday(station.company_id, scope, day);
+  const completionsToday = plantTruth.finishedToday(ctx, scope);
 
   // Performance: actual output vs the ideal cycle time. Without a configured
   // ideal cycle there is no yardstick, so Performance is reported as unknown
@@ -98,7 +103,7 @@ function calcOEE(station) {
   // inspected — the old `if (!Fail) pass++` counted it as good (and kept it in
   // the denominator), so a station that inspects nothing reported 100% quality.
   // If nothing was inspected today, quality is unmeasured, not perfect.
-  const verdicts = plantTruth.passRate(station.company_id, scope, 'today', day);
+  const verdicts = plantTruth.passRate(ctx, scope, 'today');
   const inspected = verdicts.sample;
   const quality = inspected > 0 ? verdicts.pass / inspected : null;
 
@@ -146,6 +151,8 @@ function calcOEE(station) {
 
 router.get('/', (req, res) => {
   const stations = db.prepare('SELECT * FROM stations WHERE company_id = ? ORDER BY name ASC').all(req.companyId);
+  // One day, resolved once, for every tile on the screen.
+  const ctx = plantTruth.plantContext(req.companyId);
   const result = stations.map(s => ({
     id: s.id,
     name: s.name,
@@ -156,7 +163,7 @@ router.get('/', (req, res) => {
     current_status_since: s.current_status_since || null,
     planned_hours_per_day: s.planned_hours_per_day || 8,
     ideal_cycle_seconds: s.ideal_cycle_seconds || 0,
-    oee: calcOEE(s),
+    oee: calcOEE(s, ctx),
   }));
   res.json(result);
 });

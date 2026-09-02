@@ -34,52 +34,12 @@ const router = express.Router();
 // UNqualified `app_id` in a query that also joins `work_orders` is an
 // "ambiguous column name" 500 for exactly the same reason.
 //
-// `completions` has no department_id. A completion belongs to its work order's
-// department, falling back to its station's department when the work order has
-// none (or there is no work order at all) — the same rule the joined queries
-// further down this file express as COALESCE(wo.department_id, st.department_id).
-// Here it is written as uncorrelated sub-selects over the id sets, which keeps
-// the fragment alias-agnostic (no outer table reference) and lets both
-// sub-selects carry `company_id = ?`, so a department id belonging to another
-// tenant matches nothing instead of widening the result.
-//
-// A completion with neither a work order nor a station has no department at all:
-// `station_id IN (…)` is NULL for it, so it is excluded from every specific
-// department — it can only ever appear in the unfiltered, plant-wide view. Same
-// for a completion whose work order carries no department and whose station
-// carries none. Nothing is silently filed under whichever department is on
-// screen.
-function departmentCompletionClause(p) {
-  return `(
-    ${p}work_order_id IN (SELECT id FROM work_orders WHERE company_id = ? AND department_id = ?)
-    OR (
-      (${p}work_order_id IS NULL
-       OR ${p}work_order_id NOT IN (SELECT id FROM work_orders WHERE company_id = ? AND department_id IS NOT NULL))
-      AND ${p}station_id IN (SELECT id FROM stations WHERE company_id = ? AND department_id = ?)
-    )
-  )`;
-}
-
-// A completion's SITE, written the same alias-agnostic way. Site follows a
-// different rule from department and app on purpose, and it is the rule the
-// rest of this file already uses (`/plant-view`, `/manager-view`, GET
-// /departments): a record with no site belongs to the whole company and stays
-// visible under every site, so selecting the auto-created primary site never
-// empties the page for a company that has never used sites. A record belonging
-// to a DIFFERENT site is excluded.
-function siteCompletionClause(p) {
-  return `(
-    ${p}work_order_id IN (SELECT id FROM work_orders WHERE company_id = ? AND (site_id = ? OR site_id IS NULL))
-    OR (
-      (${p}work_order_id IS NULL
-       OR ${p}work_order_id NOT IN (SELECT id FROM work_orders WHERE company_id = ? AND site_id IS NOT NULL))
-      AND (
-        ${p}station_id IS NULL
-        OR ${p}station_id IN (SELECT id FROM stations WHERE company_id = ? AND (site_id = ? OR site_id IS NULL))
-      )
-    )
-  )`;
-}
+// The DEPARTMENT and SITE rules themselves are not written here. They live in
+// src/plantTruth.js with every other definition this product must only have one
+// of, and are imported alias-agnostic. This file used to carry its own copy of
+// the site rule, and the copy had drifted: a completion whose work order has no
+// site but whose station belongs to ANOTHER site was counted here and not by the
+// KPI tile above it, so one page disagreed with itself.
 
 /**
  * @param req   the request, read for ?app_id / ?product_type_id / ?department_id
@@ -95,20 +55,12 @@ function completionFilter(req, alias = '') {
   if (req.query.app_id) { clauses.push(`${p}app_id = ?`); params.push(req.query.app_id); }
   if (req.query.product_type_id) { clauses.push(`${p}product_type_id = ?`); params.push(req.query.product_type_id); }
   if (req.query.department_id) {
-    clauses.push(departmentCompletionClause(p));
-    params.push(
-      req.companyId, req.query.department_id,   // work order's own department
-      req.companyId,                            // …unless that work order has none
-      req.companyId, req.query.department_id,   // …then fall back to the station's
-    );
+    clauses.push(plantTruth.departmentCompletionClause(p));
+    params.push(...plantTruth.departmentCompletionParams(req.companyId, req.query.department_id));
   }
   if (req.query.site_id) {
-    clauses.push(siteCompletionClause(p));
-    params.push(
-      req.companyId, req.query.site_id,         // work order's own site (or none)
-      req.companyId,                            // …unless that work order has one
-      req.companyId, req.query.site_id,         // …then fall back to the station's
-    );
+    clauses.push(plantTruth.siteCompletionClause(p));
+    params.push(...plantTruth.siteCompletionParams(req.companyId, req.query.site_id));
   }
   return { clause: clauses.length ? ' AND ' + clauses.join(' AND ') : '', params };
 }
@@ -132,10 +84,15 @@ router.get('/overview', (req, res) => {
   // The plant's day and the plant's counts, from the one module that defines
   // them. This used to bind its own date modifier and count its own runs, which
   // is how the same company read 62 here and 1 on Manager View.
+  // The plant's day, its date and its zone: resolved ONCE per request and
+  // threaded through every query below. Each of the calls this replaced re-read
+  // the company's timezone from org_settings, and two of them could land on
+  // different instants — which is how one page ends up with two "todays".
+  const ctx = plantTruth.plantContext(cid);
   const scope = plantTruth.scopeFromQuery(req);
   const totalCompletions  = db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed'${f.clause}`).get(cid, ...f.params).c;
-  const todayCompletions  = plantTruth.finishedToday(cid, scope);
-  const inProgress        = plantTruth.runningNow(cid, scope);
+  const todayCompletions  = plantTruth.finishedToday(ctx, scope);
+  const inProgress        = plantTruth.runningNow(ctx, scope);
   const totalApps         = db.prepare("SELECT COUNT(*) as c FROM apps WHERE company_id = ?").get(cid).c;
   const publishedApps     = db.prepare("SELECT COUNT(*) as c FROM apps WHERE company_id = ? AND status='published'").get(cid).c;
   const activeStations    = db.prepare("SELECT COUNT(*) as c FROM stations WHERE company_id = ? AND status='active'").get(cid).c;
@@ -152,14 +109,14 @@ router.get('/overview', (req, res) => {
   // `avgCycleTime` (whole minutes) stays on the payload for anything already
   // reading it, but nothing should render it — it is 0 for every sub-30-second
   // operation, which is exactly the lie above.
-  const cycle = plantTruth.avgCycle(cid, scope, 'all');
+  const cycle = plantTruth.avgCycle(ctx, scope, 'all');
   const avgCycleSeconds = cycle.seconds;
   const avgCycleTime = avgCycleSeconds === null ? null : Math.round(cycle.raw / 60);
 
   // Pass rate over every completed run that recorded a QC result (a run with
   // both a Pass and a Fail counts once, as a fail). No QC results = null, so
   // the UI can say "no data" instead of showing a 0% nobody measured.
-  const quality = plantTruth.passRate(cid, scope, 'all');
+  const quality = plantTruth.passRate(ctx, scope, 'all');
 
   res.json({
     totalCompletions, todayCompletions, inProgress, totalApps, publishedApps, activeStations,
@@ -173,8 +130,12 @@ router.get('/overview', (req, res) => {
     /** Why a null number is null, for the screen to print instead of a bare dash. */
     avg_cycle_reason: cycle.reason,
     pass_rate_reason: quality.reason,
+    /** Which question each number answered — this page's window is all time. */
+    avg_cycle_window: cycle.window,
+    pass_rate_window: quality.window,
     /** The day this company is having — what "today" means in todayCompletions. */
-    plant_date: plantToday(cid),
+    plant_date: ctx.plant_date,
+    timezone: ctx.timezone,
   });
 });
 
@@ -330,8 +291,9 @@ router.get('/manager-view', (req, res) => {
   // track" while the Command Center says 67% off the same rows — the disagreement
   // this whole workstream exists to end. Wave 2 deletes this endpoint's consumer;
   // until then it reads from the same place as everything else.
-  const scope = plantTruth.resolveScope(req.companyId, { siteId: site_id });
-  const woStates = plantTruth.workOrderStates(req.companyId, scope);
+  const ctx = plantTruth.plantContext(req.companyId);
+  const scope = plantTruth.resolveScope(ctx, { siteId: site_id });
+  const woStates = plantTruth.workOrderStates(ctx, scope);
   // The order this page has always been served in: `ORDER BY wo.priority DESC,
   // wo.scheduled_end ASC` — which SQLite sorts as TEXT, so it reads medium,
   // low, high, critical. Reproduced rather than corrected: changing what a
@@ -344,7 +306,10 @@ router.get('/manager-view', (req, res) => {
   // without the site filter a multi-site tenant read another site's departments
   // in its Department Summary (empty rows for departments it cannot see). The
   // canonical per-department figures come from one query set, not one per card.
-  const snapshots = plantTruth.departmentSnapshots(req.companyId, { siteId: site_id });
+  const snapshots = plantTruth.departmentSnapshots(ctx, {
+    // Same scope, same work orders, already selected and statused above.
+    scope, workOrderRows: woStates.rows,
+  });
   const managerRows = db.prepare(`SELECT id, manager_name FROM departments WHERE company_id = ?${siteClause}`)
     .all(req.companyId, ...siteParams);
   const managerById = Object.fromEntries(managerRows.map(d => [d.id, d.manager_name]));
@@ -400,9 +365,55 @@ router.get('/plant-view', (req, res) => {
   const cf  = completionFilter(req, 'completions');
   const cfc = completionFilter(req, 'c');
 
+  // The plant's day, date and zone: resolved ONCE and threaded through.
+  const ctx = plantTruth.plantContext(cid);
+
   // The page scope, resolved once by the module that owns the definition of it.
   // An id from another tenant narrows to nothing here rather than widening.
   const scope = plantTruth.scopeFromQuery(req);
+
+  // …and when it matched nothing this company owns, EVERY section is empty —
+  // not just the tiles. The KPI strip used to go to zero through the resolved
+  // scope while the throughput chart, the alert list and the recent-completions
+  // table kept using the raw parameter, so a foreign site id produced "0
+  // completed today" above six completions. A half-empty page is worse than an
+  // empty one: it reads as a real answer.
+  if (!scope.valid) {
+    return res.json({
+      scope: { site_id: null, department_id: null, app_id: null },
+      /** False when an id in the request belongs to no record this company owns. */
+      scope_valid: false,
+      plant_date: ctx.plant_date,
+      timezone: ctx.timezone,
+      kpis: {
+        total_completed_today: 0,
+        active_now: 0,
+        pass_rate: null,
+        pass_rate_sample: 0,
+        pass_rate_reason: plantTruth.REASONS.pass_rate,
+        pass_rate_window: '7d',
+        avg_cycle_time: null,
+        avg_cycle_seconds: null,
+        avg_cycle_basis: null,
+        avg_cycle_sample: 0,
+        avg_cycle_reason: plantTruth.REASONS.avg_cycle,
+        avg_cycle_window: 'all',
+        schedule_adherence: null,
+        work_orders_on_track: 0,
+        work_orders_total: 0,
+        on_track: 0,
+        open_work_orders: 0,
+        on_track_pct: null,
+        on_track_reason: plantTruth.REASONS.on_track,
+        on_track_basis: 'open_work_orders',
+      },
+      department_performance: [],
+      hourly_throughput: [],
+      work_order_summary: { on_track: 0, at_risk: 0, behind: 0, not_started: 0, completed: 0 },
+      active_alerts: [],
+      recent_completions: [],
+    });
+  }
 
   // Site filter for the queries below that are NOT part of the shared five
   // (hourly throughput, recent completions). A completion's "site" is its work
@@ -420,20 +431,20 @@ router.get('/plant-view', (req, res) => {
   // used to bind its own date modifier, run its own AVG and parse its own
   // pass/fail blobs — three copies of arithmetic that had already drifted apart
   // from the department page's copies by the time anyone noticed.
-  const todayCompleted = plantTruth.finishedToday(cid, scope);
-  const activeNow      = plantTruth.runningNow(cid, scope);
+  const todayCompleted = plantTruth.finishedToday(ctx, scope);
+  const activeNow      = plantTruth.runningNow(ctx, scope);
 
   // Seconds, for the same reason as /overview: rounding to whole minutes first
   // renders every sub-30-second operation as "0m", and a press, a pick-place or
   // a visual check is routinely under a minute. `avg_cycle_time` stays on the
   // payload in minutes for anything already reading it; nothing should render it.
-  const cycle = plantTruth.avgCycle(cid, scope, 'all');
+  const cycle = plantTruth.avgCycle(ctx, scope, 'all');
   const avgCycleSeconds = cycle.seconds;
   const avgCycleTime = avgCycleSeconds === null ? null : Math.round(cycle.raw / 60);
 
   // Pass rate over the last 7 days — this screen's window, unchanged, but no
   // longer its own implementation of what a pass rate is.
-  const quality = plantTruth.passRate(cid, scope, '7d');
+  const quality = plantTruth.passRate(ctx, scope, '7d');
   const passRate = quality.rate;
 
   // Share of this site's work orders currently on track (or already finished).
@@ -443,7 +454,7 @@ router.get('/plant-view', (req, res) => {
   // One query, one pass of the one on-track rule: the rows feed the alert list
   // and the department cards below, and the tally feeds the KPI strip, so the
   // strip and the cards can no longer count the same work orders differently.
-  const woStates = plantTruth.workOrderStates(cid, scope);
+  const woStates = plantTruth.workOrderStates(ctx, scope);
   const allWOs = woStates.rows;
 
   // `work_order_summary` has always folded overdue into behind (it has no
@@ -464,11 +475,11 @@ router.get('/plant-view', (req, res) => {
   // Picking one department in the page filter narrows this list to that card:
   // showing six cards under a one-department scope would contradict every other
   // number on the page.
-  const deptSnapshots = plantTruth.departmentSnapshots(cid, {
-    siteId: site_id,
-    departmentId: department_id,
-    appId: app_id,
-    productTypeId: req.query.product_type_id,
+  const deptSnapshots = plantTruth.departmentSnapshots(ctx, {
+    // The scope is already resolved and the work orders are already selected
+    // and statused, so neither happens a second time for the cards.
+    scope,
+    workOrderRows: allWOs,
     // This card's average has always been over ALL of a department's finished
     // runs, printed next to a count of today's. Left exactly as it was — wave 2
     // decides what the card should say, and quietly changing what a number
@@ -619,8 +630,11 @@ router.get('/plant-view', (req, res) => {
       department_id: department_id || null,
       app_id:        app_id || null,
     },
+    /** False when an id in the request belongs to no record this company owns. */
+    scope_valid: true,
     /** The day these tiles are reporting, and the clock it was read on. */
-    plant_date: plantToday(cid),
+    plant_date: ctx.plant_date,
+    timezone:   ctx.timezone,
     kpis: {
       total_completed_today: todayCompleted,
       active_now:            activeNow,
@@ -628,12 +642,17 @@ router.get('/plant-view', (req, res) => {
       pass_rate:             passRate,
       /** How many inspected runs are behind it. 0 ⇒ pass_rate is null. */
       pass_rate_sample:      quality.sample,
+      pass_rate_reason:      quality.reason,
+      pass_rate_window:      quality.window,
       avg_cycle_time:        avgCycleTime,
       avg_cycle_seconds:     avgCycleSeconds,
       /** 'hands_on' | 'elapsed' | 'mixed' | null — the label the tile must carry. */
       avg_cycle_basis:       cycle.basis,
       /** How many finished runs are behind it. 0 ⇒ avg_cycle_seconds is null. */
       avg_cycle_sample:      cycle.sample,
+      avg_cycle_reason:      cycle.reason,
+      /** This tile's average is over ALL time, not today. Named, not guessed. */
+      avg_cycle_window:      cycle.window,
       /** On track OR already finished, over every non-cancelled work order. */
       schedule_adherence:    scheduleAdherence,
       work_orders_on_track:  woSummary.on_track,
@@ -644,6 +663,7 @@ router.get('/plant-view', (req, res) => {
       on_track:              woStates.on_track,
       open_work_orders:      woStates.open_work_orders,
       on_track_pct:          woStates.on_track_pct,
+      on_track_reason:       woStates.on_track_reason,
       on_track_basis:        'open_work_orders',
     },
     department_performance: departmentPerformance,
@@ -1467,22 +1487,24 @@ router.get('/department/:id', (req, res) => {
   // different departments. The windows are this page's own (all-time average, a
   // 7-day pass rate) and unchanged — what is shared is how each is measured and
   // which day "today" is.
-  const scope = plantTruth.resolveScope(cid, { departmentId: dept.id });
-  const snapshot = plantTruth.snapshotOf(cid, scope);
+  const ctx = plantTruth.plantContext(cid);
+  const scope = plantTruth.resolveScope(ctx, { departmentId: dept.id });
+
+  // Work orders for this department, each carrying the one schedule status —
+  // selected once and handed to the snapshot rather than selected again by it.
+  const woStates = plantTruth.workOrderStates(ctx, scope);
+  const snapshot = plantTruth.snapshotOf(ctx, scope, { workOrderStates: woStates });
 
   const completedToday = snapshot.finished_today;
   const activeNow      = snapshot.running_now;
 
   // Seconds, for the same reason as /overview — see the note there.
-  const cycle = plantTruth.avgCycle(cid, scope, 'all');
+  const cycle = plantTruth.avgCycle(ctx, scope, 'all');
   const avgCycleSeconds = cycle.seconds;
   const avgCycleTime = avgCycleSeconds === null ? null : Math.round(cycle.raw / 60);
 
-  const quality = plantTruth.passRate(cid, scope, '7d');
+  const quality = plantTruth.passRate(ctx, scope, '7d');
   const passRate = quality.rate;
-
-  // Work orders for this department, each carrying the one schedule status.
-  const woStates = plantTruth.workOrderStates(cid, scope);
   const workOrders = woStates.rows.slice()
     .sort((a, b) => String(a.scheduled_end || '').localeCompare(String(b.scheduled_end || '')));
   // The page's existing pair: on track OR already finished, over every
@@ -1533,7 +1555,7 @@ router.get('/department/:id', (req, res) => {
     current_app_id: st.current_app_id,
     current_app_name: st.current_app_id ? (appNameById[st.current_app_id] || null) : null,
     active_completion: activeByStation[st.id] || null,
-    oee: calcOEE(st),
+    oee: calcOEE(st, ctx),
   }));
 
   const hourlyThroughput = db.prepare(`
@@ -1572,11 +1594,16 @@ router.get('/department/:id', (req, res) => {
       /** Pass rate over the last SEVEN DAYS — this page's window, not today's. */
       pass_rate:       passRate,
       pass_rate_sample: quality.sample,
+      pass_rate_reason: quality.reason,
+      pass_rate_window: quality.window,
       avg_cycle_time:  avgCycleTime,
       avg_cycle_seconds: avgCycleSeconds,
       /** 'hands_on' | 'elapsed' | 'mixed' | null — the label the tile must carry. */
       avg_cycle_basis: cycle.basis,
       avg_cycle_sample: cycle.sample,
+      avg_cycle_reason: cycle.reason,
+      /** This tile's average is over ALL time, not today. Named, not guessed. */
+      avg_cycle_window: cycle.window,
       /** On track OR already finished, over every non-cancelled order. */
       wos_on_track:    wosOnTrack,
       wos_total:       workOrders.length,
@@ -1585,6 +1612,7 @@ router.get('/department/:id', (req, res) => {
       on_track:            snapshot.on_track,
       open_work_orders:    snapshot.open_work_orders,
       on_track_pct:        snapshot.on_track_pct,
+      on_track_reason:     snapshot.on_track_reason,
       on_track_basis:      'open_work_orders',
       finished_today:      snapshot.finished_today,
       running_now:         snapshot.running_now,
@@ -1654,7 +1682,7 @@ router.get('/station/:id', (req, res) => {
   // adds read these. Work-order figures follow the station's department — a
   // station in no department has no work orders of its own, and says so with
   // zeros rather than borrowing the whole plant's.
-  const snapshot = plantTruth.floorSnapshot(req.companyId, { stationId: st.id });
+  const snapshot = plantTruth.floorSnapshot(plantTruth.plantContext(req.companyId), { stationId: st.id });
 
   res.json({
     plant_date: snapshot.plant_date,

@@ -614,7 +614,9 @@ export interface LeaderboardResponse {
 
 // Level 1: leaderboard ranked by department.
 export interface LeaderboardDepartment {
-  rank: number;
+  /** Null for the "No department" bucket: a pile of runs that belongs to no
+   *  place is not ranked against places. Render it as "Unranked", never "#". */
+  rank: number | null;
   department_id: string | null;
   department_name: string;
   department_color: string;

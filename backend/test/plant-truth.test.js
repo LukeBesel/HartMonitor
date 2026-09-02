@@ -284,9 +284,18 @@ describe('one definition of today', () => {
     // rather than from a second implementation of the same idea.
     process.env.DATABASE_PATH = DB_PATH;
     process.env.SEED_DEMO_DATA = 'false';
-    const { plantToday } = require('../src/plantDay');
+    const { plantToday, plantDayShift } = require('../src/plantDay');
     assert.equal(snap.plant_date, plantToday(A.companyId),
       'plant_date is plantToday(companyId), not a second opinion about it');
+
+    // The per-request context resolves the day ONCE and threads it through every
+    // query. It must be the same day plantDay.js would have handed each of them
+    // individually — resolving once is an optimisation, never a second rule.
+    const { plantContext } = require('../src/plantTruth');
+    const ctx = plantContext(A.companyId);
+    assert.equal(ctx.day, plantDayShift(A.companyId), 'the context binds plantDay\'s modifier');
+    assert.equal(ctx.plant_date, plantToday(A.companyId), 'and plantDay\'s date');
+    assert.equal(ctx.timezone, ZONE);
 
     const detail =
       `${ZONE} says it is ${localDate(ZONE, new Date())}, UTC says ${localDate('UTC', new Date())}; ` +
@@ -347,6 +356,28 @@ describe('one definition of today', () => {
     assert.equal(typeof after.pass_rate_reason, 'string');
     assert.strictEqual(after.finished_today, 1, 'the run still counts as finished');
     assert.ok(after.avg_cycle_sample >= 1, 'and it still has a duration');
+  });
+
+  it('names the window every measured number was taken over', async () => {
+    const snap = await get(A.token, '/api/floor/snapshot');
+    assert.equal(snap.avg_cycle_window, 'today', 'the floor snapshot is today, and says so');
+    assert.equal(snap.pass_rate_window, 'today');
+
+    // The screens that deliberately ask a WIDER question say which one, so the
+    // difference between two tiles is a stated question rather than a suspected
+    // bug. These windows are unchanged from before the consolidation.
+    const plant = await get(A.token, '/api/analytics/plant-view');
+    assert.equal(plant.kpis.avg_cycle_window, 'all');
+    assert.equal(plant.kpis.pass_rate_window, '7d');
+    const overview = await get(A.token, '/api/analytics/overview');
+    assert.equal(overview.avg_cycle_window, 'all');
+    assert.equal(overview.pass_rate_window, 'all');
+    const drill = await get(A.token, `/api/analytics/department/${A.dept.id}`);
+    assert.equal(drill.kpis.avg_cycle_window, 'all');
+    assert.equal(drill.kpis.pass_rate_window, '7d');
+    const listed = (await get(A.token, '/api/floor/departments')).departments[0];
+    assert.equal(listed.avg_cycle_window, 'today');
+    assert.equal(listed.pass_rate_window, 'today');
   });
 
   it('gives a measured pass rate its sample, and never confuses 0% with unmeasured', async () => {
@@ -460,6 +491,80 @@ describe('one definition of today', () => {
     assert.ok(!JSON.stringify(listing).includes('Assembly'));
   });
 
+  it('empties EVERY section of the Command Center for a foreign site, not just the tiles', async () => {
+    // The half-empty page is the dangerous one: "0 completed today" printed
+    // above a list of six completions reads as a real answer about a real
+    // department. The KPI strip used to narrow through the resolved scope while
+    // the charts and tables kept using the raw parameter.
+    const sitesA = await get(A.token, '/api/sites');
+    const plant = await get(B.token, `/api/analytics/plant-view?site_id=${sitesA[0].id}`);
+
+    assert.strictEqual(plant.scope_valid, false, 'the server says the scope matched nothing it owns');
+    assert.strictEqual(plant.kpis.total_completed_today, 0);
+    assert.strictEqual(plant.kpis.active_now, 0);
+    assert.strictEqual(plant.kpis.avg_cycle_seconds, null);
+    assert.strictEqual(plant.kpis.pass_rate, null);
+    assert.strictEqual(plant.kpis.work_orders_total, 0);
+    assert.deepStrictEqual(plant.department_performance, []);
+    assert.deepStrictEqual(plant.hourly_throughput, []);
+    assert.deepStrictEqual(plant.active_alerts, []);
+    assert.deepStrictEqual(plant.recent_completions, []);
+    assert.deepStrictEqual(plant.work_order_summary,
+      { on_track: 0, at_risk: 0, behind: 0, not_started: 0, completed: 0 });
+
+    // A department listing under a foreign site empties too, rows and all.
+    const list = await get(B.token, `/api/departments?site_id=${sitesA[0].id}`);
+    assert.deepStrictEqual(list, []);
+  });
+
+  it('every department row carries the canonical fields, even with no snapshot', async () => {
+    // A row that simply drops the fields makes the client branch on their
+    // absence, and a client that branches eventually renders undefined as 0.
+    const rows = await get(C.token, '/api/departments');
+    assert.ok(rows.length >= 1);
+    for (const row of rows) {
+      for (const key of ['plant_date', 'finished_today', 'running_now', 'avg_cycle_seconds',
+        'avg_cycle_sample', 'avg_cycle_reason', 'avg_cycle_window', 'pass_rate', 'pass_rate_sample',
+        'pass_rate_window', 'on_track', 'open_work_orders', 'on_track_pct', 'on_track_basis']) {
+        assert.ok(key in row, `department row is missing ${key}`);
+      }
+      assert.equal(typeof row.finished_today, 'number');
+    }
+    // A department created a moment ago answers with the same keys and honest
+    // values rather than six queries' worth of zeroes.
+    const created = await create(C.token, '/api/departments', { name: 'Brand New' });
+    assert.strictEqual(created.finished_today, 0);
+    assert.strictEqual(created.avg_cycle_seconds, null);
+    assert.strictEqual(created.avg_cycle_sample, 0);
+    assert.strictEqual(created.pass_rate, null);
+    assert.strictEqual(created.on_track_pct, null);
+    assert.equal(typeof created.on_track_reason, 'string');
+  });
+
+  it('a repeated query parameter is a bad request, never a 500', async () => {
+    // ?site_id=1&site_id=2 arrives as an array. Bound straight into a statement
+    // it is "Too many parameter values" — a crash any visitor can trigger from
+    // the address bar.
+    for (const path of [
+      '/api/floor/snapshot?site_id=a&site_id=b',
+      '/api/floor/snapshot?department_id=a&department_id=b',
+      '/api/floor/snapshot?app_id=a&app_id=b&station_id=c&station_id=d',
+      '/api/floor/departments?site_id=a&site_id=b',
+    ]) {
+      const r = await api('GET', path, { token: A.token });
+      assert.ok(r.status < 500, `${path} → ${r.status} ${JSON.stringify(r.json)}`);
+      assert.equal(r.status, 200, `${path} answers, emptily`);
+      assert.strictEqual(r.json.scope ? r.json.scope.valid : r.json.scope_valid, false);
+    }
+  });
+
+  it('a product type from another company narrows to nothing', async () => {
+    const r = await api('GET', `/api/floor/snapshot?product_type_id=${A.dept.id}`, { token: A.token });
+    assert.equal(r.status, 200);
+    assert.strictEqual(r.json.scope.valid, false, 'an id that is not one of this company\'s product types');
+    assert.strictEqual(r.json.finished_today, 0);
+  });
+
   // ── 5. The floor is not an upsell ──────────────────────────────────────────
 
   it('answers on a free plan — the floor view is the product, not a feature', async () => {
@@ -502,6 +607,12 @@ describe('one definition of today', () => {
 
     assert.equal(board.departments[0].department_name, 'Finishing');
     assert.strictEqual(board.departments[0].rank, 1);
+    // The type the page renders allows null, and the page prints "Unranked"
+    // rather than a bare '#'. Anything that is NOT null must be a real number.
+    for (const row of board.departments) {
+      assert.ok(row.rank === null || Number.isInteger(row.rank),
+        `rank must be an integer or null, got ${JSON.stringify(row.rank)}`);
+    }
     for (const row of board.departments.filter(d => d.department_id !== null)) {
       assert.equal(typeof row.rank, 'number', 'every real department is ranked');
     }

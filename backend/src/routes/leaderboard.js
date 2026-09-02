@@ -87,7 +87,9 @@ router.get('/departments', (req, res) => {
   // inherited Object.prototype member and inject "[object Object]" into the SQL.
   const period = Object.hasOwn(PERIODS, req.query.period) ? req.query.period : 'week';
   const periodFilter = PERIODS[period];
-  const day = plantDayShift(cid);
+  // One day for the whole request, shared with the per-department figures below.
+  const ctx = plantTruth.plantContext(cid);
+  const day = ctx.day;
   const periodArgs = periodParams(period, day);
   const periodDays = { today: 1, week: 7, month: 30, all: null }[period];
 
@@ -116,7 +118,7 @@ router.get('/departments', (req, res) => {
   // narrower on purpose — runs of a PUBLISHED app with no NCR against them, over
   // the chosen period — so `finished_today` rides alongside it rather than
   // replacing it, and the two are labelled rather than confused.
-  const snapshots = plantTruth.departmentSnapshots(cid);
+  const snapshots = plantTruth.departmentSnapshots(ctx);
   const snapshotById = Object.fromEntries(snapshots.departments.map(d => [d.department_id, d]));
 
   function shape(r) {

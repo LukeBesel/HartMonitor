@@ -17,7 +17,7 @@
 // auth as /api/analytics, and read-only, so there is no write role to gate.
 
 const express = require('express');
-const { floorSnapshot, departmentSnapshots } = require('../plantTruth');
+const { plantContext, floorSnapshot, departmentSnapshots } = require('../plantTruth');
 
 const router = express.Router();
 
@@ -27,7 +27,7 @@ const router = express.Router();
 // every rate null, `scope.valid: false` — rather than widening the answer or
 // echoing a name from the other tenant back at the caller.
 router.get('/snapshot', (req, res) => {
-  res.json(floorSnapshot(req.companyId, {
+  res.json(floorSnapshot(plantContext(req.companyId), {
     siteId: req.query.site_id,
     departmentId: req.query.department_id,
     appId: req.query.app_id,
@@ -41,7 +41,7 @@ router.get('/snapshot', (req, res) => {
 // The per-department strip every floor screen draws. A fixed number of queries
 // whatever the department count — the version this replaces cost six per card.
 router.get('/departments', (req, res) => {
-  res.json(departmentSnapshots(req.companyId, { siteId: req.query.site_id }));
+  res.json(departmentSnapshots(plantContext(req.companyId), { siteId: req.query.site_id }));
 });
 
 module.exports = router;

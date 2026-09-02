@@ -14,7 +14,7 @@
 // of those five numbers reads it from here, so two screens can disagree only if
 // they are deliberately asking different questions (a 7-day pass rate is not
 // the same question as today's), and when they do, the window is a parameter
-// here rather than arithmetic copied into a route.
+// here — and named on the payload — rather than arithmetic copied into a route.
 //
 // THE FIVE RULES it enforces:
 //
@@ -22,7 +22,10 @@
 //      from plantDay.js to BOTH sides — `date(completed_at, ?) = date('now', ?)`
 //      — so a second-shift crew's counters do not reset at 8pm Detroit time.
 //      `plant_date` rides on every answer so a screen can print the day it is
-//      actually reporting instead of guessing.
+//      actually reporting instead of guessing. The day, the date and the zone
+//      are resolved ONCE per request into a context (see plantContext) and
+//      threaded through every query, rather than each query re-reading the
+//      company's timezone setting for itself.
 //
 //   2. Unknown is NULL, never 0, and every number carries its sample. A plant
 //      that has inspected nothing has no pass rate — 0% reads as "everything
@@ -44,20 +47,30 @@
 //      run took, and are rounded exactly once on the way out.
 //
 //   5. A scope is either valid or empty — never widened. A department, site,
-//      app or station id belonging to another company resolves to an empty
-//      scope: every count is 0, every rate is null, and no name from the other
-//      tenant can appear in the answer.
+//      app, station or product type belonging to another company resolves to an
+//      empty scope: every count is 0, every rate is null, and no name from the
+//      other tenant can appear in the answer.
 //
-// ATTRIBUTION (unchanged from the queries this replaces): a completion belongs
-// to its work order's department, falling back to its station's department when
-// it ran without a work order. A completion with neither belongs to no
-// department and appears only in the plant-wide view. A record with no SITE
-// belongs to the whole company and stays visible under every site — otherwise
-// picking the auto-created primary site empties the page for the many companies
-// that never used sites.
+// ATTRIBUTION (one rule, written once, exported so the routers share it rather
+// than each keeping their own copy):
+//
+//   department — a completion belongs to its work order's department, falling
+//                back to its station's department when it ran without a work
+//                order. A completion with neither belongs to no department and
+//                appears only in the plant-wide view.
+//   site       — the same fallback: the work order's site, else the station's.
+//                A record whose effective site is NULL belongs to the whole
+//                company and stays visible under every site, so picking the
+//                auto-created primary site never empties the page for the many
+//                companies that never used sites. A record belonging to a
+//                DIFFERENT site is excluded.
 
 const db = require('./db');
-const { plantDayShift, plantToday, companyTimeZone } = require('./plantDay');
+// plantDay.js owns the plant's day. This module reads the company's zone and
+// the offset from it and resolves both derived values ONCE per request (see
+// plantContext); test/plant-truth.test.js asserts the result equals
+// plantDayShift() and plantToday() on every run, so the definition stays there.
+const { companyTimeZone, offsetMinutes } = require('./plantDay');
 const {
   avgRunSecondsSQL, avgRunBasisSQL, runSecondsSQL, roundSeconds,
 } = require('./cycleTime');
@@ -72,7 +85,67 @@ const REASONS = {
   on_track: 'no open work order to be on track with',
 };
 
+/** The measurement windows a caller may ask for. Named on every payload. */
+const WINDOWS = ['today', '7d', '30d', 'all'];
+
+// ─── The plant's day, resolved once ───────────────────────────────────────────
+
+/**
+ * The day context for ONE request: the SQL modifier, the calendar date and the
+ * zone, resolved together and threaded through every query below.
+ *
+ * It exists because the alternative is what this file replaced: eight or ten
+ * calls to plantDayShift()/plantToday() per request, each of which re-reads the
+ * company's timezone out of org_settings, and any one of which could be reading
+ * a different instant from its neighbours — which is precisely how a screen
+ * ends up with two "todays" on it.
+ *
+ * The values still come from plantDay.js. This resolves them; it does not
+ * redefine them.
+ */
+function plantContext(companyId, at = new Date()) {
+  // ONE read of the company's zone, and one offset computed from it, rather
+  // than a settings read per figure on the page. plantDayShift() and
+  // plantToday() each re-read org_settings internally, which is fine once and
+  // wasteful eight times — and, worse, two of those reads can straddle midnight
+  // and put two different "todays" on one screen.
+  //
+  // The two values below are plantDay's, not new rules: the modifier is
+  // plantDayShift's, the date is plantToday's, and test/plant-truth.test.js
+  // asserts this context equals BOTH on every run, so neither can drift.
+  const timeZone = companyTimeZone(companyId);
+  const minutes = offsetMinutes(timeZone, at);
+  return {
+    company_id: companyId,
+    at,
+    /** e.g. '-240 minutes' — bind to BOTH sides of a day comparison. */
+    day: `${minutes >= 0 ? '+' : '-'}${Math.abs(minutes)} minutes`,
+    /** 'YYYY-MM-DD' at the plant right now. */
+    plant_date: new Date(at.getTime() + minutes * 60000).toISOString().slice(0, 10),
+    /** The zone the two above were computed in; 'UTC' when none is set. */
+    timezone: timeZone || 'UTC',
+  };
+}
+
+/** Accept either a context or a bare company id, so call sites stay readable. */
+function asContext(ctxOrCompanyId) {
+  if (ctxOrCompanyId && typeof ctxOrCompanyId === 'object' && ctxOrCompanyId.day) return ctxOrCompanyId;
+  return plantContext(ctxOrCompanyId);
+}
+
 // ─── Scope ────────────────────────────────────────────────────────────────────
+
+/**
+ * Express hands back an ARRAY when a parameter is repeated — `?site_id=1&site_id=2`
+ * arrives as ['1','2']. Bound straight into a statement that is a 500 ("Too many
+ * parameter values"), which is a crash a caller can trigger from the address
+ * bar. Take the first value and carry on: a repeated filter is a malformed
+ * request, not a server fault.
+ */
+function one(value) {
+  const v = Array.isArray(value) ? value[0] : value;
+  return typeof v === 'string' || typeof v === 'number' ? String(v) : null;
+}
 
 /** Does this id exist in THIS company? Returns the id, or null. */
 function ownedId(table, id, companyId) {
@@ -87,20 +160,24 @@ function ownedId(table, id, companyId) {
  * An id belonging to another company (or to nothing at all) does not widen the
  * answer and does not 404 — it makes the scope EMPTY, so every number comes
  * back 0/null and no name from the other tenant is ever read, let alone
- * returned. `valid: false` says so on the payload.
+ * returned. `valid: false` says so on the payload, and the routes that carry
+ * lists as well as counts empty those too.
  */
-function resolveScope(companyId, opts = {}) {
-  const {
-    siteId = null, departmentId = null, appId = null,
-    stationId = null, productTypeId = null,
-  } = opts;
+function resolveScope(ctxOrCompanyId, opts = {}) {
+  const companyId = typeof ctxOrCompanyId === 'string' ? ctxOrCompanyId : ctxOrCompanyId.company_id;
+
+  const siteId = one(opts.siteId);
+  const departmentId = one(opts.departmentId);
+  const appId = one(opts.appId);
+  const stationId = one(opts.stationId);
+  const productTypeId = one(opts.productTypeId);
 
   const scope = {
     site_id: null,
     department_id: null,
     app_id: null,
     station_id: null,
-    product_type_id: productTypeId || null,
+    product_type_id: null,
     /** The department the WORK-ORDER side is scoped to (a station's, when the
      *  caller scoped by station). Work orders have no station of their own. */
     work_order_department_id: null,
@@ -121,6 +198,10 @@ function resolveScope(companyId, opts = {}) {
   if (appId) {
     scope.app_id = ownedId('apps', appId, companyId);
     if (!scope.app_id) scope.valid = false;
+  }
+  if (productTypeId) {
+    scope.product_type_id = ownedId('product_types', productTypeId, companyId);
+    if (!scope.product_type_id) scope.valid = false;
   }
   if (stationId) {
     const station = db.prepare('SELECT id, department_id FROM stations WHERE id = ? AND company_id = ?')
@@ -174,6 +255,65 @@ function scopeFromQuery(req, extra = {}) {
   });
 }
 
+// ─── Attribution SQL, shared with the routers ─────────────────────────────────
+
+/**
+ * A completion's SITE, written without depending on any join, so the same rule
+ * can be spliced into a query that has the work-order/station joins and one
+ * that does not. `p` is the qualifier for the `completions` columns ('c.',
+ * 'completions.' or '').
+ *
+ * This is the ONE site rule. analytics.js used to carry a second one that
+ * differed in a single case — a completion whose work order has no site but
+ * whose station belongs to ANOTHER site — so the Command Center's KPI strip and
+ * its throughput chart could disagree about whether that run was on this site.
+ * The rule below is the fallback rule stated everywhere else in the product:
+ * the work order's site, else the station's, and only a genuinely site-less
+ * record belongs to every site.
+ */
+function siteCompletionClause(p = '') {
+  return `(
+    ${p}work_order_id IN (SELECT id FROM work_orders WHERE company_id = ? AND site_id = ?)
+    OR (
+      (${p}work_order_id IS NULL
+       OR ${p}work_order_id NOT IN (SELECT id FROM work_orders WHERE company_id = ? AND site_id IS NOT NULL))
+      AND (
+        ${p}station_id IS NULL
+        OR ${p}station_id IN (SELECT id FROM stations WHERE company_id = ? AND (site_id = ? OR site_id IS NULL))
+      )
+    )
+  )`;
+}
+
+/** The bindings siteCompletionClause() expects, in order. */
+function siteCompletionParams(companyId, siteId) {
+  return [
+    companyId, siteId,   // the work order's own site
+    companyId,           // …unless that work order has one at all
+    companyId, siteId,   // …then fall back to the station's
+  ];
+}
+
+/**
+ * A completion's DEPARTMENT, same fallback, same alias-agnostic shape: the work
+ * order's department, else the station's.
+ */
+function departmentCompletionClause(p = '') {
+  return `(
+    ${p}work_order_id IN (SELECT id FROM work_orders WHERE company_id = ? AND department_id = ?)
+    OR (
+      (${p}work_order_id IS NULL
+       OR ${p}work_order_id NOT IN (SELECT id FROM work_orders WHERE company_id = ? AND department_id IS NOT NULL))
+      AND ${p}station_id IN (SELECT id FROM stations WHERE company_id = ? AND department_id = ?)
+    )
+  )`;
+}
+
+/** The bindings departmentCompletionClause() expects, in order. */
+function departmentCompletionParams(companyId, departmentId) {
+  return [companyId, departmentId, companyId, companyId, departmentId];
+}
+
 // ─── Completion-side SQL ──────────────────────────────────────────────────────
 
 // Both joins are always present because both dimensions fall back through them
@@ -208,12 +348,14 @@ function completionWhere(companyId, scope) {
  *
  *   'today' — the plant's day, bound on both sides (rule 1).
  *   '7d'    — a rolling week, what the floor screens have always shown.
+ *   '30d'   — a rolling month.
  *   'all'   — everything the company has ever recorded.
  *
  * It is a parameter rather than a constant because "today's pass rate" and
  * "this month's pass rate" are different QUESTIONS, not disagreeing answers.
  * What must never differ is how either one is computed, which is why they are
- * both computed here.
+ * both computed here — and every payload names the window it used, so a reader
+ * never has to guess which question a tile answered.
  */
 function windowClause(window, column, day) {
   if (window === 'today') return { sql: ` AND date(${column}, ?) = date('now', ?)`, params: [day, day] };
@@ -225,17 +367,19 @@ function windowClause(window, column, day) {
 // ─── The five numbers ─────────────────────────────────────────────────────────
 
 /** Runs that FINISHED on the plant's own calendar day. */
-function finishedToday(companyId, scope, day = plantDayShift(companyId)) {
-  const w = completionWhere(companyId, scope);
+function finishedToday(ctxOrCompanyId, scope) {
+  const ctx = asContext(ctxOrCompanyId);
+  const w = completionWhere(ctx.company_id, scope);
   return db.prepare(`
     SELECT COUNT(*) AS n ${COMPLETIONS_FROM}
     WHERE ${w.sql} AND c.status = 'completed' AND date(c.completed_at, ?) = date('now', ?)
-  `).get(...w.params, day, day).n;
+  `).get(...w.params, ctx.day, ctx.day).n;
 }
 
 /** Runs open on the floor at this instant. Not a day measure — a live one. */
-function runningNow(companyId, scope) {
-  const w = completionWhere(companyId, scope);
+function runningNow(ctxOrCompanyId, scope) {
+  const ctx = asContext(ctxOrCompanyId);
+  const w = completionWhere(ctx.company_id, scope);
   return db.prepare(`
     SELECT COUNT(*) AS n ${COMPLETIONS_FROM} WHERE ${w.sql} AND c.status = 'in_progress'
   `).get(...w.params).n;
@@ -249,9 +393,10 @@ function runningNow(companyId, scope) {
  * says why. `basis` labels what the average was measured with ('hands_on',
  * 'elapsed' or 'mixed'), because a screen showing the number has to say.
  */
-function avgCycle(companyId, scope, window = 'all', day = plantDayShift(companyId)) {
-  const w = completionWhere(companyId, scope);
-  const win = windowClause(window, 'c.completed_at', day);
+function avgCycle(ctxOrCompanyId, scope, window = 'all') {
+  const ctx = asContext(ctxOrCompanyId);
+  const w = completionWhere(ctx.company_id, scope);
+  const win = windowClause(window, 'c.completed_at', ctx.day);
   const row = db.prepare(`
     SELECT ${avgRunSecondsSQL('c')} AS avg_seconds,
            ${avgRunBasisSQL('c')}   AS basis,
@@ -271,6 +416,8 @@ function avgCycle(companyId, scope, window = 'all', day = plantDayShift(companyI
     basis: sample > 0 ? (row.basis ?? null) : null,
     sample,
     reason: sample > 0 ? null : REASONS.avg_cycle,
+    /** The question this answered. On the payload, so nobody has to guess. */
+    window,
   };
 }
 
@@ -285,9 +432,10 @@ function avgCycle(companyId, scope, window = 'all', day = plantDayShift(companyI
  * cannot 500 the page a supervisor is reading; an unreadable blob is simply an
  * uninspected run.
  */
-function passRate(companyId, scope, window = 'today', day = plantDayShift(companyId)) {
-  const w = completionWhere(companyId, scope);
-  const win = windowClause(window, 'c.completed_at', day);
+function passRate(ctxOrCompanyId, scope, window = 'today') {
+  const ctx = asContext(ctxOrCompanyId);
+  const w = completionWhere(ctx.company_id, scope);
+  const win = windowClause(window, 'c.completed_at', ctx.day);
   const rows = db.prepare(`
     SELECT c.data AS data ${COMPLETIONS_FROM}
     WHERE ${w.sql} AND c.status = 'completed'${win.sql}
@@ -307,6 +455,7 @@ function passRate(companyId, scope, window = 'today', day = plantDayShift(compan
     pass,
     fail,
     reason: sample > 0 ? null : REASONS.pass_rate,
+    window,
   };
 }
 
@@ -381,8 +530,9 @@ function tallyWorkOrders(rows) {
  * plus the canonical tally. Callers that need the rows (alerts, tables) and the
  * counts get both from one query instead of counting them a second way.
  */
-function workOrderStates(companyId, scope) {
-  const w = workOrderWhere(companyId, scope);
+function workOrderStates(ctxOrCompanyId, scope) {
+  const ctx = asContext(ctxOrCompanyId);
+  const w = workOrderWhere(ctx.company_id, scope);
   const rows = db.prepare(`${WORK_ORDER_SELECT} WHERE ${w.sql}`).all(...w.params).map(wo => ({
     ...wo,
     schedule_status: scheduleStatusOf(wo),
@@ -400,41 +550,48 @@ function workOrderStates(companyId, scope) {
  * productTypeId for the drill-downs). An id from another company yields an
  * empty scope — zeros, nulls and no name.
  */
-function floorSnapshot(companyId, opts = {}) {
-  return snapshotOf(companyId, resolveScope(companyId, opts));
+function floorSnapshot(ctxOrCompanyId, opts = {}) {
+  const ctx = asContext(ctxOrCompanyId);
+  return snapshotOf(ctx, resolveScope(ctx, opts));
 }
 
 /**
  * The snapshot for a scope that has already been resolved — what a route uses
  * when it needs the scope for something else as well (the work-order rows, say)
  * and must not resolve it twice.
+ *
+ * `opts.workOrderStates` lets a caller that has ALREADY run workOrderStates()
+ * for this exact scope hand the result in, so the work-order select runs once
+ * per request rather than once per consumer of it.
  */
-function snapshotOf(companyId, scope) {
-  const day = plantDayShift(companyId);
-
-  const cycle = avgCycle(companyId, scope, 'today', day);
-  const quality = passRate(companyId, scope, 'today', day);
-  const wos = workOrderStates(companyId, scope);
+function snapshotOf(ctxOrCompanyId, scope, opts = {}) {
+  const ctx = asContext(ctxOrCompanyId);
+  const cycle = avgCycle(ctx, scope, 'today');
+  const quality = passRate(ctx, scope, 'today');
+  const wos = opts.workOrderStates || workOrderStates(ctx, scope);
 
   return {
     /** The calendar date at the plant right now — what "today" means here. */
-    plant_date: plantToday(companyId),
+    plant_date: ctx.plant_date,
     /** The zone that date was computed in. 'UTC' when the company set none. */
-    timezone: companyTimeZone(companyId) || 'UTC',
+    timezone: ctx.timezone,
 
-    finished_today: finishedToday(companyId, scope, day),
-    running_now: runningNow(companyId, scope),
+    finished_today: finishedToday(ctx, scope),
+    running_now: runningNow(ctx, scope),
 
     avg_cycle_seconds: cycle.seconds,
     avg_cycle_basis: cycle.basis,
     avg_cycle_sample: cycle.sample,
     avg_cycle_reason: cycle.reason,
+    /** Which question the average answered: 'today' | '7d' | '30d' | 'all'. */
+    avg_cycle_window: cycle.window,
 
     pass_rate: quality.rate,
     pass_rate_sample: quality.sample,
     pass_rate_reason: quality.reason,
     pass_rate_pass: quality.pass,
     pass_rate_fail: quality.fail,
+    pass_rate_window: quality.window,
 
     open_work_orders: wos.open_work_orders,
     on_track: wos.on_track,
@@ -461,6 +618,55 @@ function snapshotOf(companyId, scope) {
   };
 }
 
+/**
+ * The snapshot of a scope with nothing in it — same keys, honest values.
+ *
+ * A caller that KNOWS the answer is empty (a department created one millisecond
+ * ago, a scope that matched nothing) uses this instead of running six queries to
+ * be told so. It is the same shape, so a screen never has to branch between "a
+ * real snapshot" and "no snapshot": zeros where something was counted, nulls
+ * with reasons where nothing was measured.
+ */
+function emptySnapshot(ctxOrCompanyId, scope = null) {
+  const ctx = asContext(ctxOrCompanyId);
+  const wos = tallyWorkOrders([]);
+  return {
+    plant_date: ctx.plant_date,
+    timezone: ctx.timezone,
+    finished_today: 0,
+    running_now: 0,
+    avg_cycle_seconds: null,
+    avg_cycle_basis: null,
+    avg_cycle_sample: 0,
+    avg_cycle_reason: REASONS.avg_cycle,
+    avg_cycle_window: 'today',
+    pass_rate: null,
+    pass_rate_sample: 0,
+    pass_rate_reason: REASONS.pass_rate,
+    pass_rate_pass: 0,
+    pass_rate_fail: 0,
+    pass_rate_window: 'today',
+    open_work_orders: wos.open_work_orders,
+    on_track: wos.on_track,
+    at_risk: wos.at_risk,
+    behind: wos.behind,
+    overdue: wos.overdue,
+    not_started: wos.not_started,
+    completed_work_orders: wos.completed_work_orders,
+    total_work_orders: wos.total_work_orders,
+    on_track_pct: wos.on_track_pct,
+    on_track_reason: wos.on_track_reason,
+    on_track_basis: 'open_work_orders',
+    scope: {
+      site_id: scope?.site_id ?? null,
+      department_id: scope?.department_id ?? null,
+      app_id: scope?.app_id ?? null,
+      station_id: scope?.station_id ?? null,
+      valid: scope ? scope.valid : true,
+    },
+  };
+}
+
 // ─── Every department, in one query set ───────────────────────────────────────
 
 /** Group rows by a key column into a plain lookup. */
@@ -474,26 +680,27 @@ function indexBy(rows, key = 'dept_id') {
  * The same snapshot, per department, for a whole site — computed in a fixed
  * number of queries rather than one set per department.
  *
- * opts: { siteId, departmentId, appId, productTypeId, cycleWindow, passWindow }.
- * The two windows default to 'today'; a caller whose screen has always shown a
- * wider average says so rather than quietly getting a different number.
+ * opts: { siteId, departmentId, appId, productTypeId, cycleWindow, passWindow,
+ *         scope, workOrderRows }.
  *
- * The department list used to cost four queries per card and the Command
- * Center's department strip cost two more; a plant with thirty departments paid
- * for a hundred and eighty round trips to draw one screen.
+ * The two windows default to 'today'; a caller whose screen has always shown a
+ * wider average says so rather than quietly getting a different number, and the
+ * window it got is named on every entry.
+ *
+ * `scope` and `workOrderRows` are for a route that has ALREADY resolved the
+ * scope and already run workOrderStates() over it: passing them in is what
+ * stops /plant-view and /manager-view running the work-order select twice per
+ * request. The rows MUST come from the same scope — they are grouped by
+ * department here, not re-filtered.
  */
-function departmentSnapshots(companyId, opts = {}) {
-  const scope = resolveScope(companyId, opts);
-  const day = plantDayShift(companyId);
-  // The measured metrics take a window for the same reason the single snapshot
-  // does: "today's average" and "this department's average ever" are different
-  // questions. Both default to today, which is what a floor screen means.
+function departmentSnapshots(ctxOrCompanyId, opts = {}) {
+  const ctx = asContext(ctxOrCompanyId);
+  const companyId = ctx.company_id;
+  const scope = opts.scope || resolveScope(ctx, opts);
   const cycleWindow = opts.cycleWindow || 'today';
   const passWindow = opts.passWindow || 'today';
-  const cycleWin = windowClause(cycleWindow, 'c.completed_at', day);
-  const passWin = windowClause(passWindow, 'c.completed_at', day);
-  const plantDate = plantToday(companyId);
-  const timezone = companyTimeZone(companyId) || 'UTC';
+  const cycleWin = windowClause(cycleWindow, 'c.completed_at', ctx.day);
+  const passWin = windowClause(passWindow, 'c.completed_at', ctx.day);
 
   // Scoping the page to one department narrows this list to that one card —
   // showing six cards under a one-department filter would contradict every
@@ -518,7 +725,7 @@ function departmentSnapshots(companyId, opts = {}) {
     SELECT ${DEPT} AS dept_id, COUNT(*) AS n ${COMPLETIONS_FROM}
     WHERE ${w.sql} AND c.status = 'completed' AND date(c.completed_at, ?) = date('now', ?)
     GROUP BY ${DEPT}
-  `).all(...w.params, day, day));
+  `).all(...w.params, ctx.day, ctx.day));
 
   // 2 — running now, per department.
   const running = indexBy(db.prepare(`
@@ -553,8 +760,9 @@ function departmentSnapshots(companyId, opts = {}) {
     else if (values.some(v => v === 'Pass')) bucket.pass++;
   }
 
-  // 5 — every work order in scope, statused once and grouped in memory.
-  const woRows = workOrderStates(companyId, scope).rows;
+  // 5 — every work order in scope, statused once and grouped in memory. Handed
+  //     in by a caller that already has them, so the select runs once.
+  const woRows = opts.workOrderRows || workOrderStates(ctx, scope).rows;
   const woByDept = {};
   for (const wo of woRows) {
     if (!wo.department_id) continue;   // no department ⇒ no department's card
@@ -562,8 +770,8 @@ function departmentSnapshots(companyId, opts = {}) {
   }
 
   return {
-    plant_date: plantDate,
-    timezone,
+    plant_date: ctx.plant_date,
+    timezone: ctx.timezone,
     departments: departments.map(dept => {
       const cycle = cycles[dept.id];
       const cycleSample = cycle?.sample || 0;
@@ -576,8 +784,8 @@ function departmentSnapshots(companyId, opts = {}) {
         department_id: dept.id,
         department_name: dept.name,
         department_color: dept.color,
-        plant_date: plantDate,
-        timezone,
+        plant_date: ctx.plant_date,
+        timezone: ctx.timezone,
 
         finished_today: finished[dept.id]?.n || 0,
         running_now: running[dept.id]?.n || 0,
@@ -589,12 +797,14 @@ function departmentSnapshots(companyId, opts = {}) {
         avg_cycle_basis: cycleSample > 0 ? (cycle.basis ?? null) : null,
         avg_cycle_sample: cycleSample,
         avg_cycle_reason: cycleSample > 0 ? null : REASONS.avg_cycle,
+        avg_cycle_window: cycleWindow,
 
         pass_rate: qcSample > 0 ? Math.round((verdict.pass / qcSample) * 100) : null,
         pass_rate_sample: qcSample,
         pass_rate_reason: qcSample > 0 ? null : REASONS.pass_rate,
         pass_rate_pass: verdict.pass,
         pass_rate_fail: verdict.fail,
+        pass_rate_window: passWindow,
 
         open_work_orders: tally.open_work_orders,
         on_track: tally.on_track,
@@ -615,9 +825,16 @@ function departmentSnapshots(companyId, opts = {}) {
 
 module.exports = {
   REASONS,
+  WINDOWS,
+  plantContext,
+  asContext,
   resolveScope,
   stationScope,
   scopeFromQuery,
+  siteCompletionClause,
+  siteCompletionParams,
+  departmentCompletionClause,
+  departmentCompletionParams,
   finishedToday,
   runningNow,
   avgCycle,
@@ -626,5 +843,6 @@ module.exports = {
   tallyWorkOrders,
   floorSnapshot,
   snapshotOf,
+  emptySnapshot,
   departmentSnapshots,
 };

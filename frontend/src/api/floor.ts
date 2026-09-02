@@ -26,6 +26,12 @@ export type CycleBasis = 'hands_on' | 'elapsed' | 'mixed';
 /** What the on-track counts are a share of. */
 export type OnTrackBasis = 'open_work_orders';
 
+/** The window a measured number was taken over. Every payload carrying an
+ *  average or a pass rate names its window, so a reader never has to guess
+ *  whether a tile means today, this week or all time — the difference between
+ *  two screens is then a stated question, not a suspected bug. */
+export type MeasurementWindow = 'today' | '7d' | '30d' | 'all';
+
 /** The scope the server actually applied — not the one the client asked for. */
 export interface FloorScope {
   site_id: string | null;
@@ -56,6 +62,8 @@ export interface FloorSnapshot {
   avg_cycle_sample: number;
   /** Why it is null, for the screen to print in its place. */
   avg_cycle_reason: string | null;
+  /** The window this average was taken over. 'today' on the floor snapshot. */
+  avg_cycle_window: MeasurementWindow;
 
   /** Today's pass rate over INSPECTED runs only, 0–100. null when none were. */
   pass_rate: number | null;
@@ -64,6 +72,8 @@ export interface FloorSnapshot {
   pass_rate_reason: string | null;
   pass_rate_pass: number;
   pass_rate_fail: number;
+  /** The window this rate was taken over. 'today' on the floor snapshot. */
+  pass_rate_window: MeasurementWindow;
 
   /** Work orders still open — the denominator on_track is a share of. */
   open_work_orders: number;

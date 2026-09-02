@@ -18,15 +18,18 @@ const router = express.Router();
 function canonicalFields(snap) {
   return {
     plant_date:        snap.plant_date,
+    timezone:          snap.timezone,
     finished_today:    snap.finished_today,
     running_now:       snap.running_now,
     avg_cycle_seconds: snap.avg_cycle_seconds,
     avg_cycle_basis:   snap.avg_cycle_basis,
     avg_cycle_sample:  snap.avg_cycle_sample,
     avg_cycle_reason:  snap.avg_cycle_reason,
+    avg_cycle_window:  snap.avg_cycle_window,
     pass_rate:         snap.pass_rate,
     pass_rate_sample:  snap.pass_rate_sample,
     pass_rate_reason:  snap.pass_rate_reason,
+    pass_rate_window:  snap.pass_rate_window,
     on_track:          snap.on_track,
     at_risk:           snap.at_risk,
     behind:            snap.behind,
@@ -38,49 +41,90 @@ function canonicalFields(snap) {
   };
 }
 
-function deptCounts(deptId) {
-  const woCount = db.prepare(
-    `SELECT COUNT(*) as c FROM work_orders WHERE department_id = ? AND status != 'cancelled'`
-  ).get(deptId).c;
+// The all-time counts this list has always shown, for EVERY department in three
+// grouped queries rather than four per department. A plant with thirty
+// departments paid a hundred and twenty round trips to draw one page.
+//
+// The numbers are unchanged, including their attribution: `completion_count`
+// counts runs through a department's WORK ORDERS only (no station fallback),
+// which is what this column has always meant. The live figures beside it — the
+// ones every other screen shares — come from plantTruth and use the fallback
+// rule; the two answer different questions and the payload names both.
+function deptCountsFor(companyId, departmentIds) {
+  const counts = {};
+  for (const id of departmentIds) {
+    counts[id] = { work_order_count: 0, completion_count: 0, active_work_orders: 0, station_count: 0 };
+  }
+  if (!departmentIds.length) return counts;
+  const put = (id, key, n) => { if (counts[id]) counts[id][key] = n; };
 
-  const completionCount = db.prepare(`
-    SELECT COUNT(*) as c
+  for (const r of db.prepare(`
+    SELECT department_id AS id,
+           COUNT(*) AS total,
+           SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) AS active
+    FROM work_orders
+    WHERE company_id = ? AND status != 'cancelled' AND department_id IS NOT NULL
+    GROUP BY department_id
+  `).all(companyId)) {
+    put(r.id, 'work_order_count', r.total);
+    put(r.id, 'active_work_orders', r.active || 0);
+  }
+
+  for (const r of db.prepare(`
+    SELECT wo.department_id AS id, COUNT(*) AS n
     FROM completions c
     JOIN work_orders wo ON wo.id = c.work_order_id
-    WHERE wo.department_id = ? AND c.status = 'completed'
-  `).get(deptId).c;
+    WHERE c.company_id = ? AND c.status = 'completed' AND wo.department_id IS NOT NULL
+    GROUP BY wo.department_id
+  `).all(companyId)) put(r.id, 'completion_count', r.n);
 
-  const activeCount = db.prepare(
-    `SELECT COUNT(*) as c FROM work_orders WHERE department_id = ? AND status = 'in_progress'`
-  ).get(deptId).c;
+  for (const r of db.prepare(`
+    SELECT department_id AS id, COUNT(*) AS n FROM stations
+    WHERE company_id = ? AND department_id IS NOT NULL GROUP BY department_id
+  `).all(companyId)) put(r.id, 'station_count', r.n);
 
-  const stationCount = db.prepare(
-    `SELECT COUNT(*) as c FROM stations WHERE department_id = ?`
-  ).get(deptId).c;
+  return counts;
+}
 
-  return { work_order_count: woCount, completion_count: completionCount, active_work_orders: activeCount, station_count: stationCount };
+/** The same counts for a single department — one implementation, both uses. */
+function deptCounts(companyId, deptId) {
+  return deptCountsFor(companyId, [deptId])[deptId];
 }
 
 // ─── GET / - list departments with work order and completion counts ────────────
 
 router.get('/', (req, res) => {
+  // One day for the whole request, and ONE reading of the site filter. The list
+  // query used to read the raw ?site_id while the figures beside each row were
+  // computed against the validated one, so an unknown site returned every
+  // department with its live numbers silently missing.
+  const ctx = plantTruth.plantContext(req.companyId);
+  const scope = plantTruth.resolveScope(ctx, { siteId: req.query.site_id });
+
   let sql = 'SELECT * FROM departments WHERE company_id = ?';
   const params = [req.companyId];
   // Unassigned records (site_id IS NULL) belong to the whole company, so they
   // stay visible under every site — otherwise picking a site empties the page
   // for the (very common) company that never assigned its departments to one.
-  if (req.query.site_id) { sql += ' AND (site_id = ? OR site_id IS NULL)'; params.push(req.query.site_id); }
+  if (scope.site_id) { sql += ' AND (site_id = ? OR site_id IS NULL)'; params.push(scope.site_id); }
+  if (!scope.valid) sql += ' AND 1 = 0';
   sql += ' ORDER BY name';
   const depts = db.prepare(sql).all(...params);
 
   // Every department's live figures in ONE query set, not one set per card.
-  const snapshots = plantTruth.departmentSnapshots(req.companyId, { siteId: req.query.site_id });
+  const snapshots = plantTruth.departmentSnapshots(ctx, { scope });
   const byId = Object.fromEntries(snapshots.departments.map(d => [d.department_id, d]));
+  // A department with no snapshot gets the empty one — zeros, nulls and
+  // reasons, the same keys as every other row. A row that simply drops the
+  // fields makes a client branch on their absence, and a client that branches
+  // eventually renders `undefined` as 0.
+  const empty = plantTruth.emptySnapshot(ctx);
+  const counts = deptCountsFor(req.companyId, depts.map(d => d.id));
 
   res.json(depts.map(dept => ({
     ...dept,
-    ...deptCounts(dept.id),
-    ...(byId[dept.id] ? canonicalFields(byId[dept.id]) : {}),
+    ...counts[dept.id],
+    ...canonicalFields(byId[dept.id] || empty),
   })));
 });
 
@@ -106,9 +150,12 @@ router.post('/', (req, res) => {
     .run(id, name, description, manager_name, color, Math.max(0, parseInt(headcount) || 0), site_id || null, req.companyId);
 
   const dept = db.prepare('SELECT * FROM departments WHERE id = ?').get(id);
+  // A department created one millisecond ago has finished nothing, has nothing
+  // running and has no work orders. Six queries to be told so is six queries
+  // wasted; the empty snapshot is the same shape and the same honest values.
   res.status(201).json({
     ...dept, work_order_count: 0, completion_count: 0, active_work_orders: 0,
-    ...canonicalFields(plantTruth.floorSnapshot(req.companyId, { departmentId: id })),
+    ...canonicalFields(plantTruth.emptySnapshot(req.companyId)),
   });
 });
 
@@ -136,10 +183,14 @@ router.put('/:id', (req, res) => {
     .run(updates.name, updates.description, updates.manager_name, updates.color, updates.headcount, updates.site_id, req.params.id);
 
   const updated = db.prepare('SELECT * FROM departments WHERE id = ?').get(req.params.id);
+  // Through departmentSnapshots, scoped to this one id, so an edited department
+  // reports exactly what the list beside it will report on the next refresh.
+  const ctx = plantTruth.plantContext(req.companyId);
+  const [snapshot] = plantTruth.departmentSnapshots(ctx, { departmentId: req.params.id }).departments;
   res.json({
     ...updated,
-    ...deptCounts(req.params.id),
-    ...canonicalFields(plantTruth.floorSnapshot(req.companyId, { departmentId: req.params.id })),
+    ...deptCounts(req.companyId, req.params.id),
+    ...canonicalFields(snapshot || plantTruth.emptySnapshot(ctx)),
   });
 });
 
