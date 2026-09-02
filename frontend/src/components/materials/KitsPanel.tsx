@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { api } from '../api/client';
-import type { Kit, KitLine, KitLineStatus, KitStatus } from '../types';
-import { useToast } from '../context/ToastContext';
-import PageHeader from '../components/shared/PageHeader';
-import EmptyState from '../components/shared/EmptyState';
-import LastRefreshed from '../components/shared/LastRefreshed';
-import { useAutoRefresh } from '../hooks/useAutoRefresh';
+import { api } from '../../api/client';
+import type { Kit, KitLine, KitLineStatus, KitStatus } from '../../types';
+import { useToast } from '../../context/ToastContext';
+import EmptyState from '../shared/EmptyState';
+import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import {
   PackageOpen, ArrowLeft, Check, CheckCircle, Flag, RotateCcw,
   AlertTriangle, X, MapPin, ChevronRight,
@@ -42,7 +39,8 @@ const LINE_STATUS_CHIP: Record<KitLineStatus, string> = {
   short:    'bg-amber-100 text-amber-700',
 };
 
-const KIT_STATUS_FILTERS: ('all' | KitStatus)[] = ['all', 'open', 'picking', 'complete', 'short', 'cancelled'];
+/** The status values the Materials filter bar offers on this tab. */
+export const KIT_STATUS_FILTERS: ('all' | KitStatus)[] = ['all', 'open', 'picking', 'complete', 'short', 'cancelled'];
 
 /** "120 ea (60 × 2)" — snapshot qty_required with its wo_qty × qty_per breakdown. */
 function qtyBreakdown(line: KitLine, woQty?: number): string | null {
@@ -117,7 +115,12 @@ function ShortDialog({ line, onConfirm, onClose, busy }: {
 
 // ── Kit detail (pick / verify board) ──────────────────────────────────────────
 
-function KitDetailView({ kitId, onBack }: { kitId: string; onBack: () => void }) {
+function KitDetailView({ kitId, onBack, onRegisterRefresh, onLoaded }: {
+  kitId: string;
+  onBack: () => void;
+  onRegisterRefresh: (fn: () => Promise<void>) => void;
+  onLoaded: () => void;
+}) {
   const { addToast } = useToast();
   const [kit, setKit] = useState<KitDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -131,14 +134,16 @@ function KitDetailView({ kitId, onBack }: { kitId: string; onBack: () => void })
       const detail = await api.getKit(kitId) as KitDetail;
       setKit(detail);
       setError(null);
+      onLoaded();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load kit');
     } finally {
       setLoading(false);
     }
-  }, [kitId]);
+  }, [kitId, onLoaded]);
 
   useEffect(() => { setLoading(true); load(); }, [load]);
+  useEffect(() => { onRegisterRefresh(load); }, [onRegisterRefresh, load]);
 
   const updateLine = async (line: KitLine, status: KitLineStatus, qtyPicked?: number, shortReason?: string) => {
     setBusyLineId(line.id);
@@ -374,32 +379,47 @@ function KitDetailView({ kitId, onBack }: { kitId: string; onBack: () => void })
 
 // ── Kit list ──────────────────────────────────────────────────────────────────
 
-function KitListView({ onOpen }: { onOpen: (id: string) => void }) {
+function KitListView({ onOpen, search, statusFilter, onRegisterRefresh, onLoaded }: {
+  onOpen: (id: string) => void;
+  /** The Materials filter bar's text, matched against work order and part. */
+  search: string;
+  statusFilter: 'all' | KitStatus;
+  onRegisterRefresh: (fn: () => Promise<void>) => void;
+  onLoaded: () => void;
+}) {
   const [kits, setKits] = useState<KitListRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [statusFilter, setStatusFilter] = useState<'all' | KitStatus>('all');
 
   const load = useCallback(async () => {
     try {
       const rows = await api.getKits() as KitListRow[];
       setKits(rows);
       setError(null);
+      onLoaded();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load kits');
       throw e;
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [onLoaded]);
 
   // Shortages appear as soon as material moves — 30s while the tab is visible.
   const auto = useAutoRefresh(load, 30_000);
+  const refresh = auto.refresh;
+  useEffect(() => { onRegisterRefresh(refresh); }, [onRegisterRefresh, refresh]);
 
-  const filtered = useMemo(
-    () => statusFilter === 'all' ? kits : kits.filter(k => k.status === statusFilter),
-    [kits, statusFilter],
-  );
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return kits.filter(k => {
+      if (statusFilter !== 'all' && k.status !== statusFilter) return false;
+      if (!q) return true;
+      return (k.work_order_number ?? '').toLowerCase().includes(q)
+        || (k.part_name ?? '').toLowerCase().includes(q)
+        || (k.part_number ?? '').toLowerCase().includes(q);
+    });
+  }, [kits, statusFilter, search]);
 
   if (loading) {
     return (
@@ -421,32 +441,8 @@ function KitListView({ onOpen }: { onOpen: (id: string) => void }) {
 
   return (
     <div className="space-y-4">
-      {/* Status filter chips + freshness */}
-      <div className="flex items-center gap-2 flex-wrap">
-        {KIT_STATUS_FILTERS.map(s => (
-          <button
-            key={s}
-            onClick={() => setStatusFilter(s)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
-              statusFilter === s
-                ? 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900 shadow-sm'
-                : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
-            }`}
-          >
-            {s === 'all' ? 'All kits' : s.charAt(0).toUpperCase() + s.slice(1)}
-            <span className="ml-1.5 text-[10px] opacity-70 [font-variant-numeric:tabular-nums]">
-              {s === 'all' ? kits.length : kits.filter(k => k.status === s).length}
-            </span>
-          </button>
-        ))}
-        <LastRefreshed
-          at={auto.lastRefreshed}
-          refreshing={auto.refreshing}
-          onRefresh={() => { void auto.refresh(); }}
-          className="ml-auto"
-        />
-      </div>
-
+      {/* The status picker, the search box and the freshness stamp all live
+          once, in the Materials chrome above this panel. */}
       {filtered.length === 0 ? (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
           <EmptyState
@@ -527,20 +523,38 @@ function KitListView({ onOpen }: { onOpen: (id: string) => void }) {
 
 // ── Page shell ────────────────────────────────────────────────────────────────
 
-export default function Kitting() {
-  const navigate = useNavigate();
-  const { kitId } = useParams<{ kitId: string }>();
+export interface KitsPanelProps {
+  /** `/inventory/kitting/:kitId` — the kit a printed traveller barcode opens. */
+  kitId?: string;
+  /** Opens a kit (null closes the one that is open). */
+  onOpenKit: (kitId: string | null) => void;
+  /** The Materials filter bar's text and status picker. */
+  search: string;
+  statusFilter: 'all' | KitStatus;
+  onRegisterRefresh: (fn: () => Promise<void>) => void;
+  onLoaded: () => void;
+}
 
+export default function KitsPanel({
+  kitId, onOpenKit, search, statusFilter, onRegisterRefresh, onLoaded,
+}: KitsPanelProps) {
   return (
-    <div className="min-h-screen bg-[#f8fafc] p-6 space-y-5">
-      <PageHeader
-        title="Kitting"
-        subtitle="Pick and verify material kits generated from work-order BOMs"
-      />
+    <div className="space-y-5">
       {kitId ? (
-        <KitDetailView kitId={kitId} onBack={() => navigate('/inventory/kitting')} />
+        <KitDetailView
+          kitId={kitId}
+          onBack={() => onOpenKit(null)}
+          onRegisterRefresh={onRegisterRefresh}
+          onLoaded={onLoaded}
+        />
       ) : (
-        <KitListView onOpen={id => navigate(`/inventory/kitting/${id}`)} />
+        <KitListView
+          onOpen={id => onOpenKit(id)}
+          search={search}
+          statusFilter={statusFilter}
+          onRegisterRefresh={onRegisterRefresh}
+          onLoaded={onLoaded}
+        />
       )}
     </div>
   );

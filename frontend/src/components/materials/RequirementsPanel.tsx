@@ -1,15 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { api } from '../api/client';
-import { useAuth } from '../context/AuthContext';
+import { api } from '../../api/client';
 import {
   Package, AlertTriangle, CheckCircle, ChevronDown, ChevronUp,
-  Download, Filter, RefreshCw, ClipboardList, ShoppingCart,
+  ClipboardList, ShoppingCart,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface RequirementItem {
+export interface RequirementItem {
   sku?: string;
   name: string;
   required_qty: number;
@@ -37,7 +36,9 @@ interface RequirementsResult {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function exportCSV(items: RequirementItem[]) {
+/** Downloads the requirement list. Exported so the Materials header can offer
+ *  one Export CSV button in the same place as every other tab's. */
+export function exportRequirementsCSV(items: RequirementItem[]) {
   const header = ['Name', 'SKU', 'Required Qty', 'On Hand Qty', 'Shortage', 'Source', 'Work Orders'];
   const rows = items.map(item => [
     `"${item.name.replace(/"/g, '""')}"`,
@@ -238,78 +239,63 @@ function RequirementRow({ item }: { item: RequirementItem }) {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-export default function InventoryRequirements() {
-  const { canEdit } = useAuth();
+export interface RequirementsPanelProps {
+  /** The Materials filter bar: item text, and "shortages only". */
+  search: string;
+  showShortagesOnly: boolean;
+  /** Reports the loaded rows so the header's Export CSV has something to write. */
+  onItems: (items: RequirementItem[]) => void;
+  onRegisterRefresh: (fn: () => Promise<void>) => void;
+  onLoaded: () => void;
+}
+
+export default function RequirementsPanel({
+  search, showShortagesOnly, onItems, onRegisterRefresh, onLoaded,
+}: RequirementsPanelProps) {
   const [data, setData] = useState<RequirementsResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [showShortagesOnly, setShowShortagesOnly] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const result = await api.getInventoryRequirements();
       setData(result);
       setError('');
+      onLoaded();
     } catch (e: any) {
       setError(e.message || 'Failed to load requirements');
     }
-  };
+  }, [onLoaded]);
 
   useEffect(() => {
     setLoading(true);
     loadData().finally(() => setLoading(false));
-  }, []);
+  }, [loadData]);
 
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    await loadData().finally(() => setRefreshing(false));
-  };
+  useEffect(() => { onRegisterRefresh(loadData); }, [onRegisterRefresh, loadData]);
 
-  const items = data?.items ?? [];
+  const items = useMemo(() => data?.items ?? [], [data]);
   const summary = data?.summary;
 
-  const filteredItems = showShortagesOnly
-    ? items.filter(i => i.shortage > 0)
-    : items;
+  useEffect(() => { onItems(items); }, [items, onItems]);
 
-  const hasShortages = items.some(i => i.shortage > 0);
+  const q = search.trim().toLowerCase();
+  const filteredItems = items.filter(i => {
+    if (showShortagesOnly && i.shortage <= 0) return false;
+    if (!q) return true;
+    return i.name.toLowerCase().includes(q) || (i.sku ?? '').toLowerCase().includes(q);
+  });
+
   const noWorkOrders = !loading && !error && items.length === 0;
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] p-6">
-      <div className="max-w-5xl mx-auto">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Materials Required</h1>
-            <p className="text-gray-500 text-sm mt-0.5">
-              Inventory needed for planned work orders — rows tagged <span className="font-semibold text-indigo-600">BOM</span> come
-              from each work order's active bill of material
-            </p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="btn-secondary"
-            >
-              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-              Refresh
-            </button>
-            {items.length > 0 && (
-              <button
-                className="btn-secondary"
-                onClick={() => exportCSV(items)}
-              >
-                <Download className="w-4 h-4" />
-                Export CSV
-              </button>
-            )}
-          </div>
-        </div>
+    <div className="space-y-5">
+      <div className="max-w-5xl">
+        {/* The heading, Refresh and Export CSV live once, in the Materials
+            chrome above. Rows tagged BOM come from the work order's active
+            bill of material. */}
 
         {/* KPI Cards */}
         {summary && (
@@ -346,45 +332,6 @@ export default function InventoryRequirements() {
           </div>
         )}
 
-        {/* Filter toggle */}
-        {!loading && !error && items.length > 0 && (
-          <div className="flex items-center gap-3 mb-4">
-            <button
-              onClick={() => setShowShortagesOnly(false)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                !showShortagesOnly
-                  ? 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900 shadow-sm'
-                  : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              All Items
-              <span className={`ml-1.5 text-xs px-1.5 py-0.5 rounded-full font-semibold ${
-                !showShortagesOnly ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'
-              }`}>
-                {items.length}
-              </span>
-            </button>
-            <button
-              onClick={() => setShowShortagesOnly(true)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                showShortagesOnly
-                  ? 'bg-red-600 text-white shadow-sm'
-                  : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
-              }`}
-            >
-              <Filter className="w-3.5 h-3.5" />
-              Shortages Only
-              {hasShortages && (
-                <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${
-                  showShortagesOnly ? 'bg-white/20 text-white' : 'bg-red-50 text-red-600'
-                }`}>
-                  {items.filter(i => i.shortage > 0).length}
-                </span>
-              )}
-            </button>
-          </div>
-        )}
-
         {/* Content */}
         {loading ? (
           <div className="flex items-center justify-center py-24 gap-3 text-gray-400">
@@ -417,9 +364,13 @@ export default function InventoryRequirements() {
               <CheckCircle className="w-8 h-8 text-green-500" />
             </div>
             <div>
-              <div className="font-semibold text-gray-700 text-lg">All materials are covered</div>
+              <div className="font-semibold text-gray-700 text-lg">
+                {q ? 'Nothing matches that search' : 'All materials are covered'}
+              </div>
               <div className="text-gray-400 text-sm mt-1">
-                You have sufficient stock for all planned work orders.
+                {q
+                  ? 'Clear the search above to see every required material.'
+                  : 'You have sufficient stock for all planned work orders.'}
               </div>
             </div>
           </div>

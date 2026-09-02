@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
-import { api } from '../api/client';
-import { useAuth } from '../context/AuthContext';
+import { useCallback, useEffect, useState } from 'react';
+import { api } from '../../api/client';
+import { useAuth } from '../../context/AuthContext';
 import {
   Truck, Plus, X, Trash2, Edit2, AlertTriangle, CheckCircle,
   Package, Clock, MapPin, RefreshCw,
@@ -47,7 +47,8 @@ interface ShipmentFormData {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const STATUS_FILTERS = ['All', 'pending', 'in_transit', 'out_for_delivery', 'delivered', 'delayed', 'exception'] as const;
+/** The status values the Materials filter bar offers on this tab. */
+export const STATUS_FILTERS = ['All', 'pending', 'in_transit', 'out_for_delivery', 'delivered', 'delayed', 'exception'] as const;
 
 const STATUS_CONFIG: Record<ShipmentStatus, { label: string; badgeClass: string; dotClass: string }> = {
   pending:          { label: 'Pending',          badgeClass: 'bg-gray-100 text-gray-600 border border-gray-200',         dotClass: 'bg-gray-400' },
@@ -58,7 +59,7 @@ const STATUS_CONFIG: Record<ShipmentStatus, { label: string; badgeClass: string;
   exception:        { label: 'Exception',         badgeClass: 'bg-red-50 text-red-700 border border-red-100',             dotClass: 'bg-red-500' },
 };
 
-const FILTER_LABELS: Record<string, string> = {
+export const FILTER_LABELS: Record<string, string> = {
   All: 'All',
   pending: 'Pending',
   in_transit: 'In Transit',
@@ -448,19 +449,29 @@ function ShipmentRow({
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-export default function ShipmentTracker() {
+export interface ShipmentsPanelProps {
+  /** The Materials filter bar: carrier / tracking text, and the status picker. */
+  search: string;
+  statusFilter: string;
+  /** The header's "Add Shipment" button. */
+  createOpen: boolean;
+  onCreateClose: () => void;
+  onRegisterRefresh: (fn: () => Promise<void>) => void;
+  onLoaded: () => void;
+}
+
+export default function ShipmentsPanel({
+  search, statusFilter, createOpen, onCreateClose, onRegisterRefresh, onLoaded,
+}: ShipmentsPanelProps) {
   const { canEdit } = useAuth();
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [pos, setPOs] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [statusFilter, setStatusFilter] = useState('All');
-  const [showModal, setShowModal] = useState(false);
   const [editing, setEditing] = useState<Shipment | null>(null);
   const [deleting, setDeleting] = useState<Shipment | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       const [shipmentsData, posData] = await Promise.all([
         api.getShipments().catch(() => []),
@@ -469,20 +480,18 @@ export default function ShipmentTracker() {
       setShipments(shipmentsData ?? []);
       setPOs(posData ?? []);
       setError('');
+      onLoaded();
     } catch (e: any) {
       setError(e.message || 'Failed to load shipments');
     }
-  };
+  }, [onLoaded]);
 
   useEffect(() => {
     setLoading(true);
     loadData().finally(() => setLoading(false));
-  }, []);
+  }, [loadData]);
 
-  const handleRefresh = async () => {
-    setRefreshing(true);
-    await loadData().finally(() => setRefreshing(false));
-  };
+  useEffect(() => { onRegisterRefresh(loadData); }, [onRegisterRefresh, loadData]);
 
   const handleCreate = async (data: ShipmentFormData) => {
     await api.createShipment({
@@ -495,7 +504,7 @@ export default function ShipmentTracker() {
       po_id: data.po_id || undefined,
       notes: data.notes,
     });
-    setShowModal(false);
+    onCreateClose();
     await loadData();
   };
 
@@ -522,9 +531,14 @@ export default function ShipmentTracker() {
     await loadData();
   };
 
-  const filtered = statusFilter === 'All'
-    ? shipments
-    : shipments.filter(s => s.status === statusFilter);
+  const q = search.trim().toLowerCase();
+  const filtered = shipments.filter(s => {
+    if (statusFilter !== 'All' && s.status !== statusFilter) return false;
+    if (!q) return true;
+    return (s.carrier ?? '').toLowerCase().includes(q)
+      || (s.tracking_number ?? '').toLowerCase().includes(q)
+      || (s.origin ?? '').toLowerCase().includes(q);
+  });
 
   // Enrich shipments with PO numbers from local pos list
   const enriched = filtered.map(s => ({
@@ -533,62 +547,10 @@ export default function ShipmentTracker() {
   }));
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] p-6">
-      <div className="max-w-5xl mx-auto">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-4 mb-6 flex-wrap">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">Shipments</h1>
-            <p className="text-gray-500 text-sm mt-0.5">Track inbound shipments and deliveries</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleRefresh}
-              disabled={refreshing}
-              className="btn-secondary"
-            >
-              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
-              Refresh
-            </button>
-            {canEdit && (
-              <button
-                className="btn-primary"
-                onClick={() => setShowModal(true)}
-              >
-                <Plus className="w-4 h-4" />
-                Add Shipment
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Status filter chips */}
-        <div className="flex gap-2 flex-wrap mb-5">
-          {STATUS_FILTERS.map(s => {
-            const isActive = statusFilter === s;
-            const count = s === 'All' ? shipments.length : shipments.filter(sh => sh.status === s).length;
-            return (
-              <button
-                key={s}
-                onClick={() => setStatusFilter(s)}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
-                  isActive
-                    ? 'bg-gray-900 text-white dark:bg-gray-100 dark:text-gray-900 shadow-sm'
-                    : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
-                }`}
-              >
-                {FILTER_LABELS[s]}
-                {count > 0 && (
-                  <span className={`text-xs px-1.5 py-0.5 rounded-full font-semibold ${
-                    isActive ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'
-                  }`}>
-                    {count}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-        </div>
+    <div className="space-y-5">
+      <div className="max-w-5xl">
+        {/* The heading, the status chips, the search box, Refresh and
+            Add Shipment all live once, in the Materials chrome above. */}
 
         {/* Content */}
         {loading ? (
@@ -611,19 +573,16 @@ export default function ShipmentTracker() {
             </div>
             <div>
               <div className="font-semibold text-gray-700 text-lg">
-                {statusFilter === 'All' ? 'No shipments yet' : `No ${FILTER_LABELS[statusFilter].toLowerCase()} shipments`}
+                {statusFilter === 'All' && !q
+                  ? 'No shipments yet'
+                  : 'No shipments match those filters'}
               </div>
               <div className="text-gray-400 text-sm mt-1">
-                {statusFilter === 'All'
+                {statusFilter === 'All' && !q
                   ? 'Add a shipment to start tracking inbound deliveries'
-                  : 'Try a different status filter'}
+                  : 'Try a different status or clear the search above'}
               </div>
             </div>
-            {canEdit && statusFilter === 'All' && (
-              <button className="btn-primary mt-2" onClick={() => setShowModal(true)}>
-                <Plus className="w-4 h-4" /> Add Shipment
-              </button>
-            )}
           </div>
         ) : (
           <div className="space-y-3">
@@ -664,11 +623,11 @@ export default function ShipmentTracker() {
       </div>
 
       {/* Modals */}
-      {showModal && (
+      {createOpen && (
         <ShipmentModal
           pos={pos}
           onSave={handleCreate}
-          onClose={() => setShowModal(false)}
+          onClose={onCreateClose}
         />
       )}
       {editing && (

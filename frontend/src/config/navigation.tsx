@@ -3,9 +3,9 @@ import {
   LayoutDashboard, AppWindow, Database, BarChart3,
   Calendar, Trophy,
   Users, Cpu, LayoutGrid,
-  Package, ShoppingCart, ShieldCheck,
+  Package, ShieldCheck,
   Factory, CalendarRange, Layers, Tablet, Network, GitBranch,
-  Boxes, PackageCheck, PackageOpen, Truck, ListChecks,
+  Boxes,
   GraduationCap,
   Bell, AlertTriangle, Wrench, ClipboardCheck, Lightbulb, BookOpen,
   FolderKanban,
@@ -66,8 +66,8 @@ export const PINNED_ITEMS: NavItem[] = [];
 
 // Two-level navigation: the sidebar (level 1) lists only these workspaces; the
 // content-header tab bar (level 2) lists the focused workspace's screens.
-// Multi-tab pages (Training, Maintenance/CMMS, Purchasing) get exactly ONE nav
-// item each — their page-internal tabs are the sub-navigation.
+// A multi-tab page (Training, the CMMS, Materials) gets exactly ONE nav item —
+// its page-internal tabs are the sub-navigation.
 export const SECTIONS: NavSection[] = [
   {
     id: 'production',
@@ -157,15 +157,20 @@ export const SECTIONS: NavSection[] = [
     icon: Boxes,
     description: 'Track stock and purchasing',
     items: [
-      // exact — so the Tracker link doesn't also light up on /inventory/boms & /inventory/kitting
-      { to: '/inventory',     icon: Package,       label: 'Inventory Tracker', exact: true, proOnly: true, module: 'inventory' },
-      { to: '/inventory/boms',    icon: Layers,       label: 'BOMs',           minRole: 'supervisor', module: 'inventory' },
-      { to: '/inventory/kitting', icon: PackageOpen,  label: 'Kitting',        module: 'inventory' },
-      { to: '/receiving',     icon: PackageCheck,  label: 'Receiving',         proOnly: false, module: 'inventory' },
-      { to: '/requirements',  icon: ListChecks,    label: 'Materials Required', proOnly: true, minRole: 'supervisor', module: 'inventory' },
-      { to: '/shipments',     icon: Truck,         label: 'Shipments',          proOnly: true, module: 'inventory' },
-      { to: '/purchasing',    icon: ShoppingCart,  label: 'Purchasing',         proOnly: true, minRole: 'supervisor', module: 'inventory' },
-      { to: '/reports/inventory', icon: BarChart3, label: 'Reports',            module: 'inventory' },
+      // ONE materials entry. Stock levels, bills of material, kits, goods-in,
+      // orders, inbound freight and what planned work needs are tabs on
+      // /inventory now — seven page files behind seven menu items, for one
+      // small shop's materials, is what made most of the people this module was
+      // built for switch it off. Not `exact`: the item has to stay lit on
+      // /inventory/boms and on the kit URL a traveller's barcode prints.
+      //
+      // The merged item carries the MOST PERMISSIVE gate of the seven it
+      // replaces — no `proOnly` (two of them were open to Free accounts) and no
+      // `minRole` (one of them asked for none). Anything stricter would take
+      // away a screen somebody can reach today; the tabs behind it are what
+      // they always were.
+      { to: '/inventory',     icon: Package,       label: 'Materials', module: 'inventory' },
+      { to: '/reports/inventory', icon: BarChart3, label: 'Reports',   module: 'inventory' },
     ],
   },
   {
@@ -229,8 +234,8 @@ export function useVisibleSections(): NavSection[] {
 // ─── Route → workspace derivation ─────────────────────────────────────────────
 // The focused workspace is derived from the CURRENT ROUTE, never from manual
 // state, so deep links always highlight the right sidebar section and tab.
-// Longest-prefix wins so `/inventory/kitting/123` resolves via the Kitting item
-// rather than the Inventory Tracker item, and legacy deep links like
+// Longest-prefix wins, so a deep link resolves through the deepest item that
+// owns it rather than a shorter one, and legacy deep links like
 // `/training/certs` still resolve to People through the `/training` item.
 
 /** True when `pathname` is `itemPath` itself or a sub-route of it. */
@@ -247,6 +252,13 @@ function pathMatchesItem(pathname: string, itemPath: string): boolean {
  */
 const PATH_SECTIONS: { prefix: string; section: SectionId }[] = [
   { prefix: '/departments', section: 'production' },
+  // The three URLs the retired Materials menu items handed out that do not sit
+  // under /inventory. They render the Materials screen on the matching tab, so
+  // the Inventory workspace has to stay lit while somebody is reading one —
+  // otherwise a printed purchase order's link looks like it left the app.
+  { prefix: '/purchasing', section: 'inventory' },
+  { prefix: '/shipments', section: 'inventory' },
+  { prefix: '/requirements', section: 'inventory' },
 ];
 
 /** The section that owns `pathname`, or null for routes outside the nav
