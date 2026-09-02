@@ -141,7 +141,22 @@ picking `006` in parallel worktrees is a merge conflict that only shows up at bo
 | 009 | `009_work_order_operations.sql` | work-orders-carry-operations | work_order_operations + release/hold columns on work_orders (see note) |
 | 010 | `010_app_revisions.sql` | app-revisions-and-approval | app_revisions snapshots + `apps.current_revision` / `apps.requires_approval` / `completions.app_revision_id` |
 | 011 | `011_qualification_overrides.sql` | run-start-gated-and-one-tap | qualification_overrides + completions.qualification_state (see note) |
-| 012 | `012_*.sql` | scrap-rework-and-coded-downtime | scrap/rework + coded downtime |
+| 012 | `012_scrap_rework_and_downtime_codes.sql` | scrap-rework-and-coded-downtime | `completions.quantity_good` / `quantity_scrap` / `quantity_rework` / `scrap_reason_code_id` / `work_order_operation_id` + `machine_events.reason_code_id` (see note) |
+
+**Note on 012's six columns.** Every one of them is **nullable and carries no
+default**, which is the whole point of the file. `NULL` means *nobody counted*;
+`0` means *somebody counted, and the answer was zero*. Those are different facts,
+and defaulting the counts to zero would have silently rewritten every run that
+ever finished into a measurement that never happened — first-pass yield would
+then be computed over a denominator the plant never provided. A run that records
+nothing still books one unit against its work order, exactly as before.
+
+The two `*_reason_code_id` columns point at `reason_codes(id)` from 007 but are
+**not declared foreign keys**, because SQLite only accepts a key inside a
+`CREATE TABLE` and both tables predate this file by years. Ownership is checked
+in the routes that write them, which is where the tenant check has to live in
+any case: `machine_events` has no `company_id` column at all, so a stop's reason
+code is resolved through `stations.company_id`.
 
 **Note on 011's `completions.qualification_state`.** It carries a value from
 `vocab.QUALIFICATION_STATE` or `''`, and it has **no CHECK constraint** — the

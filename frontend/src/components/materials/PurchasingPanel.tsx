@@ -1,15 +1,14 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api } from '../api/client';
-import ActivityLog from '../components/shared/ActivityLog';
-import SavedViewsBar from '../components/shared/SavedViewsBar';
-import { useAuth } from '../context/AuthContext';
+import { api } from '../../api/client';
+import ActivityLog from '../shared/ActivityLog';
+import { useAuth } from '../../context/AuthContext';
 import {
-  Plus, Search, Download, Eye, Trash2, Send, Package, Star,
+  Plus, Eye, Trash2, Send, Package, Star,
   X, CheckCircle, Building2, Phone,
   Mail, Clock, Edit2, TrendingUp, ShoppingCart, History,
 } from 'lucide-react';
-import TabBar from '../components/shared/TabBar';
+import TabBar from '../shared/TabBar';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -120,7 +119,8 @@ interface ReceiptEntry {
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-const PO_STATUS_FILTERS = ['All', 'draft', 'sent', 'partial', 'received', 'cancelled'] as const;
+/** The status values the Materials filter bar offers on this tab. */
+export const PO_STATUS_FILTERS = ['All', 'draft', 'sent', 'partial', 'received', 'cancelled'] as const;
 
 const PO_STATUS_BADGE: Record<POStatus, string> = {
   draft:     'badge-gray',
@@ -130,7 +130,7 @@ const PO_STATUS_BADGE: Record<POStatus, string> = {
   cancelled: 'badge-red',
 };
 
-const PO_STATUS_LABEL: Record<POStatus, string> = {
+export const PO_STATUS_LABEL: Record<POStatus, string> = {
   draft:     'Draft',
   sent:      'Sent',
   partial:   'Partial',
@@ -894,25 +894,26 @@ function PODetailModal({
 
 // ── Purchase Orders Tab ───────────────────────────────────────────────────────
 
-interface POViewFilters {
-  statusFilter: string;
+function PurchaseOrdersTab({
+  vendors, search, statusFilter, createOpen, onCreateOpen, onCreateClose,
+  onRegisterRefresh, onLoaded,
+}: {
+  vendors: Vendor[];
+  /** The Materials filter bar: PO number / vendor text, and the status picker. */
   search: string;
-}
-
-function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
+  statusFilter: string;
+  /** The header's "New PO" button, and the way the empty state opens it. */
+  createOpen: boolean;
+  onCreateOpen: () => void;
+  onCreateClose: () => void;
+  onRegisterRefresh: (fn: () => Promise<void>) => () => void;
+  onLoaded: (ok?: boolean) => void;
+}) {
   const { canEdit } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [pos, setPOs] = useState<PurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('All');
-  const [search, setSearch] = useState('');
-
-  const applySavedView = (f: POViewFilters) => {
-    setStatusFilter(f.statusFilter);
-    setSearch(f.search);
-  };
-  const [showCreate, setShowCreate] = useState(false);
   const [viewPO, setViewPO] = useState<string | null>(() => searchParams.get('highlight'));
 
   // Arriving from a "Needs Attention" link opens that PO's detail directly,
@@ -934,14 +935,17 @@ function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
         search: search || undefined,
       });
       setPOs(Array.isArray(data) ? data : []);
+      onLoaded();
     } catch (e: any) {
       setLoadError(e.message || 'Failed to load purchase orders');
+      onLoaded(false);
     } finally {
       setLoading(false);
     }
-  }, [statusFilter, search]);
+  }, [statusFilter, search, onLoaded]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => onRegisterRefresh(load), [onRegisterRefresh, load]);
 
   async function handleCreate(data: CreatePOForm) {
     await api.createPurchaseOrder({
@@ -951,7 +955,7 @@ function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
       notes: data.notes,
       lines: data.lines.map(l => ({ item_id: l.item_id, quantity_ordered: l.quantity_ordered, unit_cost: l.unit_cost, notes: l.notes })),
     });
-    setShowCreate(false);
+    onCreateClose();
     load();
   }
 
@@ -973,49 +977,8 @@ function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-3 items-center justify-between">
-        <div className="flex gap-1.5 flex-wrap">
-          {PO_STATUS_FILTERS.map(s => (
-            <button
-              key={s}
-              onClick={() => setStatusFilter(s)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                statusFilter === s
-                  ? 'text-white shadow-sm'
-                  : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'
-              }`}
-              style={statusFilter === s ? { backgroundColor: 'var(--accent)' } : {}}
-            >
-              {s === 'All' ? 'All' : PO_STATUS_LABEL[s as POStatus]}
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-2 items-center w-full sm:w-auto">
-          <div className="relative flex-1 sm:flex-initial min-w-[160px]">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
-              className="input-field pl-9 w-full sm:w-52"
-              placeholder="Search PO# or vendor…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-            />
-          </div>
-          <button className="btn-secondary whitespace-nowrap" onClick={() => api.downloadExport('purchase-orders').catch((e: any) => alert(e.message || 'Export failed'))}>
-            <Download className="w-4 h-4" /> Export CSV
-          </button>
-          {canEdit && (
-            <button className="btn-primary whitespace-nowrap" onClick={() => setShowCreate(true)}>
-              <Plus className="w-4 h-4" /> New PO
-            </button>
-          )}
-        </div>
-        <SavedViewsBar<POViewFilters>
-          storageKey="hm_saved_views_purchase_orders"
-          currentFilters={{ statusFilter, search }}
-          onApply={applySavedView}
-        />
-      </div>
-
+      {/* The status picker, the search box, Export CSV and New PO all live once,
+          in the Materials chrome above this panel. */}
       <div className="card overflow-x-auto">
         <table className="w-full text-sm whitespace-nowrap">
           <thead className="bg-gray-50 border-b border-gray-100">
@@ -1051,10 +1014,11 @@ function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
                           : 'Create your first PO to get started'}
                       </div>
                       {canEdit && statusFilter === 'All' && !search && (
-                        <button className="btn-primary mt-3" onClick={() => setShowCreate(true)}>
+                        <button className="btn-primary mt-3" onClick={onCreateOpen}>
                           <Plus className="w-4 h-4" /> New PO
                         </button>
                       )}
+
                     </td>
                   </tr>
                 )
@@ -1091,7 +1055,7 @@ function PurchaseOrdersTab({ vendors }: { vendors: Vendor[] }) {
         </table>
       </div>
 
-      {showCreate && <CreatePOModal vendors={vendors} onSave={handleCreate} onClose={() => setShowCreate(false)} />}
+      {createOpen && <CreatePOModal vendors={vendors} onSave={handleCreate} onClose={onCreateClose} />}
       {viewPO && <PODetailModal poId={viewPO} onClose={() => setViewPO(null)} onRefresh={load} />}
     </div>
   );
@@ -1126,13 +1090,24 @@ function VendorPOsList({ vendorId, vendorName }: { vendorId: string; vendorName:
 
 // ── Vendors Tab ───────────────────────────────────────────────────────────────
 
-function VendorsTab({ onVendorsChange }: { onVendorsChange: (vendors: Vendor[]) => void }) {
+function VendorsTab({
+  onVendorsChange, search, createOpen, onCreateOpen, onCreateClose,
+  onRegisterRefresh, onLoaded,
+}: {
+  onVendorsChange: (vendors: Vendor[]) => void;
+  /** The Materials filter bar's text, matched against vendor names. */
+  search: string;
+  /** The header's "New Vendor" button, and the way the empty state opens it. */
+  createOpen: boolean;
+  onCreateOpen: () => void;
+  onCreateClose: () => void;
+  onRegisterRefresh: (fn: () => Promise<void>) => () => void;
+  onLoaded: (ok?: boolean) => void;
+}) {
   const { canEdit } = useAuth();
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
-  const [search, setSearch] = useState('');
-  const [showCreate, setShowCreate] = useState(false);
   const [editing, setEditing] = useState<Vendor | null>(null);
   const [openPOsFor, setOpenPOsFor] = useState<string | null>(null);
 
@@ -1143,18 +1118,21 @@ function VendorsTab({ onVendorsChange }: { onVendorsChange: (vendors: Vendor[]) 
       const data = await api.getVendors({ search: search || undefined });
       setVendors(Array.isArray(data) ? data : []);
       onVendorsChange(data);
+      onLoaded();
     } catch (e: any) {
       setLoadError(e.message || 'Failed to load vendors');
+      onLoaded(false);
     } finally {
       setLoading(false);
     }
-  }, [search, onVendorsChange]);
+  }, [search, onVendorsChange, onLoaded]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => onRegisterRefresh(load), [onRegisterRefresh, load]);
 
   async function handleCreate(data: VendorFormData) {
     await api.createVendor(data);
-    setShowCreate(false);
+    onCreateClose();
     load();
   }
 
@@ -1179,18 +1157,7 @@ function VendorsTab({ onVendorsChange }: { onVendorsChange: (vendors: Vendor[]) 
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-3 items-center justify-between">
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input className="input-field pl-9 w-64" placeholder="Search vendors…" value={search} onChange={e => setSearch(e.target.value)} />
-        </div>
-        {canEdit && (
-          <button className="btn-primary" onClick={() => setShowCreate(true)}>
-            <Plus className="w-4 h-4" /> New Vendor
-          </button>
-        )}
-      </div>
-
+      {/* The search box and New Vendor live once, in the Materials chrome. */}
       {loading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array.from({ length: 6 }).map((_, i) => <SkeletonCard key={i} />)}
@@ -1210,10 +1177,11 @@ function VendorsTab({ onVendorsChange }: { onVendorsChange: (vendors: Vendor[]) 
             {search ? 'Try a different search' : 'Add your first vendor to start purchasing'}
           </div>
           {canEdit && !search && (
-            <button className="btn-primary mt-3" onClick={() => setShowCreate(true)}>
+            <button className="btn-primary mt-3" onClick={onCreateOpen}>
               <Plus className="w-4 h-4" /> New Vendor
             </button>
           )}
+
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -1291,7 +1259,7 @@ function VendorsTab({ onVendorsChange }: { onVendorsChange: (vendors: Vendor[]) 
         </div>
       )}
 
-      {showCreate && <VendorModal onSave={handleCreate} onClose={() => setShowCreate(false)} />}
+      {createOpen && <VendorModal onSave={handleCreate} onClose={onCreateClose} />}
       {editing && <VendorModal initial={editing} onSave={handleUpdate} onClose={() => setEditing(null)} />}
     </div>
   );
@@ -1319,7 +1287,7 @@ function SummaryBar() {
   ];
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
       {stats.map(s => (
         <div key={s.label} className="stat-card flex items-center gap-4">
           <div className={`w-10 h-10 rounded-xl ${s.bg} flex items-center justify-center shrink-0`}>
@@ -1337,15 +1305,43 @@ function SummaryBar() {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-export default function Purchasing() {
-  const [searchParams, setSearchParams] = useSearchParams();
+/** The two views inside Purchasing. */
+export type PurchasingView = 'orders' | 'vendors';
+
+export interface PurchasingPanelProps {
+  /** Which view is open. `/purchasing/vendors` and `?tab=vendors` both reach it. */
+  view: PurchasingView;
+  onViewChange: (view: PurchasingView) => void;
+  /** The Materials filter bar: text, and (on Orders) the PO status picker. */
+  search: string;
+  statusFilter: string;
+  /** Whether this account may write — drives each view's empty-state CTA. */
+  canCreate: boolean;
+  /** The header's "New PO" / "New Vendor" button. */
+  createOpen: boolean;
+  onCreateOpen: () => void;
+  onCreateClose: () => void;
+  onRegisterRefresh: (fn: () => Promise<void>) => () => void;
+  onLoaded: (ok?: boolean) => void;
+}
+
+export default function PurchasingPanel({
+  view, onViewChange, search, statusFilter, canCreate,
+  createOpen, onCreateOpen, onCreateClose, onRegisterRefresh, onLoaded,
+}: PurchasingPanelProps) {
   const [vendors, setVendors] = useState<Vendor[]>([]);
 
-  const tab = searchParams.get('tab') === 'vendors' ? 'vendors' : 'orders';
-
-  function setTab(t: 'orders' | 'vendors') {
-    setSearchParams(t === 'vendors' ? { tab: 'vendors' } : {});
-  }
+  // The vendor list is what "New PO" picks from, and it used to arrive only if
+  // you had already opened the Vendors view in this session — so a first visit
+  // offered a purchase-order form with an empty, required Vendor field. Load it
+  // here, once, for whichever view is on screen.
+  useEffect(() => {
+    let cancelled = false;
+    api.getVendors()
+      .then((rows: Vendor[]) => { if (!cancelled) setVendors(Array.isArray(rows) ? rows : []); })
+      .catch(() => { /* the Vendors view reports its own load errors */ });
+    return () => { cancelled = true; };
+  }, []);
 
   const tabs = [
     { key: 'orders' as const, label: 'Purchase Orders', icon: ShoppingCart },
@@ -1353,29 +1349,40 @@ export default function Purchasing() {
   ];
 
   return (
-    <div className="min-h-screen bg-[#f8fafc] p-6">
-      <div className="max-w-7xl mx-auto">
-        <div className="page-header">
-          <div>
-            <h1 className="page-title">Purchasing</h1>
-            <p className="page-subtitle">Vendor management and purchase orders</p>
-          </div>
-        </div>
+    <div className="space-y-5">
+      <SummaryBar />
 
-        <SummaryBar />
+      <TabBar
+        items={tabs.map(t => ({ key: t.key, label: t.label, icon: <t.icon className="w-4 h-4" /> }))}
+        active={view}
+        onSelect={onViewChange}
+        variant="pill"
+        ariaLabel="Purchasing views"
+      />
 
-        <TabBar
-          items={tabs.map(t => ({ key: t.key, label: t.label, icon: <t.icon className="w-4 h-4" /> }))}
-          active={tab}
-          onSelect={setTab}
-          variant="pill"
-          ariaLabel="Purchasing screens"
-          className="mb-6"
+      {view === 'orders' && (
+        <PurchaseOrdersTab
+          vendors={vendors}
+          search={search}
+          statusFilter={statusFilter}
+          createOpen={createOpen}
+          onCreateOpen={onCreateOpen}
+          onCreateClose={onCreateClose}
+          onRegisterRefresh={onRegisterRefresh}
+          onLoaded={onLoaded}
         />
-
-        {tab === 'orders' && <PurchaseOrdersTab vendors={vendors} />}
-        {tab === 'vendors' && <VendorsTab onVendorsChange={setVendors} />}
-      </div>
+      )}
+      {view === 'vendors' && (
+        <VendorsTab
+          onVendorsChange={setVendors}
+          search={search}
+          createOpen={createOpen}
+          onCreateOpen={onCreateOpen}
+          onCreateClose={onCreateClose}
+          onRegisterRefresh={onRegisterRefresh}
+          onLoaded={onLoaded}
+        />
+      )}
     </div>
   );
 }

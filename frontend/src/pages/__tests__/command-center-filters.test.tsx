@@ -28,6 +28,8 @@ const acknowledgeAndonCall = vi.fn();
 const resolveAndonCall = vi.fn();
 const getFloorSnapshot = vi.fn();
 const getFloorDepartments = vi.fn();
+const getWipSummary = vi.fn();
+const getWip = vi.fn();
 
 vi.mock('../../api/client', () => ({
   api: {
@@ -42,9 +44,14 @@ vi.mock('../../api/client', () => ({
   },
 }));
 
+// The Command Center also reads work-in-progress by operation and answers
+// "where is WO-1042?" from the same module. Both are mocked here so this file
+// keeps testing the tiles rather than the network.
 vi.mock('../../api/floor', () => ({
   getFloorSnapshot: (...args: unknown[]) => getFloorSnapshot(...args),
   getFloorDepartments: (...args: unknown[]) => getFloorDepartments(...args),
+  getWipSummary: (...args: unknown[]) => getWipSummary(...args),
+  getWip: (...args: unknown[]) => getWip(...args),
 }));
 
 vi.mock('../../context/AuthContext', () => ({
@@ -321,7 +328,22 @@ describe('the plant is on screen before anything is chosen', () => {
 
   it('tells a company with no departments how to make one, and still shows the plant', async () => {
     getDepartments.mockResolvedValue([]);
-    getFloorDepartments.mockResolvedValue({ ...FLOOR_DEPARTMENTS, departments: [] });
+    // A fresh account has no work in progress either, and no job to look up.
+  getWipSummary.mockResolvedValue({
+    plant_date: '2026-09-02', timezone: 'UTC',
+    departments: [],
+    totals: {
+      running: 0, queued: 0, queued_basis: 'ready + queued operations',
+      good_today: null, good_today_sample: 0, good_today_reason: 'not counted yet',
+      scrap_today: null, scrap_today_sample: 0, scrap_today_reason: 'not counted yet',
+    },
+    scope: { site_id: null, department_id: null, valid: true },
+  });
+  getWip.mockResolvedValue({
+    plant_date: '2026-09-02', timezone: 'UTC',
+    query: '', match: 'none', result: null, results: [], answer: null, reason: null,
+  });
+  getFloorDepartments.mockResolvedValue({ ...FLOOR_DEPARTMENTS, departments: [] });
     renderPage();
 
     expect(await screen.findByText('No departments yet')).toBeInTheDocument();

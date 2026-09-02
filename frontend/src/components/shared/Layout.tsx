@@ -9,7 +9,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useBranding } from '../../context/BrandingContext';
 import { useNavPrefs } from '../../context/NavPrefsContext';
 import { usePermissions } from '../../context/PermissionsContext';
-import { NavItem, NavSection, useVisibleSections, findSectionForPath } from '../../config/navigation';
+import { NavItem, NavSection, useVisibleSections, findSectionForPath, pathMatchesItem } from '../../config/navigation';
 import SiteSwitcher from './SiteSwitcher';
 import AlertsBell from './AlertsBell';
 import RequestHelpButton from './RequestHelpButton';
@@ -186,6 +186,8 @@ export default function Layout() {
   // Pro-locked screens open the upgrade modal for Free users, exactly like the
   // sidebar used to.
   const renderTab = (item: NavItem) => {
+    // Alias paths (e.g. /purchasing under Materials) do not match the NavLink's `to`.
+    const ownsPath = pathMatchesItem(location.pathname, item);
     const { to, icon: Icon, label, exact, proOnly } = item;
     const isLocked = proOnly && isFree;
     if (isLocked) {
@@ -208,10 +210,10 @@ export default function Layout() {
         end={exact}
         className={({ isActive }) =>
           `flex shrink-0 items-center gap-1.5 whitespace-nowrap px-3 py-2.5 text-[13px] font-medium border-b-2 transition-colors ${
-            isActive ? '' : 'border-transparent text-gray-500 hover:text-gray-800'
+            (isActive || ownsPath) ? '' : 'border-transparent text-gray-500 hover:text-gray-800'
           }`
         }
-        style={({ isActive }) => (isActive ? { borderColor: 'var(--accent-ink)', color: 'var(--accent-ink)' } : undefined)}
+        style={({ isActive }) => ((isActive || ownsPath) ? { borderColor: 'var(--accent-ink)', color: 'var(--accent-ink)' } : undefined)}
       >
         <Icon size={14} className="flex-shrink-0" />
         {label}

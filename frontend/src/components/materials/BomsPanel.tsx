@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { api } from '../api/client';
-import type { BOM, BOMLine, BOMStatus } from '../types';
-import type { BOMLineInput } from '../api/client';
-import { useAuth } from '../context/AuthContext';
-import { useToast } from '../context/ToastContext';
-import PageHeader from '../components/shared/PageHeader';
-import EmptyState from '../components/shared/EmptyState';
+import { api } from '../../api/client';
+import type { BOM, BOMLine, BOMStatus } from '../../types';
+import type { BOMLineInput } from '../../api/client';
+import { useAuth } from '../../context/AuthContext';
+import { useToast } from '../../context/ToastContext';
+import EmptyState from '../shared/EmptyState';
 import {
   Layers, Plus, ChevronDown, Search, Trash2, ArrowUp, ArrowDown,
   CheckCircle, GitBranch, Save, AlertTriangle, Package,
@@ -137,7 +136,17 @@ function ItemTypeahead({ onPick }: { onPick: (item: ItemRow) => void }) {
 
 // ── Main page ─────────────────────────────────────────────────────────────────
 
-export default function BOMs() {
+export interface BomsPanelProps {
+  /** The Materials filter bar's text, matched against product-type names. */
+  search: string;
+  /** Hands the shell this panel's loader and takes back the way to withdraw
+   *  it, so the shell's one Refresh control always holds a live loader. */
+  onRegisterRefresh: (fn: () => Promise<void>) => () => void;
+  /** Called after every load, to move (or stall) the shared freshness stamp. */
+  onLoaded: (ok?: boolean) => void;
+}
+
+export default function BomsPanel({ search, onRegisterRefresh, onLoaded }: BomsPanelProps) {
   const { canEdit } = useAuth();
   const { addToast } = useToast();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -202,6 +211,7 @@ export default function BOMs() {
       ]);
       setProductTypes(pts);
       setBoms(bomList);
+      onLoaded();
       setAppSteps((app.steps ?? []).map(s => ({ id: s.id, name: s.name })));
       setLoadError(null);
       // Preselect: URL deep-link (once), else keep current, else first PT
@@ -214,12 +224,18 @@ export default function BOMs() {
       });
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : 'Failed to load product types');
+      onLoaded(false);
     } finally {
       setLoadingSide(false);
     }
-  }, []);
+    // `onLoaded` is stable (the shell wraps it in useCallback).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onLoaded]);
 
   useEffect(() => { loadSide(selectedAppId); }, [selectedAppId, loadSide]);
+
+  const reload = useCallback(async () => { await loadSide(selectedAppId); }, [loadSide, selectedAppId]);
+  useEffect(() => onRegisterRefresh(reload), [onRegisterRefresh, reload]);
 
   // Versions for the selected product type, newest first.
   const versions = useMemo(
@@ -422,13 +438,14 @@ export default function BOMs() {
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
-  return (
-    <div className="min-h-screen bg-[#f8fafc] p-6 space-y-5">
-      <PageHeader
-        title="Bills of Material"
-        subtitle="Versioned BOMs per product type — drafts are editable, activate to use in kitting"
-      />
+  // The heading and the search box live once, in the Materials chrome above.
+  const q = search.trim().toLowerCase();
+  const visibleProductTypes = q
+    ? productTypes.filter(pt => pt.name.toLowerCase().includes(q))
+    : productTypes;
 
+  return (
+    <div className="space-y-5">
       {loadError ? (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm py-16 flex flex-col items-center gap-3 text-center">
           <AlertTriangle size={28} className="text-red-400" />
@@ -464,16 +481,18 @@ export default function BOMs() {
                 <div className="space-y-2 p-2">
                   {[...Array(4)].map((_, i) => <div key={i} className="h-10 animate-pulse bg-gray-100 rounded-lg" />)}
                 </div>
-              ) : productTypes.length === 0 ? (
+              ) : visibleProductTypes.length === 0 ? (
                 <EmptyState
                   compact
                   icon={Package}
-                  title="No product types"
-                  description="Add product types to this app in the App Builder, then attach a BOM to each."
+                  title={productTypes.length === 0 ? 'No product types' : 'No match'}
+                  description={productTypes.length === 0
+                    ? 'Add product types to this app in the App Builder, then attach a BOM to each.'
+                    : 'No product type on this app matches the search above.'}
                 />
               ) : (
                 <div className="space-y-1">
-                  {productTypes.map(pt => {
+                  {visibleProductTypes.map(pt => {
                     const activeV = activeVersionByPt.get(pt.id);
                     const selected = pt.id === selectedPtId;
                     return (

@@ -80,8 +80,33 @@ describe('resolvePageTitle', () => {
   });
 
   it('carries the suffix on the two screens that used to drop it', () => {
-    expect(resolvePageTitle('/requirements')).toBe(`Materials Required${SUFFIX}`);
-    expect(resolvePageTitle('/shipments')).toBe(`Shipments${SUFFIX}`);
+    // Both are tabs on Materials now; the suffix is the point of this check.
+    expect(resolvePageTitle('/requirements')).toBe(`Materials${SUFFIX}`);
+    expect(resolvePageTitle('/shipments')).toBe(`Materials${SUFFIX}`);
+  });
+
+  it('titles every way into the Materials screen with the screen it is', () => {
+    // Seven screens became seven tabs on one. Which tab is a `?tab=` query and
+    // this table only sees the path, so they share the screen's one name rather
+    // than a guess. The receiving KIOSK is a separate surface and keeps its own.
+    for (const url of [
+      '/inventory', '/inventory/item-7', '/inventory/boms',
+      '/inventory/kitting', '/inventory/kitting/kit-42',
+      '/requirements', '/shipments', '/purchasing', '/purchasing/vendors',
+    ]) {
+      expect(resolvePageTitle(url), url).toBe(`Materials${SUFFIX}`);
+    }
+    expect(resolvePageTitle('/receiving')).toBe(`Receiving${SUFFIX}`);
+  });
+
+  it('no longer names a Materials screen that was folded in', () => {
+    const named = [
+      '/inventory', '/inventory/boms', '/inventory/kitting', '/inventory/kitting/k-1',
+      '/requirements', '/shipments', '/purchasing', '/purchasing/vendors',
+    ].map(resolveScreenName);
+    for (const gone of ['Inventory Tracker', 'BOMs', 'Kitting', 'Materials Required', 'Shipments', 'Purchasing']) {
+      expect(named, `a route still resolves to "${gone}"`).not.toContain(gone);
+    }
   });
 
   it('names the workspace on each of the six Reports screens', () => {
@@ -93,7 +118,7 @@ describe('resolvePageTitle', () => {
   it('resolves parameterised routes without leaking the parameter', () => {
     expect(resolvePageTitle('/apps/42/build')).toBe(`App Builder${SUFFIX}`);
     expect(resolvePageTitle('/apps/42')).toBe(`App Details${SUFFIX}`);
-    expect(resolvePageTitle('/inventory/kitting/7')).toBe(`Kitting${SUFFIX}`);
+    expect(resolvePageTitle('/inventory/kitting/7')).toBe(`Materials${SUFFIX}`);
     expect(resolvePageTitle('/departments/9/tv')).toBe(`Department TV${SUFFIX}`);
   });
 

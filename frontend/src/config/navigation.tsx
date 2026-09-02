@@ -3,9 +3,9 @@ import {
   LayoutDashboard, AppWindow, Database, BarChart3,
   Calendar, Trophy,
   Users, Cpu, LayoutGrid,
-  Package, ShoppingCart, ShieldCheck,
+  Package, ShieldCheck,
   Factory, CalendarRange, Layers, Tablet, Network, GitBranch,
-  Boxes, PackageCheck, PackageOpen, Truck, ListChecks,
+  Boxes,
   GraduationCap,
   Bell, AlertTriangle, Wrench, ClipboardCheck, Lightbulb, BookOpen,
   FolderKanban,
@@ -15,6 +15,11 @@ import { useModules } from '../context/ModulesContext';
 export type NavItem = {
   to: string; icon: React.ElementType; label: string;
   exact?: boolean; proOnly?: boolean; minRole?: string;
+  /** Other paths this one item owns, for a screen reached by more than one URL.
+   *  Materials is one screen at /inventory with seven tabs, but /purchasing,
+   *  /shipments and /requirements are addresses its retired menu items handed
+   *  out and still render it — the workspace has to stay lit on all of them. */
+  altPaths?: string[];
   /** Items that can't be hidden and always show regardless of workspace. */
   pinned?: boolean;
   /** Opens a full-screen experience outside the management shell (e.g. the
@@ -66,8 +71,8 @@ export const PINNED_ITEMS: NavItem[] = [];
 
 // Two-level navigation: the sidebar (level 1) lists only these workspaces; the
 // content-header tab bar (level 2) lists the focused workspace's screens.
-// Multi-tab pages (Training, Maintenance/CMMS, Purchasing) get exactly ONE nav
-// item each — their page-internal tabs are the sub-navigation.
+// A multi-tab page (Training, the CMMS, Materials) gets exactly ONE nav item —
+// its page-internal tabs are the sub-navigation.
 export const SECTIONS: NavSection[] = [
   {
     id: 'production',
@@ -157,15 +162,27 @@ export const SECTIONS: NavSection[] = [
     icon: Boxes,
     description: 'Track stock and purchasing',
     items: [
-      // exact — so the Tracker link doesn't also light up on /inventory/boms & /inventory/kitting
-      { to: '/inventory',     icon: Package,       label: 'Inventory Tracker', exact: true, proOnly: true, module: 'inventory' },
-      { to: '/inventory/boms',    icon: Layers,       label: 'BOMs',           minRole: 'supervisor', module: 'inventory' },
-      { to: '/inventory/kitting', icon: PackageOpen,  label: 'Kitting',        module: 'inventory' },
-      { to: '/receiving',     icon: PackageCheck,  label: 'Receiving',         proOnly: false, module: 'inventory' },
-      { to: '/requirements',  icon: ListChecks,    label: 'Materials Required', proOnly: true, minRole: 'supervisor', module: 'inventory' },
-      { to: '/shipments',     icon: Truck,         label: 'Shipments',          proOnly: true, module: 'inventory' },
-      { to: '/purchasing',    icon: ShoppingCart,  label: 'Purchasing',         proOnly: true, minRole: 'supervisor', module: 'inventory' },
-      { to: '/reports/inventory', icon: BarChart3, label: 'Reports',            module: 'inventory' },
+      // ONE materials entry. Stock levels, bills of material, kits, goods-in,
+      // orders, inbound freight and what planned work needs are tabs on
+      // /inventory now — seven page files behind seven menu items, for one
+      // small shop's materials, is what made most of the people this module was
+      // built for switch it off. Not `exact`: the item has to stay lit on
+      // /inventory/boms and on the kit URL a traveller's barcode prints.
+      //
+      // Gating moved DOWN a level rather than being merged away. The item keeps
+      // the `proOnly` the stock tracker always had, and carries NO `minRole`,
+      // because four of its seven tabs were open to every role and a role gate
+      // here would take the whole screen off them. The three that did ask for a
+      // supervisor (bills of material, orders, requirements) still do:
+      // MATERIALS_SUPERVISOR_TABS in
+      // components/materials/materialsTabs.ts is the one list, and the screen
+      // both hides those tabs and turns their URLs away.
+      {
+        to: '/inventory', icon: Package, label: 'Materials',
+        proOnly: true, module: 'inventory',
+        altPaths: ['/purchasing', '/shipments', '/requirements'],
+      },
+      { to: '/reports/inventory', icon: BarChart3, label: 'Reports',   module: 'inventory' },
     ],
   },
   {
@@ -229,13 +246,23 @@ export function useVisibleSections(): NavSection[] {
 // ─── Route → workspace derivation ─────────────────────────────────────────────
 // The focused workspace is derived from the CURRENT ROUTE, never from manual
 // state, so deep links always highlight the right sidebar section and tab.
-// Longest-prefix wins so `/inventory/kitting/123` resolves via the Kitting item
-// rather than the Inventory Tracker item, and legacy deep links like
+// Longest-prefix wins, so a deep link resolves through the deepest item that
+// owns it rather than a shorter one, and legacy deep links like
 // `/training/certs` still resolve to People through the `/training` item.
 
-/** True when `pathname` is `itemPath` itself or a sub-route of it. */
-function pathMatchesItem(pathname: string, itemPath: string): boolean {
-  return pathname === itemPath || pathname.startsWith(`${itemPath}/`);
+/** True when `pathname` is `base` itself or a sub-route of it. */
+function pathUnder(pathname: string, base: string): boolean {
+  return pathname === base || pathname.startsWith(`${base}/`);
+}
+
+/** Every path an item owns: its own, plus any `altPaths`. */
+export function itemPaths(item: NavItem): string[] {
+  return [item.to, ...(item.altPaths ?? [])];
+}
+
+/** True when `pathname` is one of `item`'s paths, or a sub-route of one. */
+export function pathMatchesItem(pathname: string, item: NavItem): boolean {
+  return itemPaths(item).some(base => pathUnder(pathname, base));
 }
 
 /**
@@ -260,16 +287,18 @@ export function findSectionForPath(
   let bestLen = -1;
   for (const section of sections) {
     for (const item of section.items) {
-      if (pathMatchesItem(pathname, item.to) && item.to.length > bestLen) {
-        best = section;
-        bestLen = item.to.length;
+      for (const base of itemPaths(item)) {
+        if (pathUnder(pathname, base) && base.length > bestLen) {
+          best = section;
+          bestLen = base.length;
+        }
       }
     }
   }
   if (best) return best;
 
   for (const alias of PATH_SECTIONS) {
-    if (!pathMatchesItem(pathname, alias.prefix)) continue;
+    if (!pathUnder(pathname, alias.prefix)) continue;
     const section = sections.find(s => s.id === alias.section);
     if (section) return section;
   }

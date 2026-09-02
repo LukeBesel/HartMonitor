@@ -26,6 +26,8 @@ import TabBar from '../components/shared/TabBar';
 import UpgradeModal from '../components/shared/UpgradeModal';
 import { StepMetricsPanel } from '../components/analytics/StepMetricsPanel';
 import { OEEPanel } from '../components/analytics/OEEPanel';
+import { getLosses } from '../api/oee';
+import type { LossesReport } from '../api/oee';
 import { fmtDuration } from '../components/apps/appModel';
 import { useAuth } from '../context/AuthContext';
 import { usePlan } from '../context/PlanContext';
@@ -226,7 +228,10 @@ export default function Analytics() {
           </div>
         </div>
       ) : (
-        <OEEPanel />
+        <>
+          <OEEPanel />
+          <DowntimePareto stationId={searchParams.get('station_id') || ''} />
+        </>
       ))}
 
       {showUpgrade && (
@@ -571,6 +576,127 @@ function KPICard({ icon, bg, label, value, note, title }: {
         <div className="text-xs text-gray-500">{label}</div>
         {note && <div className="text-[11px] text-gray-400 truncate" title={note}>{note}</div>}
       </div>
+    </div>
+  );
+}
+
+// ─── The downtime Pareto and the six big losses ──────────────────────────────
+//
+// Downtime used to be a free-text "Reason (optional)" on a machine event, so
+// the plant had a word cloud where it needed a Pareto — and no six-big-losses
+// roll-up at all. Every stop now picks from the company's coded list.
+//
+// Two rules this panel keeps:
+//
+//   • Minutes with no coded reason get their OWN labelled bar and are never
+//     spread across the six buckets. A Pareto that redistributes unknown
+//     minutes invents its own top cause, and somebody then goes and fixes it.
+//   • A day with no stops says so. A chart of six zero-height bars reads as a
+//     measurement, and it is not one.
+
+function DowntimePareto({ stationId }: { stationId: string }) {
+  const [data, setData] = useState<LossesReport | null>(null);
+  const [days, setDays] = useState(1);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    // Wrapped so a SYNCHRONOUS throw becomes a rejection like any other
+    // failure: this panel must degrade to a line of text, never take the OEE
+    // tab down with it.
+    Promise.resolve()
+      .then(() => getLosses({ days, stationId: stationId || undefined }))
+      .then(d => { if (live) { setData(d); setError(''); } })
+      .catch((err: unknown) => { if (live) setError(err instanceof Error ? err.message : 'Could not load downtime'); });
+    return () => { live = false; };
+  }, [days, stationId]);
+
+  if (error) {
+    return <div className="card p-5 mt-6 text-sm text-gray-500">{error}</div>;
+  }
+  if (!data) {
+    return <div className="card p-5 mt-6"><Skeleton className="h-24 w-full" /></div>;
+  }
+
+  const worst = data.pareto[0]?.minutes ?? 0;
+
+  return (
+    <div className="card p-5 mt-6 space-y-5">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+            <AlertTriangle size={15} className="text-amber-500" /> Why the plant stopped
+          </h3>
+          <p className="text-xs text-gray-400 mt-0.5">
+            {data.station_name ? `${data.station_name} · ` : ''}
+            {data.stops} stop{data.stops === 1 ? '' : 's'} · {data.total_down_minutes} minutes
+            {data.plant_date ? ` · plant day ${data.plant_date}` : ''}
+          </p>
+        </div>
+        <select
+          className="input-field w-auto text-sm"
+          value={days}
+          onChange={e => setDays(Number(e.target.value))}
+          aria-label="Downtime window"
+        >
+          <option value={1}>Today</option>
+          <option value={7}>Last 7 days</option>
+          <option value={30}>Last 30 days</option>
+        </select>
+      </div>
+
+      {data.pareto.length === 0 ? (
+        <p className="text-sm text-gray-400">{data.empty_reason ?? 'No stops recorded'}</p>
+      ) : (
+        <>
+          <div className="space-y-2">
+            {data.pareto.map(row => (
+              <div key={row.reason_code_id ?? 'unclassified'} className="space-y-1">
+                <div className="flex items-baseline justify-between gap-3 text-xs">
+                  <span className={`font-medium truncate pr-1 ${row.reason_code_id ? 'text-gray-700' : 'text-gray-400 italic'}`}>
+                    {row.label}
+                    {row.bucket_label && <span className="text-gray-400 font-normal"> · {row.bucket_label}</span>}
+                  </span>
+                  <span className="tabular-nums text-gray-500 flex-shrink-0">
+                    {row.minutes}m{row.pct !== null ? ` · ${row.pct}%` : ''}
+                    {row.cumulative_pct !== null && <span className="text-gray-300"> ({row.cumulative_pct}% cum.)</span>}
+                  </span>
+                </div>
+                <div className="h-2.5 rounded-full bg-gray-100 overflow-hidden">
+                  <div
+                    className={`h-full rounded-full ${row.reason_code_id ? 'bg-amber-500' : 'bg-gray-300'}`}
+                    style={{ width: worst > 0 ? `${Math.max(2, (row.minutes / worst) * 100)}%` : '0%' }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-gray-400 mb-2">
+              The six big losses
+            </h4>
+            <div className="overflow-x-auto">
+              <div className="flex gap-2 min-w-max">
+                {data.six_big_losses.map(b => (
+                  <div key={b.bucket || 'none'} className="rounded-lg border border-gray-200 px-3 py-2 min-w-[112px]">
+                    <div className="text-lg font-bold tabular-nums text-gray-900">{b.minutes}m</div>
+                    <div className="text-[11px] text-gray-500 leading-tight">{b.label}</div>
+                  </div>
+                ))}
+                {data.unclassified_minutes > 0 && (
+                  <div className="rounded-lg border border-dashed border-gray-300 px-3 py-2 min-w-[112px]">
+                    <div className="text-lg font-bold tabular-nums text-gray-400">{data.unclassified_minutes}m</div>
+                    <div className="text-[11px] text-gray-400 leading-tight">
+                      Not coded — logged before reasons, never redistributed
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

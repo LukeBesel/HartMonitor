@@ -50,6 +50,11 @@ export interface RunSummaryProps {
   /** THIS run, so "Synced" can be about this run's own queued save and not
    *  about the outbox happening to be empty of other people's work. */
   completionId?: string | null;
+  /** What this run counted: "1 good · 1 scrap · Weld porosity". Empty when the
+   *  operator never touched the units control — the run recorded no counts at
+   *  all, which is a different thing from having counted zero, and the tile
+   *  says so rather than printing a fabricated "1 good". */
+  unitsLabel?: string;
   /** Run context carried into the next unit (WO number / part number), or null. */
   contextLabel?: string | null;
   /** Non-empty = "Next unit" is disabled with this short reason (no context yet). */
@@ -69,7 +74,7 @@ export default function RunSummary(props: RunSummaryProps) {
   const {
     appName, operatorName, productTypeName, steps, stepTimes, getStepTakt,
     taktExceededSteps, capturedCount, kitSummary, savedLocally, completionId,
-    contextLabel, nextUnitDisabledReason, onChangeContext, onNextUnit, onDone, onReview,
+    unitsLabel, contextLabel, nextUnitDisabledReason, onChangeContext, onNextUnit, onDone, onReview,
   } = props;
 
   // Live outbox depth for THIS run's own final save (the player queues it under
@@ -122,6 +127,15 @@ export default function RunSummary(props: RunSummaryProps) {
           <div className="p-well flex items-center gap-2.5 px-4 py-3 mb-4" style={{ color: 'var(--p-good)' }}>
             <CheckCircle size={17} className="flex-shrink-0" />
             <span style={{ fontSize: 14, fontWeight: 550 }}>Synced — this run is on the server</span>
+          </div>
+        )}
+
+        {/* What the run made. Only shown when somebody counted: a run with no
+            counts says nothing here rather than claiming one good piece. */}
+        {unitsLabel && (
+          <div className="p-well flex items-center gap-2.5 px-4 py-3 mb-4">
+            <Package size={16} className="flex-shrink-0" style={{ color: 'var(--p-accent)' }} />
+            <span style={{ fontSize: 15, fontWeight: 650, color: 'var(--p-ink)' }}>{unitsLabel}</span>
           </div>
         )}
 

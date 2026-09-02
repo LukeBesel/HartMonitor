@@ -1,0 +1,1685 @@
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import {
+  Package, DollarSign, AlertTriangle, TrendingUp, Search, Plus,
+  MapPin, X, Pencil, Trash2, ArrowUpCircle, ArrowDownCircle,
+  RefreshCw, ChevronDown, Layers, RotateCcw, ArrowLeftRight, Truck,
+  ClipboardList, Database, LayoutGrid, PackageX,
+} from 'lucide-react';
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
+} from 'recharts';
+import { api } from '../../api/client';
+import type { InventoryTrackerSummary, InventoryMovement } from '../../types';
+import { useSite } from '../../context/SiteContext';
+import { useAuth } from '../../context/AuthContext';
+import TabBar from '../shared/TabBar';
+import { Skeleton, fmtNum } from './common';
+
+// ─── Stock ────────────────────────────────────────────────────────────────────
+//
+// The Stock tab of the Materials screen: what is on hand, what it is worth,
+// what moved, and where it lives. Its five views (Overview, Items, Min/Max,
+// Movements, Locations) are sub-tabs inside this panel — the search box, the
+// category picker and the low-stock switch that used to sit above them are the
+// Materials screen's own filter bar now, handed down as props.
+
+// ─── Helpers ───────────────────────────────────────────────────────────────
+
+function fmtCurrency(v: number | null | undefined): string {
+  if (v == null) return '$0.00';
+  return '$' + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function fmtCurrencyWhole(v: number | null | undefined): string {
+  if (v == null) return '$0';
+  return '$' + Math.round(v).toLocaleString('en-US');
+}
+
+function fmtDate(iso: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  const now = new Date();
+  const diff = now.getTime() - d.getTime();
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+  return d.toLocaleDateString();
+}
+
+function stockStatus(qty: number, reorderPoint: number): 'ok' | 'low' | 'critical' {
+  if (qty <= 0) return 'critical';
+  if (qty <= reorderPoint) return 'critical';
+  if (qty <= reorderPoint * 1.2) return 'low';
+  return 'ok';
+}
+
+// ─── Movement type config ───────────────────────────────────────────────────
+
+const MOVE_CONFIG: Record<string, { label: string; color: string; bgColor: string; icon: any; sign: number }> = {
+  receive:  { label: 'Receive',  color: 'text-emerald-700', bgColor: 'bg-emerald-50', icon: ArrowUpCircle,   sign: 1 },
+  consume:  { label: 'Consume',  color: 'text-red-700',     bgColor: 'bg-red-50',     icon: ArrowDownCircle, sign: -1 },
+  ship:     { label: 'Ship',     color: 'text-orange-700',  bgColor: 'bg-orange-50',  icon: Truck,           sign: -1 },
+  scrap:    { label: 'Scrap',    color: 'text-gray-600',    bgColor: 'bg-gray-100',   icon: Trash2,          sign: -1 },
+  adjust:   { label: 'Adjust',   color: 'text-blue-700',    bgColor: 'bg-blue-50',    icon: Pencil,          sign: 0 },
+  return:   { label: 'Return',   color: 'text-teal-700',    bgColor: 'bg-teal-50',    icon: RotateCcw,       sign: 1 },
+  transfer: { label: 'Transfer', color: 'text-purple-700',  bgColor: 'bg-purple-50',  icon: ArrowLeftRight,  sign: 0 },
+};
+
+const CHART_COLORS = ['#3b82f6', '#22c55e', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4', '#ec4899', '#84cc16'];
+
+// ─── Stat Card ──────────────────────────────────────────────────────────────
+
+function SummaryCard({ icon, iconBg, label, value, sub }: any) {
+  return (
+    <div className="stat-card">
+      <div className="flex items-center gap-3">
+        <div className={`w-10 h-10 ${iconBg} rounded-xl flex items-center justify-center flex-shrink-0`}>
+          {icon}
+        </div>
+        <div className="min-w-0">
+          <div className="text-base sm:text-2xl font-bold text-gray-900 truncate">{value}</div>
+          <div className="text-xs font-medium text-gray-500">{label}</div>
+          {sub && <div className="text-xs text-gray-400">{sub}</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Item Form Modal ─────────────────────────────────────────────────────────
+
+const EMPTY_ITEM = {
+  sku: '', name: '', description: '', category: '',
+  unit_of_measure: 'ea', unit_cost: '', reorder_point: '', reorder_max: '', reorder_qty: '', lead_time_days: '',
+};
+function ItemModal({ item, onClose, onSaved }: { item: any | null; onClose: () => void; onSaved: () => void }) {
+  const [form, setForm] = useState<any>(item ? {
+    sku: item.sku ?? '',
+    name: item.name ?? '',
+    description: item.description ?? '',
+    category: item.category ?? '',
+    unit_of_measure: item.unit_of_measure ?? 'ea',
+    unit_cost: item.unit_cost ?? '',
+    reorder_point: item.reorder_point ?? '',
+    reorder_max: item.reorder_max ?? '',
+    reorder_qty: item.reorder_qty ?? '',
+    lead_time_days: item.lead_time_days ?? '',
+  } : { ...EMPTY_ITEM });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  function set(field: string, val: any) {
+    setForm((f: any) => ({ ...f, [field]: val }));
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.sku.trim() || !form.name.trim()) {
+      setError('SKU and Name are required.');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      const payload: any = { ...form };
+      if (payload.unit_cost !== '') payload.unit_cost = parseFloat(payload.unit_cost);
+      else delete payload.unit_cost;
+      if (payload.reorder_point !== '') payload.reorder_point = parseFloat(payload.reorder_point);
+      else delete payload.reorder_point;
+      if (payload.reorder_max !== '') payload.reorder_max = parseFloat(payload.reorder_max);
+      else delete payload.reorder_max;
+      if (payload.reorder_qty !== '') payload.reorder_qty = parseFloat(payload.reorder_qty);
+      else delete payload.reorder_qty;
+      if (payload.lead_time_days !== '') payload.lead_time_days = parseInt(payload.lead_time_days);
+      else delete payload.lead_time_days;
+
+      if (item?.id) {
+        await api.updateInventoryItem(item.id, payload);
+      } else {
+        await api.createInventoryItem(payload);
+      }
+      onSaved();
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <h2 className="font-semibold text-gray-900">{item ? 'Edit Item' : 'New Inventory Item'}</h2>
+          <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg"><X size={16} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div className="field-row gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">SKU *</label>
+              <input className="input-field" value={form.sku} onChange={e => set('sku', e.target.value)} placeholder="SKU-001" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Name *</label>
+              <input className="input-field" value={form.name} onChange={e => set('name', e.target.value)} placeholder="Item name" />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Description</label>
+            <textarea className="input-field resize-none" rows={2} value={form.description} onChange={e => set('description', e.target.value)} placeholder="Optional description" />
+          </div>
+          <div className="field-row gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Category</label>
+              <input className="input-field" value={form.category} onChange={e => set('category', e.target.value)} placeholder="e.g. Raw Materials" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Unit of Measure</label>
+              <select className="input-field" value={form.unit_of_measure} onChange={e => set('unit_of_measure', e.target.value)}>
+                {['ea','kg','m','L','roll','box','set'].map(u => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="field-row-3 gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Unit Cost ($)</label>
+              <input className="input-field" type="number" min="0" step="0.01" value={form.unit_cost} onChange={e => set('unit_cost', e.target.value)} placeholder="0.00" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Min Stock (Reorder)</label>
+              <input className="input-field" type="number" min="0" value={form.reorder_point} onChange={e => set('reorder_point', e.target.value)} placeholder="0" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Max Stock (Target)</label>
+              <input className="input-field" type="number" min="0" value={form.reorder_max} onChange={e => set('reorder_max', e.target.value)} placeholder="0" />
+            </div>
+          </div>
+          <div className="field-row gap-4">
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Reorder Qty</label>
+              <input className="input-field" type="number" min="0" value={form.reorder_qty} onChange={e => set('reorder_qty', e.target.value)} placeholder="0" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Lead Time (days)</label>
+              <input className="input-field" type="number" min="0" value={form.lead_time_days} onChange={e => set('lead_time_days', e.target.value)} placeholder="0" />
+            </div>
+          </div>
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          <div className="flex justify-end gap-3 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
+            <button type="submit" disabled={saving} className="btn-primary">
+              {saving ? <RefreshCw size={14} className="animate-spin" /> : null}
+              {item ? 'Save Changes' : 'Create Item'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Record Movement Modal ───────────────────────────────────────────────────
+// Global movement recorder: pick any item (or pre-bound to one), a type, qty,
+// location(s), and a note. Recording updates the item's stock atomically server-side.
+
+function RecordMovementModal({
+  item, items, onClose, onSaved,
+}: {
+  item?: any | null;           // optional pre-selected item
+  items?: any[];               // catalog for the item picker (when not pre-selected)
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const { selectedSiteId } = useSite();
+  const [locations, setLocations] = useState<any[]>([]);
+  const [form, setForm] = useState({
+    item_id: item?.id ?? '',
+    location_id: '',
+    to_location_id: '',
+    movement_type: 'receive',
+    quantity: '',
+    notes: '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    api.getLocations({ site_id: selectedSiteId || undefined }).then(setLocations).catch(() => {});
+  }, [selectedSiteId]);
+
+  function set(field: string, val: any) {
+    setForm(f => ({ ...f, [field]: val }));
+  }
+
+  const isTransfer = form.movement_type === 'transfer';
+  const isAdjust = form.movement_type === 'adjust';
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.item_id) { setError('Select an item.'); return; }
+    if (!form.location_id) { setError(isTransfer ? 'Select the source location.' : 'Select a location.'); return; }
+    if (isTransfer && !form.to_location_id) { setError('Select a destination location.'); return; }
+    if (isTransfer && form.to_location_id === form.location_id) { setError('Source and destination must differ.'); return; }
+    if (form.quantity === '' || isNaN(Number(form.quantity))) { setError('Enter a valid quantity.'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      await api.createMovement({
+        item_id: form.item_id,
+        location_id: form.location_id,
+        to_location_id: isTransfer ? form.to_location_id : undefined,
+        movement_type: form.movement_type,
+        quantity: parseFloat(form.quantity),
+        notes: form.notes || undefined,
+      });
+      onSaved();
+      onClose();
+    } catch (err: any) {
+      setError(err.message || 'Failed to record movement');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+          <div>
+            <h2 className="font-semibold text-gray-900">Record Movement</h2>
+            {item && <p className="text-xs text-gray-500 mt-0.5">{item.name}</p>}
+          </div>
+          <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg"><X size={16} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          {!item && (
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">Item *</label>
+              <select className="input-field" value={form.item_id} onChange={e => set('item_id', e.target.value)}>
+                <option value="">Select item…</option>
+                {(items ?? []).map(i => (
+                  <option key={i.id} value={i.id}>{i.name} ({i.sku})</option>
+                ))}
+              </select>
+            </div>
+          )}
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Movement Type *</label>
+            <select className="input-field" value={form.movement_type} onChange={e => set('movement_type', e.target.value)}>
+              <option value="receive">Receive (+)</option>
+              <option value="consume">Consume (−)</option>
+              <option value="ship">Ship (−)</option>
+              <option value="scrap">Scrap (−)</option>
+              <option value="return">Return (+)</option>
+              <option value="adjust">Adjust (±)</option>
+              <option value="transfer">Transfer</option>
+            </select>
+          </div>
+          <div className={isTransfer ? 'grid grid-cols-2 gap-3' : ''}>
+            <div>
+              <label className="block text-xs font-medium text-gray-700 mb-1">{isTransfer ? 'From Location *' : 'Location *'}</label>
+              <select className="input-field" value={form.location_id} onChange={e => set('location_id', e.target.value)}>
+                <option value="">Select location…</option>
+                {locations.map(l => (
+                  <option key={l.id} value={l.id}>{l.name} ({l.code})</option>
+                ))}
+              </select>
+            </div>
+            {isTransfer && (
+              <div>
+                <label className="block text-xs font-medium text-gray-700 mb-1">To Location *</label>
+                <select className="input-field" value={form.to_location_id} onChange={e => set('to_location_id', e.target.value)}>
+                  <option value="">Select location…</option>
+                  {locations.map(l => (
+                    <option key={l.id} value={l.id}>{l.name} ({l.code})</option>
+                  ))}
+                </select>
+              </div>
+            )}
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">
+              Quantity {isAdjust ? '(+ for in, − for out)' : ''}
+            </label>
+            <input
+              className="input-field"
+              type="number"
+              step="0.001"
+              value={form.quantity}
+              onChange={e => set('quantity', e.target.value)}
+              placeholder={isAdjust ? '±0' : '0'}
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-700 mb-1">Reason / Note</label>
+            <input className="input-field" value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Optional reason or note" />
+          </div>
+          {error && <p className="text-sm text-red-600">{error}</p>}
+          <div className="flex justify-end gap-3 pt-2">
+            <button type="button" onClick={onClose} className="btn-secondary">Cancel</button>
+            <button type="submit" disabled={saving} className="btn-primary">
+              {saving ? <RefreshCw size={14} className="animate-spin" /> : null}
+              Record Movement
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ─── Locations Tab ───────────────────────────────────────────────────────────
+
+function LocationsTab({ canEdit }: { canEdit: boolean }) {
+  const { selectedSiteId } = useSite();
+  const [locations, setLocations] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [form, setForm] = useState({ name: '', code: '', type: 'warehouse' });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  const loadLocations = useCallback(() => {
+    setLoading(true);
+    setLoadError('');
+    api.getLocations({ site_id: selectedSiteId || undefined })
+      .then(data => { setLocations(Array.isArray(data) ? data : []); setLoading(false); })
+      .catch((err: any) => { setLoadError(err.message || 'Failed to load locations'); setLoading(false); });
+  }, [selectedSiteId]);
+
+  useEffect(() => { loadLocations(); }, [loadLocations]);
+
+  function set(field: string, val: string) {
+    setForm(f => ({ ...f, [field]: val }));
+  }
+
+  async function handleCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!form.name.trim() || !form.code.trim()) { setError('Name and Code are required.'); return; }
+    setSaving(true);
+    setError('');
+    try {
+      await api.createLocation(form);
+      setForm({ name: '', code: '', type: 'warehouse' });
+      loadLocations();
+    } catch (err: any) {
+      setError(err.message || 'Failed to create location');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="card p-6 space-y-5">
+      {loading ? (
+        <div className="space-y-2">
+          {[1,2,3].map(i => <Skeleton key={i} className="h-10" />)}
+        </div>
+      ) : loadError ? (
+        <div className="flex flex-col items-center gap-3 py-10 text-center">
+          <AlertTriangle size={22} className="text-red-400" />
+          <p className="text-gray-500 font-medium">Couldn't load locations</p>
+          <p className="text-xs text-gray-400">{loadError}</p>
+          <button onClick={loadLocations} className="btn-secondary">
+            <RefreshCw size={14} /> Retry
+          </button>
+        </div>
+      ) : (
+        <div className="overflow-auto">
+          <table className="w-full text-sm min-w-[480px]">
+            <thead>
+              <tr className="border-b border-gray-100">
+                <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500">Name</th>
+                <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500">Code</th>
+                <th className="text-left py-2 px-3 text-xs font-semibold text-gray-500">Type</th>
+                <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500">Items</th>
+                <th className="text-right py-2 px-3 text-xs font-semibold text-gray-500">Units</th>
+              </tr>
+            </thead>
+            <tbody>
+              {locations.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="text-center py-6 text-gray-400 text-sm">No locations yet</td>
+                </tr>
+              )}
+              {locations.map(l => (
+                <tr key={l.id} className="border-b border-gray-50 hover:bg-gray-50">
+                  <td className="py-2.5 px-3 font-medium text-gray-900">{l.name}</td>
+                  <td className="py-2.5 px-3 text-gray-500 font-mono text-xs">{l.code}</td>
+                  <td className="py-2.5 px-3">
+                    <span className="badge-gray capitalize">{l.type}</span>
+                  </td>
+                  <td className="py-2.5 px-3 text-right text-gray-700">{fmtNum(l.item_count)}</td>
+                  <td className="py-2.5 px-3 text-right text-gray-700">{fmtNum(l.total_units)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {canEdit && (
+        <div className="border-t border-gray-100 pt-4">
+          <h3 className="text-sm font-semibold text-gray-700 mb-3">New Location</h3>
+          <form onSubmit={handleCreate} className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end">
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Name *</label>
+              <input className="input-field" value={form.name} onChange={e => set('name', e.target.value)} placeholder="Warehouse A" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Code *</label>
+              <input className="input-field" value={form.code} onChange={e => set('code', e.target.value)} placeholder="WH-A" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1">Type</label>
+              <select className="input-field" value={form.type} onChange={e => set('type', e.target.value)}>
+                <option value="warehouse">Warehouse</option>
+                <option value="floor">Floor</option>
+                <option value="hold">Hold</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <button type="submit" disabled={saving} className="btn-primary">
+              {saving ? <RefreshCw size={14} className="animate-spin" /> : <Plus size={14} />}
+              Add
+            </button>
+          </form>
+          {error && <p className="text-sm text-red-600 mt-2">{error}</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Item Detail Panel ───────────────────────────────────────────────────────
+
+function DetailPanel({ itemId, onClose, onEdit, onRefreshList, canEdit }: {
+  itemId: string;
+  onClose: () => void;
+  onEdit: (item: any) => void;
+  onRefreshList: () => void;
+  canEdit: boolean;
+}) {
+  const [item, setItem] = useState<any>(null);
+  const [movements, setMovements] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [tab, setTab] = useState<'stock' | 'movements'>('stock');
+  const [showAdjust, setShowAdjust] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    Promise.all([
+      api.getInventoryItem(itemId),
+      api.getMovements({ item_id: itemId, limit: 50 }),
+    ]).then(([it, mv]) => {
+      setItem(it);
+      setMovements(mv);
+      setLoading(false);
+    }).catch(() => setLoading(false));
+  }, [itemId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const totalStock = useMemo(() => {
+    if (!item?.stock_by_location) return 0;
+    return item.stock_by_location.reduce((sum: number, l: any) => sum + (l.quantity ?? 0), 0);
+  }, [item]);
+
+  const totalValue = useMemo(() => {
+    if (!item) return 0;
+    return totalStock * (item.unit_cost ?? 0);
+  }, [item, totalStock]);
+
+  if (loading) {
+    return (
+      <div className="w-full lg:flex-1 bg-white rounded-2xl border border-gray-200 shadow-sm p-6 space-y-4 min-w-0">
+        <Skeleton className="h-6 w-48" />
+        <Skeleton className="h-4 w-32" />
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-32 w-full" />
+      </div>
+    );
+  }
+
+  if (!item) {
+    return (
+      <div className="w-full lg:flex-1 bg-white rounded-2xl border border-gray-200 shadow-sm p-6 flex items-center justify-center">
+        <p className="text-gray-400">Item not found</p>
+      </div>
+    );
+  }
+
+  const status = stockStatus(totalStock, item.reorder_point ?? 0);
+
+  return (
+    <div className="w-full lg:flex-1 bg-white rounded-2xl border border-gray-200 shadow-sm flex flex-col min-w-0 overflow-hidden">
+      {showAdjust && (
+        <RecordMovementModal
+          item={item}
+          onClose={() => setShowAdjust(false)}
+          onSaved={() => { load(); onRefreshList(); }}
+        />
+      )}
+
+      {/* Header */}
+      <div className="px-5 py-4 border-b border-gray-100 flex items-start gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="badge-blue font-mono text-xs">{item.sku}</span>
+            <span className={`badge ${status === 'ok' ? 'badge-green' : status === 'low' ? 'badge-amber' : 'badge-red'}`}>
+              {status === 'ok' ? 'In Stock' : status === 'low' ? 'Low Stock' : 'Critical'}
+            </span>
+          </div>
+          <h2 className="text-lg font-bold text-gray-900 mt-1 truncate">{item.name}</h2>
+          <div className="flex items-center gap-3 mt-0.5 text-xs text-gray-500">
+            {item.category && <span>{item.category}</span>}
+            <span className="badge-gray">{item.unit_of_measure ?? 'ea'}</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {canEdit && (
+            <button onClick={() => onEdit(item)} className="btn-ghost p-1.5 rounded-lg" title="Edit">
+              <Pencil size={14} />
+            </button>
+          )}
+          <button onClick={onClose} className="btn-ghost p-1.5 rounded-lg" title="Close">
+            <X size={16} />
+          </button>
+        </div>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex border-b border-gray-100">
+        {(['stock', 'movements'] as const).map(t => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`flex-1 py-2.5 text-sm font-medium transition-colors capitalize ${
+              tab === t ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            {t === 'movements' ? 'Movements' : 'Stock'}
+          </button>
+        ))}
+      </div>
+
+      {/* Tab content */}
+      <div className="flex-1 overflow-y-auto p-5">
+        {tab === 'stock' && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-gray-50 rounded-xl p-3">
+                <div className="text-xs text-gray-500 mb-0.5">Total Stock</div>
+                <div className="text-xl font-bold text-gray-900">{fmtNum(totalStock)} <span className="text-sm font-normal text-gray-400">{item.unit_of_measure}</span></div>
+              </div>
+              <div className="bg-gray-50 rounded-xl p-3">
+                <div className="text-xs text-gray-500 mb-0.5">Total Value</div>
+                <div className="text-xl font-bold text-gray-900">{fmtCurrency(totalValue)}</div>
+              </div>
+            </div>
+            {item.reorder_point != null && (
+              <div className="flex items-center gap-2 text-xs text-gray-500 bg-gray-50 rounded-xl p-3">
+                <AlertTriangle size={13} className={status !== 'ok' ? 'text-red-500' : 'text-gray-400'} />
+                <span>Reorder point: <strong>{fmtNum(item.reorder_point)} {item.unit_of_measure}</strong></span>
+                {item.reorder_qty ? <span className="ml-2">· Reorder qty: <strong>{fmtNum(item.reorder_qty)}</strong></span> : null}
+              </div>
+            )}
+
+            <div>
+              <div className="section-label">By Location</div>
+              {(!item.stock_by_location || item.stock_by_location.length === 0) && (
+                <p className="text-sm text-gray-400 text-center py-4">No stock records</p>
+              )}
+              <div className="space-y-2">
+                {(item.stock_by_location ?? []).map((sl: any) => {
+                  const ls = sl.quantity <= 0 ? 'critical' : stockStatus(sl.quantity, item.reorder_point ?? 0);
+                  return (
+                    <div key={sl.location_id} className="flex items-center justify-between p-3 rounded-xl border border-gray-100 hover:bg-gray-50">
+                      <div className="flex items-center gap-2">
+                        <MapPin size={13} className="text-gray-400" />
+                        <span className="text-sm font-medium text-gray-800">{sl.location_name}</span>
+                        {sl.location_code && <span className="text-xs text-gray-400 font-mono">{sl.location_code}</span>}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm font-semibold text-gray-900">{fmtNum(sl.quantity)}</span>
+                        <span className={`badge ${ls === 'ok' ? 'badge-green' : ls === 'low' ? 'badge-amber' : 'badge-red'}`}>
+                          {ls === 'ok' ? 'OK' : ls === 'low' ? 'Low' : 'Critical'}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {canEdit && (
+              <button onClick={() => setShowAdjust(true)} className="btn-secondary w-full justify-center">
+                <Layers size={14} />
+                Record Movement
+              </button>
+            )}
+          </div>
+        )}
+
+        {tab === 'movements' && (
+          <div className="space-y-1">
+            {movements.length === 0 && (
+              <p className="text-sm text-gray-400 text-center py-6">No movements recorded</p>
+            )}
+            {movements.map((mv: any) => {
+              const cfg = MOVE_CONFIG[mv.movement_type] ?? MOVE_CONFIG.adjust;
+              const Icon = cfg.icon;
+              const isPositive = mv.quantity > 0;
+              const qtyStr = (isPositive && mv.movement_type !== 'adjust' ? '+' : '') + fmtNum(mv.quantity);
+              return (
+                <div key={mv.id} className="flex items-center gap-3 py-2.5 border-b border-gray-50 last:border-0">
+                  <div className={`w-7 h-7 ${cfg.bgColor} rounded-lg flex items-center justify-center flex-shrink-0`}>
+                    <Icon size={13} className={cfg.color} />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-semibold ${cfg.color}`}>{cfg.label}</span>
+                      <span className="text-xs text-gray-400">{fmtDate(mv.created_at)}</span>
+                    </div>
+                    <div className="text-xs text-gray-500 truncate">
+                      {mv.location_name && <span>{mv.location_name}</span>}
+                      {mv.created_by && <span className="ml-2 text-gray-400">· {mv.created_by}</span>}
+                      {mv.notes && <span className="ml-2 text-gray-400">· {mv.notes}</span>}
+                    </div>
+                  </div>
+                  <span className={`text-sm font-bold flex-shrink-0 ${
+                    mv.quantity > 0 ? 'text-emerald-600' : 'text-red-600'
+                  }`}>
+                    {qtyStr}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** The five views inside Stock. Receiving used to be a sixth; it is a tab of
+ *  the Materials screen itself now. Lifted to the shell so the shared filter
+ *  bar knows which of them actually reads from it. */
+export type StockView = 'overview' | 'items' | 'minmax' | 'movements' | 'locations';
+
+// ─── Overview Tab ─────────────────────────────────────────────────────────────
+
+function OverviewTab({
+  summary, loading, error, onRetry, onSelectItem,
+}: {
+  summary: InventoryTrackerSummary | null;
+  loading: boolean;
+  error?: string;
+  onRetry: () => void;
+  onSelectItem: (id: string) => void;
+}) {
+  const chartData = useMemo(() => (summary?.value_by_category ?? []).slice(0, 8), [summary]);
+
+  if (!loading && !summary && error) {
+    return (
+      <div className="card p-10 flex flex-col items-center gap-3 text-center">
+        <AlertTriangle size={28} className="text-red-400" />
+        <p className="text-gray-600 font-medium">Couldn't load inventory overview</p>
+        <p className="text-sm text-gray-400">{error}</p>
+        <button onClick={onRetry} className="btn-secondary">
+          <RefreshCw size={14} /> Retry
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-5">
+      {/* KPI cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        {loading || !summary ? (
+          [1,2,3,4].map(i => (
+            <div key={i} className="stat-card">
+              <div className="flex items-center gap-3">
+                <Skeleton className="w-10 h-10 rounded-xl" />
+                <div className="space-y-1.5 flex-1">
+                  <Skeleton className="h-6 w-16" />
+                  <Skeleton className="h-3 w-24" />
+                </div>
+              </div>
+            </div>
+          ))
+        ) : (
+          <>
+            <SummaryCard
+              icon={<Package size={18} className="text-blue-600" />}
+              iconBg="bg-blue-50"
+              label="Total SKUs"
+              value={fmtNum(summary.total_items)}
+              sub={`${summary.categories.length} categories`}
+            />
+            <SummaryCard
+              icon={<DollarSign size={18} className="text-emerald-600" />}
+              iconBg="bg-emerald-50"
+              label="Total Stock Value"
+              value={fmtCurrencyWhole(summary.total_value)}
+              sub="across all locations"
+            />
+            <SummaryCard
+              icon={<AlertTriangle size={18} className="text-amber-600" />}
+              iconBg="bg-amber-50"
+              label="Below Reorder Point"
+              value={fmtNum(summary.low_stock)}
+              sub="low-stock alerts"
+            />
+            <SummaryCard
+              icon={<PackageX size={18} className="text-red-600" />}
+              iconBg="bg-red-50"
+              label="Out of Stock"
+              value={fmtNum(summary.out_of_stock)}
+              sub="items at zero"
+            />
+          </>
+        )}
+      </div>
+
+      {/* Min/Max stock level gauges */}
+      {!loading && summary && summary.low_stock_list.filter(r => r.reorder_point > 0).length > 0 && (
+        <div className="card p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <Layers size={15} className="text-blue-500" />
+            <h3 className="text-sm font-semibold text-gray-700">Stock Level Gauges</h3>
+            <span className="ml-auto text-xs text-gray-400 flex items-center gap-3">
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-red-400" />Below Min</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-emerald-400" />Healthy</span>
+              <span className="flex items-center gap-1"><span className="inline-block w-3 h-3 rounded-sm bg-amber-400" />Above Max</span>
+            </span>
+          </div>
+          <div className="space-y-3">
+            {summary.low_stock_list.filter(r => r.reorder_point > 0).slice(0, 12).map(row => {
+              const max = row.reorder_max && row.reorder_max > 0 ? row.reorder_max : row.reorder_point * 3;
+              const pct = Math.min(100, (row.total_quantity / max) * 100);
+              const minPct = (row.reorder_point / max) * 100;
+              const isBelow = row.total_quantity < row.reorder_point;
+              const isAbove = row.reorder_max && row.reorder_max > 0 && row.total_quantity > row.reorder_max;
+              const barColor = isBelow ? 'bg-red-400' : isAbove ? 'bg-amber-400' : 'bg-emerald-400';
+              return (
+                <div key={row.id} className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="font-medium text-gray-800 truncate max-w-[160px]">{row.name}</span>
+                    <span className={`font-mono font-semibold ${isBelow ? 'text-red-600' : isAbove ? 'text-amber-600' : 'text-emerald-700'}`}>
+                      {fmtNum(row.total_quantity)} <span className="text-gray-400 font-normal">{row.unit_of_measure}</span>
+                    </span>
+                  </div>
+                  <div className="relative h-2 bg-gray-100 rounded-full overflow-visible">
+                    <div className={`h-2 rounded-full transition-all ${barColor}`} style={{ width: `${pct}%` }} />
+                    {/* Min marker */}
+                    <div
+                      className="absolute top-0 bottom-0 w-0.5 bg-blue-400 rounded"
+                      style={{ left: `${minPct}%` }}
+                      title={`Min: ${fmtNum(row.reorder_point)}`}
+                    />
+                    {/* Max marker */}
+                    {row.reorder_max && row.reorder_max > 0 && (
+                      <div
+                        className="absolute top-0 bottom-0 w-0.5 bg-gray-400 rounded"
+                        style={{ left: '100%' }}
+                        title={`Max: ${fmtNum(row.reorder_max)}`}
+                      />
+                    )}
+                  </div>
+                  <div className="flex justify-between text-[10px] text-gray-400">
+                    <span>0</span>
+                    <span className="text-blue-500">min {fmtNum(row.reorder_point)}</span>
+                    {row.reorder_max && row.reorder_max > 0
+                      ? <span>max {fmtNum(row.reorder_max)}</span>
+                      : <span>{fmtNum(max)}</span>
+                    }
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        {/* Stock value by category chart */}
+        <div className="card p-5">
+          <h3 className="text-sm font-semibold text-gray-700 mb-4">Stock Value by Category</h3>
+          {loading || !summary ? (
+            <Skeleton className="h-64 w-full" />
+          ) : chartData.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-16">No stock value to display</p>
+          ) : (
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                <XAxis dataKey="category" tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={{ stroke: '#e2e8f0' }} />
+                <YAxis tick={{ fontSize: 11, fill: '#64748b' }} tickLine={false} axisLine={false}
+                  tickFormatter={(v) => '$' + (v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v)} />
+                <Tooltip
+                  formatter={(v: any) => [fmtCurrency(Number(v)), 'Value']}
+                  contentStyle={{ borderRadius: 12, border: '1px solid #e2e8f0', fontSize: 12 }}
+                />
+                <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                  {chartData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </div>
+
+        {/* Low-stock alert list */}
+        <div className="card p-5">
+          <div className="flex items-center gap-2 mb-4">
+            <AlertTriangle size={15} className="text-amber-500" />
+            <h3 className="text-sm font-semibold text-gray-700">Low-Stock Alerts</h3>
+          </div>
+          {loading || !summary ? (
+            <div className="space-y-2">{[1,2,3,4].map(i => <Skeleton key={i} className="h-12" />)}</div>
+          ) : summary.low_stock_list.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-16">All items are above their reorder points</p>
+          ) : (
+            <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+              {summary.low_stock_list.map(row => {
+                const out = row.total_quantity <= 0;
+                return (
+                  <button
+                    key={row.id}
+                    onClick={() => onSelectItem(row.id)}
+                    className="w-full flex items-center justify-between p-3 rounded-xl border border-gray-100 hover:bg-gray-50 text-left transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <div className="font-medium text-gray-900 text-sm truncate">{row.name}</div>
+                      <div className="text-xs text-gray-400 font-mono">{row.sku}</div>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <div className="text-right">
+                        <div className={`text-sm font-bold ${out ? 'text-red-600' : 'text-amber-600'}`}>
+                          {fmtNum(row.total_quantity)} <span className="text-xs font-normal text-gray-400">{row.unit_of_measure}</span>
+                        </div>
+                        <div className="text-xs text-gray-400">reorder at {fmtNum(row.reorder_point)}</div>
+                      </div>
+                      <span className={`badge ${out ? 'badge-red' : 'badge-amber'}`}>{out ? 'Out' : 'Low'}</span>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Min/Max Tab ─────────────────────────────────────────────────────────────
+
+type MinMaxFilter = 'all' | 'below' | 'above' | 'none';
+
+function MinMaxTab({
+  items, canEdit, search, onEditItem, onRecord,
+}: {
+  items: any[];
+  canEdit: boolean;
+  /** The Materials filter bar's text — this view no longer owns a search box. */
+  search: string;
+  onEditItem: (item: any) => void;
+  onRecord: (item: any) => void;
+}) {
+  const [filter, setFilter] = useState<MinMaxFilter>('all');
+
+  const filtered = useMemo(() => {
+    let list = items;
+    if (search.trim()) {
+      const q = search.toLowerCase();
+      list = list.filter(it => it.name?.toLowerCase().includes(q) || it.sku?.toLowerCase().includes(q));
+    }
+    if (filter === 'below') list = list.filter(it => it.reorder_point > 0 && (it.total_quantity ?? 0) < it.reorder_point);
+    if (filter === 'above') list = list.filter(it => it.reorder_max > 0 && (it.total_quantity ?? 0) > it.reorder_max);
+    if (filter === 'none')  list = list.filter(it => !(it.reorder_point > 0) && !(it.reorder_max > 0));
+    return list;
+  }, [items, search, filter]);
+
+  const belowMin  = useMemo(() => items.filter(it => it.reorder_point > 0 && (it.total_quantity ?? 0) < it.reorder_point).length, [items]);
+  const aboveMax  = useMemo(() => items.filter(it => it.reorder_max  > 0 && (it.total_quantity ?? 0) > it.reorder_max).length,  [items]);
+
+  const CHIPS: { key: MinMaxFilter; label: string }[] = [
+    { key: 'all',   label: 'All' },
+    { key: 'below', label: 'Below Min' },
+    { key: 'above', label: 'Above Max' },
+    { key: 'none',  label: 'No Thresholds' },
+  ];
+
+  return (
+    <div className="space-y-4">
+      {/* Threshold chips. The search box above the page drives this list too. */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {CHIPS.map(chip => (
+            <button
+              key={chip.key}
+              onClick={() => setFilter(chip.key)}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                filter === chip.key
+                  ? 'bg-blue-600 text-white border-blue-600'
+                  : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+              }`}
+            >
+              {chip.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Summary strip */}
+      <div className="grid grid-cols-3 gap-3">
+        <div className="card p-3 flex items-center gap-2">
+          <Package size={15} className="text-blue-500 flex-shrink-0" />
+          <div>
+            <div className="text-lg font-bold text-gray-900">{items.length}</div>
+            <div className="text-xs text-gray-500">Total Items</div>
+          </div>
+        </div>
+        <div className="card p-3 flex items-center gap-2">
+          <AlertTriangle size={15} className="text-red-500 flex-shrink-0" />
+          <div>
+            <div className="text-lg font-bold text-red-600">{belowMin}</div>
+            <div className="text-xs text-gray-500">Below Min</div>
+          </div>
+        </div>
+        <div className="card p-3 flex items-center gap-2">
+          <TrendingUp size={15} className="text-amber-500 flex-shrink-0" />
+          <div>
+            <div className="text-lg font-bold text-amber-600">{aboveMax}</div>
+            <div className="text-xs text-gray-500">Above Max</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Item list */}
+      {filtered.length === 0 ? (
+        <div className="card p-12 flex flex-col items-center gap-3">
+          <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center">
+            <Layers size={22} className="text-gray-400" />
+          </div>
+          <p className="text-gray-500 font-medium">No items match this filter</p>
+          <p className="text-xs text-gray-400">Try adjusting your search or filter</p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {filtered.map(item => {
+            const totalQty = item.total_quantity ?? item.total_stock ?? item.quantity ?? 0;
+            const noThresholds = !(item.reorder_point > 0) && !(item.reorder_max > 0);
+            const max = item.reorder_max > 0
+              ? item.reorder_max
+              : item.reorder_point > 0
+                ? item.reorder_point * 3
+                : totalQty * 2 || 100;
+            const pct    = Math.min(100, (totalQty / max) * 100);
+            const minPct = item.reorder_point > 0 ? Math.min(100, (item.reorder_point / max) * 100) : 0;
+            const isBelow  = item.reorder_point > 0 && totalQty < item.reorder_point;
+            const isAbove  = item.reorder_max  > 0 && totalQty > item.reorder_max;
+            const barColor = isBelow ? 'bg-red-400' : isAbove ? 'bg-amber-400' : 'bg-emerald-400';
+            const qtyColor = isBelow ? 'text-red-600' : isAbove ? 'text-amber-600' : 'text-emerald-700';
+
+            return (
+              <div key={item.id} className="card p-4">
+                <div className="flex items-start gap-4">
+                  {/* Left: name + SKU */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-1">
+                      <span className="font-medium text-gray-900 truncate">{item.name}</span>
+                      <span className="font-mono text-xs text-gray-500 bg-gray-100 px-1.5 py-0.5 rounded">{item.sku}</span>
+                      {noThresholds && (
+                        <span className="text-xs text-gray-400 italic">No thresholds set</span>
+                      )}
+                    </div>
+
+                    {/* Stock bar */}
+                    {!noThresholds && (
+                      <div className="mt-2 space-y-1">
+                        <div className="relative h-2.5 bg-gray-100 rounded-full overflow-visible">
+                          <div
+                            className={`h-2.5 rounded-full transition-all ${barColor}`}
+                            style={{ width: `${pct}%` }}
+                          />
+                          {item.reorder_point > 0 && (
+                            <div
+                              className="absolute top-0 bottom-0 w-0.5 bg-blue-500 rounded"
+                              style={{ left: `${minPct}%` }}
+                              title={`Min: ${fmtNum(item.reorder_point)}`}
+                            />
+                          )}
+                          {item.reorder_max > 0 && (
+                            <div
+                              className="absolute top-0 bottom-0 w-0.5 bg-gray-400 rounded"
+                              style={{ left: '100%' }}
+                              title={`Max: ${fmtNum(item.reorder_max)}`}
+                            />
+                          )}
+                        </div>
+                        <div className="flex justify-between text-[10px] text-gray-400">
+                          <span>0</span>
+                          {item.reorder_point > 0 && (
+                            <span className="text-blue-500">min {fmtNum(item.reorder_point)}</span>
+                          )}
+                          {item.reorder_max > 0
+                            ? <span className="text-gray-500">max {fmtNum(item.reorder_max)}</span>
+                            : <span>{fmtNum(max)}</span>
+                          }
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Right: qty + actions */}
+                  <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                    <div className={`text-xl font-bold ${noThresholds ? 'text-gray-700' : qtyColor}`}>
+                      {fmtNum(totalQty)}
+                      <span className="text-sm font-normal text-gray-400 ml-1">{item.unit_of_measure ?? 'ea'}</span>
+                    </div>
+                    {canEdit && (
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          onClick={() => onRecord(item)}
+                          className="btn-secondary text-xs px-2.5 py-1.5"
+                          title="Adjust Stock"
+                        >
+                          <Layers size={12} />
+                          Adjust Stock
+                        </button>
+                        <button
+                          onClick={() => onEditItem(item)}
+                          className="btn-ghost p-1.5 rounded-lg"
+                          title="Set Thresholds"
+                        >
+                          <Pencil size={13} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+const MOVEMENT_FILTER_TYPES = ['', 'receive', 'consume', 'ship', 'scrap', 'return', 'adjust', 'transfer'];
+
+function MovementsTab({
+  items, canEdit, reloadKey, onRecord,
+}: {
+  items: any[];
+  canEdit: boolean;
+  reloadKey: number;
+  onRecord: () => void;
+}) {
+  const [movements, setMovements] = useState<InventoryMovement[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [days, setDays] = useState(30);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    setError('');
+    api.getMovements({
+      movement_type: typeFilter || undefined,
+      days,
+      limit: 200,
+    }).then(data => { setMovements(Array.isArray(data) ? data : []); setLoading(false); })
+      .catch((err: any) => { setError(err.message || 'Failed to load movements'); setLoading(false); });
+  }, [typeFilter, days]);
+
+  useEffect(() => { load(); }, [load, reloadKey]);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="relative">
+          <select className="input-field pr-8 appearance-none cursor-pointer" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
+            {MOVEMENT_FILTER_TYPES.map(t => (
+              <option key={t} value={t}>{t === '' ? 'All Types' : (MOVE_CONFIG[t]?.label ?? t)}</option>
+            ))}
+          </select>
+          <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+        </div>
+        <div className="relative">
+          <select className="input-field pr-8 appearance-none cursor-pointer" value={days} onChange={e => setDays(Number(e.target.value))}>
+            {[7, 14, 30, 90, 365].map(d => <option key={d} value={d}>Last {d} days</option>)}
+          </select>
+          <ChevronDown size={13} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+        </div>
+        <div className="flex-1" />
+        {canEdit && (
+          <button onClick={onRecord} disabled={items.length === 0} className="btn-primary whitespace-nowrap">
+            <Plus size={14} />
+            Record Movement
+          </button>
+        )}
+      </div>
+
+      <div className="card overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm whitespace-nowrap">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50/60">
+                <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500">Type</th>
+                <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500">Item</th>
+                <th className="text-right py-3 px-4 text-xs font-semibold text-gray-500">Quantity</th>
+                <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500">Location</th>
+                <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500">Reason / Note</th>
+                <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500">User</th>
+                <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500">When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loading && [1,2,3,4,5].map(i => (
+                <tr key={i} className="border-b border-gray-50">
+                  {[1,2,3,4,5,6,7].map(j => <td key={j} className="py-3 px-4"><Skeleton className="h-4 w-full" /></td>)}
+                </tr>
+              ))}
+              {!loading && error && movements.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-16 text-center">
+                    <div className="flex flex-col items-center gap-3">
+                      <AlertTriangle size={22} className="text-red-400" />
+                      <p className="text-gray-500 font-medium">Couldn't load movements</p>
+                      <p className="text-xs text-gray-400">{error}</p>
+                      <button onClick={load} className="btn-secondary">
+                        <RefreshCw size={14} /> Retry
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )}
+              {!loading && !error && movements.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-16 text-center">
+                    <div className="flex flex-col items-center gap-3">
+                      <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center">
+                        <ClipboardList size={22} className="text-gray-400" />
+                      </div>
+                      <p className="text-gray-500 font-medium">No movements recorded</p>
+                      <p className="text-xs text-gray-400">Stock receipts, issues, adjustments and transfers will appear here</p>
+                    </div>
+                  </td>
+                </tr>
+              )}
+              {!loading && movements.map(mv => {
+                const cfg = MOVE_CONFIG[mv.movement_type] ?? MOVE_CONFIG.adjust;
+                const Icon = cfg.icon;
+                const isPositive = mv.quantity > 0;
+                const qtyStr = (isPositive && mv.movement_type !== 'adjust' ? '+' : '') + fmtNum(mv.quantity);
+                return (
+                  <tr key={mv.id} className="border-b border-gray-50 hover:bg-gray-50">
+                    <td className="py-3 px-4">
+                      <span className={`inline-flex items-center gap-1.5 ${cfg.bgColor} ${cfg.color} px-2 py-1 rounded-lg text-xs font-semibold`}>
+                        <Icon size={12} />
+                        {cfg.label}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="font-medium text-gray-900 truncate max-w-[200px]">{mv.item_name ?? '—'}</div>
+                      {mv.sku && <div className="text-xs text-gray-400 font-mono">{mv.sku}</div>}
+                    </td>
+                    <td className={`py-3 px-4 text-right font-bold ${mv.quantity > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                      {qtyStr}
+                    </td>
+                    <td className="py-3 px-4 text-gray-600">{mv.location_name ?? '—'}</td>
+                    <td className="py-3 px-4 text-gray-500 max-w-[220px] truncate">{mv.notes || '—'}</td>
+                    <td className="py-3 px-4 text-gray-600">{mv.created_by || mv.operator_name || '—'}</td>
+                    <td className="py-3 px-4 text-gray-400">{fmtDate(mv.created_at)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        {!loading && movements.length > 0 && (
+          <div className="px-4 py-2.5 border-t border-gray-50">
+            <span className="text-xs text-gray-400">{movements.length} movement{movements.length !== 1 ? 's' : ''}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Main Page ───────────────────────────────────────────────────────────────
+
+// ─── The panel ────────────────────────────────────────────────────────────────
+
+export interface StockPanelProps {
+  /** `/inventory/:itemId` — the item whose detail panel is open, if any. */
+  itemId?: string;
+  /** Which of the five views is open. The shell owns it so the shared filter
+   *  bar can offer the controls the open view uses, and none that it doesn't. */
+  view: StockView;
+  onViewChange: (view: StockView) => void;
+  /** Whether this account may write — drives the empty state's own CTA. */
+  canCreate: boolean;
+  /** Opens the same New Item form the header's button opens. */
+  onCreateOpen: () => void;
+  /** The Materials filter bar: free text, category, and the low-stock switch. */
+  search: string;
+  category: string;
+  lowStockOnly: boolean;
+  /** Reports the categories this company actually has, for the shared picker. */
+  onCategories: (categories: string[]) => void;
+  /** Reports how many items are loaded, so the header can disable an action
+   *  that would open a modal with nothing to pick. */
+  onItemCount: (count: number) => void;
+  /** Opens / closes `/inventory/:itemId` without this panel owning the URL. */
+  onSelectItem: (itemId: string | null) => void;
+  /** The header's "New Item" button. */
+  createOpen: boolean;
+  onCreateClose: () => void;
+  /** The header's "Record Movement" button. */
+  recordOpen: boolean;
+  onRecordOpen: () => void;
+  onRecordClose: () => void;
+  /** Hands the shell this panel's loader and takes back the way to withdraw
+   *  it, so the shell's one Refresh control always holds a live loader. */
+  onRegisterRefresh: (fn: () => Promise<void>) => () => void;
+  /** Called after every load, to move (or stall) the shared freshness stamp. */
+  onLoaded: (ok?: boolean) => void;
+}
+
+export default function StockPanel({
+  itemId, view, onViewChange, search, category, lowStockOnly,
+  onCategories, onItemCount, onSelectItem,
+  canCreate, createOpen, onCreateOpen, onCreateClose,
+  recordOpen, onRecordOpen, onRecordClose,
+  onRegisterRefresh, onLoaded,
+}: StockPanelProps) {
+  const setView = onViewChange;
+
+  const [trackerSummary, setTrackerSummary] = useState<InventoryTrackerSummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState('');
+  const [items, setItems] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [itemsError, setItemsError] = useState('');
+
+  const [editingItem, setEditingItem] = useState<any>(null);
+  const [recordMovementItem, setRecordMovementItem] = useState<any>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [loadingSample, setLoadingSample] = useState(false);
+  const [sampleError, setSampleError] = useState('');
+  const [movementsReloadKey, setMovementsReloadKey] = useState(0);
+  const { isAtLeast, canEdit } = useAuth();
+
+  // `silent` skips the skeletons so a background poll never blanks the table
+  // the user is reading — the freshness stamp carries the reload signal instead.
+  const loadSummary = useCallback((silent = false) => {
+    if (!silent) setSummaryLoading(true);
+    setSummaryError('');
+    return api.getInventoryTrackerSummary()
+      .then(s => { setTrackerSummary(s); setSummaryLoading(false); })
+      .catch((err: any) => { setSummaryError(err.message || 'Failed to load inventory summary'); setSummaryLoading(false); throw err; });
+  }, []);
+
+  const loadItems = useCallback((silent = false) => {
+    if (!silent) setLoading(true);
+    setItemsError('');
+    const params: any = {};
+    if (search) params.search = search;
+    if (category) params.category = category;
+    if (lowStockOnly) params.low_stock = true;
+    return api.getInventoryItems(params)
+      .then(data => { setItems(Array.isArray(data) ? data : []); setLoading(false); })
+      .catch((err: any) => { setItemsError(err.message || 'Failed to load items'); setLoading(false); throw err; });
+  }, [search, category, lowStockOnly]);
+
+  // One reload drives the whole tab: summary, item list and the Movements view
+  // (which reloads off `movementsReloadKey`).
+  const loadAll = useCallback(async (silent = true) => {
+    setMovementsReloadKey(k => k + 1);
+    const [s, i] = await Promise.allSettled([loadSummary(silent), loadItems(silent)]);
+    const failed = s.status === 'rejected' && i.status === 'rejected';
+    onLoaded(!failed);
+    if (failed) throw s.reason;
+  }, [loadSummary, loadItems, onLoaded]);
+
+  // Loads on mount and whenever a filter above the page moves.
+  useEffect(() => { loadAll(false).catch(() => {}); }, [loadAll]);
+
+  const silentReload = useCallback(async () => { await loadAll(true).catch(() => {}); }, [loadAll]);
+  useEffect(() => onRegisterRefresh(silentReload), [onRegisterRefresh, silentReload]);
+
+  useEffect(() => { onItemCount(items.length); }, [items.length, onItemCount]);
+
+  // Deep-linked item detail forces the Items view so the panel is visible.
+  useEffect(() => { if (itemId) setView('items'); }, [itemId, setView]);
+
+  const handleLoadSampleData = async () => {
+    setLoadingSample(true);
+    setSampleError('');
+    try {
+      await api.loadSampleData();
+      await loadAll(true);
+    } catch (err: any) {
+      setSampleError(err?.message || 'Failed to load sample data');
+    } finally {
+      setLoadingSample(false);
+    }
+  };
+
+  function refresh() {
+    void loadAll(true).catch(() => {});
+  }
+
+  async function handleDelete(item: any) {
+    if (!confirm(`Delete "${item.name}"? This will deactivate the item.`)) return;
+    setDeletingId(item.id);
+    try {
+      await api.deleteInventoryItem(item.id);
+      if (itemId === item.id) onSelectItem(null);
+      refresh();
+    } catch (err: any) {
+      alert(err.message || 'Delete failed');
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  function selectItem(id: string) {
+    onSelectItem(itemId === id ? null : id);
+  }
+
+  const categories: string[] = useMemo(() => {
+    if (trackerSummary?.categories?.length) return trackerSummary.categories;
+    return [...new Set(items.map((i: any) => i.category).filter(Boolean))] as string[];
+  }, [trackerSummary, items]);
+
+  // Reported through a serialised copy so a fresh array of the same names does
+  // not send the shell round again on every render.
+  const categoryKey = JSON.stringify(categories);
+  useEffect(() => {
+    onCategories(JSON.parse(categoryKey) as string[]);
+  }, [categoryKey, onCategories]);
+
+  const VIEWS: { key: StockView; label: string; icon: any }[] = [
+    { key: 'overview',  label: 'Overview',  icon: LayoutGrid },
+    { key: 'items',     label: 'Items',     icon: Package },
+    { key: 'minmax',    label: 'Min / Max', icon: Layers },
+    { key: 'movements', label: 'Movements', icon: ClipboardList },
+    { key: 'locations', label: 'Locations', icon: MapPin },
+  ];
+
+  return (
+    <div className="space-y-5">
+      {/* Modals */}
+      {(createOpen || editingItem) && (
+        <ItemModal
+          item={editingItem}
+          onClose={() => { setEditingItem(null); onCreateClose(); }}
+          onSaved={refresh}
+        />
+      )}
+      {(recordOpen || recordMovementItem) && (
+        <RecordMovementModal
+          item={recordMovementItem ?? undefined}
+          items={items}
+          onClose={() => { setRecordMovementItem(null); onRecordClose(); }}
+          onSaved={refresh}
+        />
+      )}
+
+      <TabBar
+        items={VIEWS.map(v => ({
+          key: v.key,
+          label: v.label,
+          icon: <v.icon size={15} />,
+          badge: v.key === 'overview' && trackerSummary && trackerSummary.low_stock > 0
+            ? <span className="ml-1 text-xs bg-red-100 text-red-700 px-1.5 rounded-full font-semibold">{trackerSummary.low_stock}</span>
+            : undefined,
+        }))}
+        active={view}
+        onSelect={key => { if (key !== 'items' && itemId) onSelectItem(null); setView(key); }}
+        ariaLabel="Stock views"
+      />
+
+      {/* OVERVIEW */}
+      {view === 'overview' && (
+        <OverviewTab
+          summary={trackerSummary}
+          loading={summaryLoading}
+          error={summaryError}
+          onRetry={() => { loadSummary().catch(() => {}); }}
+          onSelectItem={(id) => { setView('items'); onSelectItem(id); }}
+        />
+      )}
+
+      {/* ITEMS */}
+      {view === 'items' && (
+        <div className={`flex flex-col lg:flex-row gap-5 items-start ${itemId ? 'lg:min-h-[500px]' : ''}`}>
+          {/* Items table */}
+          <div className={`card overflow-hidden flex-shrink-0 w-full ${itemId ? 'lg:w-[55%]' : 'lg:flex-1'}`}>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm whitespace-nowrap">
+                <thead>
+                  <tr className="border-b border-gray-100 bg-gray-50/60">
+                    <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500 whitespace-nowrap">SKU</th>
+                    <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500">Name</th>
+                    {!itemId && <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500">Category</th>}
+                    <th className="text-right py-3 px-4 text-xs font-semibold text-gray-500 whitespace-nowrap">Stock</th>
+                    {!itemId && <th className="text-right py-3 px-4 text-xs font-semibold text-gray-500 whitespace-nowrap">Reorder Pt</th>}
+                    {!itemId && <th className="text-right py-3 px-4 text-xs font-semibold text-gray-500 whitespace-nowrap">Unit Cost</th>}
+                    {!itemId && <th className="text-right py-3 px-4 text-xs font-semibold text-gray-500 whitespace-nowrap">Value</th>}
+                    <th className="text-left py-3 px-4 text-xs font-semibold text-gray-500">Status</th>
+                    <th className="py-3 px-4" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {loading && (
+                    [1,2,3,4,5].map(i => (
+                      <tr key={i} className="border-b border-gray-50">
+                        {[1,2,3,4,5,6,7,8].map(j => (
+                          <td key={j} className="py-3 px-4">
+                            <Skeleton className="h-4 w-full" />
+                          </td>
+                        ))}
+                      </tr>
+                    ))
+                  )}
+                  {!loading && itemsError && items.length === 0 && (
+                    <tr>
+                      <td colSpan={9} className="py-16 text-center">
+                        <div className="flex flex-col items-center gap-3">
+                          <AlertTriangle size={22} className="text-red-400" />
+                          <p className="text-gray-500 font-medium">Couldn't load items</p>
+                          <p className="text-xs text-gray-400">{itemsError}</p>
+                          <button onClick={() => { loadItems().catch(() => {}); }} className="btn-secondary">
+                            <RefreshCw size={14} /> Retry
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  {!loading && !itemsError && items.length === 0 && (
+                    <tr>
+                      <td colSpan={9} className="py-16 text-center">
+                        <div className="flex flex-col items-center gap-3">
+                          <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center">
+                            <Package size={22} className="text-gray-400" />
+                          </div>
+                          <p className="text-gray-500 font-medium">No items found</p>
+                          <p className="text-xs text-gray-400">
+                            {search || category || lowStockOnly ? 'Try adjusting your filters' : 'Get started by adding your first item'}
+                          </p>
+                          {!search && !category && !lowStockOnly && canCreate && (
+                            <div className="flex items-center justify-center gap-2 mt-1">
+                              <button onClick={onCreateOpen} className="btn-primary">
+                                <Plus size={14} />
+                                New Item
+                              </button>
+                              {isAtLeast('manager') && (
+                                <button onClick={handleLoadSampleData} disabled={loadingSample} className="btn-secondary">
+                                  {loadingSample ? <RefreshCw size={14} className="animate-spin" /> : <Database size={14} />}
+                                  Load Sample Data
+                                </button>
+                              )}
+                            </div>
+                          )}
+                          {sampleError && (
+                            <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mt-1 max-w-sm mx-auto">{sampleError}</p>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  {!loading && items.map((item: any) => {
+                    const totalQty = item.total_quantity ?? item.total_stock ?? item.quantity ?? 0;
+                    const rp = item.reorder_point ?? 0;
+                    const status = stockStatus(totalQty, rp);
+                    const isSelected = itemId === item.id;
+                    const isLow = status !== 'ok';
+                    return (
+                      <tr
+                        key={item.id}
+                        onClick={() => selectItem(item.id)}
+                        className={`border-b border-gray-50 cursor-pointer transition-colors ${
+                          isSelected
+                            ? 'bg-blue-50 hover:bg-blue-50'
+                            : isLow
+                            ? 'bg-red-50/40 hover:bg-red-50'
+                            : 'hover:bg-gray-50'
+                        }`}
+                      >
+                        <td className="py-3 px-4">
+                          <span className="font-mono text-xs text-gray-600 bg-gray-100 px-1.5 py-0.5 rounded">{item.sku}</span>
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="font-medium text-gray-900 truncate max-w-[180px]">{item.name}</div>
+                          {item.description && !itemId && (
+                            <div className="text-xs text-gray-400 truncate max-w-[180px]">{item.description}</div>
+                          )}
+                        </td>
+                        {!itemId && (
+                          <td className="py-3 px-4">
+                            {item.category ? <span className="badge-gray">{item.category}</span> : <span className="text-gray-300">—</span>}
+                          </td>
+                        )}
+                        <td className="py-3 px-4 text-right">
+                          <span className={`font-semibold ${
+                            status === 'ok' ? 'text-emerald-700' : status === 'low' ? 'text-amber-700' : 'text-red-700'
+                          }`}>
+                            {fmtNum(totalQty)}
+                          </span>
+                          <span className="text-xs text-gray-400 ml-1">{item.unit_of_measure}</span>
+                        </td>
+                        {!itemId && (
+                          <td className="py-3 px-4 text-right text-gray-500">{rp > 0 ? fmtNum(rp) : '—'}</td>
+                        )}
+                        {!itemId && (
+                          <td className="py-3 px-4 text-right text-gray-700">
+                            {item.unit_cost != null ? fmtCurrency(item.unit_cost) : '—'}
+                          </td>
+                        )}
+                        {!itemId && (
+                          <td className="py-3 px-4 text-right font-medium text-gray-900">
+                            {item.unit_cost != null ? fmtCurrency(totalQty * item.unit_cost) : '—'}
+                          </td>
+                        )}
+                        <td className="py-3 px-4">
+                          <span className={`badge ${
+                            status === 'ok' ? 'badge-green' : status === 'low' ? 'badge-amber' : 'badge-red'
+                          }`}>
+                            {status === 'ok' ? 'In Stock' : status === 'low' ? 'Low Stock' : 'Critical'}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4">
+                          {canEdit && (
+                            <div className="flex items-center gap-1 justify-end" onClick={e => e.stopPropagation()}>
+                              <button
+                                onClick={() => setEditingItem(item)}
+                                className="btn-ghost p-1.5 rounded-lg"
+                                title="Edit"
+                              >
+                                <Pencil size={13} />
+                              </button>
+                              <button
+                                onClick={() => handleDelete(item)}
+                                disabled={deletingId === item.id}
+                                className="btn-ghost p-1.5 rounded-lg text-red-500 hover:bg-red-50"
+                                title="Delete"
+                              >
+                                {deletingId === item.id
+                                  ? <RefreshCw size={13} className="animate-spin" />
+                                  : <Trash2 size={13} />
+                                }
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {!loading && items.length > 0 && (
+              <div className="px-4 py-2.5 border-t border-gray-50 flex items-center justify-between">
+                <span className="text-xs text-gray-400">{items.length} item{items.length !== 1 ? 's' : ''}</span>
+                <div className="flex items-center gap-3 text-xs text-gray-400">
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 bg-emerald-400 rounded-full" /> In Stock</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 bg-amber-400 rounded-full" /> Low</span>
+                  <span className="flex items-center gap-1"><span className="w-2 h-2 bg-red-400 rounded-full" /> Critical</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Detail panel */}
+          {itemId && (
+            <DetailPanel
+              itemId={itemId}
+              onClose={() => onSelectItem(null)}
+              onEdit={(item) => setEditingItem(item)}
+              onRefreshList={refresh}
+              canEdit={canEdit}
+            />
+          )}
+        </div>
+      )}
+
+      {/* MIN / MAX */}
+      {view === 'minmax' && (
+        <MinMaxTab
+          items={items}
+          canEdit={canEdit}
+          search={search}
+          onEditItem={(item: any) => setEditingItem(item)}
+          onRecord={(item: any) => setRecordMovementItem(item)}
+        />
+      )}
+
+      {/* MOVEMENTS */}
+      {view === 'movements' && (
+        <MovementsTab
+          items={items}
+          canEdit={canEdit}
+          reloadKey={movementsReloadKey}
+          onRecord={onRecordOpen}
+        />
+      )}
+
+      {/* LOCATIONS */}
+      {view === 'locations' && (
+        <LocationsTab canEdit={canEdit} />
+      )}
+    </div>
+  );
+}

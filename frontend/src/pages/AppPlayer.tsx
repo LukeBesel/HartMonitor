@@ -16,7 +16,7 @@ import { getAppDraft } from '../api/revisions';
 import {
   startRun as startRunRequest, notQualified, verifyOverrideAuthorizer, mintOverrideToken,
 } from '../api/training';
-import type { NotQualified } from '../api/training';
+import type { NotQualified, StartRunPayload } from '../api/training';
 import { fmtDuration } from '../components/apps/appModel';
 import { useAuth } from '../context/AuthContext';
 import { setRunActive } from '../utils/staleChunk';
@@ -53,15 +53,36 @@ import {
   getStepBlocks, kitProgress, kitWidgetFor, legacyKey, operatorAttribution,
   operatorDisplayName, operatorReturnLink, runContextGate, runContextRequired, setupNeeded,
   sideEffectKey, stepHidesFooterNav, stepShowsKit, stepTaktSeconds as taktOfStep,
-  stepValueSignature, summarizeBlocks, taktBarState, valueInputFor,
+  resumeTarget, stepValueSignature, summarizeBlocks, taktBarState, unitsBalance, unitsSummary,
+  valueInputFor,
 } from '../components/player/runtime';
 import type { BlockItem } from '../components/player/runtime';
+import { getReasonCodes } from '../api/andon';
+import type { ReasonCode } from '../api/andon';
 import '../player.css';
 
 // Work-order fields added by the v2 backend (list returns wo.*).
 interface WorkOrderExt extends WorkOrder {
   product_type_id?: string | null;
 }
+
+/** What the finish step counted. Only ever sent when somebody typed it. */
+interface RunCounts {
+  good: number;
+  scrap: number;
+  rework: number;
+  scrapReasonCodeId: string;
+}
+
+/** The finishing PUT: the flush payload plus the counts. The count fields are
+ *  added here rather than in api/client.ts because they are only ever sent by
+ *  this one screen, on one request, at the end of a run. */
+type FinishPayload = CompletionFlushPayload & {
+  quantity_good?: number;
+  quantity_scrap?: number;
+  quantity_rework?: number;
+  scrap_reason_code_id?: string;
+};
 
 // App field written by the builder's run-context toggle (contract:
 // app.require_run_context; absent → enforce only for schema_version ≥ 2).
@@ -97,6 +118,13 @@ export default function AppPlayer() {
   // the Operator Portal goes back to the Operator Portal — never to /apps,
   // which is an unlocked manager console with a builder in it.
   const enteredFromOperator = searchParams.get('from') === 'operator';
+  /**
+   * A dispatch-board link (?from=dispatch). It carries no uid — a uid in a URL
+   * is a claim anybody can copy, and the Operator Portal's uid is one a badge
+   * reader verified. Whoever followed this link is signed in, and their session
+   * is proof the server already checked, so THEY are the operator.
+   */
+  const enteredFromDispatch = searchParams.get('from') === 'dispatch';
   const exitPath = exitTarget({ fromOperator: enteredFromOperator, role: user?.role });
 
   // ── Loading / catalog state ────────────────────────────────────────────────
@@ -132,6 +160,14 @@ export default function AppPlayer() {
   const overrideProofRef = useRef<string | null>(null);
   /** The run is skipped straight past setup at most once per visit. */
   const autoStartedRef = useRef(false);
+  /** A ?run= link is followed at most once, whether or not it resolved. */
+  const resumeParamRef = useRef(false);
+  /**
+   * Something the LINK asked for could not be done — the named run has since
+   * been finished or handed on. Not an error the operator caused, so it is said
+   * plainly and the normal flow carries on underneath it.
+   */
+  const [linkNotice, setLinkNotice] = useState<string | null>(null);
   /**
    * Did the deep link name the station, or is this just the last station this
    * browser happened to use? Only the first is a fact about where the operator
@@ -157,6 +193,27 @@ export default function AppPlayer() {
   const [leaving, setLeaving] = useState(false);
   // Takt polish (player batch A3): one-time full-screen flash at takt zero
   const [taktFlash, setTaktFlash] = useState(false);
+
+  // ── Units this run (finish step) ───────────────────────────────────────────
+  // The operation of the job these units book against, carried by the dispatch
+  // deep link as ?op=. Absent for a run started from the app library, which is
+  // exactly the pre-existing behaviour: the run books against the job's current
+  // operation server-side, or against nothing at all when there is no job.
+  const [operationId, setOperationId] = useState('');
+  /** The finish sheet is open: one screen, four numbers, two taps. */
+  const [finishOpen, setFinishOpen] = useState(false);
+  const [unitsRun, setUnitsRun] = useState(1);
+  const [unitsGood, setUnitsGood] = useState(1);
+  const [unitsScrap, setUnitsScrap] = useState(0);
+  const [unitsRework, setUnitsRework] = useState(0);
+  const [unitsReasonId, setUnitsReasonId] = useState('');
+  /** Nobody touched the control ⇒ the run sends NO counts and the server
+   *  stores NULLs. "Nobody counted" and "counted zero" are different facts. */
+  const [unitsTouched, setUnitsTouched] = useState(false);
+  const [unitsError, setUnitsError] = useState('');
+  const [scrapCodes, setScrapCodes] = useState<ReasonCode[]>([]);
+  /** What the finished run recorded, for the summary line. */
+  const [unitsLabel, setUnitsLabel] = useState('');
 
   // ── Run state ──────────────────────────────────────────────────────────────
   const [status, setStatus] = useState<RunStatus>('setup');
@@ -290,6 +347,11 @@ export default function AppPlayer() {
         // so the run is booked to the person, not to their typing.
         const uidParam = searchParams.get('uid');
         const partParam = searchParams.get('part') || searchParams.get('pn');
+        // Which operation of the job the dispatch stream sent this tablet to.
+        // Only meaningful alongside a work order — the run's units book against
+        // an operation OF that job, and the server refuses any other.
+        const opParam = searchParams.get('op');
+        if (opParam && woParam) setOperationId(opParam);
         if (woParam) setSelectedWorkOrderId(woParam);
         if (!woParam && partParam) setManualPartNumber(partParam);
         if (nameParam) setOperatorName(nameParam);
@@ -305,6 +367,23 @@ export default function AppPlayer() {
   }, [id]);
 
   useEffect(() => { loadAll(); }, [loadAll]);
+
+  // A dispatch link names no operator, because the person who followed it is
+  // signed in: take their identity from the session rather than asking a
+  // manager to type their own name into a player they opened themselves.
+  // Anything the link DID carry wins — this only fills a gap.
+  useEffect(() => {
+    if (!enteredFromDispatch || !user) return;
+    setOperatorUserId(prev => prev || user.id);
+    setOperatorName(prev => (prev.trim() ? prev : (user.display_name || '').trim()));
+  }, [enteredFromDispatch, user]);
+
+  // The coded scrap reasons the finish step picks from. Loaded once; a company
+  // that has none gets a control that says so rather than an empty select.
+  useEffect(() => {
+    if (previewMode) return;
+    getReasonCodes({ kind: 'scrap' }).then(setScrapCodes).catch(() => setScrapCodes([]));
+  }, [previewMode]);
 
   // Departments are offered as help-request targets alongside the four function
   // teams. Best-effort: a company with none simply sees the four teams.
@@ -647,16 +726,30 @@ export default function AppPlayer() {
     }
   }, [bufferValue]);
 
-  const doComplete = useCallback(async () => {
+  /**
+   * Finish the run.
+   *
+   * `counts` is null for a run whose units control was never touched — it sends
+   * NO count fields at all, so the server stores NULLs and the run behaves
+   * exactly as every run did before this control existed. NULL is "nobody
+   * counted"; 0 is "counted, and the answer was zero".
+   */
+  const doComplete = useCallback(async (counts: RunCounts | null = null) => {
     const cid = completionIdRef.current;
     setCompleting(true);
     const values = [...valuesBufferRef.current.values()].filter((v): v is NonNullable<typeof v> => v !== null);
-    const body: CompletionFlushPayload = {
+    const body: FinishPayload = {
       status: 'completed',
       data: { ...formDataRef.current },
       step_times: { ...stepTimesRef.current },
       takt_exceeded_steps: taktExceededRef.current,
       values,
+      ...(counts ? {
+        quantity_good: counts.good,
+        quantity_scrap: counts.scrap,
+        quantity_rework: counts.rework,
+        ...(counts.scrap > 0 ? { scrap_reason_code_id: counts.scrapReasonCodeId } : {}),
+      } : {}),
     };
     try {
       if (previewMode) {
@@ -690,6 +783,52 @@ export default function AppPlayer() {
     }
   }, [previewMode, debug, pushToast, removeQueuedFlush]);
 
+  /**
+   * The finish step's Complete.
+   *
+   * Two taps on the happy path: Complete opens the sheet with one good unit
+   * already filled in, Complete again closes the run. A run whose numbers were
+   * never touched sends NO counts — the server stores NULLs and the job
+   * advances by one, exactly as it always has.
+   *
+   * The sheet is deliberately NOT closed here. A server refusal ("only 3 left
+   * on this operation") has to land back on the numbers that caused it, with
+   * them still on screen; the completed screen replaces this one on success.
+   */
+  const confirmFinish = useCallback(() => {
+    if (completing) return;
+    if (!unitsTouched) {
+      setUnitsLabel('');
+      void doComplete(null);
+      return;
+    }
+    const check = unitsBalance({
+      unitsRun, good: unitsGood, scrap: unitsScrap, rework: unitsRework,
+      scrapReasonCodeId: unitsReasonId,
+      // A company whose manager has not set the list up has nothing to pick.
+      scrapCodesOffered: scrapCodes.length,
+    });
+    if (!check.ok) { setUnitsError(check.reason); return; }
+    setUnitsError('');
+    const label = scrapCodes.find(c => c.id === unitsReasonId)?.label ?? '';
+    setUnitsLabel(unitsSummary({ good: unitsGood, scrap: unitsScrap, rework: unitsRework }, label));
+    void doComplete({
+      good: unitsGood, scrap: unitsScrap, rework: unitsRework, scrapReasonCodeId: unitsReasonId,
+    });
+  }, [completing, unitsTouched, unitsRun, unitsGood, unitsScrap, unitsRework, unitsReasonId,
+    scrapCodes, doComplete]);
+
+  /** Any edit to any of the four numbers arms the balance rule. */
+  const editUnits = useCallback((patch: Partial<{ run: number; good: number; scrap: number; rework: number; reason: string }>) => {
+    setUnitsTouched(true);
+    setUnitsError('');
+    if (patch.run !== undefined) setUnitsRun(patch.run);
+    if (patch.good !== undefined) setUnitsGood(patch.good);
+    if (patch.scrap !== undefined) setUnitsScrap(patch.scrap);
+    if (patch.rework !== undefined) setUnitsRework(patch.rework);
+    if (patch.reason !== undefined) setUnitsReasonId(patch.reason);
+  }, []);
+
   const commitNavigate = useCallback((intent: NavIntent, depth = 0) => {
     if (depth > 8) return;
     const a = appRef.current;
@@ -699,7 +838,12 @@ export default function AppPlayer() {
     recordStepTime(idx);
     captureStepExitValues(a.steps[idx]);
 
-    if (intent.to === 'complete') { void doComplete(); return; }
+    // Preview writes nothing, so asking a builder to count units they did not
+    // make is a screen with no purpose and no consequence.
+    if (intent.to === 'complete') {
+      if (previewMode) { void doComplete(null); return; }
+      setUnitsError(''); setFinishOpen(true); return;
+    }
 
     let target = idx;
     if (intent.to === 'next') target = idx + 1;
@@ -710,7 +854,10 @@ export default function AppPlayer() {
       if (t === -1) return;
       target = t;
     }
-    if (intent.to === 'next' && target >= a.steps.length) { void doComplete(); return; }
+    if (intent.to === 'next' && target >= a.steps.length) {
+      if (previewMode) { void doComplete(null); return; }
+      setUnitsError(''); setFinishOpen(true); return;
+    }
     if (intent.to !== 'prev') historyRef.current.push(idx);
 
     // Saved position for resume-by-another-operator (jobs in progress).
@@ -746,7 +893,7 @@ export default function AppPlayer() {
       }
     }
     if (nav && !blocked) commitNavigate(nav, depth + 1);
-  }, [recordStepTime, captureStepExitValues, doComplete, flushValues, buildState, applyNonNavEffect]);
+  }, [recordStepTime, captureStepExitValues, doComplete, flushValues, buildState, applyNonNavEffect, previewMode]);
 
   const requestNavigate = useCallback((intent: NavIntent) => {
     const a = appRef.current;
@@ -1086,6 +1233,11 @@ export default function AppPlayer() {
     pausedAtRef.current = null;
     setSavedLocally(false);
     setShowPartsOverlay(false);
+    // A new unit is counted from scratch: back to one good, untouched, so the
+    // next run does not inherit the last one's scrap.
+    setFinishOpen(false);
+    setUnitsRun(1); setUnitsGood(1); setUnitsScrap(0); setUnitsRework(0);
+    setUnitsReasonId(''); setUnitsTouched(false); setUnitsError(''); setUnitsLabel('');
     // A new run starts with a clean slate — requests raised during the previous
     // one stay on the Andon Board, they just stop banner-ing here.
     setActiveCalls([]);
@@ -1127,13 +1279,17 @@ export default function AppPlayer() {
         // Same POST /completions the player has always made. The only
         // difference is an optional one-shot supervisor proof in a header,
         // which is absent for every company that has not turned the gate on.
-        const c = await startRunRequest<{ id: string }>({
+        // Widened locally rather than in api/training.ts: the operation id is a
+        // field of THIS request, and the start-run helper is shared.
+        const payload: StartRunPayload & { work_order_operation_id?: string } = {
           app_id: id,
           ...who,
           work_order_id: selectedWorkOrderId || undefined,
+          work_order_operation_id: (selectedWorkOrderId && operationId) ? operationId : undefined,
           product_type_id: selectedProductTypeId || undefined,
           station_id: selectedStationId || undefined,
-        }, overrideProofRef.current);
+        };
+        const c = await startRunRequest<{ id: string }>(payload, overrideProofRef.current);
         overrideProofRef.current = null;   // single use — the server spent it
         setQualBlock(null);
         setQualError('');
@@ -1201,7 +1357,7 @@ export default function AppPlayer() {
       setStarting(false);
     }
   }, [id, starting, previewMode, operatorName, operatorUserId, selectedWorkOrderId, selectedProductTypeId,
-    selectedStationId, requireContext, manualPartNumber, resetRunState, loadKitForWO, setKitState,
+    selectedStationId, operationId, requireContext, manualPartNumber, resetRunState, loadKitForWO, setKitState,
     applyEffects, buildState, debug]);
 
   /**
@@ -1251,10 +1407,40 @@ export default function AppPlayer() {
   // only a station the LINK named: a station merely remembered in this
   // browser's localStorage is offered as a preselected default on the setup
   // screen, never used to book a run nobody was shown.
+  // ── ?run= — pick this exact job back up ───────────────────────────────────
+  // The Operator Portal's Resume link names the run itself. Without this the
+  // operator lands on setup and is shown the concurrent-run warning about their
+  // OWN job, which is both wrong and the exact thing the link was avoiding.
+  //
+  // The list this checks against is the server's own in-progress runs FOR THIS
+  // APP AND COMPANY, so an id that is finished, abandoned, from another app or
+  // from another tenant simply is not in it: it falls through to the normal
+  // flow with a plain notice, and never resumes anything it should not.
+  useEffect(() => {
+    if (resumeParamRef.current) return;
+    if (loading || !app || previewMode || status !== 'setup' || !jobsLoaded) return;
+    const runParam = searchParams.get('run');
+    if (!runParam) { resumeParamRef.current = true; return; }
+    if (!operatorName.trim()) return;   // wait for the identity to settle
+    resumeParamRef.current = true;
+    const target = resumeTarget(jobs, runParam, { operatorUserId, operatorName });
+    // Somebody else's run, or a run that has closed: land on setup and say so.
+    // The concurrent-run card below offers "Resume their run" — joining a job
+    // is a decision two people share, not something a link does quietly.
+    if (target.kind === 'gone' || target.kind === 'theirs') { setLinkNotice(target.notice); return; }
+    if (target.kind !== 'resume') return;
+    void resumeJob(target.job);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading, app, previewMode, status, jobsLoaded, jobs, operatorName, operatorUserId, searchParams]);
+
   useEffect(() => {
     if (autoStartedRef.current) return;
     if (loading || !app || previewMode || status !== 'setup' || starting) return;
     if (!jobsLoaded) return;
+    // A link that names a run is asking to RESUME, not to start: let that
+    // resolve first, or a fresh run would be booked over the top of it.
+    if (searchParams.get('run') && !resumeParamRef.current) return;
+    if (resumingId) return;
     const needed = setupNeeded(
       {
         operatorUserId,
@@ -1263,7 +1449,14 @@ export default function AppPlayer() {
         partNumber: manualPartNumber,
         productTypeId: selectedProductTypeId,
       },
-      { productTypeCount: productTypes.length, productTypeLocked, preview: previewMode },
+      {
+        productTypeCount: productTypes.length,
+        productTypeLocked,
+        preview: previewMode,
+        // A signed-in manager on a dispatch link is identified by their
+        // session; the link carries no uid on purpose.
+        selfIdentified: enteredFromDispatch && !!user,
+      },
     );
     if (needed) return;
     if (concurrentRun(jobs, selectedWorkOrderId, manualPartNumber)) return;
@@ -1273,6 +1466,7 @@ export default function AppPlayer() {
     loading, app, previewMode, status, starting, jobsLoaded, jobs, stationFromLink,
     operatorUserId, selectedStationId, selectedWorkOrderId, manualPartNumber,
     selectedProductTypeId, productTypes.length, productTypeLocked, startRun,
+    enteredFromDispatch, user, resumingId, searchParams,
   ]);
 
   // ── Request help (Andon alerts) ────────────────────────────────────────────
@@ -1800,6 +1994,13 @@ export default function AppPlayer() {
             )}
           </div>
 
+          {linkNotice && (
+            <div className="p-well flex items-center gap-2 px-4 py-3 mt-4" style={{ color: 'var(--p-warn)', fontSize: 14 }}>
+              <AlertCircle size={15} className="flex-shrink-0" />
+              {linkNotice}
+            </div>
+          )}
+
           {actionError && (
             <div className="p-well flex items-center gap-2 px-4 py-3 mt-4" style={{ color: 'var(--p-bad)', fontSize: 14 }}>
               <AlertCircle size={15} className="flex-shrink-0" />
@@ -1968,6 +2169,7 @@ export default function AppPlayer() {
         capturedCount={capturedRef.current.size}
         kitSummary={kitSummary}
         savedLocally={savedLocally}
+        unitsLabel={unitsLabel}
         contextLabel={contextLabel}
         nextUnitDisabledReason={summaryGate.ok ? undefined : summaryGate.reason}
         onChangeContext={changeContext}
@@ -2313,6 +2515,25 @@ export default function AppPlayer() {
         />
       )}
 
+      {/* Units this run (finish step). One control, four numbers, two taps: the
+          happy path is Complete → Complete. Nothing typed = nothing counted. */}
+      {finishOpen && (
+        <UnitsSheet
+          unitsRun={unitsRun}
+          good={unitsGood}
+          scrap={unitsScrap}
+          rework={unitsRework}
+          scrapReasonCodeId={unitsReasonId}
+          scrapCodes={scrapCodes}
+          touched={unitsTouched}
+          error={unitsError}
+          completing={completing}
+          onEdit={editUnits}
+          onClose={() => { setFinishOpen(false); setUnitsError(''); }}
+          onConfirm={confirmFinish}
+        />
+      )}
+
       {/* Pause-and-leave with an optional handoff comment (player batch C2) */}
       {leaveOpen && (
         <LeaveJobSheet
@@ -2476,6 +2697,141 @@ function ReportProblemSheet({ preview, onClose, onSubmit }: {
 // The sheet states the actual, measured cost: how far in the run got, how many
 // steps were timed, how many values were captured. Never a fabricated figure —
 // a run with nothing recorded says so.
+
+// ─── Units this run (finish step) ────────────────────────────────────────────
+//
+// Production quantity used to be good-only: a run happened, therefore one good
+// piece existed. First-pass yield, scrap by part and the cost of poor quality
+// were all uncomputable, and the only scrap number in the product was one a
+// supervisor typed into a shift note at the end of a shift, from memory.
+//
+// The control has to be fast enough that nobody routes around it, and honest
+// enough to be worth having. So:
+//
+//   • Good is prefilled with 1 — the happy path is Complete, Complete;
+//   • the scrap reason only appears once scrap is non-zero, and is then
+//     REQUIRED: scrap with no reason is a number nobody can act on;
+//   • the moment any number is edited, all four have to add up, and the
+//     mismatch is NAMED rather than called "invalid";
+//   • a run whose numbers were never touched sends nothing at all, so the
+//     database can still tell "nobody counted" from "counted zero".
+//
+// No autoFocus: an operator holding a part in one hand does not want a keyboard
+// jumping up at them.
+
+function UnitsSheet({
+  unitsRun, good, scrap, rework, scrapReasonCodeId, scrapCodes, touched, error, completing,
+  onEdit, onClose, onConfirm,
+}: {
+  unitsRun: number;
+  good: number;
+  scrap: number;
+  rework: number;
+  scrapReasonCodeId: string;
+  scrapCodes: ReasonCode[];
+  touched: boolean;
+  error: string;
+  completing: boolean;
+  onEdit: (patch: Partial<{ run: number; good: number; scrap: number; rework: number; reason: string }>) => void;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const num = (v: string) => {
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? Math.max(0, n) : 0;
+  };
+  const sum = good + scrap + rework;
+  const field = (label: string, value: number, onChange: (n: number) => void, id: string) => (
+    <div>
+      <label className="p-label" htmlFor={id}>{label}</label>
+      <input
+        id={id}
+        type="number"
+        inputMode="numeric"
+        min={0}
+        className="p-input tnum"
+        style={{ minHeight: 52, fontSize: 20, fontWeight: 700 }}
+        value={String(value)}
+        onChange={e => onChange(num(e.target.value))}
+      />
+    </div>
+  );
+
+  return (
+    <div className="p-sheet-backdrop" role="dialog" aria-modal="true" aria-label="Units this run">
+      <div className="p-sheet" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2" style={{ fontSize: 18, fontWeight: 650, color: 'var(--p-ink)' }}>
+            <Package size={18} style={{ color: 'var(--p-accent)' }} /> Units this run
+          </div>
+          <button onClick={onClose} aria-label="Close" style={{ color: 'var(--p-muted)', width: 44, height: 44 }} className="flex items-center justify-center">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3">
+            {field('Units run', unitsRun, n => onEdit({ run: n }), 'units-run')}
+            {field('Good', good, n => onEdit({ good: n }), 'units-good')}
+            {field('Scrap', scrap, n => onEdit({ scrap: n }), 'units-scrap')}
+            {field('Rework', rework, n => onEdit({ rework: n }), 'units-rework')}
+          </div>
+
+          {scrap > 0 && (
+            <div>
+              <label className="p-label" htmlFor="units-scrap-reason">What was the scrap?</label>
+              {scrapCodes.length > 0 ? (
+                <select
+                  id="units-scrap-reason"
+                  className="p-input"
+                  style={{ minHeight: 52, fontSize: 16 }}
+                  value={scrapReasonCodeId}
+                  onChange={e => onEdit({ reason: e.target.value })}
+                >
+                  <option value="">Pick a reason…</option>
+                  {scrapCodes.map(c => (
+                    <option key={c.id} value={c.id}>{c.label}</option>
+                  ))}
+                </select>
+              ) : (
+                // Nothing to pick, so the run is NOT held hostage to a list a
+                // manager has not made. The scrap is still counted; the yield
+                // report labels it "No reason recorded" rather than guessing.
+                <p style={{ fontSize: 14, color: 'var(--p-warn)' }}>
+                  A manager has not set up scrap reasons yet — the scrap is still counted,
+                  it just cannot say why.
+                </p>
+              )}
+            </div>
+          )}
+
+          {touched && (
+            <p className="tnum" style={{ fontSize: 13.5, color: sum === unitsRun ? 'var(--p-muted)' : 'var(--p-warn)' }}>
+              {good} + {scrap} + {rework} = {sum} of {unitsRun}
+            </p>
+          )}
+          {error && (
+            <p className="p-well px-4 py-3" style={{ fontSize: 14.5, color: 'var(--p-warn)' }}>{error}</p>
+          )}
+          {!touched && (
+            <p style={{ fontSize: 13.5, color: 'var(--p-muted)' }}>
+              Leave this alone and the run is recorded without a count, exactly as before.
+            </p>
+          )}
+
+          <div className="flex gap-3">
+            <button className="p-btn p-btn-primary flex-1" style={{ minWidth: 0 }} onClick={onConfirm} disabled={completing}>
+              {completing ? <Loader2 size={18} className="animate-spin" /> : null} Complete
+            </button>
+            <button className="p-btn p-btn-ghost flex-1" style={{ minWidth: 0 }} onClick={onClose} disabled={completing}>
+              Back
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function AbandonRunSheet({ stepPosition, stepCount, stepsTimed, valuesCaptured, onClose, onAbandon }: {
   stepPosition: number;
