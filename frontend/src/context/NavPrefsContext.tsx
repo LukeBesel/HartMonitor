@@ -1,10 +1,20 @@
-import { createContext, useContext, useState, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import type { SectionId } from '../config/navigation';
+import { useAuth, useAuthUserId } from './AuthContext';
+import {
+  fetchNavHiddenSections, saveNavHiddenSections, parseHiddenSections,
+} from '../api/settings';
 
 const HIDDEN_KEY = 'hm_hidden_nav';
 const HIDDEN_SECTIONS_KEY = 'hm_hidden_sections';
 const ORDER_KEY = 'hm_nav_order';
-const PRO_SIDEBAR_KEY = 'hm_show_pro_sidebar';
+
+// Which workspaces this plant shows is a fact about the plant, so it lives in
+// org_settings and follows the company onto every screen and every device (see
+// api/settings.ts). The two switches below it — per-item visibility and the
+// developer-only item order — stay on the device: they are one person tuning
+// their own sidebar, and they were never the thing that surprised a second
+// tablet with a different navigation.
 
 
 function loadSet(key: string, fallback: string[] = []): Set<string> {
@@ -38,32 +48,78 @@ interface NavPrefsContextValue {
   hiddenItems: Set<string>;
   isItemHidden: (to: string) => boolean;
   toggleItem: (to: string) => void;
-  // Whole-workspace visibility
+  // Whole-workspace visibility — company-wide, saved in org_settings.
   hiddenSections: Set<string>;
   isSectionHidden: (id: SectionId) => boolean;
   toggleSection: (id: SectionId) => void;
+  /** True until the company's saved workspaces have been read back. */
+  sectionsLoading: boolean;
+  /** Set when the last write was refused (an operator, or the server said no). */
+  sectionsError: string | null;
   // Custom item ordering per section (developer-controlled). Maps sectionId →
   // an ordered list of item `to` paths. Items not listed keep their natural order.
   itemOrder: Record<string, string[]>;
   moveItem: (sectionId: string, to: string, direction: 'up' | 'down', currentOrder: string[]) => void;
-  // Developer preview: show Pro-locked items in the sidebar even on Free.
-  showProSidebar: boolean;
-  setShowProSidebar: (v: boolean) => void;
   resetNavPrefs: () => void;
 }
 
 const NavPrefsContext = createContext<NavPrefsContextValue | null>(null);
 
 export function NavPrefsProvider({ children }: { children: ReactNode }) {
+  const { isAtLeast } = useAuth();
+  const userId = useAuthUserId();
   const [hiddenItems, setHiddenItems] = useState<Set<string>>(() => loadSet(HIDDEN_KEY));
-  // All workspaces are visible by default; users can hide the ones they don't
-  // use from Settings. (The retired 'planning' section may linger in stored
-  // prefs — it no longer matches a section id, so it is simply ignored.)
-  const [hiddenSections, setHiddenSections] = useState<Set<string>>(() => loadSet(HIDDEN_SECTIONS_KEY));
+  // All workspaces are visible by default; a manager can hide the ones the
+  // plant does not use from Settings. (The retired 'planning' section may
+  // linger in stored prefs — it no longer matches a section id, so it is
+  // simply ignored.)
+  const [hiddenSections, setHiddenSections] = useState<Set<string>>(new Set());
+  const [sectionsLoading, setSectionsLoading] = useState(true);
+  const [sectionsError, setSectionsError] = useState<string | null>(null);
   const [itemOrder, setItemOrder] = useState<Record<string, string[]>>(() => loadOrder());
-  const [showProSidebar, setShowProSidebarState] = useState<boolean>(() => {
-    try { return localStorage.getItem(PRO_SIDEBAR_KEY) === 'true'; } catch { return false; }
-  });
+
+  // Read the company's answer once a session exists. Signed out, there is no
+  // company to ask and no sidebar to hide anything from.
+  useEffect(() => {
+    let cancelled = false;
+    if (!userId) {
+      setHiddenSections(new Set());
+      setSectionsLoading(false);
+      return;
+    }
+    setSectionsLoading(true);
+    (async () => {
+      try {
+        const stored = await fetchNavHiddenSections();
+        if (cancelled) return;
+        if (stored !== null) {
+          setHiddenSections(new Set(stored));
+          // The company has an answer, so this device's old copy is history.
+          try { localStorage.removeItem(HIDDEN_SECTIONS_KEY); } catch { /* ignore */ }
+        } else {
+          // First run against a company that has never saved: adopt whatever
+          // this device was carrying, hand it to the company once, and forget
+          // the local copy. A member who may not write simply keeps showing it
+          // until somebody who may does.
+          const local = parseHiddenSections(localStorage.getItem(HIDDEN_SECTIONS_KEY));
+          setHiddenSections(new Set(local));
+          if (isAtLeast('manager')) {
+            try {
+              await saveNavHiddenSections(local);
+              try { localStorage.removeItem(HIDDEN_SECTIONS_KEY); } catch { /* ignore */ }
+            } catch { /* the local value stays until a write succeeds */ }
+          }
+        }
+      } catch {
+        // No answer from the server is not a reason to hide workspaces.
+        if (!cancelled) setHiddenSections(new Set());
+      } finally {
+        if (!cancelled) setSectionsLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userId]);
 
   const toggleItem = (to: string) => {
     setHiddenItems(prev => {
@@ -75,22 +131,27 @@ export function NavPrefsProvider({ children }: { children: ReactNode }) {
     });
   };
 
+  // Company-wide: show the change straight away, then persist it. If the
+  // server refuses (an operator may not rearrange the plant's navigation) the
+  // sidebar goes back to what the company actually has saved.
+  const persistSections = useCallback(async (next: Set<string>, previous: Set<string>) => {
+    setSectionsError(null);
+    try {
+      await saveNavHiddenSections([...next]);
+    } catch (err: any) {
+      setHiddenSections(previous);
+      setSectionsError(err?.message || 'Could not save which workspaces this company shows.');
+    }
+  }, []);
+
   const toggleSection = (id: SectionId) => {
     setHiddenSections(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
-      saveSet(HIDDEN_SECTIONS_KEY, next);
+      void persistSections(next, prev);
       return next;
     });
-  };
-
-  const setShowProSidebar = (v: boolean) => {
-    setShowProSidebarState(v);
-    try {
-      if (v) localStorage.setItem(PRO_SIDEBAR_KEY, 'true');
-      else localStorage.removeItem(PRO_SIDEBAR_KEY);
-    } catch { /* ignore */ }
   };
 
   // Reorder one item within a section. `currentOrder` is the section's current
@@ -111,10 +172,12 @@ export function NavPrefsProvider({ children }: { children: ReactNode }) {
 
   const resetNavPrefs = () => {
     setHiddenItems(new Set());
-    setHiddenSections(new Set());
     setItemOrder({});
     saveSet(HIDDEN_KEY, new Set());
-    saveSet(HIDDEN_SECTIONS_KEY, new Set());
+    setHiddenSections(prev => {
+      void persistSections(new Set(), prev);
+      return new Set();
+    });
     try {
       localStorage.removeItem(ORDER_KEY);
     } catch { /* ignore */ }
@@ -129,10 +192,10 @@ export function NavPrefsProvider({ children }: { children: ReactNode }) {
         hiddenSections,
         isSectionHidden: (id) => hiddenSections.has(id),
         toggleSection,
+        sectionsLoading,
+        sectionsError,
         itemOrder,
         moveItem,
-        showProSidebar,
-        setShowProSidebar,
         resetNavPrefs,
       }}
     >
