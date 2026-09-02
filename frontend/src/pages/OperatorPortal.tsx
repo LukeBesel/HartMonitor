@@ -6,7 +6,8 @@ import {
   Briefcase, History as HistoryIcon, LogOut, RefreshCw, Send, ArrowLeft, ScanLine, WifiOff,
   MessageSquare, Lock, Delete, Users as UsersIcon, KeyRound, LayoutDashboard,
 } from 'lucide-react';
-import { timeAgo, fmtMinutes } from '../utils/time';
+import { timeAgo } from '../utils/time';
+import { fmtMinutes } from '../components/apps/appModel';
 import { tintedChipOn } from '../utils/contrast';
 import BarcodeScannerModal from '../components/shared/BarcodeScannerModal';
 import { useOnlineStatus } from '../hooks/useOnlineStatus';
@@ -819,7 +820,7 @@ function JobsTab({
                       {wo.takt_time_minutes > 0 && (
                         <div className="flex items-center gap-1 text-blue-200/80">
                           <Clock size={12} />
-                          {fmtMinutes(wo.takt_time_minutes)}m takt
+                          {fmtMinutes(wo.takt_time_minutes)} takt
                         </div>
                       )}
                       {wo.department_name && (

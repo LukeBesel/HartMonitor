@@ -102,21 +102,14 @@ function scanWidenedDeclarations(): { rel: string; name: string }[] {
  *     ("2:45 PM" via toLocaleTimeString), the same shape as appModel's own
  *     `fmtDateTime` — not a duration. A false positive of the name heuristic,
  *     not a hazard.
- *   - `utils/time.ts fmtMinutes` rounds a raw minutes value to one decimal
- *     place ("6.1") with no unit-string conversion — not a duration-string
- *     formatter. It name-collides with the new canonical `fmtMinutes` added
- *     in this change, but predates it, and is not a 60x-shaped hazard:
- *     rounding a number is not confusing units. Left alone rather than
- *     renamed because its only consumer, pages/OperatorPortal.tsx, is being
- *     edited by another workstream right now — rename it to
- *     `roundOneDecimal` once OperatorPortal.tsx is free (coordinator
- *     follow-up), updating that one call site to match.
+ *   (`utils/time.ts fmtMinutes`, a one-decimal rounder that name-collided with
+ *   the canonical adapter, was deleted once its only consumer,
+ *   pages/OperatorPortal.tsx, moved to appModel's fmtMinutes.)
  */
 const KNOWN_WIDENED_DECLARATIONS = [
   'components/player/runtime.ts -> formatDur',
   'pages/Leaderboard.tsx -> formatDuration',
   'pages/ReceivingPortal.tsx -> fmtTime',
-  'utils/time.ts -> fmtMinutes',
 ].sort();
 
 describe('the shared duration formatter is the only one', () => {

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { AA_TEXT, contrastRatio, parseColor, tintedChipOn, toHex } from '../contrast';
-import { fmtMinutes } from '../time';
+import { fmtMinutes } from '../../components/apps/appModel';
 
 /**
  * The full-screen surfaces — the department and leaderboard wall boards, the
@@ -129,9 +129,12 @@ describe('department chip on a job card', () => {
 
 describe('fmtMinutes', () => {
   it('never puts a float tail on an operator’s job card', () => {
-    expect(fmtMinutes(6.083333333333333)).toBe('6.1');
-    expect(fmtMinutes(6)).toBe('6');
-    expect(fmtMinutes(0.5)).toBe('0.5');
-    expect(fmtMinutes(12.25)).toBe('12.3');
+    // The job card reads the canonical duration adapter: minutes in, the
+    // same string every other screen prints out. No decimal minutes anywhere.
+    expect(fmtMinutes(6.083333333333333)).toBe('6m 5s');
+    expect(fmtMinutes(6)).toBe('6m');
+    expect(fmtMinutes(0.5)).toBe('30s');
+    expect(fmtMinutes(12.25)).toBe('12m 15s');
+    expect(fmtMinutes(6.083333333333333)).not.toMatch(/\.\d{3,}/);
   });
 });
