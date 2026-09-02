@@ -1544,17 +1544,20 @@ function loadSampleDataForCompany(companyId) {
   // company's own timezone, not the server's.
   const seedShapes = require('./seedShapes');
   const tag = uuidv4().replace(/-/g, '').slice(0, 6).toUpperCase();
+  const appWidgets = seedShapes.widgetIndex(steps);
 
   const reasonIds = seedShapes.seedReasonCodes(companyId);
   const routing = seedShapes.seedBracketLineRouting(companyId, {
     tag, deptId, siteId, weldAppId: appId, inspectAppId: null, weldStationId: s1, inspectStationId: null,
+    cutOperatorName: operators[1],
   });
   seedShapes.seedWeldScrapRuns(companyId, {
-    appId, stationId: s1,
+    appId, stationId: s1, tag,
     workOrderId: routing.inProgress.workOrderId,
     workOrderOperationId: routing.inProgress.op2Id,
     operatorUserId: null, operatorName: operators[0],
     scrapReasonCodeId: reasonIds.scrap.weld_porosity,
+    widgets: appWidgets,
   });
   seedShapes.seedDowntimePareto(companyId, {
     stationIds: [s1, s2],
@@ -1575,19 +1578,28 @@ function loadSampleDataForCompany(companyId) {
   `).get(companyId);
 
   if (owner) {
-    seedShapes.seedAndonCalls(companyId, {
-      deptId, stationId: s1, raiserUserId: null, raiserName: operators[0],
-    });
-
-    // A second person for the app-revision approval and the training
-    // override sign-off — a supervisor really has to be someone other than
-    // the publisher, or neither the approval nor the override means anything.
+    // Two more people for the app-revision approval, the training override
+    // sign-off, and (the supervisor) the andon escalation's first rung — a
+    // supervisor really has to be someone other than the publisher, or
+    // neither the approval nor the override means anything.
     const supervisorId = uuidv4();
     db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role, company_id) VALUES (?, ?, 'Line Supervisor', ?, 'supervisor', ?)`)
       .run(supervisorId, `sample-supervisor-${tag.toLowerCase()}@hartmonitor.local`, hashPwDemo(uuidv4()), companyId);
     const traineeId = uuidv4();
     db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role, company_id) VALUES (?, ?, 'Sample Trainee', ?, 'operator', ?)`)
       .run(traineeId, `sample-trainee-${tag.toLowerCase()}@hartmonitor.local`, hashPwDemo(uuidv4()), companyId);
+
+    // driveLive: false — this is a REAL company's own data. Firing the real
+    // escalateOne() would email and webhook whoever it resolves, potentially
+    // at an integration this customer has already configured for real
+    // events; see seedAndonCalls' doc comment. The escalation state (and its
+    // in-app trail) is still written, just without any outbound side effect.
+    seedShapes.seedAndonCalls(companyId, {
+      deptId, stationId: s1, raiserUserId: null, raiserName: operators[0],
+      supervisorUserId: supervisorId,
+      responderUserId: owner.id, responderName: owner.display_name,
+      driveLive: false,
+    });
 
     const revisions = seedShapes.seedTwoRevisions(companyId, {
       appId, publisherUserId: owner.id, approverUserId: supervisorId,
@@ -1596,20 +1608,39 @@ function loadSampleDataForCompany(companyId) {
     // Stamp the app's own history with the revision it actually ran under:
     // every earlier run Rev 1, the latest Rev 2 — the same rule the sandbox
     // seed follows, applied to the completions this function already wrote.
+    const appRow = db.prepare('SELECT name FROM apps WHERE id = ? AND company_id = ?').get(appId, companyId);
+
+    // A dedicated, most-recent completion for the trainee — never a randomly
+    // selected run by one of the OTHER seeded operators. The override and
+    // Rev 2 both have to land on a run that is actually the trainee's own,
+    // or "the operator this override covers" and "the operator who ran it"
+    // are two different people.
+    const traineeCompletionId = uuidv4();
+    db.prepare(`
+      INSERT INTO completions (id, app_id, app_name, station_id, operator_name, operator_user_id, started_at, completed_at, status, data, step_times, company_id)
+      VALUES (?, ?, ?, ?, 'Sample Trainee', ?, datetime('now', '-6 minutes'), datetime('now', '-1 minutes'), 'completed', ?, ?, ?)
+    `).run(
+      traineeCompletionId, appId, appRow ? appRow.name : '', s1, traineeId,
+      JSON.stringify({ ppe_worn: true, bolt_count: 8, final_inspection: 'Pass' }),
+      JSON.stringify({ 0: 6, 1: 210, 2: 40 }),
+      companyId,
+    );
+    seedShapes.stampCompletionValues(companyId, appId, traineeCompletionId, appWidgets,
+      { ppe_worn: true, bolt_count: 8, final_inspection: 'Pass' }, 1);
+
     const appCompletions = db.prepare(
-      `SELECT id FROM completions WHERE company_id = ? AND app_id = ? ORDER BY completed_at ASC`
-    ).all(companyId, appId);
+      `SELECT id FROM completions WHERE company_id = ? AND app_id = ? AND id != ? ORDER BY completed_at ASC`
+    ).all(companyId, appId, traineeCompletionId);
     const stampRevision = db.prepare(`UPDATE completions SET app_revision_id = ? WHERE id = ? AND company_id = ?`);
-    appCompletions.forEach((c, i) => {
-      stampRevision.run(i === appCompletions.length - 1 ? revisions.rev2.id : revisions.rev1.id, c.id, companyId);
-    });
-    const latest = appCompletions[appCompletions.length - 1] || null;
+    appCompletions.forEach(c => stampRevision.run(revisions.rev1.id, c.id, companyId));
+    stampRevision.run(revisions.rev2.id, traineeCompletionId, companyId);
 
     seedShapes.seedTrainingOverride(companyId, {
       appId, operatorUserId: traineeId, operatorName: 'Sample Trainee',
       certifierUserId: owner.id,
       supervisorUserId: supervisorId, supervisorName: 'Line Supervisor',
-      completionId: latest ? latest.id : null,
+      completionId: traineeCompletionId,
+      alsoCertify: [{ userId: owner.id, name: owner.display_name }],
     });
   }
 

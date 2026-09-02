@@ -228,18 +228,34 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   // morning whole.
   const downMin = Math.max(3, Math.round(shiftMin * 0.094));
   const downFrac = f => Math.max(1, Math.round(downMin * f));
-  const st1 = uuidv4(), st2 = uuidv4();
+  const st1 = uuidv4(), st2 = uuidv4(), stWeld = uuidv4();
   db.prepare(`INSERT INTO stations (id, name, description, location, status, current_app_id, company_id, department_id, current_status, current_status_since, ideal_cycle_seconds, planned_hours_per_day)
               VALUES (?, 'Station 1', 'Bracket assembly bench', 'Line A', 'active', ?, ?, ?, 'running', datetime('now', ?), ?, ?)`)
     .run(st1, appId, orgId, deptA, `-${todayWindowMin} minutes`, IDEAL_CYCLE_S, shiftHours);
   db.prepare(`INSERT INTO stations (id, name, description, location, status, company_id, department_id, current_status, current_status_since, planned_hours_per_day)
               VALUES (?, 'Station 2', 'Pack-out bench', 'Line A', 'active', ?, ?, 'down', datetime('now', ?), ?)`)
     .run(st2, orgId, deptB, `-${downMin} minutes`, shiftHours);
+  // A third station for the Bracket Line's Cut/Weld operations — deliberately
+  // NOT Station 1. Station 1's whole OEE story ("everything it finishes today
+  // is WO-1001, and it logs no downtime") is metric-honesty.test.js's own
+  // fixture; booking the routing's runs there too would make Station 1
+  // finish more today than WO-1001 accounts for, and would put the Bracket
+  // Line's downtime Pareto stops on the one station that is supposed to stay
+  // clean. A dedicated cell keeps both stories true at once.
+  db.prepare(`INSERT INTO stations (id, name, description, location, status, company_id, department_id, planned_hours_per_day)
+              VALUES (?, 'Weld Cell', 'Bracket Line — cut and weld', 'Line A', 'active', ?, ?, ?)`)
+    .run(stWeld, orgId, deptA, shiftHours);
 
   const insEvent = db.prepare(`INSERT INTO machine_events (id, station_id, event_type, reason, started_at, ended_at, duration_minutes) VALUES (?, ?, ?, ?, datetime('now', ?), ?, ?)`);
   insEvent.run(uuidv4(), st1, 'up', '', `-${todayWindowMin} minutes`, null, null);
   insEvent.run(uuidv4(), st2, 'up', '', `-${downMin + 255} minutes`, db.prepare(`SELECT datetime('now', ?) AS t`).get(`-${downMin} minutes`).t, 255);
-  insEvent.run(uuidv4(), st2, 'down', 'Conveyor drive jam', `-${downMin} minutes`, null, null);
+  // Coded further down (once reason codes exist) so the Pareto's top bars are
+  // all named causes rather than one large "Not coded" bar outweighing the
+  // three deliberately-seeded ones — this stop reads as a genuine
+  // 'breakdown' (it is the one an emergency maintenance work order and a
+  // critical NCR are already about), not a brief 'jam'.
+  const conveyorJamEventId = uuidv4();
+  insEvent.run(conveyorJamEventId, st2, 'down', 'Conveyor drive jam', `-${downMin} minutes`, null, null);
 
   // ── Product types ───────────────────────────────────────────────────────────
   const ptStd = uuidv4(), ptHd = uuidv4();
@@ -791,23 +807,30 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   // ── Coded reasons (scrap / rework / downtime): seeded exactly as a first
   // read of GET /api/andon/reason-codes would seed them ─────────────────────
   const reasonIds = seedShapes.seedReasonCodes(orgId);
+  // The pre-existing Station 2 stop above now has a code to point at — a
+  // genuine breakdown, not a brief jam (see the comment where it was raised).
+  seedShapes.codeDowntimeEvent(conveyorJamEventId, reasonIds.downtime.breakdown);
 
   // ── Routings and operations: a 4-op job standing on Weld, 12 of 50 done ────
+  // Cut/Weld run at the dedicated Weld Cell, not Station 1 — see its own
+  // comment above for why Station 1 has to stay out of this.
   const routing = seedShapes.seedBracketLineRouting(orgId, {
     tag, deptId: deptA, siteId,
     weldAppId: appId, inspectAppId: qcAppId,
-    weldStationId: st1, inspectStationId: st2,
+    weldStationId: stWeld, inspectStationId: st2,
+    cutOperatorUserId: opId.bob, cutOperatorName: 'Bob Operator',
   });
 
   // ── Scrap: two runs booked against the Weld operation, one carrying a coded
   // reason — SUM(quantity_good) across them is exactly the 12 advance() booked.
   seedShapes.seedWeldScrapRuns(orgId, {
-    appId, stationId: st1,
+    appId, stationId: stWeld, tag,
     workOrderId: routing.inProgress.workOrderId,
     workOrderOperationId: routing.inProgress.op2Id,
     productTypeId: ptStd,
     operatorUserId: opId.maria, operatorName: 'Maria Lopez',
     scrapReasonCodeId: reasonIds.scrap.weld_porosity,
+    widgets,
   });
 
   // ── Downtime Pareto: three coded stops across three loss buckets ───────────
@@ -820,20 +843,32 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
     },
   });
 
-  // ── Andon: one call that climbed to management, one answered inside target ─
+  // ── Andon: one call that climbed to management, one answered inside target.
+  // Driven through the REAL escalateOne() — nothing real is listening on a
+  // throwaway sandbox org, so its email/webhook side effects are harmless. ──
   seedShapes.seedAndonCalls(orgId, {
     deptId: deptA, stationId: st1,
     raiserUserId: opId.bob, raiserName: 'Bob Operator',
+    supervisorUserId: supervisorId,
+    responderUserId: opId.maria, responderName: 'Maria Lopez',
+    driveLive: true,
   });
 
   // ── Training: an expired cert on the QC app, overridden by the supervisor,
-  // stamped onto today's QC run (Rev 2, Priya Shah) ──────────────────────────
+  // stamped onto today's QC run (Rev 2, Priya Shah). Enforcement is 'block' —
+  // the mode the override exists for — so Bob and the visitor (who
+  // sandbox-qc-hold.test.js and a live demo both run the QC app as) keep a
+  // clean certification and are never the ones the block actually stops. ────
   seedShapes.seedTrainingOverride(orgId, {
     appId: qcAppId,
     operatorUserId: qcTodayOperatorUserId, operatorName: qcTodayOperatorName,
     certifierUserId: visitorUserId,
     supervisorUserId: supervisorId, supervisorName,
     completionId: qcTodayCompletionId,
+    alsoCertify: [
+      { userId: opId.bob, name: 'Bob Operator' },
+      { userId: visitorUserId, name: 'Demo Visitor' },
+    ],
   });
 }
 
