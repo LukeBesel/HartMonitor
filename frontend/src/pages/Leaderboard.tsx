@@ -155,7 +155,8 @@ const DEPT_RANK_ACCENT: Record<number, string> = {
 };
 
 function DepartmentCard({ dept, onSelect }: { dept: LeaderboardDepartment; onSelect: () => void }) {
-  const rankColor = DEPT_RANK_ACCENT[dept.rank] || 'text-gray-400';
+  // The "No department" bucket has no rank — it is a pile of runs, not a place.
+  const rankColor = (dept.rank != null && DEPT_RANK_ACCENT[dept.rank]) || 'text-gray-400';
   return (
     <button
       onClick={onSelect}
@@ -163,7 +164,9 @@ function DepartmentCard({ dept, onSelect }: { dept: LeaderboardDepartment; onSel
     >
       <div className="flex items-start justify-between gap-2">
         <div className="flex items-center gap-3 min-w-0">
-          <span className={`text-2xl font-black tabular-nums ${rankColor}`}>#{dept.rank}</span>
+          <span className={`font-black tabular-nums ${rankColor} ${dept.rank == null ? 'text-xs uppercase tracking-wide' : 'text-2xl'}`}>
+            {dept.rank == null ? 'Unranked' : `#${dept.rank}`}
+          </span>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: dept.department_color }} />
