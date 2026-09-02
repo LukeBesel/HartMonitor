@@ -100,17 +100,24 @@ const TITLE_ROUTES: TitleRoute[] = [
   { path: '/stations', screen: 'Stations' },
   { path: '/completions/:id', screen: 'Run Record' },
 
-  // ── Inventory ──────────────────────────────────────────────────────────────
-  { path: '/inventory/boms', screen: 'BOMs' },
-  { path: '/inventory/kitting/:kitId', screen: 'Kitting' },
-  { path: '/inventory/kitting', screen: 'Kitting' },
-  { path: '/inventory/:id', screen: 'Inventory Tracker' },
-  { path: '/inventory', screen: 'Inventory Tracker' },
+  // ── Materials ──────────────────────────────────────────────────────────────
+  // One screen, one title. Seven screens' worth of URLs still route here — each
+  // opens its own tab — but which tab is a `?tab=` query, and this table sees
+  // only the path, so naming them apart here would be guessing. The tab row on
+  // screen says which one is open.
+  //
+  // The receiving KIOSK is the exception: it is a separate full-screen surface
+  // on /receiving, not the Receiving tab, and keeps its own name.
+  { path: '/inventory/boms', screen: 'Materials' },
+  { path: '/inventory/kitting/:kitId', screen: 'Materials' },
+  { path: '/inventory/kitting', screen: 'Materials' },
+  { path: '/inventory/:id', screen: 'Materials' },
+  { path: '/inventory', screen: 'Materials' },
   { path: '/receiving', screen: 'Receiving' },
-  { path: '/requirements', screen: 'Materials Required' },
-  { path: '/shipments', screen: 'Shipments' },
-  { path: '/purchasing/:tab', screen: 'Purchasing' },
-  { path: '/purchasing', screen: 'Purchasing' },
+  { path: '/requirements', screen: 'Materials' },
+  { path: '/shipments', screen: 'Materials' },
+  { path: '/purchasing/:view', screen: 'Materials' },
+  { path: '/purchasing', screen: 'Materials' },
 
   // ── Kaizen / CI ────────────────────────────────────────────────────────────
   { path: '/kaizen', screen: 'Kaizen / CI Ideas' },

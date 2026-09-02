@@ -41,8 +41,10 @@ const SettingsPage     = lazy(() => import('./pages/Settings'));
 const Dashboards       = lazy(() => import('./pages/Dashboards'));
 const DashboardView    = lazy(() => import('./pages/DashboardView'));
 const CategoryReports  = lazy(() => import('./pages/CategoryReports'));
+// One Materials screen. Stock, BOMs, Kits, Receiving, Purchasing, Shipments and
+// Requirements were seven page files behind eight menu items; they are tabs on
+// this one now, and the URLs those items handed out still route here.
 const Inventory        = lazy(() => import('./pages/Inventory'));
-const Purchasing       = lazy(() => import('./pages/Purchasing'));
 const Quality          = lazy(() => import('./pages/Quality'));
 const Leaderboard      = lazy(() => import('./pages/Leaderboard'));
 const Landing          = lazy(() => import('./pages/Landing'));
@@ -56,10 +58,6 @@ const AuditLog         = lazy(() => import('./pages/AuditLog'));
 const Facilities       = lazy(() => import('./pages/Facilities'));
 const Routings             = lazy(() => import('./pages/Routings'));
 const ReceivingPortal      = lazy(() => import('./pages/ReceivingPortal'));
-const ShipmentTracker      = lazy(() => import('./pages/ShipmentTracker'));
-const InventoryRequirements = lazy(() => import('./pages/InventoryRequirements'));
-const BOMs                 = lazy(() => import('./pages/BOMs'));
-const Kitting              = lazy(() => import('./pages/Kitting'));
 const Training             = lazy(() => import('./pages/Training'));
 const Andon                = lazy(() => import('./pages/Andon'));
 const CAPA                 = lazy(() => import('./pages/CAPA'));
@@ -141,6 +139,14 @@ function AppRoutes() {
       <Route path="/sso/callback" element={<SSOCallback />} />
       <Route path="/play/:id" element={<OperatorRoute><AppPlayer /></OperatorRoute>} />
       <Route path="/operator" element={<OperatorRoute><OperatorPortal /></OperatorRoute>} />
+      {/* The receiving kiosk. A goods-in bench runs it full screen with a
+          scanner, so it is mounted HERE, outside the management shell, with no
+          sidebar or workspace tabs around it — the same treatment the operator
+          portal gets. The Receiving TAB on the Materials screen is the
+          desk-side view of the same work; this is the one on the dock. */}
+      <Route path="/receiving" element={
+        <ProtectedRoute><ModuleGate module="inventory"><ReceivingPortal /></ModuleGate></ProtectedRoute>
+      } />
       <Route path="/departments/:id/tv" element={<ProtectedRoute><DepartmentTV /></ProtectedRoute>} />
       {/* The leaderboard's wall board is the leaderboard with ?tv=1 —
           one page, one set of numbers — and a board hangs on a wall
@@ -207,16 +213,21 @@ function AppRoutes() {
         <Route path="/reports/:category" element={<CategoryReports />} />
         {/* Edit mode stays on the workspace route (DashboardView reads :mode). */}
         <Route path="/reports/:category/:mode" element={<CategoryReports />} />
+        {/* One Materials screen, eight ways in. Each of these paths renders it
+            with the matching tab already open (Inventory reads the URL — see
+            components/materials/materialsTabs.ts), rather than redirecting: a
+            bookmark, a link out of the App Builder and the barcode printed on a
+            kit traveller all keep the address they were given. The tab bar
+            itself navigates to the canonical `/inventory?tab=…`. */}
         <Route path="/inventory" element={<ModuleGate module="inventory"><Inventory /></ModuleGate>} />
-        <Route path="/inventory/boms" element={<ModuleGate module="inventory"><BOMs /></ModuleGate>} />
-        <Route path="/inventory/kitting" element={<ModuleGate module="inventory"><Kitting /></ModuleGate>} />
-        <Route path="/inventory/kitting/:kitId" element={<ModuleGate module="inventory"><Kitting /></ModuleGate>} />
+        <Route path="/inventory/boms" element={<ModuleGate module="inventory"><Inventory /></ModuleGate>} />
+        <Route path="/inventory/kitting" element={<ModuleGate module="inventory"><Inventory /></ModuleGate>} />
+        <Route path="/inventory/kitting/:kitId" element={<ModuleGate module="inventory"><Inventory /></ModuleGate>} />
         <Route path="/inventory/:id" element={<ModuleGate module="inventory"><Inventory /></ModuleGate>} />
-        <Route path="/receiving" element={<ModuleGate module="inventory"><ReceivingPortal /></ModuleGate>} />
-        <Route path="/requirements" element={<ModuleGate module="inventory"><InventoryRequirements /></ModuleGate>} />
-        <Route path="/shipments" element={<ModuleGate module="inventory"><ShipmentTracker /></ModuleGate>} />
-        <Route path="/purchasing" element={<ModuleGate module="inventory"><Purchasing /></ModuleGate>} />
-        <Route path="/purchasing/:tab" element={<ModuleGate module="inventory"><Purchasing /></ModuleGate>} />
+        <Route path="/requirements" element={<ModuleGate module="inventory"><Inventory /></ModuleGate>} />
+        <Route path="/shipments" element={<ModuleGate module="inventory"><Inventory /></ModuleGate>} />
+        <Route path="/purchasing" element={<ModuleGate module="inventory"><Inventory /></ModuleGate>} />
+        <Route path="/purchasing/:view" element={<ModuleGate module="inventory"><Inventory /></ModuleGate>} />
         <Route path="/quality" element={<ModuleGate module="quality"><Quality /></ModuleGate>} />
         <Route path="/quality/:id" element={<ModuleGate module="quality"><Quality /></ModuleGate>} />
         <Route path="/training" element={<ModuleGate module="training"><Training /></ModuleGate>} />

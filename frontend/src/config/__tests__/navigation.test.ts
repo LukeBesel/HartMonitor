@@ -48,6 +48,20 @@ describe('findSectionForPath (route → workspace derivation)', () => {
     expect(findSectionForPath('/purchasing/orders')?.id).toBe('inventory');
   });
 
+  it('keeps Inventory lit on every URL the retired Materials items handed out', () => {
+    // Seven menu items became seven tabs on one screen. The URLs they handed
+    // out still render it — three of them from paths outside /inventory — and
+    // the workspace has to stay lit while somebody is reading one, or a printed
+    // purchase order's link looks like it left the app.
+    for (const url of [
+      '/inventory', '/inventory/boms', '/inventory/kitting',
+      '/inventory/kitting/kit-42', '/inventory/item-7',
+      '/purchasing', '/purchasing/vendors', '/shipments', '/requirements',
+    ]) {
+      expect(findSectionForPath(url)?.id, `${url} lost its workspace`).toBe('inventory');
+    }
+  });
+
   it('maps the fixed Reports routes to their workspaces', () => {
     expect(findSectionForPath('/reports/production')?.id).toBe('production');
     expect(findSectionForPath('/reports/inventory')?.id).toBe('inventory');
@@ -168,8 +182,73 @@ describe('SECTIONS shape', () => {
     expect(allPaths).toContain('/training');
     expect(allPaths).not.toContain('/training/certs');
     expect(allPaths).not.toContain('/training/plans');
-    // Maintenance and Purchasing keep exactly one entry each.
+    // Maintenance keeps exactly one entry.
     expect(allPaths.filter(p => p.startsWith('/maintenance'))).toEqual(['/maintenance']);
-    expect(allPaths.filter(p => p.startsWith('/purchasing'))).toEqual(['/purchasing']);
+    // Purchasing has no entry of its own at all any more: it is a tab on the
+    // one Materials screen, reached from /inventory.
+    expect(allPaths.filter(p => p.startsWith('/purchasing'))).toEqual([]);
+  });
+});
+
+describe('one Materials screen', () => {
+  // Eight items under Inventory — Inventory Tracker, BOMs, Kitting, Receiving,
+  // Materials Required, Shipments, Purchasing, Reports — led to seven page
+  // files for one small shop's materials. Two items now: the screen, and its
+  // reports.
+  const inventory = () => SECTIONS.find(s => s.id === 'inventory')!;
+
+  it('leaves exactly two items: Materials and Reports', () => {
+    expect(inventory().items.map(i => i.label)).toEqual(['Materials', 'Reports']);
+    expect(inventory().items.map(i => i.to)).toEqual(['/inventory', '/reports/inventory']);
+  });
+
+  it('names none of the seven items it replaced', () => {
+    const labels = SECTIONS.flatMap(s => s.items.map(i => i.label));
+    for (const gone of [
+      'Inventory Tracker', 'BOMs', 'Kitting', 'Receiving',
+      'Materials Required', 'Shipments', 'Purchasing',
+    ]) {
+      expect(labels, `nav still lists "${gone}"`).not.toContain(gone);
+    }
+    const paths = SECTIONS.flatMap(s => s.items.map(i => i.to));
+    for (const gone of [
+      '/inventory/boms', '/inventory/kitting', '/receiving',
+      '/requirements', '/shipments', '/purchasing',
+    ]) {
+      expect(paths, `nav still points at ${gone}`).not.toContain(gone);
+    }
+  });
+
+  it('keeps the plan gate at the menu and moves the role gate into the screen', () => {
+    // The seven items it replaces did not agree: four were open to every role,
+    // three asked for a supervisor. Merging them could only have thrown one of
+    // those away. So the item keeps the `proOnly` the stock tracker always had
+    // and carries NO `minRole` — a role gate here would take the four open tabs
+    // off the roles that could always reach them — and the three that asked for
+    // a supervisor still ask, one level down, in MATERIALS_SUPERVISOR_TABS.
+    const materials = inventory().items[0];
+    expect(materials.proOnly).toBe(true);
+    expect(materials.minRole).toBeUndefined();
+    expect(materials.module).toBe('inventory');
+    // Not `exact`: the item stays lit on /inventory/boms and on the kit URL a
+    // traveller's barcode prints.
+    expect(materials.exact).toBeUndefined();
+  });
+
+  it('owns the three addresses that do not sit under /inventory', () => {
+    // /purchasing, /shipments and /requirements still render this screen, so
+    // the item that replaced their menu entries has to own them too — a side
+    // table of aliases is a second place to forget.
+    const materials = inventory().items[0];
+    expect(materials.altPaths).toEqual(['/purchasing', '/shipments', '/requirements']);
+    for (const url of ['/purchasing/vendors', '/shipments', '/requirements']) {
+      expect(findSectionForPath(url)?.id, url).toBe('inventory');
+    }
+  });
+
+  it('still hides the whole workspace when the module is off', () => {
+    const off = filterNavByModules(SECTIONS, key => key !== 'inventory');
+    expect(off.some(s => s.id === 'inventory')).toBe(false);
+    expect(findSectionForPath('/purchasing', off)).toBeNull();
   });
 });

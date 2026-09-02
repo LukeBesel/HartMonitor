@@ -86,13 +86,23 @@ const ROUTES = [
   ['Dashboards', '/dashboards'],
   ['Production Reports', '/reports/production'],
   ['Quality Reports', '/reports/quality'],
-  ['Inventory', '/inventory'],
-  ['BOMs', '/inventory/boms'],
-  ['Kitting', '/inventory/kitting'],
+  // One Materials screen, seven tabs. The five rows on the left are the URLs
+  // the retired menu items handed out — each still renders, on its own tab —
+  // and the ?tab= rows are the two tabs no route ever pointed at plus the
+  // canonical addresses the tab row itself navigates to.
+  ['Materials — stock', '/inventory'],
+  ['Materials — boms', '/inventory/boms'],
+  ['Materials — kits', '/inventory/kitting'],
+  ['Materials — requirements', '/requirements'],
+  ['Materials — shipments', '/shipments'],
+  ['Materials — purchasing', '/purchasing'],
+  ['Materials — purchasing vendors', '/purchasing/vendors'],
+  ['Materials — receiving', '/inventory?tab=receiving'],
+  ['Materials — kits tab', '/inventory?tab=kits'],
+  ['Materials — requirements tab', '/inventory?tab=requirements'],
+  // The shop-floor receiving kiosk — a full-screen surface of its own, not the
+  // Receiving tab, and still reached at its own URL.
   ['Receiving Portal', '/receiving'],
-  ['Materials Required', '/requirements'],
-  ['Shipment Tracker', '/shipments'],
-  ['Purchasing', '/purchasing'],
   ['Quality', '/quality'],
   ['CAPA', '/capa'],
   ['Training', '/training'],
