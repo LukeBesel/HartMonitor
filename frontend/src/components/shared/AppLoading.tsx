@@ -10,7 +10,7 @@ import { Activity } from 'lucide-react';
  * they wait. There is deliberately no progress bar: nothing here knows how far
  * along the load is, and a bar that guesses would be inventing it.
  */
-export default function AppLoading({ message = 'Loading your workspace…' }: { message?: string }) {
+export default function AppLoading({ message = 'Loading…' }: { message?: string }) {
   return (
     <div
       className="min-h-screen flex flex-col items-center justify-center bg-gray-50 px-6"

@@ -2,6 +2,7 @@ const express = require('express');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const { displayRole } = require('../roles');
 const { config } = require('../config');
 const { hashPassword, verifyPassword, generateToken, requireAuth } = require('../middleware/auth');
 const { PROVIDERS, isConfigured } = require('../sso');
@@ -291,8 +292,15 @@ router.get('/me', requireAuth, (req, res) => {
   const kiosk = db.prepare("SELECT value FROM org_settings WHERE company_id = ? AND key = 'operator_kiosk_lock'").get(req.companyId);
   // is_platform_staff decides whether the operator console is offered at all.
   // Sent as a real boolean so the client never has to guess at 0/1 truthiness.
+  //
+  // `display_role` is what a screen PRINTS for this role. The stored value is
+  // unchanged — the account creator is still 'developer', which is what every
+  // permission check and the users-table CHECK are written against — but a
+  // plant manager who created the account is an Owner, not a developer, and no
+  // screen should be inventing that label for itself.
   res.json({
     ...user,
+    display_role: displayRole(user.role),
     is_platform_staff: user.is_platform_staff === 1,
     company_name: company?.value || 'HartMonitor',
     kiosk_lock: kiosk?.value === 'true',

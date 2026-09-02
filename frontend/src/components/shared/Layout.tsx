@@ -372,7 +372,7 @@ export default function Layout() {
             </button>
           )}
 
-          {/* Request help — the same Andon mechanism the player uses, reachable
+          {/* Call for help — the same Andon mechanism the player uses, reachable
               from anywhere in the app, next to where the alerts land */}
           <RequestHelpButton collapsed={effectiveCollapsed} />
 
@@ -403,7 +403,7 @@ export default function Layout() {
                 </div>
                 <div className="flex-1 min-w-0 text-left">
                   <div className="text-xs font-semibold text-white/90 truncate">{user?.display_name}</div>
-                  <div className="text-[10px] text-gray-400 capitalize truncate">{user?.role}</div>
+                  <div className="text-[10px] text-gray-400 capitalize truncate">{user?.display_role ?? user?.role}</div>
                 </div>
                 <ChevronDown size={12} className={`text-gray-500 flex-shrink-0 transition-transform ${userMenuOpen ? 'rotate-180' : ''}`} />
               </button>

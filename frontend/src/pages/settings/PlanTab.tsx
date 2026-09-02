@@ -70,7 +70,7 @@ function CheckoutModal({ item, onClose, onComplete }: {
       }
       refresh();
       onComplete(item.kind === 'tier'
-        ? `Welcome to ${item.name}! Your workspace has been upgraded.`
+        ? `Welcome to ${item.name}! Your plan has been upgraded.`
         : `${item.name} ×${item.quantity} added -- capacity unlocked instantly.`);
       onClose();
     } catch (err: any) {

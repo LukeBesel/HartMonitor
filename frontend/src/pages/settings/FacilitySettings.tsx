@@ -1,5 +1,5 @@
 // ─── Group 3: Facility ───────────────────────────────────────────────────────
-// The shape of the plant itself — sites, the departments inside them, the work
+// The shape of the plant itself — sites, the departments inside them, the
 // stations inside those, and the shifts they run — plus who gets told when
 // something on that floor needs attention.
 //
@@ -16,7 +16,7 @@ export default function FacilitySettings() {
       <SettingsSection
         id="sites"
         title="Sites, Departments & Stations"
-        description="Build the plant: sites, the departments in them, the work stations in those, and the shifts they run."
+        description="Build the plant: sites, the departments in them, the stations in those, and the shifts they run."
       >
         <SitesTab />
       </SettingsSection>

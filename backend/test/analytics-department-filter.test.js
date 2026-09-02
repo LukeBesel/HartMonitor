@@ -7,8 +7,11 @@
 // filter that looked like it worked and changed nothing.
 //
 // They also cover GET /andon/summary, which counted the whole company whatever
-// the Andon board was scoped to, and /analytics/manager-view, whose department
-// list ignored ?site_id and so leaked other sites' departments.
+// the Andon board was scoped to.
+//
+// The site-scoping cases for GET /analytics/manager-view went with the endpoint:
+// no screen had called it since the four floor screens became one, and a route
+// nobody reads is a second answer waiting to disagree with /plant-view.
 //
 // A completion has no department column: it belongs to its work order's
 // department, falling back to its station's department when the work order has
@@ -408,62 +411,5 @@ describe('Andon summary department scoping', () => {
     assert.equal(s.acknowledged, 0);
     assert.equal(s.resolved_today, 0);
     assert.equal(Object.values(s.by_team).reduce((a, b) => a + b, 0), 0);
-  });
-});
-
-describe('manager-view department list stays inside the requested site', () => {
-  const A = {};
-
-  before(async () => {
-    const signup = await api('POST', '/api/auth/signup', {
-      body: { company_name: 'Two Site Co', email: 'admin@twosite.test', password: 'SecretPass5', display_name: 'Admin' },
-    });
-    assert.equal(signup.status, 201);
-    A.token = signup.json.token;
-
-    const sites = await api('GET', '/api/sites', { token: A.token });
-    A.site1 = sites.json[0];
-    A.site2 = await create(A.token, '/api/sites', { name: 'South Plant', code: 'SOUTH' });
-
-    A.north = await create(A.token, '/api/departments', { name: 'North Weld', site_id: A.site1.id });
-    A.south = await create(A.token, '/api/departments', { name: 'South Paint', site_id: A.site2.id });
-    // A department that was never assigned to a site belongs to the whole
-    // company and must stay visible under every site.
-    A.shared = await create(A.token, '/api/departments', { name: 'Shared Tooling' });
-
-    A.app = await create(A.token, '/api/apps', { name: 'Build', status: 'published' });
-    A.woNorth = await create(A.token, '/api/work-orders', {
-      part_number: 'N-1', part_name: 'North Part', quantity: 3,
-      app_id: A.app.id, department_id: A.north.id, site_id: A.site1.id,
-    });
-    A.woSouth = await create(A.token, '/api/work-orders', {
-      part_number: 'S-1', part_name: 'South Part', quantity: 3,
-      app_id: A.app.id, department_id: A.south.id, site_id: A.site2.id,
-    });
-  });
-
-  it('lists every department when no site is requested', async () => {
-    const mv = await get(A.token, '/api/analytics/manager-view');
-    assert.deepEqual(
-      mv.department_stats.map(d => d.name).sort(),
-      ['North Weld', 'Shared Tooling', 'South Paint'],
-    );
-    assert.equal(mv.work_orders.length, 2);
-  });
-
-  it('drops other sites\' departments once a site is requested', async () => {
-    const mv = await get(A.token, `/api/analytics/manager-view${qs({ site_id: A.site1.id })}`);
-    assert.deepEqual(
-      mv.department_stats.map(d => d.name).sort(),
-      ['North Weld', 'Shared Tooling'],
-      'South Paint belongs to the other site',
-    );
-    assert.deepEqual(mv.work_orders.map(w => w.part_name), ['North Part'], 'and its work orders go with it');
-
-    const mv2 = await get(A.token, `/api/analytics/manager-view${qs({ site_id: A.site2.id })}`);
-    assert.deepEqual(
-      mv2.department_stats.map(d => d.name).sort(),
-      ['Shared Tooling', 'South Paint'],
-    );
   });
 });

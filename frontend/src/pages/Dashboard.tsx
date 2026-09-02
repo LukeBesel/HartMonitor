@@ -27,6 +27,7 @@ import { attentionIcon, attentionLabel } from '../config/attention';
 import { ANDON_TEAMS, ANDON_TEAM_ORDER, teamConfig } from '../config/andonTeams';
 import { subscribeRealtime, isAndonEvent } from '../utils/realtime';
 import { onTrackSentence } from '../utils/floorWording';
+import { displayId } from '../utils/ids';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
 import OnboardingWizard from '../components/shared/OnboardingWizard';
@@ -600,7 +601,7 @@ export default function Dashboard() {
           { icon: LayoutDashboard, label: 'Command Center', desc: 'Your home base — what needs attention, then the whole plant, live.' },
           { icon: Tablet,          label: 'Operator Portal', desc: 'The shop-floor screen operators use to pick a job and start working.' },
           { icon: AppWindow,       label: 'App Library & Builder', desc: 'Build drag-and-drop digital work instructions, then publish them.' },
-          { icon: Building2,       label: 'Departments & Stations', desc: 'Define work centers and watch live status across the floor.' },
+          { icon: Building2,       label: 'Departments & Stations', desc: 'Define stations and watch live status across the floor.' },
           { icon: CalendarRange,   label: 'Planning & Schedule', desc: 'Schedule work orders, balance capacity, and plan inventory.' },
           { icon: GitBranch,       label: 'Routings', desc: 'Define step-by-step manufacturing sequences with cycle times.' },
           { icon: BarChart2,       label: 'Reporting & Analytics', desc: 'Track throughput, cycle times, OEE, and custom dashboards.' },
@@ -632,7 +633,7 @@ export default function Dashboard() {
               <Sparkles size={26} />
             </div>
             <div className="flex-1 min-w-0">
-              <h2 className="text-lg font-bold text-gray-900">Your workspace is ready — build your first app</h2>
+              <h2 className="text-lg font-bold text-gray-900">Your company is set up — build your first app</h2>
               <p className="text-sm text-gray-600 mt-1">
                 Every number on this page comes from an app your floor runs. Build one — a guided
                 procedure with the checks and readings you want captured — and this dashboard fills
@@ -787,7 +788,11 @@ export default function Dashboard() {
                         <span className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full border ${cfg.chip}`}>
                           {item.target_label ?? item.team_label ?? cfg.label}
                         </span>
-                        <span className="text-sm font-medium text-gray-900 truncate">{item.label}</span>
+                        {/* An attention row leads with the id of the thing that
+                            needs attention; the company tag on that id is a
+                            database concern, so the cell reads NCR-101 and the
+                            stored id stays in the title. */}
+                        <span className="text-sm font-medium text-gray-900 truncate" title={item.label}>{displayId(item.label)}</span>
                         <span className={`text-xs font-semibold tabular-nums ${item.severity === 'red' ? 'text-red-600' : 'text-amber-600'}`}>
                           {item.age_minutes ?? 0}m
                         </span>
@@ -836,7 +841,7 @@ export default function Dashboard() {
                       <span className={`text-[11px] font-semibold uppercase tracking-wide ${item.severity === 'red' ? 'text-red-600' : 'text-amber-600'}`}>
                         {attentionLabel(item.type)}
                       </span>
-                      <span className="text-sm font-medium text-gray-900 truncate">{item.label}</span>
+                      <span className="text-sm font-medium text-gray-900 truncate" title={item.label}>{displayId(item.label)}</span>
                     </div>
                     {item.detail && <div className="text-xs text-gray-500 truncate">{item.detail}</div>}
                   </div>
@@ -1334,7 +1339,9 @@ export default function Dashboard() {
               <div key={wo.id} className="border border-gray-100 rounded-lg p-3">
                 <div className="flex items-center justify-between gap-2 mb-1.5">
                   <div className="flex items-center gap-2 min-w-0">
-                    <span className="font-semibold text-xs text-gray-900 truncate">{wo.work_order_number}</span>
+                    {/* WO-1001, the way the traveller and the barcode say it.
+                        The stored id carries a company tag; it stays in `title`. */}
+                    <span className="font-semibold text-xs text-gray-900 truncate" title={wo.work_order_number}>{displayId(wo.work_order_number)}</span>
                     <span className={`text-[11px] px-1.5 py-0.5 rounded-full font-medium flex-shrink-0 ${SCHEDULE_PILL[wo.schedule_status] ?? 'bg-gray-100 text-gray-600'}`}>
                       {wo.schedule_status.replace('_', ' ')}
                     </span>

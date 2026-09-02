@@ -1,3 +1,4 @@
+import { displayId } from '../utils/ids';
 import { useEffect, useState, useCallback } from 'react';
 import {
   Wrench, Plus, Search, AlertTriangle, CheckCircle2, Clock,
@@ -32,7 +33,7 @@ interface Asset {
   notes: string;
 }
 
-// The work order and the PM schedule are typed in src/api/maintenance.ts, where
+// The maintenance job and the PM schedule are typed in src/api/maintenance.ts, where
 // the fields that link them live (pm_schedule_id / pm_title on the job,
 // next_due_reason / is_overdue / auto_create_wo on the schedule). One shape,
 // used by the page and by anything else that reads these endpoints.
@@ -60,7 +61,7 @@ function formatDate(iso?: string | null): string {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-// For a work order's due date, which is a plain date the browser can compare.
+// For a maintenance job's due date, which is a plain date the browser can compare.
 // A PM's overdue-ness is NOT decided here — it comes from the server, in the
 // plant's day, so the row and the Overdue PMs tile agree.
 function isOverdue(dateStr?: string | null): boolean {
@@ -226,7 +227,7 @@ function CreateWOModal({ assets, onClose, onCreated }: CreateWOModalProps) {
       onCreated();
       onClose();
     } catch (err: any) {
-      setError(err.message || 'Failed to create work order.');
+      setError(err.message || 'Failed to create maintenance job.');
     } finally {
       setSaving(false);
     }
@@ -236,7 +237,7 @@ function CreateWOModal({ assets, onClose, onCreated }: CreateWOModalProps) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-          <h2 className="text-gray-900 font-semibold text-base">New Work Order</h2>
+          <h2 className="text-gray-900 font-semibold text-base">New maintenance job</h2>
           <button onClick={onClose} className="text-gray-500 hover:text-gray-900 transition-colors">
             <X size={18} />
           </button>
@@ -739,7 +740,7 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
         ) : (
           <>
             <StatCard
-              label="Open Work Orders"
+              label="Open jobs"
               value={summary?.open_wos ?? 0}
               icon={<ClipboardList size={20} />}
               accent="text-blue-700"
@@ -757,7 +758,7 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
               accent="text-purple-700"
             />
             <StatCard
-              label="Critical WOs"
+              label="Critical jobs"
               value={summary?.critical_wos ?? 0}
               icon={<AlertCircle size={20} />}
               accent="text-amber-700"
@@ -820,11 +821,11 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
           )}
         </div>
 
-        {/* Open Work Orders */}
+        {/* Open maintenance jobs */}
         <div className="bg-white border border-gray-200 rounded-xl p-4">
           <div className="flex items-center gap-2 mb-4">
             <Wrench size={16} className="text-blue-700" />
-            <h3 className="text-gray-900 font-semibold text-sm">Open Work Orders</h3>
+            <h3 className="text-gray-900 font-semibold text-sm">Open maintenance jobs</h3>
           </div>
           {wosLoading ? (
             <div className="space-y-2">
@@ -833,8 +834,8 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
           ) : openWOs.length === 0 ? (
             <EmptyState
               icon={<CheckCircle2 size={36} />}
-              title="No open work orders"
-              sub="All work orders are resolved or completed."
+              title="No open maintenance jobs"
+              sub="Every maintenance job is resolved or completed."
             />
           ) : (
             <div className="space-y-2">
@@ -842,7 +843,7 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
                 <div key={wo.id} className="flex items-start justify-between gap-3 p-3 bg-gray-50 rounded-lg border border-gray-300">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-xs font-mono text-gray-500">{wo.wo_number}</span>
+                      <span className="text-xs font-mono text-gray-500" title={wo.wo_number}>{displayId(wo.wo_number)}</span>
                       <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${priorityColor(wo.priority)}`}>
                         {capitalize(wo.priority)}
                       </span>
@@ -873,7 +874,7 @@ function OverviewTab({ summary, summaryLoading, overduePMs, pmsLoading, openWOs,
   );
 }
 
-// ── Work Orders Tab ───────────────────────────────────────────────────────────
+// ── Maintenance Jobs Tab ──────────────────────────────────────────────────────
 
 interface WorkOrdersTabProps {
   wos: MaintenanceWO[];
@@ -989,8 +990,8 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO, onOpenPM }: WorkOrder
       ) : filtered.length === 0 ? (
         <EmptyState
           icon={<ClipboardList size={40} />}
-          title="No work orders found"
-          sub="Adjust filters or create a new work order."
+          title="No maintenance jobs found"
+          sub="Adjust filters or create a new maintenance job."
         />
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
@@ -1000,7 +1001,7 @@ function WorkOrdersTab({ wos, loading, onRefresh, onNewWO, onOpenPM }: WorkOrder
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-1">
-                    <span className="text-xs font-mono text-gray-500">{wo.wo_number}</span>
+                    <span className="text-xs font-mono text-gray-500" title={wo.wo_number}>{displayId(wo.wo_number)}</span>
                     <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${woTypeColor(wo.type)}`}>
                       {woTypeLabel(wo.type)}
                     </span>
@@ -1337,7 +1338,7 @@ function PMSchedulesTab({ pms, loading, onRefresh, onNewPM, highlightId }: PMSch
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Title</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Frequency</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Next Due</th>
-                  <th className="text-left px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" title="Raise a work order automatically when this PM comes due, and how many days early">Auto</th>
+                  <th className="text-left px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" title="Raise a maintenance job automatically when this PM comes due, and how many days early">Auto</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Last Done</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Assigned To</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Est. Hrs</th>
@@ -1386,7 +1387,7 @@ function PMSchedulesTab({ pms, loading, onRefresh, onNewPM, highlightId }: PMSch
                           </span>
                         )}
                         {pm.open_wo_number && (
-                          <div className="text-xs text-blue-700 mt-0.5">Job raised: {pm.open_wo_number}</div>
+                          <div className="text-xs text-blue-700 mt-0.5" title={pm.open_wo_number}>Job raised: {displayId(pm.open_wo_number)}</div>
                         )}
                       </td>
                       {/* Deliberately narrow: two controls and no prose. The
@@ -1400,8 +1401,8 @@ function PMSchedulesTab({ pms, loading, onRefresh, onNewPM, highlightId }: PMSch
                             type="checkbox"
                             checked={pm.auto_create_wo}
                             disabled={savingId === pm.id}
-                            title={`Raise a work order automatically when "${pm.title}" comes due`}
-                            aria-label={`Raise a work order automatically for ${pm.title}`}
+                            title={`Raise a maintenance job automatically when "${pm.title}" comes due`}
+                            aria-label={`Raise a maintenance job automatically for ${pm.title}`}
                             onChange={e => saveSchedule(pm, { auto_create_wo: e.target.checked })}
                             className="rounded border-gray-300"
                           />
@@ -1522,7 +1523,7 @@ export default function Maintenance() {
       const data = await getMaintenanceWorkOrders();
       setWOs(data);
     } catch (err: any) {
-      setError(err.message || 'Failed to load work orders.');
+      setError(err.message || 'Failed to load maintenance jobs.');
     } finally {
       setWOsLoading(false);
     }
@@ -1573,7 +1574,7 @@ export default function Maintenance() {
 
   const tabs: { key: TabKey; label: string; icon: React.ReactNode }[] = [
     { key: 'overview',     label: 'Overview',      icon: <BarChart3 size={15} /> },
-    { key: 'work_orders',  label: 'Work Orders',   icon: <ClipboardList size={15} /> },
+    { key: 'work_orders',  label: 'Maintenance Jobs', icon: <ClipboardList size={15} /> },
     { key: 'assets',       label: 'Assets',        icon: <Cpu size={15} /> },
     { key: 'pm_schedules', label: 'PM Schedules',  icon: <Clock size={15} /> },
   ];
@@ -1588,7 +1589,7 @@ export default function Maintenance() {
             <Wrench size={22} className="text-blue-700" />
             <h1 className="text-2xl font-bold text-gray-900">Maintenance</h1>
           </div>
-          <p className="text-sm text-gray-500">CMMS — Assets, work orders, and preventive maintenance schedules</p>
+          <p className="text-sm text-gray-500">Assets, maintenance jobs, and preventive maintenance schedules</p>
         </div>
         <button
           onClick={() => {

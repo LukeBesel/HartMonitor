@@ -85,8 +85,10 @@ const TITLE_ROUTES: TitleRoute[] = [
   { path: '/capa', screen: 'CAPA Tracker' },
 
   // ── Maintenance ────────────────────────────────────────────────────────────
-  { path: '/maintenance/:tab', screen: 'CMMS' },
-  { path: '/maintenance', screen: 'CMMS' },
+  // "Maintenance" on the menu, in the tab and on the page — never the acronym
+  // the industry's software uses, which is not a word a plant manager asked for.
+  { path: '/maintenance/:tab', screen: 'Maintenance' },
+  { path: '/maintenance', screen: 'Maintenance' },
 
   // ── People ─────────────────────────────────────────────────────────────────
   { path: '/training/:tab', screen: 'Training' },
@@ -129,9 +131,12 @@ const TITLE_ROUTES: TitleRoute[] = [
   // into a tab label they need the workspace back, taken from the URL.
   { path: '/reports/:category/:mode', screen: p => `${titleCase(p.category || '')} Reports`.trim() },
   { path: '/reports/:category', screen: p => `${titleCase(p.category || '')} Reports`.trim() },
-  { path: '/dashboards/:id/:mode', screen: 'Dashboard' },
-  { path: '/dashboards/:id', screen: 'Dashboard' },
-  { path: '/dashboards', screen: 'Dashboards' },
+  // A saved custom report is a REPORT; /dashboards is the one place to build
+  // and read one. "Dashboard" names exactly one screen in this product — the
+  // Command Center at /dashboard — and nothing else.
+  { path: '/dashboards/:id/:mode', screen: 'Report' },
+  { path: '/dashboards/:id', screen: 'Report' },
+  { path: '/dashboards', screen: 'Report Builder' },
   { path: '/tables/:id', screen: 'Table' },
   { path: '/tables', screen: 'Tables' },
   { path: '/leaderboard', screen: 'Leaderboard' },

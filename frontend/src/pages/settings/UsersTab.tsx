@@ -10,7 +10,22 @@ import { Toast, ROLE_COLORS } from './shared';
 
 // ─── Tab 5: Users & Permissions ───────────────────────────────────────────────
 
-const ROLE_OPTIONS = ['developer', 'manager', 'supervisor', 'operator', 'viewer'];
+// The value is the STORED role; the label is the only name a screen prints
+// for it. 'developer' is the level the account creator is given — they are the
+// Owner of the company, and nobody has to know the word the database uses.
+const ROLE_OPTIONS: { value: string; label: string }[] = [
+  { value: 'developer',  label: 'Owner' },
+  { value: 'manager',    label: 'Manager' },
+  { value: 'supervisor', label: 'Supervisor' },
+  { value: 'operator',   label: 'Operator' },
+  { value: 'viewer',     label: 'Viewer' },
+];
+
+/** The name for a role when a row has no `display_role` from the API. */
+function roleLabel(role: string): string {
+  return ROLE_OPTIONS.find(r => r.value === role)?.label
+    ?? (role ? role.charAt(0).toUpperCase() + role.slice(1) : '');
+}
 function UserModal({ user, onClose, onSaved }: {
   user: any | null;
   onClose: () => void;
@@ -69,7 +84,7 @@ function UserModal({ user, onClose, onSaved }: {
           <div>
             <label className="block text-xs font-medium text-gray-700 mb-1">Role</label>
             <select className="input-field w-full" value={form.role} onChange={set('role')}>
-              {ROLE_OPTIONS.map(r => <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>)}
+              {ROLE_OPTIONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
             </select>
           </div>
           <div>
@@ -203,7 +218,7 @@ export function UsersTab() {
                     <td className="px-4 py-3 text-gray-600">{u.email}</td>
                     <td className="px-4 py-3">
                       <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${ROLE_COLORS[u.role] ?? 'bg-gray-100 text-gray-600'}`}>
-                        {u.role}
+                        {u.display_role ?? roleLabel(u.role)}
                       </span>
                     </td>
                     <td className="px-4 py-3">
@@ -261,7 +276,7 @@ export function UsersTab() {
                 <tr className="border-b border-gray-100 bg-gray-50">
                   <th className="px-4 py-2.5 text-left font-semibold text-gray-500">Permission</th>
                   {ROLE_OPTIONS.map(r => (
-                    <th key={r} className="px-3 py-2.5 text-center font-semibold text-gray-500 capitalize">{r}</th>
+                    <th key={r.value} className="px-3 py-2.5 text-center font-semibold text-gray-500">{r.label}</th>
                   ))}
                 </tr>
               </thead>

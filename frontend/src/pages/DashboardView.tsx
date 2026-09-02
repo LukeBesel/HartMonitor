@@ -34,7 +34,7 @@ const METRIC_OPTIONS = [
   { value: 'today_completions', label: 'Today\'s Completions' },
   { value: 'active_runs',       label: 'Active Runs (live)' },
   { value: 'pass_rate',         label: 'Pass Rate %' },
-  { value: 'avg_cycle',         label: 'Avg Cycle Time (min)' },
+  { value: 'avg_cycle',         label: 'Avg Cycle Time' },
   { value: 'period_completions',label: 'Completions in Period' },
 ];
 
@@ -85,20 +85,21 @@ function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
           </div>
         );
       }
-      // A 'm' suffix means the metric is minutes (currently only avg_cycle) —
-      // the backend also hands back the exact seconds it averaged, so this
-      // renders through the one duration formatter instead of re-rounding the
-      // already-rounded minutes value. That's what keeps this tile agreeing
-      // with the same run's duration on App Analytics instead of printing its
-      // own, separately-rounded number.
-      const isMinutesMetric = data.suffix === 'm' && typeof data.seconds === 'number';
+      // A duration is a duration: the card says `unit: 'duration'` and hands
+      // back the exact seconds it averaged, so this renders through the one
+      // duration formatter every other screen uses. No label sniffing, no
+      // re-rounding of an already-rounded minutes value — which is what kept
+      // this tile disagreeing with the same runs' average on the per-app screen.
+      // `suffix === 'm'` is the pre-`unit` payload, kept for one release.
+      const seconds = typeof data.avg_cycle_seconds === 'number' ? data.avg_cycle_seconds : data.seconds;
+      const isDuration = (data.unit === 'duration' || data.suffix === 'm') && typeof seconds === 'number';
       return (
         <div className="flex flex-col items-center justify-center py-6 gap-1">
           <div className="text-5xl font-bold" style={{ color }}>
-            {isMinutesMetric
-              ? fmtDuration(data.seconds)
+            {isDuration
+              ? fmtDuration(seconds)
               : (typeof val === 'number' && !Number.isInteger(val) ? val.toFixed(1) : val)}
-            {data.suffix && !isMinutesMetric && <span className="text-2xl ml-1 font-medium opacity-70">{data.suffix}</span>}
+            {data.suffix && !isDuration && <span className="text-2xl ml-1 font-medium opacity-70">{data.suffix}</span>}
           </div>
           {typeof data.sample_size === 'number' && (
             <div className="text-[11px] text-gray-400">from {data.sample_size} recorded result{data.sample_size === 1 ? '' : 's'}</div>
@@ -157,14 +158,11 @@ function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
 
     case 'leaderboard': {
       const rows = data.rows || [];
-      // "Avg Cycle (min)" is the only leaderboard metric in minutes; it goes
-      // through the shared minutes adapter rather than a bare `.toFixed(1)` so
-      // it never reads differently than the same average shown anywhere else.
-      // \bmin\b, not .includes('min') — a label like "Admin Actions" contains
-      // "min" as a substring but is not a minutes metric. The real fix is a
-      // unit field on the metric payload instead of sniffing the label text
-      // at all; tracked as a wave-5 backend follow-up.
-      const isMinutes = /\bmin\b/i.test(data.label ?? '');
+      // The card says what its rows are in — `unit: 'minutes'` — so the minutes
+      // adapter is chosen from a fact rather than from the word "min" appearing
+      // in a label. (A pre-`unit` payload still labels itself "Avg Cycle (min)";
+      // that fallback comes out one release from now.)
+      const isMinutes = data.unit === 'minutes' || /\bmin\b/i.test(data.label ?? '');
       return (
         <div className="space-y-1.5 py-2">
           {rows.slice(0, 6).map((r: any, i: number) => (
@@ -420,6 +418,38 @@ function storeFilters(id: string, filters: DashboardFilters) {
   }
 }
 
+/** The skeleton a report shows while it loads. Exported so the workspace
+ *  Reports routes (/reports/:category), which have to resolve their saved
+ *  report's id before this view can mount, show the SAME thing rather than a
+ *  second, slightly different one of their own. */
+export function ReportSkeleton() {
+  return (
+    <div className="p-6 space-y-5">
+      <div className="h-9 w-64 animate-pulse bg-gray-200 rounded-lg" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {[1, 2, 3, 4].map(i => (
+          <div key={i} className="h-48 animate-pulse bg-white border border-gray-200 rounded-2xl" />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Same idea for the failure: one "couldn't load this report" for both routes. */
+export function ReportLoadFailed({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className="p-6 flex flex-col items-center justify-center py-24 gap-3 text-center">
+      <AlertTriangle size={40} className="text-red-400" />
+      <div>
+        <p className="font-medium text-gray-500">Couldn't load this report</p>
+        <p className="text-sm text-gray-400 mt-1">{message}</p>
+      </div>
+      <button className="btn-secondary" onClick={onRetry}>Retry</button>
+      <Link to="/dashboards" className="text-blue-600 text-sm hover:underline">← Back to Report Builder</Link>
+    </div>
+  );
+}
+
 /** `dashboardId` lets a host route (the per-workspace Reports pages) render this
  *  view in place without navigating to /dashboards/:id — which would swap the
  *  user out of their current workspace and its tab bar. */
@@ -484,7 +514,7 @@ export default function DashboardView({ dashboardId }: { dashboardId?: string } 
         const siteOptions = (siteList ?? []).map((x: any) => ({ id: x.id, name: x.name }));
         setSites(siteOptions.length > 1 ? siteOptions : []);
       })
-      .catch((err: any) => setLoadError(err?.message || 'Failed to load dashboard'))
+      .catch((err: any) => setLoadError(err?.message || 'Failed to load this report'))
       .finally(() => setLoading(false));
   }, [id]);
 
@@ -551,34 +581,15 @@ export default function DashboardView({ dashboardId }: { dashboardId?: string } 
       await api.updateDashboard(id, { name: title.trim() });
       setDashboard(prev => prev ? { ...prev, name: title.trim() } : prev);
     } catch (err: any) {
-      alert(err.message || 'Failed to rename dashboard');
+      alert(err.message || 'Failed to rename this report');
     } finally {
       setSavingTitle(false);
     }
   };
 
-  if (loading) return (
-    <div className="p-6 space-y-5">
-      <div className="h-9 w-64 animate-pulse bg-gray-200 rounded-lg" />
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-        {[1, 2, 3, 4].map(i => (
-          <div key={i} className="h-48 animate-pulse bg-white border border-gray-200 rounded-2xl" />
-        ))}
-      </div>
-    </div>
-  );
+  if (loading) return <ReportSkeleton />;
 
-  if (!dashboard) return (
-    <div className="p-6 flex flex-col items-center justify-center py-24 gap-3 text-center">
-      <AlertTriangle size={40} className="text-red-400" />
-      <div>
-        <p className="font-medium text-gray-500">Couldn't load this dashboard</p>
-        <p className="text-sm text-gray-400 mt-1">{loadError || 'Dashboard not found'}</p>
-      </div>
-      <button className="btn-secondary" onClick={loadShell}>Retry</button>
-      <Link to="/dashboards" className="text-blue-600 text-sm hover:underline">← Back to Dashboards</Link>
-    </div>
-  );
+  if (!dashboard) return <ReportLoadFailed message={loadError || 'Report not found'} onRetry={loadShell} />;
 
   const cards = dashboard.cards ?? [];
 
@@ -688,14 +699,14 @@ export default function DashboardView({ dashboardId }: { dashboardId?: string } 
         <div className="bg-white rounded-2xl border border-gray-200 shadow-sm py-16 text-center">
           <BarChart3 size={40} className="mx-auto mb-3 text-gray-200" />
           <div className="text-gray-500 font-medium">No cards yet</div>
-          <p className="text-gray-400 text-sm mt-1">Add KPI, chart and table widgets to bring this dashboard to life.</p>
+          <p className="text-gray-400 text-sm mt-1">Add KPI, chart and table cards to bring this report to life.</p>
           {canEdit && (embedded ? (
             <button onClick={() => setEmbeddedEdit(true)} className="btn-primary mt-4 mx-auto text-sm">
-              <Settings size={14} /> Configure Dashboard
+              <Settings size={14} /> Add cards
             </button>
           ) : (
             <Link to={`/dashboards/${id}/edit`} className="btn-primary mt-4 mx-auto text-sm">
-              <Settings size={14} /> Configure Dashboard
+              <Settings size={14} /> Add cards
             </Link>
           ))}
         </div>

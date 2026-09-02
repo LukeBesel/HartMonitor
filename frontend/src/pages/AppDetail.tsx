@@ -1,9 +1,9 @@
 // The one screen for one app: /apps/:id.
 //
-// This app's cycle time used to be reported on five screens — App Detail, Run
-// History, App Analytics, the Apps Dashboard and Operation Analytics — under
-// four different labels, at three different precisions, each behind its own
-// filter bar. The numbers came from the same runs, so the disagreements were
+// This app's cycle time used to be reported on five screens — a detail page, a
+// run history, a per-app analytics page, an apps overview and a per-operation
+// breakdown — under four different labels, at three different precisions, each
+// behind its own filter bar. The numbers came from the same runs, so the disagreements were
 // all presentation, and the one genuinely useful comparison ("who ran it") was
 // six clicks and a dead end away.
 //
@@ -1546,7 +1546,7 @@ function LiveBand({ runs, now }: {
     <section className="card border-blue-100 bg-blue-50/40 p-4">
       <div className="flex items-center gap-2 mb-3 flex-wrap">
         <span className="w-2 h-2 rounded-full bg-blue-500 live-pulse" aria-hidden="true" />
-        <h2 className="font-semibold text-gray-900 text-sm">On the bench right now</h2>
+        <h2 className="font-semibold text-gray-900 text-sm">Running now</h2>
         <span className="text-xs text-gray-500">{pluralize(runs.length, 'run')} in progress</span>
       </div>
       <ul className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-2">

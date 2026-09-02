@@ -73,7 +73,7 @@ export function ThemeTab() {
 
       {/* Color Themes grid */}
       <div>
-        <SectionHeader title="Color Themes" subtitle={isDeveloper ? "Choose an accent color for your workspace" : "Theme is set by your developer"} />
+        <SectionHeader title="Color Themes" subtitle={isDeveloper ? "Choose an accent color for your company" : "Theme is set by your developer"} />
         <div className={`grid grid-cols-4 gap-4 ${!isDeveloper ? 'opacity-50 pointer-events-none' : ''}`}>
           {THEME_PRESETS.map((preset) => {
             const isSelected = theme.name === preset.name;

@@ -399,7 +399,7 @@ export function OEEPanel() {
         <KpiCard
           icon={<Monitor size={18} className="text-blue-600" />}
           iconBg="bg-blue-50"
-          label="Total Machines"
+          label="Stations"
           value={String(totalMachines)}
         />
         <KpiCard
@@ -407,7 +407,7 @@ export function OEEPanel() {
           iconBg="bg-green-50"
           label="Running Now"
           value={String(runningNow)}
-          sub={`${totalMachines > 0 ? Math.round((runningNow / totalMachines) * 100) : 0}% of fleet`}
+          sub={`${totalMachines > 0 ? Math.round((runningNow / totalMachines) * 100) : 0}% of stations`}
         />
         <KpiCard
           icon={<AlertTriangle size={18} className="text-red-500" />}
@@ -422,7 +422,7 @@ export function OEEPanel() {
           label="Plant-wide OEE"
           value={plantOEE === null ? '—' : `${plantOEE.toFixed(1)}%`}
           sub={plantOEE === null
-            ? 'No machine has enough data yet'
+            ? 'No station has enough data yet'
             : `averaged over ${measured.length} of ${totalMachines} machines`}
           valueClass={plantOEE === null ? 'text-gray-400' : oeeColor(plantOEE)}
         />

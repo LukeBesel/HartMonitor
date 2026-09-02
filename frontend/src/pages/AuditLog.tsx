@@ -184,13 +184,13 @@ export default function AuditLog() {
         </div>
 
         <div className="flex flex-col gap-1 w-full xs:w-auto">
-          <label className="text-xs font-medium text-gray-500">Workstation</label>
+          <label className="text-xs font-medium text-gray-500">Station</label>
           <select
             className="input-field w-48"
             value={stationId}
             onChange={e => setStationId(e.target.value)}
           >
-            <option value="">All Workstations</option>
+            <option value="">All Stations</option>
             {stations.map(s => (
               <option key={s.id} value={s.id}>{s.name}</option>
             ))}

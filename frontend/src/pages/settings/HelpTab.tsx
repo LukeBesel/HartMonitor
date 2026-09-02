@@ -53,7 +53,7 @@ const MODULE_GUIDES: ModuleGuide[] = [
       'Operators can also report a quality issue (NCR) directly from any step.',
     ],
     tips: [
-      'Set this up on a dedicated tablet or touchscreen at each workstation.',
+      'Set this up on a dedicated tablet or touchscreen at each station.',
       'The portal works offline -- completions sync when the connection restores.',
     ],
   },
@@ -80,15 +80,15 @@ const MODULE_GUIDES: ModuleGuide[] = [
   {
     icon: <Building2 size={16} />,
     title: 'Command Center / Live Floor View',
-    summary: 'See the live status of your entire floor and manage your work centers.',
+    summary: 'See the live status of your entire floor and manage your stations.',
     link: '/dashboard',
     linkLabel: 'Open Command Center',
     color: '#f59e0b',
     steps: [
-      'Go to Stations → "New Station" to add each physical workstation on your floor.',
+      'Go to Stations → "New Station" to add each station on your floor.',
       'Assign an App to each station so operators always know what to run there.',
       'Organize stations into Departments (Assembly, QC, Packaging, etc.) for grouped views.',
-      'The Command Center Live Floor View shows live throughput, OEE, and machine status for every station.',
+      'The Command Center shows live throughput, OEE and status for every station.',
       'Click any station card to see its real-time metrics and recent completions.',
     ],
     tips: [

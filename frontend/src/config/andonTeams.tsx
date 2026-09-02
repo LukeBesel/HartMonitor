@@ -77,7 +77,7 @@ export const ANDON_TEAM_ORDER: AndonTeam[] = ['quality', 'supervisor', 'maintena
 export const ANDON_TEAM_FALLBACK: AndonTeamConfig = {
   label: 'Team',
   tileLabel: 'Team',
-  hint: 'Request help',
+  hint: 'Call for help',
   icon: HelpCircle,
   chip: 'bg-gray-100 text-gray-700 border-gray-200',
   dot: 'bg-gray-400',

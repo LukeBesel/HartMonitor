@@ -25,9 +25,9 @@ export interface ModuleDef {
 
 export const MODULE_REGISTRY: ModuleDef[] = [
   { key: 'production',  name: 'Production',  icon: Factory,       core: true,  description: 'Work orders, stations, scheduling, and OEE' },
-  { key: 'quality',     name: 'Quality',     icon: ShieldCheck,   core: false, description: 'NCRs, CAPA, and SQDC boards' },
+  { key: 'quality',     name: 'Quality',     icon: ShieldCheck,   core: false, description: 'NCRs and corrective action' },
   { key: 'inventory',   name: 'Inventory',   icon: Boxes,         core: false, description: 'Items, stock, receiving, purchasing, and shipments' },
-  { key: 'maintenance', name: 'Maintenance', icon: Wrench,        core: false, description: 'Assets, PM schedules, and maintenance work orders' },
+  { key: 'maintenance', name: 'Maintenance', icon: Wrench,        core: false, description: 'Assets, PM schedules, and maintenance jobs' },
   { key: 'andon',       name: 'Andon',       icon: Siren,         core: false, description: 'Andon calls and alerting' },
   { key: 'kaizen',      name: 'Kaizen',      icon: Lightbulb,     core: false, description: 'Continuous improvement ideas' },
   { key: 'training',    name: 'Training',    icon: GraduationCap, core: false, description: 'Training records and certifications' },

@@ -71,7 +71,7 @@ export default function UpgradeModal({ onClose, feature = 'app', lockedFeature, 
             </div>
             <div>
               <div className="text-white font-bold text-lg leading-tight">
-                {lockedFeature ? `${lockedFeature} is a Pro feature` : feature === 'dashboard' ? 'Dashboard limit reached' : 'App limit reached'}
+                {lockedFeature ? `${lockedFeature} is a Pro feature` : feature === 'dashboard' ? 'Report limit reached' : 'App limit reached'}
               </div>
               <div className="text-blue-200 text-xs">{lockedFeature ? 'Upgrade to unlock it' : 'Add capacity your way'}</div>
             </div>

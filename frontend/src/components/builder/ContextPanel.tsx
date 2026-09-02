@@ -1315,13 +1315,13 @@ function AppTab({ app, canEdit, departments, stations, productTypes, onUpdateApp
             {departments.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
           </select>
         </Field>
-        <Field label="Workstation">
+        <Field label="Station">
           <select className="wb-input" value={app.station_id || ''} onChange={e => onUpdateApp(prev => ({ ...prev, station_id: e.target.value || null }))}>
-            <option value="">— No workstation —</option>
+            <option value="">— No station —</option>
             {availableStations.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
           </select>
           {app.department_id && availableStations.length === 0 && (
-            <p className="mt-1 text-warn-ink" style={{ fontSize: 11 }}>No workstations in this department yet.</p>
+            <p className="mt-1 text-warn-ink" style={{ fontSize: 11 }}>No stations in this department yet.</p>
           )}
         </Field>
       </Section>

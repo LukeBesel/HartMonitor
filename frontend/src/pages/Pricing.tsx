@@ -13,7 +13,7 @@ const GRADIENT = 'linear-gradient(135deg, #6366f1, #ec4899)';
 
 const FAQ = [
   { q: 'Is HartMonitor really free right now?', a: 'Yes. During early access, every module and every feature is completely free with no limits and no credit card. When paid plans launch, early-access users get advance notice and a founding discount — and your data always stays yours.' },
-  { q: 'Can I upgrade or downgrade anytime?', a: 'Yes. Upgrade, downgrade, or buy add-ons from your workspace settings at any time. Changes take effect immediately and billing is prorated.' },
+  { q: 'Can I upgrade or downgrade anytime?', a: 'Yes. Upgrade, downgrade, or buy add-ons from your company settings at any time. Changes take effect immediately and billing is prorated.' },
   { q: 'What happens when my trial ends?', a: 'Your account pauses and you will be prompted to add a payment method. Your data is retained for 30 days — nothing is deleted. You can reactivate anytime during that window.' },
   { q: 'Do you offer refunds?', a: 'Yes. We offer a pro-rated refund within 30 days of any charge. Contact support@hartmonitor.io and we will process it promptly.' },
   { q: 'Can I export my data?', a: 'Absolutely. CSV export is available for all data — work orders, quality records, analytics, inventory — on every plan, including Free. Your data is always yours.' },
@@ -37,7 +37,7 @@ export default function Pricing() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Buying happens inside the app (tied to your workspace & billing). Send
+  // Buying happens inside the app (tied to your company & billing). Send
   // logged-in users straight to settings; everyone else signs up first.
   const goBuy = (tier: string) => {
     if (tier === 'enterprise') { window.location.href = 'mailto:sales@hartmonitor.io'; return; }
@@ -186,7 +186,7 @@ export default function Pricing() {
             <div className="absolute inset-0 opacity-25 blur-2xl" style={{ background: GRADIENT }} />
             <div className="relative">
               <h2 className="text-3xl md:text-4xl font-semibold tracking-tight">Everything is free during early access.</h2>
-              <p className="mt-4 text-gray-300">No credit card required. Set up your workspace in minutes and see results on your first shift.</p>
+              <p className="mt-4 text-gray-300">No credit card required. Set up your company in minutes and see results on your first shift.</p>
               <Link to="/login?mode=signup" className="mt-8 inline-flex items-center gap-2 px-8 py-4 rounded-full bg-white text-gray-900 font-semibold transition-all hover:scale-[1.03] shadow-xl">
                 Create your free workspace <ArrowRight size={18} />
               </Link>

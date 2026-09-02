@@ -40,7 +40,7 @@ const GROUP_ICONS: Record<GroupId, React.ReactNode> = {
 const GROUP_BLURBS: Record<GroupId, string> = {
   account:      'Your login, how the product looks, and your own sidebar.',
   company:      'The company, its people, its plan and what they see.',
-  facility:     'Sites, departments, work stations, shifts and alerts.',
+  facility:     'Sites, departments, stations, shifts and alerts.',
   integrations: 'API keys, webhooks, data export and the guides.',
 };
 

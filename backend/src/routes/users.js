@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
 const { requireAuth, requireRole, hashPassword } = require('../middleware/auth');
 const { logActivity } = require('../activity');
+const { withDisplayRole } = require('../roles');
 
 const router = express.Router();
 
@@ -23,7 +24,10 @@ router.get('/', (req, res) => {
       WHEN 'developer' THEN 1 WHEN 'manager' THEN 2 WHEN 'supervisor' THEN 3
       WHEN 'operator' THEN 4 ELSE 5 END, display_name
   `).all(req.companyId);
-  res.json(users);
+  // Every row carries `display_role` — the one name a screen prints for a role
+  // (see ../roles.js). `role` itself is untouched: it is the permission level
+  // the API and the users-table CHECK are written against.
+  res.json(users.map(withDisplayRole));
 });
 
 // ─── POST / — create user ─────────────────────────────────────────────────────
@@ -43,7 +47,7 @@ router.post('/', requireRole('developer'), (req, res) => {
     .run(id, email.toLowerCase().trim(), display_name, hashPassword(password), role, req.companyId);
   logActivity(req.companyId, 'user', id, `User "${display_name}" created with role ${role}`, req.user.display_name);
   const user = db.prepare('SELECT id, email, display_name, role, is_active, created_at FROM users WHERE id = ?').get(id);
-  res.status(201).json(user);
+  res.status(201).json(withDisplayRole(user));
 });
 
 // ─── GET /:id — get user ──────────────────────────────────────────────────────
@@ -54,7 +58,7 @@ router.get('/:id', (req, res) => {
     FROM users WHERE id = ? AND company_id = ?
   `).get(req.params.id, req.companyId);
   if (!user) return res.status(404).json({ error: 'Not found' });
-  res.json(user);
+  res.json(withDisplayRole(user));
 });
 
 // ─── PUT /:id — update user ───────────────────────────────────────────────────
