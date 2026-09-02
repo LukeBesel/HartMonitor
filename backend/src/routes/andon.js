@@ -19,8 +19,27 @@ const { notify } = require('../notifications');
 const { deliverWebhooks } = require('../webhooks');
 const { TEAMS, TEAM_BY_TYPE, teamOf, teamLabel } = require('../andonTeams');
 const { deliverAlert } = require('../andonRouting');
+const { isValid, REASON_KIND, LOSS_BUCKET } = require('../vocab');
+const { ROLE_LEVELS } = require('../middleware/auth');
+const {
+  startAndonEscalation, runOnce, listTargets, seedTargets, targetTeamOf, respondByFor, PRIORITIES,
+} = require('../andonEscalation');
 
 const router = express.Router();
+
+// A call that nobody acknowledges has to chase someone; nothing else in the
+// product owns the andon lifecycle, so the sweeper is started here — the same
+// way routes/completions.js starts the stale-run reaper. Guarded against a
+// double start, its timers are unref'd, and it stays off under NODE_ENV=test
+// unless ANDON_SWEEP_MS asks for it (suites call runOnce() a tick at a time).
+startAndonEscalation();
+
+// Managers own the response targets and the coded reason list; supervisors and
+// operators read them. index.js already gates every write on this router at
+// 'operator', so this is the extra step up for configuration, not the only gate.
+function canManage(req) {
+  return (ROLE_LEVELS[req.user?.role] ?? 0) >= ROLE_LEVELS.manager;
+}
 
 // Returns the id if the row exists in this company, else null (cross-tenant FK guard).
 function ownedOrNull(table, id, companyId) {
@@ -43,7 +62,8 @@ const SELECT_CALL = `
          ap.name AS app_name,
          CAST((julianday('now') - julianday(a.created_at)) * 86400 AS INTEGER) AS age_seconds,
          CAST((julianday(a.acknowledged_at) - julianday(a.created_at)) * 86400 AS INTEGER) AS response_seconds,
-         CAST((julianday(a.resolved_at) - julianday(a.created_at)) * 86400 AS INTEGER) AS resolution_seconds
+         CAST((julianday(a.resolved_at) - julianday(a.created_at)) * 86400 AS INTEGER) AS resolution_seconds,
+         CAST((julianday(a.respond_by) - julianday('now')) * 86400 AS INTEGER) AS respond_in_seconds
   FROM andon_calls a
   LEFT JOIN departments d  ON d.id  = a.department_id
   LEFT JOIN stations s     ON s.id  = a.station_id
@@ -55,11 +75,26 @@ const SELECT_CALL = `
 // from their type, and pre-title rows fall back to their description.
 // `target_label` is the single string every surface renders — the department
 // name when a department was alerted, the function team's name otherwise.
-function decorate(row) {
+// The company's response targets, read once per request and keyed
+// `team|priority`, so decorating a hundred rows is one query rather than a
+// hundred. Seeds the defaults on the way past (first read for a new company).
+function targetMap(companyId) {
+  const map = new Map();
+  for (const t of listTargets(companyId)) map.set(`${t.team}|${t.priority}`, t);
+  return map;
+}
+
+function decorate(row, targets) {
   if (!row) return row;
   const team = teamOf(row);
   const targetType = row.target_type === 'department' && row.department_name ? 'department' : 'team';
   const targetLabel = targetType === 'department' ? row.department_name : teamLabel(team);
+  // The target a call is measured against: its own team's row, except a safety
+  // call, which is measured on the (much shorter) safety clock.
+  const target = targets?.get(`${targetTeamOf(row)}|${row.priority || 'normal'}`) || null;
+  const level = Number(row.escalation_level || 0);
+  const escalateTeam = target?.escalate_to_team || 'supervisor';
+  const respondIn = row.respond_by ? (row.respond_in_seconds ?? null) : null;
   return {
     ...row,
     team,
@@ -74,11 +109,31 @@ function decorate(row) {
     response_seconds: row.response_seconds == null ? null : Math.max(0, row.response_seconds),
     resolution_seconds: row.resolution_seconds == null ? null : Math.max(0, row.resolution_seconds),
     location: row.station_name || row.department_name || '',
+    // ── The clock ──
+    respond_by: row.respond_by || null,
+    // Seconds left before the target is missed; negative once it has been.
+    // Null on a legacy row raised before targets existed — the board prints the
+    // reason rather than inventing a countdown.
+    respond_in_seconds: respondIn,
+    target_seconds: target ? target.respond_minutes * 60 : null,
+    target_reason: target ? null : 'no response target set for this team',
+    escalation_level: level,
+    escalated_at: row.escalated_at || null,
+    escalated_to_user_id: row.escalated_to_user_id || null,
+    escalated_to_team: level > 0 ? escalateTeam : null,
+    escalated_to_label: level > 0 ? teamLabel(escalateTeam) : null,
+    // Open, past its target, and nobody has said "on my way".
+    overdue: row.status === 'open' && respondIn != null && respondIn < 0,
+    // Measured, never estimated: null until somebody actually acknowledged.
+    within_target: row.response_seconds == null || !target
+      ? null
+      : row.response_seconds <= target.respond_minutes * 60,
   };
 }
 
 function getCall(id, companyId) {
-  return decorate(db.prepare(`${SELECT_CALL} WHERE a.id = ? AND a.company_id = ?`).get(id, companyId));
+  const row = db.prepare(`${SELECT_CALL} WHERE a.id = ? AND a.company_id = ?`).get(id, companyId);
+  return row ? decorate(row, targetMap(companyId)) : row;
 }
 
 function ownedCall(req) {
@@ -109,7 +164,8 @@ router.get('/', (req, res) => {
   }
   sql += ' ORDER BY CASE a.priority WHEN \'critical\' THEN 0 WHEN \'high\' THEN 1 WHEN \'normal\' THEN 2 ELSE 3 END, a.created_at DESC LIMIT ?';
   params.push(Number(limit) || 100);
-  res.json(db.prepare(sql).all(...params).map(decorate));
+  const targets = targetMap(req.companyId);
+  res.json(db.prepare(sql).all(...params).map(row => decorate(row, targets)));
 });
 
 // ─── GET /andon/teams ──────────────────────────────────────────────────────────
@@ -158,14 +214,269 @@ router.get('/summary', (req, res) => {
     WHERE company_id = ? AND acknowledged_at IS NOT NULL AND date(created_at, ?) = date('now', ?)${dept}
   `).get(cid, day, day, ...deptParams);
 
+  // ── Against target ────────────────────────────────────────────────────────
+  // A response time means nothing on its own: four minutes is excellent for a
+  // materials call and far too slow for a safety one. Every call is therefore
+  // measured against ITS OWN team+priority target, and the board reports the
+  // share that made it — never a bare average pretending to be a verdict.
+  const targets = targetMap(cid);
+  const targetSecondsFor = row => {
+    const t = targets.get(`${targetTeamOf(row)}|${row.priority || 'normal'}`);
+    return t ? t.respond_minutes * 60 : null;
+  };
+
+  const overdue = db.prepare(`
+    SELECT COUNT(*) as n FROM andon_calls
+     WHERE company_id = ? AND status = 'open' AND respond_by IS NOT NULL
+       AND julianday(respond_by) < julianday('now')${dept}
+  `).get(cid, ...deptParams).n;
+  const escalated_open = db.prepare(`
+    SELECT COUNT(*) as n FROM andon_calls
+     WHERE company_id = ? AND status = 'open' AND escalation_level > 0${dept}
+  `).get(cid, ...deptParams).n;
+
+  const answered = db.prepare(`
+    SELECT type, team, priority,
+           CAST((julianday(acknowledged_at) - julianday(created_at)) * 86400 AS INTEGER) AS response_seconds
+      FROM andon_calls
+     WHERE company_id = ? AND acknowledged_at IS NOT NULL
+       AND date(created_at, ?) = date('now', ?)${dept}
+  `).all(cid, day, day, ...deptParams);
+  const measured = answered.filter(r => targetSecondsFor(r) != null);
+  const withinCount = measured.filter(r => Math.max(0, r.response_seconds ?? 0) <= targetSecondsFor(r)).length;
+  // Null, not 0%. "0% within target" says every call was late; "—, nothing has
+  // been acknowledged today" says nothing has been measured. The board prints
+  // the reason where the number would go.
+  const within_target_pct = measured.length ? Math.round((withinCount / measured.length) * 100) : null;
+  const within_target_reason = measured.length
+    ? null
+    : (answered.length ? 'no response target set for the calls answered today' : 'nothing has been acknowledged today');
+  const target_seconds = measured.length
+    ? Math.round(measured.reduce((sum, r) => sum + targetSecondsFor(r), 0) / measured.length)
+    : null;
+
   res.json({
     open, critical, acknowledged, resolved_today, by_type, by_team,
     avg_response_seconds_today: respRow?.n ? Math.round(respRow.avg_s) : null,
     responded_today: respRow?.n ?? 0,
+    // Open calls that have already missed their target, and how many of those
+    // have been escalated at least once.
+    overdue,
+    escalated_open,
+    // The target today's answered calls were measured against (mean seconds),
+    // and the share that met it. Both null together, with a stated reason.
+    target_seconds,
+    within_target_pct,
+    within_target_reason,
+    within_target_sample: measured.length,
     // Echoed so a caller (and the board) can tell a scoped payload from a
     // plant-wide one without re-deriving it from its own state.
     department_id: deptId,
   });
+});
+
+// ─── GET/PUT /andon/targets — the response clock, per team and priority ──────
+// respond_minutes is how long somebody has to say "on my way" before the call
+// escalates; escalate_minutes is how long the next tier gets before it climbs
+// again (twice at most). Defaults are seeded on the first read, so a company
+// that never opens this panel still has a working clock.
+
+router.get('/targets', (req, res) => {
+  res.json(listTargets(req.companyId).map(t => ({
+    ...t,
+    team_label: TEAMS[t.team] ? teamLabel(t.team) : (t.team === 'safety' ? 'Safety' : t.team),
+    escalate_to_label: teamLabel(t.escalate_to_team || 'supervisor'),
+  })));
+});
+
+router.put('/targets', (req, res) => {
+  if (!canManage(req)) return res.status(403).json({ error: 'Requires manager role or higher', code: 'FORBIDDEN' });
+  const { team, priority } = req.body || {};
+  if (!team || !PRIORITIES.includes(priority)) {
+    return res.status(400).json({ error: `team and priority (${PRIORITIES.join(', ')}) required` });
+  }
+  seedTargets(req.companyId);
+  const existing = db.prepare('SELECT * FROM andon_targets WHERE company_id = ? AND team = ? AND priority = ?')
+    .get(req.companyId, team, priority);
+  if (!existing) return res.status(404).json({ error: 'Not found' });
+
+  // A zero-minute target is not a target, it is a call that is late the instant
+  // it is raised; the floor learns to ignore the board rather than answer it.
+  const minutes = (value, fallback) => {
+    const n = Number(value);
+    return Number.isFinite(n) && n >= 1 ? Math.min(Math.round(n), 24 * 60) : fallback;
+  };
+  const respond = minutes(req.body.respond_minutes, existing.respond_minutes);
+  const escalate = minutes(req.body.escalate_minutes, existing.escalate_minutes);
+  const escalateTo = req.body.escalate_to_team !== undefined
+    ? (TEAMS[req.body.escalate_to_team] ? req.body.escalate_to_team : 'supervisor')
+    : existing.escalate_to_team;
+
+  db.prepare(`
+    UPDATE andon_targets SET respond_minutes = ?, escalate_minutes = ?, escalate_to_team = ?
+     WHERE id = ? AND company_id = ?
+  `).run(respond, escalate, escalateTo, existing.id, req.companyId);
+  logActivity(req.companyId, 'andon', existing.id,
+    `Response target changed — ${team} / ${priority}: respond ${respond}m, escalate ${escalate}m`,
+    req.user?.display_name);
+  res.json(db.prepare('SELECT * FROM andon_targets WHERE id = ?').get(existing.id));
+});
+
+// ─── /andon/reason-codes — the company's ONE coded reason list ───────────────
+// Three streams capture a reason (scrap, rework, downtime) and every one of
+// them reads this list, so a plant codes "no material" once and every screen —
+// and every report — spells it the same way. A downtime reason additionally
+// carries the OEE loss bucket it rolls into, which is what makes two plants'
+// numbers comparable; a scrap or rework reason carries '' because it maps to no
+// loss bucket at all.
+//
+// The defaults below are seeded the first time a company reads the list, so the
+// capture screens are never handed an empty picker.
+
+const REASON_DEFAULTS = {
+  scrap: [
+    ['weld_porosity', 'Weld porosity', ''],
+    ['dimensional', 'Dimensional out of tolerance', ''],
+    ['surface_defect', 'Surface defect', ''],
+    ['material_defect', 'Material defect', ''],
+    ['setup_scrap', 'Setup scrap', ''],
+    ['handling_damage', 'Handling damage', ''],
+  ],
+  rework: [
+    ['weld_repair', 'Weld repair', ''],
+    ['dimensional_touch_up', 'Dimensional touch-up', ''],
+    ['refinish', 'Surface refinish', ''],
+    ['reassemble', 'Reassembly', ''],
+    ['retest', 'Retest after adjustment', ''],
+  ],
+  downtime: [
+    ['breakdown', 'Breakdown', 'breakdown'],
+    ['changeover', 'Changeover / setup', 'setup_adjustment'],
+    ['no_material', 'No material', 'minor_stop'],
+    ['no_operator', 'No operator', 'minor_stop'],
+    ['jam', 'Jam', 'minor_stop'],
+    ['running_slow', 'Running slow', 'speed_loss'],
+    ['startup_reject', 'Startup reject', 'startup_reject'],
+    ['process_reject', 'Process reject', 'process_reject'],
+  ],
+};
+
+/** Seeds the three default lists the first time a company reads any of them.
+ *  Keyed on the company having NO codes at all, so deleting or deactivating one
+ *  never resurrects it on the next read. */
+function seedReasonCodes(companyId) {
+  const existing = db.prepare('SELECT COUNT(*) as n FROM reason_codes WHERE company_id = ?').get(companyId).n;
+  if (existing > 0) return;
+  const insert = db.prepare(`
+    INSERT OR IGNORE INTO reason_codes (id, company_id, kind, code, label, loss_bucket, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `);
+  db.transaction(() => {
+    for (const kind of REASON_KIND) {
+      (REASON_DEFAULTS[kind] || []).forEach(([code, label, bucket], i) => {
+        insert.run(uuidv4(), companyId, kind, code, label, bucket, (i + 1) * 10);
+      });
+    }
+  })();
+}
+
+const reasonRow = r => ({ ...r, is_active: !!r.is_active });
+
+router.get('/reason-codes', (req, res) => {
+  seedReasonCodes(req.companyId);
+  const { kind, include_inactive } = req.query;
+  if (kind && !isValid('REASON_KIND', kind)) {
+    return res.status(400).json({ error: `kind must be one of ${REASON_KIND.join(', ')}` });
+  }
+  let sql = 'SELECT * FROM reason_codes WHERE company_id = ?';
+  const params = [req.companyId];
+  if (kind) { sql += ' AND kind = ?'; params.push(kind); }
+  if (include_inactive !== 'true') sql += ' AND is_active = 1';
+  sql += ' ORDER BY kind ASC, sort_order ASC, label ASC';
+  res.json(db.prepare(sql).all(...params).map(reasonRow));
+});
+
+router.post('/reason-codes', (req, res) => {
+  if (!canManage(req)) return res.status(403).json({ error: 'Requires manager role or higher', code: 'FORBIDDEN' });
+  seedReasonCodes(req.companyId);
+  const { kind, code, label, loss_bucket = '', sort_order = 0 } = req.body || {};
+  if (!isValid('REASON_KIND', kind)) {
+    return res.status(400).json({ error: `kind must be one of ${REASON_KIND.join(', ')}` });
+  }
+  const trimmedCode = String(code || '').trim();
+  const trimmedLabel = String(label || '').trim();
+  if (!trimmedCode || !trimmedLabel) return res.status(400).json({ error: 'code and label required' });
+  // '' is a legitimate bucket — a scrap reason rolls into no OEE loss. Anything
+  // else has to be one of the six, because the CHECK on the column says so and
+  // a 400 reads better than the 500 the constraint would raise.
+  const bucket = String(loss_bucket || '');
+  if (bucket && !isValid('LOSS_BUCKET', bucket)) {
+    return res.status(400).json({ error: `loss_bucket must be empty or one of ${LOSS_BUCKET.join(', ')}` });
+  }
+  const dup = db.prepare('SELECT id FROM reason_codes WHERE company_id = ? AND kind = ? AND code = ?')
+    .get(req.companyId, kind, trimmedCode);
+  if (dup) return res.status(409).json({ error: 'That code already exists for this kind' });
+
+  const id = uuidv4();
+  db.prepare(`
+    INSERT INTO reason_codes (id, company_id, kind, code, label, loss_bucket, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(id, req.companyId, kind, trimmedCode, trimmedLabel, bucket, Number(sort_order) || 0);
+  logActivity(req.companyId, 'reason_code', id, `Reason code added — ${kind}: ${trimmedLabel}`, req.user?.display_name);
+  res.status(201).json(reasonRow(db.prepare('SELECT * FROM reason_codes WHERE id = ?').get(id)));
+});
+
+router.put('/reason-codes/:id', (req, res) => {
+  if (!canManage(req)) return res.status(403).json({ error: 'Requires manager role or higher', code: 'FORBIDDEN' });
+  const row = db.prepare('SELECT * FROM reason_codes WHERE id = ? AND company_id = ?')
+    .get(req.params.id, req.companyId);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+
+  const bucket = req.body?.loss_bucket !== undefined ? String(req.body.loss_bucket || '') : row.loss_bucket;
+  if (bucket && !isValid('LOSS_BUCKET', bucket)) {
+    return res.status(400).json({ error: `loss_bucket must be empty or one of ${LOSS_BUCKET.join(', ')}` });
+  }
+  const code = req.body?.code !== undefined ? String(req.body.code).trim() : row.code;
+  const label = req.body?.label !== undefined ? String(req.body.label).trim() : row.label;
+  if (!code || !label) return res.status(400).json({ error: 'code and label required' });
+  if (code !== row.code) {
+    const dup = db.prepare('SELECT id FROM reason_codes WHERE company_id = ? AND kind = ? AND code = ? AND id != ?')
+      .get(req.companyId, row.kind, code, row.id);
+    if (dup) return res.status(409).json({ error: 'That code already exists for this kind' });
+  }
+  const isActive = req.body?.is_active !== undefined ? (req.body.is_active ? 1 : 0) : row.is_active;
+  const sortOrder = req.body?.sort_order !== undefined ? (Number(req.body.sort_order) || 0) : row.sort_order;
+
+  db.prepare(`
+    UPDATE reason_codes SET code = ?, label = ?, loss_bucket = ?, is_active = ?, sort_order = ?
+     WHERE id = ? AND company_id = ?
+  `).run(code, label, bucket, isActive, sortOrder, row.id, req.companyId);
+  res.json(reasonRow(db.prepare('SELECT * FROM reason_codes WHERE id = ?').get(row.id)));
+});
+
+// ─── POST /andon/sweep — drive one escalation tick (test harness only) ───────
+// The sweeper runs on a timer in production and is deliberately off under
+// NODE_ENV=test, so a suite can prove "escalates on the first tick, sends
+// nothing on the second" instead of sleeping and hoping. Outside a test
+// environment this route does not exist at all — the same 404 an unrouted path
+// gives, so nothing advertises it.
+//
+// `backdate_call_id` moves one call's respond_by into the past first, which is
+// how a suite (or a sandbox demo) reaches an overdue call without waiting out a
+// ten-minute target.
+
+router.post('/sweep', (req, res) => {
+  if (process.env.NODE_ENV !== 'test') return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
+  const { backdate_call_id, backdate_seconds = 60 } = req.body || {};
+  if (backdate_call_id) {
+    const seconds = Math.max(1, Math.round(Number(backdate_seconds) || 60));
+    db.prepare(`
+      UPDATE andon_calls SET respond_by = datetime('now', ?) WHERE id = ? AND company_id = ?
+    `).run(`-${seconds} seconds`, backdate_call_id, req.companyId);
+  }
+  const escalated = runOnce();
+  const mine = escalated.filter(e => e.company_id === req.companyId);
+  res.json({ escalated: mine, count: mine.length, swept: escalated.length });
 });
 
 // ─── POST /andon — raise a help request ───────────────────────────────────────
@@ -218,17 +529,22 @@ router.post('/', (req, res) => {
   const body = (message || note || '').trim();
   const raisedBy = (operator_name || created_by || req.user?.display_name || '').trim();
 
+  // Every call gets a clock at birth. respond_by is the instant the company's
+  // own target for this team + priority runs out; the sweeper in
+  // andonEscalation.js is what acts on it, and the board counts down to it.
+  const { respond_by } = respondByFor(req.companyId, { type, team: resolvedTeam, priority: finalPriority });
+
   const id = uuidv4();
   db.prepare(`
     INSERT INTO andon_calls (
       id, company_id, type, team, target_type, priority, title, message, description,
       department_id, station_id, work_order_id, app_id, completion_id, step_name,
-      created_by, created_by_user_id, raised_by
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      created_by, created_by_user_id, raised_by, respond_by
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id, req.companyId, type, resolvedTeam, targetType, finalPriority, finalTitle, body, finalTitle,
     deptId, stationId, woId, appId, completionIdOwned, String(step_name || ''),
-    raisedBy, req.user?.id || null, raisedBy,
+    raisedBy, req.user?.id || null, raisedBy, respond_by,
   );
 
   const call = getCall(id, req.companyId);

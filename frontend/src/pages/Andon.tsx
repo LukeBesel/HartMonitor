@@ -10,9 +10,15 @@ import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import {
   Siren, HelpCircle, ShieldAlert, Package, Wrench, AlertTriangle,
-  CheckCircle, X, ChevronDown, Plus, Loader2, Timer, MapPin, Hash, Building2,
+  CheckCircle, X, ChevronDown, ChevronUp, Plus, Loader2, Timer, MapPin, Hash, Building2,
+  ArrowUpCircle, SlidersHorizontal, Clock, Ban,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { fmtDuration } from '../components/apps/appModel';
+import {
+  getAndonTargets, updateAndonTarget, secondsToTarget, secondsSinceEscalation, parseUtc,
+} from '../api/andon';
+import type { AndonCallLive, AndonSummaryLive, AndonTarget } from '../api/andon';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
 import type { DepartmentOption } from '../hooks/useDepartmentFilter';
@@ -21,7 +27,7 @@ import DepartmentFilter from '../components/shared/DepartmentFilter';
 import { ANDON_TEAMS, ANDON_TEAM_ORDER, teamConfig, formatAge, targetLabel, targetPayload } from '../config/andonTeams';
 import type { AlertTarget } from '../config/andonTeams';
 import { subscribeRealtime, isAndonEvent } from '../utils/realtime';
-import type { AndonCall, AndonCallType, AndonPriority, AndonStatus, AndonSummary, AndonTeam, Station } from '../types';
+import type { AndonCallType, AndonPriority, AndonStatus, AndonTeam, Station } from '../types';
 
 // ── Config maps ───────────────────────────────────────────────────────────────
 
@@ -80,6 +86,198 @@ function TeamChip({ team, label, isDepartment }: { team: string; label?: string;
       <Icon size={12} />
       {label ?? cfg.label}
     </span>
+  );
+}
+
+// ── The response clock ────────────────────────────────────────────────────────
+// A call's age on its own says nothing: 46 minutes is a disaster for a safety
+// call and unremarkable for a materials one. Every card therefore prints the
+// TARGET it is being measured against and counts down to it, and says plainly
+// when it has been missed rather than letting a growing number imply it.
+
+/** The wall-clock time a target runs out, in the viewer's own zone. */
+function clockAt(iso: string | null | undefined): string {
+  const ms = parseUtc(iso);
+  return ms === null ? '' : new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function ResponseClock({ call, now }: { call: AndonCallLive; now: number }) {
+  const left = secondsToTarget(call, now);
+  if (left === null) {
+    // No target rather than a fabricated countdown — a call raised before this
+    // company had targets, or a team nobody has set one for.
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-gray-500">
+        <Clock size={11} className="shrink-0" />
+        {call.target_reason || 'No response target set'}
+      </span>
+    );
+  }
+  const late = left < 0;
+  return (
+    <span
+      data-testid="respond-by"
+      className={`inline-flex items-center gap-1.5 text-xs font-medium tnum ${late ? 'text-red-300' : 'text-gray-300'}`}
+    >
+      <Clock size={11} className="shrink-0" />
+      Respond by {clockAt(call.respond_by)} · {late ? `${fmtDuration(-left)} over` : `${fmtDuration(left)} left`}
+    </span>
+  );
+}
+
+/** Red, because an escalated call is one nobody answered — not a status change
+ *  to be read past. Names WHO it went to and HOW LONG AGO, so the board answers
+ *  "has anyone been told?" without anyone opening the call. */
+function EscalationBadge({ call, now }: { call: AndonCallLive; now: number }) {
+  const level = call.escalation_level ?? 0;
+  if (!level) return null;
+  const ago = secondsSinceEscalation(call, now);
+  return (
+    <span
+      data-testid="escalation-badge"
+      className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-semibold border bg-red-500/20 text-red-300 border-red-500/50"
+    >
+      <ArrowUpCircle size={12} className="shrink-0" />
+      Escalated to {call.escalated_to_label || 'the next tier'}
+      {ago === null ? '' : ` ${formatAge(ago)} ago`}
+      {level > 1 ? ' · twice' : ''}
+    </span>
+  );
+}
+
+// ── Response targets panel ────────────────────────────────────────────────────
+// The clock every card counts down, in one editable place: how long a team has
+// to answer, and how long the next tier gets before the call climbs again.
+// Collapsed by default and loaded only when opened — a responder watching the
+// board does not need the plant's policy on screen, and a manager setting it
+// does not want to hunt through Settings for it.
+
+const PRIORITY_ORDER: Array<'critical' | 'high' | 'normal'> = ['critical', 'high', 'normal'];
+
+function TargetsPanel() {
+  const [open, setOpen] = useState(false);
+  const [rows, setRows] = useState<AndonTarget[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!open || rows || loading) return;
+    setLoading(true);
+    getAndonTargets()
+      .then(setRows)
+      .catch(err => setError(err instanceof Error ? err.message : 'Could not load the response targets.'))
+      .finally(() => setLoading(false));
+  }, [open, rows, loading]);
+
+  async function save(row: AndonTarget, patch: { respond_minutes?: number; escalate_minutes?: number }) {
+    const key = `${row.team}|${row.priority}`;
+    setSavingKey(key);
+    setError('');
+    try {
+      const saved = await updateAndonTarget({ team: row.team, priority: row.priority, ...patch });
+      setRows(prev => (prev || []).map(r => (r.id === row.id ? { ...r, ...saved } : r)));
+    } catch (err) {
+      // A refused edit must not leave an edited-looking number on screen.
+      setError(err instanceof Error ? err.message : 'Only a manager can change response targets.');
+      setRows(prev => (prev ? [...prev] : prev));
+    } finally {
+      setSavingKey(null);
+    }
+  }
+
+  const ordered = (rows || []).slice().sort((a, b) =>
+    a.team_label.localeCompare(b.team_label) ||
+    PRIORITY_ORDER.indexOf(a.priority) - PRIORITY_ORDER.indexOf(b.priority));
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+      >
+        <span className="flex items-center gap-2 text-sm font-semibold text-white">
+          <SlidersHorizontal size={15} className="text-gray-400" />
+          Response targets
+          <span className="text-xs font-normal text-gray-500">
+            how long each team has before a call escalates
+          </span>
+        </span>
+        {open ? <ChevronUp size={16} className="text-gray-400 shrink-0" /> : <ChevronDown size={16} className="text-gray-400 shrink-0" />}
+      </button>
+
+      {open && (
+        <div className="border-t border-gray-800 p-4 space-y-3">
+          {error && (
+            <p className="text-sm text-red-300 bg-red-900/20 border border-red-800 rounded-lg px-3 py-2">{error}</p>
+          )}
+          {loading && !rows ? (
+            <p className="text-sm text-gray-500">Loading targets…</p>
+          ) : ordered.length === 0 ? (
+            <p className="text-sm text-gray-500">No response targets yet.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm whitespace-nowrap">
+                <thead>
+                  <tr className="text-left text-xs uppercase tracking-wide text-gray-500">
+                    <th className="py-2 pr-4 font-semibold">Team</th>
+                    <th className="py-2 pr-4 font-semibold">Priority</th>
+                    <th className="py-2 pr-4 font-semibold">Respond (min)</th>
+                    <th className="py-2 pr-4 font-semibold">Escalate after (min)</th>
+                    <th className="py-2 font-semibold">Escalates to</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800">
+                  {ordered.map(row => {
+                    const key = `${row.team}|${row.priority}`;
+                    const busy = savingKey === key;
+                    return (
+                      <tr key={row.id}>
+                        <td className="py-2 pr-4 text-gray-200">{row.team_label}</td>
+                        <td className="py-2 pr-4 capitalize text-gray-400">{row.priority}</td>
+                        <td className="py-2 pr-4">
+                          <input
+                            type="number"
+                            min={1}
+                            defaultValue={row.respond_minutes}
+                            disabled={busy}
+                            aria-label={`Respond minutes for ${row.team_label} ${row.priority}`}
+                            onBlur={e => {
+                              const value = Number(e.target.value);
+                              if (value !== row.respond_minutes) void save(row, { respond_minutes: value });
+                            }}
+                            className="w-20 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-white tnum disabled:opacity-50"
+                          />
+                        </td>
+                        <td className="py-2 pr-4">
+                          <input
+                            type="number"
+                            min={1}
+                            defaultValue={row.escalate_minutes}
+                            disabled={busy}
+                            aria-label={`Escalate minutes for ${row.team_label} ${row.priority}`}
+                            onBlur={e => {
+                              const value = Number(e.target.value);
+                              if (value !== row.escalate_minutes) void save(row, { escalate_minutes: value });
+                            }}
+                            className="w-20 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-white tnum disabled:opacity-50"
+                          />
+                        </td>
+                        <td className="py-2 text-gray-400">{row.escalate_to_label}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <p className="mt-3 text-xs text-gray-500">
+                A call nobody acknowledges within its respond time is escalated to the next team, then once more —
+                twice at most. Managers can edit these; everyone else sees them.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -146,7 +344,7 @@ function RequestHelpModal({ departments, onClose, onCreated }: RequestHelpModalP
             <div className="p-2 bg-red-900/40 rounded-lg">
               <Siren size={20} className="text-red-400" />
             </div>
-            <h2 className="text-lg font-semibold text-white">Request help</h2>
+            <h2 className="text-lg font-semibold text-white">Call for help</h2>
           </div>
           <button
             onClick={onClose}
@@ -286,7 +484,7 @@ function RequestHelpModal({ departments, onClose, onCreated }: RequestHelpModalP
 
           <div className="flex gap-3 pt-1">
             <button type="button" onClick={onClose} className="btn-secondary flex-1">
-              Cancel
+              Close
             </button>
             <button
               type="submit"
@@ -330,8 +528,8 @@ function SkeletonCards() {
 
 export default function Andon() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [calls, setCalls] = useState<AndonCall[]>([]);
-  const [summary, setSummary] = useState<AndonSummary | null>(null);
+  const [calls, setCalls] = useState<AndonCallLive[]>([]);
+  const [summary, setSummary] = useState<AndonSummaryLive | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -375,6 +573,15 @@ export default function Andon() {
   const [resolveCardId, setResolveCardId] = useState<string | null>(null);
   const [resolutionText, setResolutionText] = useState('');
 
+  // One instant for the whole board, ticked every second, so every countdown on
+  // screen agrees with every other one and none of them drifts from the target
+  // between the twenty-second reloads.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
   // ── Data loading ─────────────────────────────────────────────────────────
 
   const load = useCallback(async () => {
@@ -395,8 +602,8 @@ export default function Andon() {
         api.getAndonCalls(params),
         api.getAndonSummary(departmentFilter ? { department_id: departmentFilter } : undefined),
       ]);
-      setCalls(callsData);
-      setSummary(summaryData);
+      setCalls(callsData as AndonCallLive[]);
+      setSummary(summaryData as AndonSummaryLive);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load Andon data.');
       // Rethrow so the freshness stamp does not claim data it never got.
@@ -432,6 +639,21 @@ export default function Andon() {
     }
   }
 
+  // The requester no longer needs help. Kept as a stand-down rather than a
+  // delete, so the board keeps an honest record of who was called and why the
+  // call went away.
+  async function handleCancel(id: string) {
+    setActionLoading(prev => ({ ...prev, [id]: true }));
+    try {
+      await api.cancelAndonCall(id);
+      await auto.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not cancel the call.');
+    } finally {
+      setActionLoading(prev => ({ ...prev, [id]: false }));
+    }
+  }
+
   async function handleResolve(id: string) {
     setActionLoading(prev => ({ ...prev, [id]: true }));
     try {
@@ -451,6 +673,9 @@ export default function Andon() {
   const statusFilters = ['all', 'open', 'acknowledged', 'resolved'];
 
   const avgResponse = summary?.avg_response_seconds_today ?? null;
+  // `?? null` and never `|| 0`: a real 0% (everything late today) has to survive
+  // as 0, and a missing measurement has to survive as null.
+  const withinTarget = summary?.within_target_pct ?? null;
 
   const teamCounts = useMemo(() => summary?.by_team ?? {}, [summary]);
 
@@ -514,7 +739,7 @@ export default function Andon() {
               className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-6 rounded-xl flex items-center gap-2 transition-colors w-full sm:w-auto justify-center"
             >
               <Plus size={18} />
-              Request help
+              Call for help
             </button>
           </div>
         </div>
@@ -544,7 +769,7 @@ export default function Andon() {
                 Scoped to {deptFilter.selected?.name} — these four numbers and the team badges below count only this department's requests.
               </p>
             )}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
               <div className={`bg-gray-900 border border-gray-800 rounded-xl p-4 ${summary.open > 0 ? 'border-red-800/60' : ''}`}>
                 <div className="flex items-center justify-between mb-1">
                   <span className="section-label">Open requests</span>
@@ -555,6 +780,14 @@ export default function Andon() {
                 <p data-testid="stat-open" className={`text-3xl font-bold ${summary.open > 0 ? 'text-red-400' : 'text-white'}`}>
                   {summary.open}
                 </p>
+                {/* How many of those have already missed their target — the
+                    number a supervisor actually has to act on. */}
+                {(summary.overdue ?? 0) > 0 && (
+                  <p data-testid="stat-overdue" className="text-xs text-red-400 mt-1">
+                    {summary.overdue} past target
+                    {(summary.escalated_open ?? 0) > 0 ? ` · ${summary.escalated_open} escalated` : ''}
+                  </p>
+                )}
               </div>
 
               <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
@@ -582,9 +815,37 @@ export default function Andon() {
                   </p>
                 )}
               </div>
+
+              {/* Against target — the number an average cannot give you. Null,
+                  never 0%: "0% within target" says every call today was late,
+                  which is a very different plant from one where nothing has been
+                  answered yet. When there is nothing to measure this prints an
+                  em dash and the reason. */}
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                <p className="section-label mb-1">Within target today</p>
+                {withinTarget === null ? (
+                  <p data-testid="stat-within-target" className="text-3xl font-bold text-gray-500">
+                    —
+                    <span className="block text-xs font-medium text-gray-500 mt-1">
+                      {summary.within_target_reason || 'nothing has been acknowledged today'}
+                    </span>
+                  </p>
+                ) : (
+                  <p data-testid="stat-within-target" className="text-3xl font-bold text-white">
+                    {withinTarget}%
+                    <span className="block text-xs font-medium text-gray-500 mt-1">
+                      {summary.within_target_sample} answered
+                      {summary.target_seconds ? ` · target ${fmtDuration(summary.target_seconds)}` : ''}
+                    </span>
+                  </p>
+                )}
+              </div>
             </div>
           </div>
         )}
+
+        {/* ── Response targets ── */}
+        <TargetsPanel />
 
         {/* ── Filter Chips ── */}
         <div className="space-y-3">
@@ -705,6 +966,16 @@ export default function Andon() {
                     </span>
                   </div>
 
+                  {/* The clock. An open call counts down to its target; an
+                      escalated one wears the red badge whatever its status,
+                      because "escalated" is a level, not a status word. */}
+                  {(call.status === 'open' || (call.escalation_level ?? 0) > 0) && (
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                      {call.status === 'open' && <ResponseClock call={call} now={now} />}
+                      <EscalationBadge call={call} now={now} />
+                    </div>
+                  )}
+
                   {/* Where it came from — location + run context */}
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-500">
                     {call.location && (
@@ -732,8 +1003,11 @@ export default function Andon() {
                     <p className="text-xs text-gray-500 flex items-center gap-1.5 flex-wrap">
                       <span>Responder: <span className="text-gray-300">{call.assigned_to}</span></span>
                       {call.response_seconds !== null && (
-                        <span className="inline-flex items-center gap-1 text-green-400">
+                        <span className={`inline-flex items-center gap-1 ${call.within_target === false ? 'text-amber-400' : 'text-green-400'}`}>
                           <Timer size={11} /> answered in {formatAge(call.response_seconds)}
+                          {call.target_seconds
+                            ? ` (target ${fmtDuration(call.target_seconds)})`
+                            : ''}
                         </span>
                       )}
                     </p>
@@ -741,11 +1015,14 @@ export default function Andon() {
 
                   {/* Actions */}
                   {call.status === 'open' && (
-                    <div className="mt-auto flex gap-2">
+                    // Wraps: three actions do not fit one line on a phone (or in
+                    // a three-up card on a laptop), and a button clipped by the
+                    // card edge is a button nobody can press.
+                    <div className="mt-auto flex flex-wrap gap-2">
                       <button
                         onClick={() => handleAcknowledge(call.id)}
                         disabled={isActioning}
-                        className="btn-primary flex-1 flex items-center justify-center gap-2 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="btn-primary flex-1 min-w-[9rem] flex items-center justify-center gap-2 py-2 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {isActioning ? <Loader2 size={14} className="animate-spin" /> : null}
                         On my way
@@ -757,6 +1034,14 @@ export default function Andon() {
                         title="Resolve without acknowledging"
                       >
                         Resolve
+                      </button>
+                      <button
+                        onClick={() => handleCancel(call.id)}
+                        disabled={isActioning}
+                        className="btn-ghost text-sm px-3 disabled:opacity-50 inline-flex items-center gap-1.5"
+                        title="Stand the call down — help is no longer needed"
+                      >
+                        <Ban size={13} /> Cancel call
                       </button>
                     </div>
                   )}
@@ -803,6 +1088,14 @@ export default function Andon() {
                   {call.status === 'resolved' && (
                     <div className="mt-auto text-xs text-green-400 space-y-0.5">
                       <p>Resolved{call.resolved_by ? ` by ${call.resolved_by}` : ''}</p>
+                      {/* Time to acknowledge, on a closed call — the number the
+                          plant is actually judged on. A call nobody ever
+                          acknowledged says so, rather than showing nothing. */}
+                      <p data-testid="closed-time-to-acknowledge" className={call.response_seconds === null ? 'text-gray-500' : 'text-gray-400'}>
+                        {call.response_seconds === null
+                          ? 'Nobody acknowledged this call'
+                          : `Acknowledged after ${formatAge(call.response_seconds)}${call.target_seconds ? ` of a ${fmtDuration(call.target_seconds)} target` : ''}`}
+                      </p>
                       {call.resolution && <p className="text-gray-500 line-clamp-2">{call.resolution}</p>}
                     </div>
                   )}
