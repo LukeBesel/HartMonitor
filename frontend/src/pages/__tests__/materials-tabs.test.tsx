@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 
 // ─── Eight destinations, one Materials screen ─────────────────────────────────
 //
@@ -21,7 +21,7 @@ const apiCalls: Record<string, unknown[][]> = {};
 /** Whatever a screen asks the server for, answered with a shape it can render.
  *  Anything unlisted answers with an empty list, which is a real state (a shop
  *  with no shipments yet) rather than a crash. */
-const API_RESULTS: Record<string, unknown> = {
+const BASE_RESULTS: Record<string, unknown> = {
   getInventoryTrackerSummary: {
     total_items: 2, total_value: 1200, low_stock: 1, out_of_stock: 0,
     today_receives: 0, today_consumes: 0,
@@ -94,11 +94,23 @@ const API_RESULTS: Record<string, unknown> = {
   },
 };
 
+/** The fixtures for one test. Reset before each, so a test that empties a list
+ *  to see an empty state cannot leak that into the next one. */
+const API_RESULTS: Record<string, unknown> = { ...BASE_RESULTS };
+
+/** Endpoints that should reject on their next call — for the "a load failed"
+ *  paths, which are the ones a screen most often lies about. */
+const failNext = new Set<string>();
+
 vi.mock('../../api/client', () => ({
   api: new Proxy({}, {
     get(_target, prop: string) {
       return (...args: unknown[]) => {
         (apiCalls[prop] ??= []).push(args);
+        if (failNext.has(prop)) {
+          failNext.delete(prop);
+          return Promise.reject(new Error(`${prop} is unavailable`));
+        }
         const result = API_RESULTS[prop];
         return Promise.resolve(result === undefined ? [] : result);
       };
@@ -107,11 +119,15 @@ vi.mock('../../api/client', () => ({
 }));
 
 let canEdit = true;
+let role: keyof typeof ROLE_RANK = 'manager';
+const ROLE_RANK = { viewer: 1, operator: 2, supervisor: 3, manager: 4, developer: 5 } as const;
 
 vi.mock('../../context/AuthContext', () => ({
   useAuth: () => ({
-    user: { id: 'u-1', email: 'a@b.c', display_name: 'Ana Diaz', role: 'manager' },
-    canEdit, loading: false, isAtLeast: () => true,
+    user: { id: 'u-1', email: 'a@b.c', display_name: 'Ana Diaz', role },
+    canEdit,
+    loading: false,
+    isAtLeast: (want: keyof typeof ROLE_RANK) => ROLE_RANK[role] >= ROLE_RANK[want],
   }),
 }));
 vi.mock('../../context/SiteContext', () => ({
@@ -131,14 +147,31 @@ vi.mock('../../components/shared/ModuleOnboarding', () => ({
 }));
 
 import Materials from '../Inventory';
-import { SECTIONS } from '../../config/navigation';
-import { resolveMaterialsTab, materialsTabPath } from '../../components/materials/materialsTabs';
+import { SECTIONS, findSectionForPath } from '../../config/navigation';
+import {
+  MATERIALS_SUPERVISOR_TABS, resolveMaterialsTab, materialsTabPath,
+} from '../../components/materials/materialsTabs';
+
+/** The URL the router is on, so a test can check what the screen put there. */
+let currentLocation = '';
+
+function LocationProbe() {
+  const loc = useLocation();
+  currentLocation = `${loc.pathname}${loc.search}`;
+  return null;
+}
+
+/** The URL the screen is on right now. */
+function currentUrl(): string {
+  return currentLocation;
+}
 
 /** The app's real inventory route table, so a URL is resolved here exactly the
  *  way App.tsx resolves it — including which parameter each path supplies. */
 function renderAt(url: string) {
   return render(
     <MemoryRouter initialEntries={[url]}>
+      <LocationProbe />
       <Routes>
         <Route path="/inventory" element={<Materials />} />
         <Route path="/inventory/boms" element={<Materials />} />
@@ -162,7 +195,12 @@ function activeTab(): string {
 
 beforeEach(() => {
   canEdit = true;
+  role = 'manager';
   for (const key of Object.keys(apiCalls)) delete apiCalls[key];
+  for (const key of Object.keys(API_RESULTS)) delete API_RESULTS[key];
+  Object.assign(API_RESULTS, BASE_RESULTS);
+  failNext.clear();
+  currentLocation = '';
   window.localStorage.clear();
 });
 
@@ -272,8 +310,16 @@ describe('one header and one filter bar, whichever tab is open', () => {
       // One heading, and it is the screen's name — not the old page's.
       expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1);
       expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Materials');
-      // And exactly one search box: the shared one.
-      expect(screen.getAllByLabelText('Search Materials')).toHaveLength(1);
+      // And at most one search box — the shared one. Stock opens on Overview,
+      // a rollup that reads nothing from the bar, so there the bar says so
+      // instead of offering a box that does not filter (N6).
+      const boxes = screen.queryAllByLabelText('Search Materials');
+      const isStockOverview = url === '/inventory';
+      expect(boxes).toHaveLength(isStockOverview ? 0 : 1);
+      if (isStockOverview) {
+        expect(within(screen.getByTestId('materials-filter-bar'))
+          .getByText(/Items and Min \/ Max/)).toBeTruthy();
+      }
     });
   }
 
@@ -297,8 +343,10 @@ describe('the shared filter bar', () => {
   it('re-asks the server when the Stock search moves', async () => {
     renderAt('/inventory');
     await waitFor(() => expect(apiCalls.getInventoryItems?.length).toBeGreaterThan(0));
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Stock views' }))
+      .getByRole('button', { name: /Items/ }));
 
-    fireEvent.change(screen.getByLabelText('Search Materials'), { target: { value: 'filler' } });
+    fireEvent.change(await screen.findByLabelText('Search Materials'), { target: { value: 'filler' } });
     await waitFor(() => {
       const calls = apiCalls.getInventoryItems!;
       const last = calls[calls.length - 1][0] as { search?: string };
@@ -416,10 +464,15 @@ describe('every action the seven pages carried is still on the screen', () => {
   });
 
   it('keeps the barcode scanner reachable from the one filter bar', async () => {
-    renderAt('/inventory');
-    await waitFor(() => expect(activeTab()).toContain('Stock'));
-    const bar = screen.getByTestId('materials-filter-bar');
-    expect(within(bar).getByRole('button', { name: 'Scan barcode' })).toBeTruthy();
+    // Its own control, not an icon inside the search box: Stock opens on the
+    // rollup, which has no box, and a scanned SKU is still a stock question.
+    for (const url of ['/inventory', '/shipments', '/inventory?tab=receiving']) {
+      renderAt(url);
+      await waitFor(() => expect(screen.getAllByTestId('materials-filter-bar').length)
+        .toBeGreaterThan(0));
+      const bar = screen.getAllByTestId('materials-filter-bar').slice(-1)[0];
+      expect(within(bar).getByRole('button', { name: 'Scan barcode' }), url).toBeTruthy();
+    }
   });
 
   it('shows a read-only account the screen without the write actions', async () => {
@@ -431,5 +484,317 @@ describe('every action the seven pages carried is still on the screen', () => {
     expect(within(header).queryByRole('button', { name: /Record Movement/ })).toBeNull();
     // Reading is still allowed, so the export stays.
     expect(within(header).getByRole('button', { name: /Export CSV/ })).toBeTruthy();
+  });
+});
+
+// ── 6. The one Refresh control actually drives the tab on screen ─────────────
+
+describe('the one Refresh control and the one poll', () => {
+  /** The endpoint each tab re-asks when it reloads. */
+  const RELOAD_CALL: Record<string, string> = {
+    '/inventory': 'getInventoryItems',
+    '/inventory?tab=receiving': 'getPurchaseOrders',
+    '/inventory/boms': 'getBOMs',
+    '/inventory/kitting': 'getKits',
+    '/inventory/kitting/kit-42': 'getKit',
+    '/requirements': 'getInventoryRequirements',
+    '/shipments': 'getShipments',
+    '/purchasing': 'getPurchaseOrders',
+    '/purchasing/vendors': 'getVendors',
+  };
+
+  for (const [url, call] of Object.entries(RELOAD_CALL)) {
+    it(`re-asks ${call} when Refresh is pressed on ${url}`, async () => {
+      // The shell resets its loader reference when the tab changes. Doing that
+      // in an effect made it run AFTER the incoming panel's own effects — React
+      // runs child effects first — so the panel registered its loader and the
+      // shell immediately threw it away, and Refresh did nothing at all.
+      renderAt(url);
+      await waitFor(() => expect(apiCalls[call]?.length).toBeGreaterThan(0));
+      const before = apiCalls[call]!.length;
+
+      const refresh = within(screen.getByTestId('materials-header'))
+        .getByRole('button', { name: /refresh/i });
+      fireEvent.click(refresh);
+
+      await waitFor(() => expect(apiCalls[call]!.length).toBeGreaterThan(before));
+    });
+  }
+
+  it('polls the tab on screen once per interval, and only once', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderAt('/inventory/kitting');
+      await waitFor(() => expect(apiCalls.getKits?.length).toBeGreaterThan(0));
+      const afterMount = apiCalls.getKits!.length;
+
+      // Kits used to run a 30s timer of its own ON TOP of the shell's 60s one,
+      // so this tab alone fetched on a schedule the freshness stamp never
+      // claimed. One timer now: nothing at 45s, exactly one poll by 65s.
+      await act(async () => { await vi.advanceTimersByTimeAsync(45_000); });
+      expect(apiCalls.getKits!.length).toBe(afterMount);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+      expect(apiCalls.getKits!.length).toBe(afterMount + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('says so when a load fails, instead of a stamp that never moves', async () => {
+    // And it must not read "No shipments yet" either: "we could not ask" and
+    // "there are none" are different facts.
+    failNext.add('getShipments');
+    renderAt('/shipments');
+    expect(await screen.findByText(/Could not refresh/)).toBeTruthy();
+    expect(screen.queryByText(/Updated/)).toBeNull();
+    expect(screen.queryByText(/No shipments yet/)).toBeNull();
+    expect(screen.getByText(/Could not load shipments/)).toBeTruthy();
+  });
+
+  it('says so on a failed requirements run too', async () => {
+    failNext.add('getInventoryRequirements');
+    renderAt('/requirements');
+    expect(await screen.findByText(/Could not refresh/)).toBeTruthy();
+  });
+});
+
+// ── 7. The counts the status chips carried are still on screen ──────────────
+
+describe('the status counts moved rather than disappearing', () => {
+  it('states every kit status, and how many of the loaded kits are showing', async () => {
+    renderAt('/inventory/kitting');
+    const line = await screen.findByText(/of 1 kit/);
+    // Counted off the loaded list — never a number the screen made up.
+    expect(line.textContent).toMatch(/1 of 1 kit/);
+    for (const status of ['open', 'picking', 'complete', 'short', 'cancelled']) {
+      expect(line.textContent, `kit status "${status}" is not counted`).toContain(status);
+    }
+    expect(line.textContent).toContain('1 open');
+  });
+
+  it('states all six shipment statuses', async () => {
+    renderAt('/shipments');
+    const line = await screen.findByText(/of 1 shipment/);
+    for (const label of ['pending', 'in transit', 'out for delivery', 'delivered', 'delayed', 'exception']) {
+      expect(line.textContent, `shipment status "${label}" is not counted`).toContain(label);
+    }
+    expect(line.textContent).toContain('1 in transit');
+  });
+
+  it('states required items and how many are short', async () => {
+    renderAt('/requirements');
+    const line = await screen.findByText(/item.* required/);
+    expect(line.textContent).toMatch(/1 of 1 item required/);
+    expect(line.textContent).toContain('1 short');
+  });
+});
+
+// ── 8. Three tabs still ask for a supervisor ────────────────────────────────
+
+describe('the gates the merged menu item could have thrown away', () => {
+  it('names the three tabs that ask for a supervisor', () => {
+    expect([...MATERIALS_SUPERVISOR_TABS]).toEqual(['boms', 'purchasing', 'requirements']);
+  });
+
+  it('shows an operator the four open tabs and none of the gated three', async () => {
+    role = 'operator';
+    renderAt('/inventory');
+    await waitFor(() => expect(activeTab()).toContain('Stock'));
+    const row = screen.getByRole('navigation', { name: 'Materials screens' });
+    expect(within(row).getAllByRole('button').map(b => b.textContent?.trim()))
+      .toEqual(['Stock', 'Kits', 'Receiving', 'Shipments']);
+  });
+
+  it('shows a supervisor all seven', async () => {
+    role = 'supervisor';
+    renderAt('/inventory');
+    await waitFor(() => expect(activeTab()).toContain('Stock'));
+    const row = screen.getByRole('navigation', { name: 'Materials screens' });
+    expect(within(row).getAllByRole('button')).toHaveLength(7);
+  });
+
+  it('turns an operator away from a gated URL, onto Stock, and says why', async () => {
+    role = 'operator';
+    renderAt('/purchasing');
+    await waitFor(() => expect(activeTab()).toContain('Stock'));
+    const notice = await screen.findByTestId('materials-denied-notice');
+    expect(notice.textContent).toContain('Purchasing');
+    expect(notice.textContent).toMatch(/supervisors and above/);
+    // And nothing was fetched for the tab they could not open.
+    expect(apiCalls.getPurchasingSummary).toBeUndefined();
+  });
+
+  it('lets a supervisor straight into the same URL', async () => {
+    role = 'supervisor';
+    renderAt('/purchasing');
+    await waitFor(() => expect(activeTab()).toContain('Purchasing'));
+    expect(screen.queryByTestId('materials-denied-notice')).toBeNull();
+  });
+
+  it('keeps the nav item ungated by role and Pro-gated as the tracker was', () => {
+    const materials = SECTIONS.find(s => s.id === 'inventory')!.items[0];
+    expect(materials.minRole).toBeUndefined();
+    expect(materials.proOnly).toBe(true);
+  });
+});
+
+// ── 9. One item owns every URL the seven handed out ─────────────────────────
+
+describe('the Materials item owns its alternate addresses', () => {
+  it('lists them on the item rather than in a side table', () => {
+    const materials = SECTIONS.find(s => s.id === 'inventory')!.items[0];
+    expect(materials.altPaths).toEqual(['/purchasing', '/shipments', '/requirements']);
+  });
+
+  it('resolves every one of them to the Inventory workspace', () => {
+    for (const url of [
+      '/inventory', '/inventory/boms', '/inventory/kitting/kit-42',
+      '/purchasing', '/purchasing/vendors', '/shipments', '/requirements',
+    ]) {
+      expect(findSectionForPath(url)?.id, url).toBe('inventory');
+    }
+  });
+});
+
+// ── 10. The empty states can start the thing they are empty of ──────────────
+
+describe('an empty tab offers the action that fills it', () => {
+  it('offers New Item from the Stock table, wired to the header form', async () => {
+    API_RESULTS.getInventoryItems = [];
+    renderAt('/inventory');
+    await waitFor(() => expect(activeTab()).toContain('Stock'));
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Stock views' }))
+      .getByRole('button', { name: /Items/ }));
+    const ctas = await screen.findAllByRole('button', { name: /New Item/ });
+    // One in the header, one in the empty table — both open the same form.
+    expect(ctas.length).toBeGreaterThan(1);
+    fireEvent.click(ctas[ctas.length - 1]);
+    expect(await screen.findByText('New Inventory Item')).toBeTruthy();
+  });
+
+  it('offers New PO from an empty purchase-order table', async () => {
+    API_RESULTS.getPurchaseOrders = [];
+    renderAt('/purchasing');
+    await waitFor(() => expect(activeTab()).toContain('Purchasing'));
+    const ctas = await screen.findAllByRole('button', { name: /New PO/ });
+    // One in the header, one in the empty state — both open the same form.
+    expect(ctas.length).toBeGreaterThan(1);
+    fireEvent.click(ctas[ctas.length - 1]);
+    expect(await screen.findByText('New Purchase Order')).toBeTruthy();
+  });
+
+  it('offers Add Shipment from an empty shipment list', async () => {
+    API_RESULTS.getShipments = [];
+    renderAt('/shipments');
+    await waitFor(() => expect(activeTab()).toContain('Shipments'));
+    const ctas = await screen.findAllByRole('button', { name: /Add Shipment/ });
+    expect(ctas.length).toBeGreaterThan(1);
+  });
+
+  it('offers a read-only account none of them', async () => {
+    canEdit = false;
+    API_RESULTS.getShipments = [];
+    renderAt('/shipments');
+    await waitFor(() => expect(activeTab()).toContain('Shipments'));
+    expect(screen.queryByRole('button', { name: /Add Shipment/ })).toBeNull();
+  });
+
+  it('hides the receiving kiosk from an account that cannot write', async () => {
+    canEdit = false;
+    renderAt('/inventory?tab=receiving');
+    await waitFor(() => expect(activeTab()).toContain('Receiving'));
+    expect(screen.queryByRole('button', { name: /Open the kiosk/ })).toBeNull();
+
+    canEdit = true;
+    renderAt('/inventory?tab=receiving');
+    await waitFor(() => expect(
+      screen.getAllByRole('button', { name: /Open the kiosk/ }).length,
+    ).toBeGreaterThan(0));
+  });
+});
+
+// ── 11. A filtered view is a link ───────────────────────────────────────────
+
+describe('the filter bar is shareable and survives a reload', () => {
+  it('waits for a pause before re-asking the server', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderAt('/inventory');
+      await waitFor(() => expect(apiCalls.getInventoryItems?.length).toBeGreaterThan(0));
+      fireEvent.click(within(screen.getByRole('navigation', { name: 'Stock views' }))
+        .getByRole('button', { name: /Items/ }));
+      const before = apiCalls.getInventoryItems!.length;
+
+      const box = screen.getByLabelText('Search Materials');
+      for (const value of ['f', 'fi', 'fil', 'fill']) {
+        fireEvent.change(box, { target: { value } });
+        await act(async () => { await vi.advanceTimersByTimeAsync(80); });
+      }
+      // Four keystrokes inside the window are one question, not four.
+      expect(apiCalls.getInventoryItems!.length).toBe(before);
+
+      await act(async () => { await vi.advanceTimersByTimeAsync(300); });
+      await waitFor(() => {
+        const calls = apiCalls.getInventoryItems!;
+        expect((calls[calls.length - 1][0] as { search?: string }).search).toBe('fill');
+      });
+      expect(apiCalls.getInventoryItems!.length).toBe(before + 1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('puts the filters in the URL so the view can be sent to someone', async () => {
+    renderAt('/shipments');
+    await waitFor(() => expect(activeTab()).toContain('Shipments'));
+    fireEvent.change(screen.getByLabelText('Search Materials'), { target: { value: 'ups' } });
+    fireEvent.change(screen.getByLabelText('Filter by status'), { target: { value: 'delivered' } });
+    await waitFor(() => {
+      const url = currentUrl();
+      expect(url).toContain('q=ups');
+      expect(url).toContain('status=delivered');
+    });
+  });
+
+  it('opens a shared link on the slice it names', async () => {
+    renderAt('/shipments?q=ups&status=delivered');
+    await waitFor(() => expect(activeTab()).toContain('Shipments'));
+    expect((screen.getByLabelText('Search Materials') as HTMLInputElement).value).toBe('ups');
+    expect((screen.getByLabelText('Filter by status') as HTMLSelectElement).value).toBe('delivered');
+  });
+});
+
+// ── 12. Stock's rollup views are not offered controls they ignore ───────────
+
+describe('the filter bar offers only what the open view reads', () => {
+  it('gives Overview no search box, category picker or status picker', async () => {
+    renderAt('/inventory');
+    await waitFor(() => expect(activeTab()).toContain('Stock'));
+    expect(screen.queryByLabelText('Search Materials')).toBeNull();
+    expect(screen.queryByLabelText('Filter by category')).toBeNull();
+    expect(screen.queryByLabelText('Filter by status')).toBeNull();
+    // The bar itself is still there, saying where its controls apply.
+    expect(screen.getAllByTestId('materials-filter-bar')).toHaveLength(1);
+  });
+
+  it('gives Items all three', async () => {
+    renderAt('/inventory');
+    await waitFor(() => expect(activeTab()).toContain('Stock'));
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Stock views' }))
+      .getByRole('button', { name: /Items/ }));
+    await waitFor(() => expect(screen.getByLabelText('Search Materials')).toBeTruthy());
+    expect(screen.getByLabelText('Filter by category')).toBeTruthy();
+    expect(screen.getByLabelText('Filter by status')).toBeTruthy();
+  });
+
+  it('takes them away again on Locations', async () => {
+    renderAt('/inventory');
+    await waitFor(() => expect(activeTab()).toContain('Stock'));
+    const views = () => screen.getByRole('navigation', { name: 'Stock views' });
+    fireEvent.click(within(views()).getByRole('button', { name: /Items/ }));
+    await waitFor(() => expect(screen.getByLabelText('Search Materials')).toBeTruthy());
+    fireEvent.click(within(views()).getByRole('button', { name: /Locations/ }));
+    await waitFor(() => expect(screen.queryByLabelText('Search Materials')).toBeNull());
   });
 });

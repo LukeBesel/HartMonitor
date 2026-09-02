@@ -4,7 +4,7 @@ import { api } from '../../api/client';
 import ActivityLog from '../shared/ActivityLog';
 import { useAuth } from '../../context/AuthContext';
 import {
-  Plus, Search, Download, Eye, Trash2, Send, Package, Star,
+  Plus, Eye, Trash2, Send, Package, Star,
   X, CheckCircle, Building2, Phone,
   Mail, Clock, Edit2, TrendingUp, ShoppingCart, History,
 } from 'lucide-react';
@@ -895,17 +895,19 @@ function PODetailModal({
 // ── Purchase Orders Tab ───────────────────────────────────────────────────────
 
 function PurchaseOrdersTab({
-  vendors, search, statusFilter, createOpen, onCreateClose, onRegisterRefresh, onLoaded,
+  vendors, search, statusFilter, createOpen, onCreateOpen, onCreateClose,
+  onRegisterRefresh, onLoaded,
 }: {
   vendors: Vendor[];
   /** The Materials filter bar: PO number / vendor text, and the status picker. */
   search: string;
   statusFilter: string;
-  /** The header's "New PO" button. */
+  /** The header's "New PO" button, and the way the empty state opens it. */
   createOpen: boolean;
+  onCreateOpen: () => void;
   onCreateClose: () => void;
-  onRegisterRefresh: (fn: () => Promise<void>) => void;
-  onLoaded: () => void;
+  onRegisterRefresh: (fn: () => Promise<void>) => () => void;
+  onLoaded: (ok?: boolean) => void;
 }) {
   const { canEdit } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -936,13 +938,14 @@ function PurchaseOrdersTab({
       onLoaded();
     } catch (e: any) {
       setLoadError(e.message || 'Failed to load purchase orders');
+      onLoaded(false);
     } finally {
       setLoading(false);
     }
   }, [statusFilter, search, onLoaded]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { onRegisterRefresh(load); }, [onRegisterRefresh, load]);
+  useEffect(() => onRegisterRefresh(load), [onRegisterRefresh, load]);
 
   async function handleCreate(data: CreatePOForm) {
     await api.createPurchaseOrder({
@@ -1010,6 +1013,11 @@ function PurchaseOrdersTab({
                           ? 'Try adjusting your filters or search'
                           : 'Create your first PO to get started'}
                       </div>
+                      {canEdit && statusFilter === 'All' && !search && (
+                        <button className="btn-primary mt-3" onClick={onCreateOpen}>
+                          <Plus className="w-4 h-4" /> New PO
+                        </button>
+                      )}
 
                     </td>
                   </tr>
@@ -1083,16 +1091,18 @@ function VendorPOsList({ vendorId, vendorName }: { vendorId: string; vendorName:
 // ── Vendors Tab ───────────────────────────────────────────────────────────────
 
 function VendorsTab({
-  onVendorsChange, search, createOpen, onCreateClose, onRegisterRefresh, onLoaded,
+  onVendorsChange, search, createOpen, onCreateOpen, onCreateClose,
+  onRegisterRefresh, onLoaded,
 }: {
   onVendorsChange: (vendors: Vendor[]) => void;
   /** The Materials filter bar's text, matched against vendor names. */
   search: string;
-  /** The header's "New Vendor" button. */
+  /** The header's "New Vendor" button, and the way the empty state opens it. */
   createOpen: boolean;
+  onCreateOpen: () => void;
   onCreateClose: () => void;
-  onRegisterRefresh: (fn: () => Promise<void>) => void;
-  onLoaded: () => void;
+  onRegisterRefresh: (fn: () => Promise<void>) => () => void;
+  onLoaded: (ok?: boolean) => void;
 }) {
   const { canEdit } = useAuth();
   const [vendors, setVendors] = useState<Vendor[]>([]);
@@ -1111,13 +1121,14 @@ function VendorsTab({
       onLoaded();
     } catch (e: any) {
       setLoadError(e.message || 'Failed to load vendors');
+      onLoaded(false);
     } finally {
       setLoading(false);
     }
   }, [search, onVendorsChange, onLoaded]);
 
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { onRegisterRefresh(load); }, [onRegisterRefresh, load]);
+  useEffect(() => onRegisterRefresh(load), [onRegisterRefresh, load]);
 
   async function handleCreate(data: VendorFormData) {
     await api.createVendor(data);
@@ -1165,6 +1176,11 @@ function VendorsTab({
           <div className="text-gray-500 text-xs mt-1">
             {search ? 'Try a different search' : 'Add your first vendor to start purchasing'}
           </div>
+          {canEdit && !search && (
+            <button className="btn-primary mt-3" onClick={onCreateOpen}>
+              <Plus className="w-4 h-4" /> New Vendor
+            </button>
+          )}
 
         </div>
       ) : (
@@ -1299,16 +1315,19 @@ export interface PurchasingPanelProps {
   /** The Materials filter bar: text, and (on Orders) the PO status picker. */
   search: string;
   statusFilter: string;
+  /** Whether this account may write — drives each view's empty-state CTA. */
+  canCreate: boolean;
   /** The header's "New PO" / "New Vendor" button. */
   createOpen: boolean;
+  onCreateOpen: () => void;
   onCreateClose: () => void;
-  onRegisterRefresh: (fn: () => Promise<void>) => void;
-  onLoaded: () => void;
+  onRegisterRefresh: (fn: () => Promise<void>) => () => void;
+  onLoaded: (ok?: boolean) => void;
 }
 
 export default function PurchasingPanel({
-  view, onViewChange, search, statusFilter,
-  createOpen, onCreateClose, onRegisterRefresh, onLoaded,
+  view, onViewChange, search, statusFilter, canCreate,
+  createOpen, onCreateOpen, onCreateClose, onRegisterRefresh, onLoaded,
 }: PurchasingPanelProps) {
   const [vendors, setVendors] = useState<Vendor[]>([]);
 
@@ -1347,6 +1366,7 @@ export default function PurchasingPanel({
           search={search}
           statusFilter={statusFilter}
           createOpen={createOpen}
+          onCreateOpen={onCreateOpen}
           onCreateClose={onCreateClose}
           onRegisterRefresh={onRegisterRefresh}
           onLoaded={onLoaded}
@@ -1357,6 +1377,7 @@ export default function PurchasingPanel({
           onVendorsChange={setVendors}
           search={search}
           createOpen={createOpen}
+          onCreateOpen={onCreateOpen}
           onCreateClose={onCreateClose}
           onRegisterRefresh={onRegisterRefresh}
           onLoaded={onLoaded}

@@ -705,8 +705,9 @@ function DetailPanel({ itemId, onClose, onEdit, onRefreshList, canEdit }: {
 }
 
 /** The five views inside Stock. Receiving used to be a sixth; it is a tab of
- *  the Materials screen itself now. */
-type StockView = 'overview' | 'items' | 'minmax' | 'movements' | 'locations';
+ *  the Materials screen itself now. Lifted to the shell so the shared filter
+ *  bar knows which of them actually reads from it. */
+export type StockView = 'overview' | 'items' | 'minmax' | 'movements' | 'locations';
 
 // ─── Overview Tab ─────────────────────────────────────────────────────────────
 
@@ -1261,6 +1262,14 @@ function MovementsTab({
 export interface StockPanelProps {
   /** `/inventory/:itemId` — the item whose detail panel is open, if any. */
   itemId?: string;
+  /** Which of the five views is open. The shell owns it so the shared filter
+   *  bar can offer the controls the open view uses, and none that it doesn't. */
+  view: StockView;
+  onViewChange: (view: StockView) => void;
+  /** Whether this account may write — drives the empty state's own CTA. */
+  canCreate: boolean;
+  /** Opens the same New Item form the header's button opens. */
+  onCreateOpen: () => void;
   /** The Materials filter bar: free text, category, and the low-stock switch. */
   search: string;
   category: string;
@@ -1279,19 +1288,21 @@ export interface StockPanelProps {
   recordOpen: boolean;
   onRecordOpen: () => void;
   onRecordClose: () => void;
-  /** Hands the shell this panel's loader, so one Refresh control serves them all. */
-  onRegisterRefresh: (fn: () => Promise<void>) => void;
-  /** Called after every successful load, to move the shared freshness stamp. */
-  onLoaded: () => void;
+  /** Hands the shell this panel's loader and takes back the way to withdraw
+   *  it, so the shell's one Refresh control always holds a live loader. */
+  onRegisterRefresh: (fn: () => Promise<void>) => () => void;
+  /** Called after every load, to move (or stall) the shared freshness stamp. */
+  onLoaded: (ok?: boolean) => void;
 }
 
 export default function StockPanel({
-  itemId, search, category, lowStockOnly,
+  itemId, view, onViewChange, search, category, lowStockOnly,
   onCategories, onItemCount, onSelectItem,
-  createOpen, onCreateClose, recordOpen, onRecordOpen, onRecordClose,
+  canCreate, createOpen, onCreateOpen, onCreateClose,
+  recordOpen, onRecordOpen, onRecordClose,
   onRegisterRefresh, onLoaded,
 }: StockPanelProps) {
-  const [view, setView] = useState<StockView>('overview');
+  const setView = onViewChange;
 
   const [trackerSummary, setTrackerSummary] = useState<InventoryTrackerSummary | null>(null);
   const [summaryLoading, setSummaryLoading] = useState(true);
@@ -1335,20 +1346,21 @@ export default function StockPanel({
   const loadAll = useCallback(async (silent = true) => {
     setMovementsReloadKey(k => k + 1);
     const [s, i] = await Promise.allSettled([loadSummary(silent), loadItems(silent)]);
-    if (s.status === 'rejected' && i.status === 'rejected') throw s.reason;
-    onLoaded();
+    const failed = s.status === 'rejected' && i.status === 'rejected';
+    onLoaded(!failed);
+    if (failed) throw s.reason;
   }, [loadSummary, loadItems, onLoaded]);
 
   // Loads on mount and whenever a filter above the page moves.
   useEffect(() => { loadAll(false).catch(() => {}); }, [loadAll]);
 
   const silentReload = useCallback(async () => { await loadAll(true).catch(() => {}); }, [loadAll]);
-  useEffect(() => { onRegisterRefresh(silentReload); }, [onRegisterRefresh, silentReload]);
+  useEffect(() => onRegisterRefresh(silentReload), [onRegisterRefresh, silentReload]);
 
   useEffect(() => { onItemCount(items.length); }, [items.length, onItemCount]);
 
   // Deep-linked item detail forces the Items view so the panel is visible.
-  useEffect(() => { if (itemId) setView('items'); }, [itemId]);
+  useEffect(() => { if (itemId) setView('items'); }, [itemId, setView]);
 
   const handleLoadSampleData = async () => {
     setLoadingSample(true);
@@ -1506,11 +1518,19 @@ export default function StockPanel({
                           <p className="text-xs text-gray-400">
                             {search || category || lowStockOnly ? 'Try adjusting your filters' : 'Get started by adding your first item'}
                           </p>
-                          {!search && !category && !lowStockOnly && canEdit && isAtLeast('manager') && (
-                            <button onClick={handleLoadSampleData} disabled={loadingSample} className="btn-secondary mt-1">
-                              {loadingSample ? <RefreshCw size={14} className="animate-spin" /> : <Database size={14} />}
-                              Load Sample Data
-                            </button>
+                          {!search && !category && !lowStockOnly && canCreate && (
+                            <div className="flex items-center justify-center gap-2 mt-1">
+                              <button onClick={onCreateOpen} className="btn-primary">
+                                <Plus size={14} />
+                                New Item
+                              </button>
+                              {isAtLeast('manager') && (
+                                <button onClick={handleLoadSampleData} disabled={loadingSample} className="btn-secondary">
+                                  {loadingSample ? <RefreshCw size={14} className="animate-spin" /> : <Database size={14} />}
+                                  Load Sample Data
+                                </button>
+                              )}
+                            </div>
                           )}
                           {sampleError && (
                             <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2 mt-1 max-w-sm mx-auto">{sampleError}</p>

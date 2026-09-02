@@ -245,8 +245,8 @@ export interface RequirementsPanelProps {
   showShortagesOnly: boolean;
   /** Reports the loaded rows so the header's Export CSV has something to write. */
   onItems: (items: RequirementItem[]) => void;
-  onRegisterRefresh: (fn: () => Promise<void>) => void;
-  onLoaded: () => void;
+  onRegisterRefresh: (fn: () => Promise<void>) => () => void;
+  onLoaded: (ok?: boolean) => void;
 }
 
 export default function RequirementsPanel({
@@ -264,6 +264,7 @@ export default function RequirementsPanel({
       onLoaded();
     } catch (e: any) {
       setError(e.message || 'Failed to load requirements');
+      onLoaded(false);
     }
   }, [onLoaded]);
 
@@ -272,7 +273,7 @@ export default function RequirementsPanel({
     loadData().finally(() => setLoading(false));
   }, [loadData]);
 
-  useEffect(() => { onRegisterRefresh(loadData); }, [onRegisterRefresh, loadData]);
+  useEffect(() => onRegisterRefresh(loadData), [onRegisterRefresh, loadData]);
 
   const items = useMemo(() => data?.items ?? [], [data]);
   const summary = data?.summary;
@@ -383,9 +384,12 @@ export default function RequirementsPanel({
                 <RequirementRow key={`${item.name}-${i}`} item={item} />
               ))}
 
-            <div className="text-xs text-gray-400 text-center pt-2">
-              {filteredItems.length} item{filteredItems.length !== 1 ? 's' : ''}
-              {showShortagesOnly ? ' with shortages' : ' required'}
+            {/* The All / Shortages pair carried its counts on the buttons; the
+                picker in the shared filter bar has nowhere to put them, so both
+                live here, counted off the loaded list. */}
+            <div className="text-xs text-gray-400 text-center pt-2 [font-variant-numeric:tabular-nums]">
+              {filteredItems.length} of {items.length} item{items.length !== 1 ? 's' : ''} required
+              {' · '}{items.filter(i => i.shortage > 0).length} short
             </div>
           </div>
         )}

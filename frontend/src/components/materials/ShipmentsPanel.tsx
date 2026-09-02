@@ -3,7 +3,7 @@ import { api } from '../../api/client';
 import { useAuth } from '../../context/AuthContext';
 import {
   Truck, Plus, X, Trash2, Edit2, AlertTriangle, CheckCircle,
-  Package, Clock, MapPin, RefreshCw,
+  Package, Clock, MapPin,
 } from 'lucide-react';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -453,15 +453,17 @@ export interface ShipmentsPanelProps {
   /** The Materials filter bar: carrier / tracking text, and the status picker. */
   search: string;
   statusFilter: string;
-  /** The header's "Add Shipment" button. */
+  /** The header's "Add Shipment" button, and the way the empty state opens it. */
   createOpen: boolean;
+  onCreateOpen: () => void;
   onCreateClose: () => void;
-  onRegisterRefresh: (fn: () => Promise<void>) => void;
-  onLoaded: () => void;
+  onRegisterRefresh: (fn: () => Promise<void>) => () => void;
+  onLoaded: (ok?: boolean) => void;
 }
 
 export default function ShipmentsPanel({
-  search, statusFilter, createOpen, onCreateClose, onRegisterRefresh, onLoaded,
+  search, statusFilter, createOpen, onCreateOpen, onCreateClose,
+  onRegisterRefresh, onLoaded,
 }: ShipmentsPanelProps) {
   const { canEdit } = useAuth();
   const [shipments, setShipments] = useState<Shipment[]>([]);
@@ -473,8 +475,12 @@ export default function ShipmentsPanel({
 
   const loadData = useCallback(async () => {
     try {
+      // The shipment list is the answer; the purchase orders only decorate it
+      // with a PO number. So a failed shipment fetch is reported, and a failed
+      // PO fetch is not — this used to swallow both and render "No shipments
+      // yet", which is a different fact from "we could not ask".
       const [shipmentsData, posData] = await Promise.all([
-        api.getShipments().catch(() => []),
+        api.getShipments(),
         api.getPurchaseOrders().catch(() => []),
       ]);
       setShipments(shipmentsData ?? []);
@@ -483,6 +489,7 @@ export default function ShipmentsPanel({
       onLoaded();
     } catch (e: any) {
       setError(e.message || 'Failed to load shipments');
+      onLoaded(false);
     }
   }, [onLoaded]);
 
@@ -491,7 +498,7 @@ export default function ShipmentsPanel({
     loadData().finally(() => setLoading(false));
   }, [loadData]);
 
-  useEffect(() => { onRegisterRefresh(loadData); }, [onRegisterRefresh, loadData]);
+  useEffect(() => onRegisterRefresh(loadData), [onRegisterRefresh, loadData]);
 
   const handleCreate = async (data: ShipmentFormData) => {
     await api.createShipment({
@@ -583,6 +590,11 @@ export default function ShipmentsPanel({
                   : 'Try a different status or clear the search above'}
               </div>
             </div>
+            {canEdit && statusFilter === 'All' && !q && (
+              <button className="btn-primary mt-2" onClick={onCreateOpen}>
+                <Plus className="w-4 h-4" /> Add Shipment
+              </button>
+            )}
           </div>
         ) : (
           <div className="space-y-3">
@@ -595,9 +607,15 @@ export default function ShipmentsPanel({
                 onDelete={() => setDeleting(s)}
               />
             ))}
-            <div className="text-xs text-gray-400 text-center pt-2">
-              {enriched.length} shipment{enriched.length !== 1 ? 's' : ''}
-              {statusFilter !== 'All' ? ` · ${FILTER_LABELS[statusFilter]}` : ''}
+            {/* The status chips carried a count each; the picker in the shared
+                filter bar has nowhere to put them, so all six live here,
+                counted off the loaded list. */}
+            <div className="text-xs text-gray-400 text-center pt-2 [font-variant-numeric:tabular-nums]">
+              {enriched.length} of {shipments.length} shipment{shipments.length !== 1 ? 's' : ''}
+              {STATUS_FILTERS
+                .filter((st): st is ShipmentStatus => st !== 'All')
+                .map(st => ` · ${shipments.filter(sh => sh.status === st).length} ${FILTER_LABELS[st].toLowerCase()}`)
+                .join('')}
             </div>
           </div>
         )}

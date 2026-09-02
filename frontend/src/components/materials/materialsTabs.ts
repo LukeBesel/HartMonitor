@@ -52,6 +52,28 @@ export function isMaterialsTab(value: string | null | undefined): value is Mater
   return !!value && (MATERIALS_TABS as readonly string[]).includes(value);
 }
 
+/**
+ * The tabs that ask for a supervisor, and the role they ask for.
+ *
+ * Collapsing eight menu items into one could have merged their gates away with
+ * them: three of the retired items carried `minRole: 'supervisor'` (bills of
+ * material, purchasing, requirements) and four did not. The nav item is
+ * ungated so the four open tabs stay open to every role; the gate lives here
+ * instead, and the screen both hides these tabs and turns their URLs away.
+ */
+export const MATERIALS_SUPERVISOR_TABS: readonly MaterialsTab[] = ['boms', 'purchasing', 'requirements'];
+export const MATERIALS_SUPERVISOR_ROLE = 'supervisor' as const;
+
+/** Can somebody with this role reach `tab`? `isAtLeast` is useAuth's — typed by
+ *  the one role it is asked about, so the wider callback from the context
+ *  satisfies it. */
+export function canSeeMaterialsTab(
+  tab: MaterialsTab,
+  isAtLeast: (role: typeof MATERIALS_SUPERVISOR_ROLE) => boolean,
+): boolean {
+  return !MATERIALS_SUPERVISOR_TABS.includes(tab) || isAtLeast(MATERIALS_SUPERVISOR_ROLE);
+}
+
 /** True when `pathname` is `prefix` itself or a route underneath it. */
 function under(pathname: string, prefix: string): boolean {
   return pathname === prefix || pathname.startsWith(`${prefix}/`);

@@ -210,10 +210,11 @@ function POReceiveCard({ po, onReceived }: { po: PurchaseOrder; onReceived: () =
 export interface ReceivingPanelProps {
   /** The shared filter bar's text, matched against PO number and vendor. */
   search: string;
-  /** Hands the shell this panel's loader so one Refresh control serves them all. */
-  onRegisterRefresh: (fn: () => Promise<void>) => void;
-  /** Called after every successful load, to move the shared freshness stamp. */
-  onLoaded: () => void;
+  /** Hands the shell this panel's loader and takes back the way to withdraw
+   *  it, so the shell's one Refresh control always holds a live loader. */
+  onRegisterRefresh: (fn: () => Promise<void>) => () => void;
+  /** Called after every load, to move (or stall) the shared freshness stamp. */
+  onLoaded: (ok?: boolean) => void;
   /** Sends the reader to the Purchasing tab — there is no page to link to now. */
   onOpenPurchasing: () => void;
 }
@@ -261,6 +262,7 @@ export default function ReceivingPanel({
       onLoaded();
     } catch (e: any) {
       setError(e.message || 'Failed to load purchase orders');
+      onLoaded(false);
     }
   }, [onLoaded]);
 
@@ -269,7 +271,7 @@ export default function ReceivingPanel({
     loadPOs().finally(() => setLoading(false));
   }, [loadPOs]);
 
-  useEffect(() => { onRegisterRefresh(loadPOs); }, [onRegisterRefresh, loadPOs]);
+  useEffect(() => onRegisterRefresh(loadPOs), [onRegisterRefresh, loadPOs]);
 
   // The heading, the freshness stamp and the Refresh button all live once, in
   // the Materials header above this panel.

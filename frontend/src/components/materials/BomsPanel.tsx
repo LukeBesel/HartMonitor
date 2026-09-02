@@ -139,10 +139,11 @@ function ItemTypeahead({ onPick }: { onPick: (item: ItemRow) => void }) {
 export interface BomsPanelProps {
   /** The Materials filter bar's text, matched against product-type names. */
   search: string;
-  /** Hands the shell this panel's loader, so one Refresh control serves them all. */
-  onRegisterRefresh: (fn: () => Promise<void>) => void;
-  /** Called after every successful load, to move the shared freshness stamp. */
-  onLoaded: () => void;
+  /** Hands the shell this panel's loader and takes back the way to withdraw
+   *  it, so the shell's one Refresh control always holds a live loader. */
+  onRegisterRefresh: (fn: () => Promise<void>) => () => void;
+  /** Called after every load, to move (or stall) the shared freshness stamp. */
+  onLoaded: (ok?: boolean) => void;
 }
 
 export default function BomsPanel({ search, onRegisterRefresh, onLoaded }: BomsPanelProps) {
@@ -223,6 +224,7 @@ export default function BomsPanel({ search, onRegisterRefresh, onLoaded }: BomsP
       });
     } catch (e) {
       setLoadError(e instanceof Error ? e.message : 'Failed to load product types');
+      onLoaded(false);
     } finally {
       setLoadingSide(false);
     }
@@ -233,7 +235,7 @@ export default function BomsPanel({ search, onRegisterRefresh, onLoaded }: BomsP
   useEffect(() => { loadSide(selectedAppId); }, [selectedAppId, loadSide]);
 
   const reload = useCallback(async () => { await loadSide(selectedAppId); }, [loadSide, selectedAppId]);
-  useEffect(() => { onRegisterRefresh(reload); }, [onRegisterRefresh, reload]);
+  useEffect(() => onRegisterRefresh(reload), [onRegisterRefresh, reload]);
 
   // Versions for the selected product type, newest first.
   const versions = useMemo(

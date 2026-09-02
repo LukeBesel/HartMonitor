@@ -3,7 +3,6 @@ import { api } from '../../api/client';
 import type { Kit, KitLine, KitLineStatus, KitStatus } from '../../types';
 import { useToast } from '../../context/ToastContext';
 import EmptyState from '../shared/EmptyState';
-import { useAutoRefresh } from '../../hooks/useAutoRefresh';
 import {
   PackageOpen, ArrowLeft, Check, CheckCircle, Flag, RotateCcw,
   AlertTriangle, X, MapPin, ChevronRight,
@@ -118,8 +117,8 @@ function ShortDialog({ line, onConfirm, onClose, busy }: {
 function KitDetailView({ kitId, onBack, onRegisterRefresh, onLoaded }: {
   kitId: string;
   onBack: () => void;
-  onRegisterRefresh: (fn: () => Promise<void>) => void;
-  onLoaded: () => void;
+  onRegisterRefresh: (fn: () => Promise<void>) => () => void;
+  onLoaded: (ok?: boolean) => void;
 }) {
   const { addToast } = useToast();
   const [kit, setKit] = useState<KitDetail | null>(null);
@@ -137,13 +136,14 @@ function KitDetailView({ kitId, onBack, onRegisterRefresh, onLoaded }: {
       onLoaded();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load kit');
+      onLoaded(false);
     } finally {
       setLoading(false);
     }
   }, [kitId, onLoaded]);
 
   useEffect(() => { setLoading(true); load(); }, [load]);
-  useEffect(() => { onRegisterRefresh(load); }, [onRegisterRefresh, load]);
+  useEffect(() => onRegisterRefresh(load), [onRegisterRefresh, load]);
 
   const updateLine = async (line: KitLine, status: KitLineStatus, qtyPicked?: number, shortReason?: string) => {
     setBusyLineId(line.id);
@@ -384,8 +384,8 @@ function KitListView({ onOpen, search, statusFilter, onRegisterRefresh, onLoaded
   /** The Materials filter bar's text, matched against work order and part. */
   search: string;
   statusFilter: 'all' | KitStatus;
-  onRegisterRefresh: (fn: () => Promise<void>) => void;
-  onLoaded: () => void;
+  onRegisterRefresh: (fn: () => Promise<void>) => () => void;
+  onLoaded: (ok?: boolean) => void;
 }) {
   const [kits, setKits] = useState<KitListRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -399,16 +399,17 @@ function KitListView({ onOpen, search, statusFilter, onRegisterRefresh, onLoaded
       onLoaded();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load kits');
-      throw e;
+      onLoaded(false);
     } finally {
       setLoading(false);
     }
   }, [onLoaded]);
 
-  // Shortages appear as soon as material moves — 30s while the tab is visible.
-  const auto = useAutoRefresh(load, 30_000);
-  const refresh = auto.refresh;
-  useEffect(() => { onRegisterRefresh(refresh); }, [onRegisterRefresh, refresh]);
+  // No poll of its own. Every tab of the Materials screen is refreshed by the
+  // one control in its header and the one timer behind it — a second timer
+  // here meant this tab, alone, fetched twice as often as the stamp claimed.
+  useEffect(() => { setLoading(true); void load(); }, [load]);
+  useEffect(() => onRegisterRefresh(load), [onRegisterRefresh, load]);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -420,6 +421,17 @@ function KitListView({ onOpen, search, statusFilter, onRegisterRefresh, onLoaded
         || (k.part_number ?? '').toLowerCase().includes(q);
     });
   }, [kits, statusFilter, search]);
+
+  // The status chips carried a count each; the picker in the shared filter bar
+  // has nowhere to put them, so they live here — counted off the loaded list,
+  // every one of them, so "no kits are short" is stated rather than implied by
+  // an absence.
+  const byStatus = useMemo(
+    () => KIT_STATUS_FILTERS
+      .filter((st): st is KitStatus => st !== 'all')
+      .map(st => ({ status: st, count: kits.filter(k => k.status === st).length })),
+    [kits],
+  );
 
   if (loading) {
     return (
@@ -434,7 +446,7 @@ function KitListView({ onOpen, search, statusFilter, onRegisterRefresh, onLoaded
         <AlertTriangle size={28} className="text-red-400" />
         <p className="text-gray-500 font-medium">Couldn't load kits</p>
         <p className="text-xs text-gray-400">{error}</p>
-        <button onClick={() => { setLoading(true); void auto.refresh(); }} className="btn-secondary">Retry</button>
+        <button onClick={() => { setLoading(true); void load(); }} className="btn-secondary">Retry</button>
       </div>
     );
   }
@@ -515,6 +527,10 @@ function KitListView({ onOpen, search, statusFilter, onRegisterRefresh, onLoaded
               </tbody>
             </table>
           </div>
+          <div className="px-4 py-2.5 border-t border-gray-100 text-xs text-gray-400 [font-variant-numeric:tabular-nums]">
+            {filtered.length} of {kits.length} kit{kits.length !== 1 ? 's' : ''}
+            {byStatus.map(s => ` · ${s.count} ${s.status}`).join('')}
+          </div>
         </div>
       )}
     </div>
@@ -531,8 +547,8 @@ export interface KitsPanelProps {
   /** The Materials filter bar's text and status picker. */
   search: string;
   statusFilter: 'all' | KitStatus;
-  onRegisterRefresh: (fn: () => Promise<void>) => void;
-  onLoaded: () => void;
+  onRegisterRefresh: (fn: () => Promise<void>) => () => void;
+  onLoaded: (ok?: boolean) => void;
 }
 
 export default function KitsPanel({

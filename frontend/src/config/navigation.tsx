@@ -15,6 +15,11 @@ import { useModules } from '../context/ModulesContext';
 export type NavItem = {
   to: string; icon: React.ElementType; label: string;
   exact?: boolean; proOnly?: boolean; minRole?: string;
+  /** Other paths this one item owns, for a screen reached by more than one URL.
+   *  Materials is one screen at /inventory with seven tabs, but /purchasing,
+   *  /shipments and /requirements are addresses its retired menu items handed
+   *  out and still render it — the workspace has to stay lit on all of them. */
+  altPaths?: string[];
   /** Items that can't be hidden and always show regardless of workspace. */
   pinned?: boolean;
   /** Opens a full-screen experience outside the management shell (e.g. the
@@ -164,12 +169,19 @@ export const SECTIONS: NavSection[] = [
       // built for switch it off. Not `exact`: the item has to stay lit on
       // /inventory/boms and on the kit URL a traveller's barcode prints.
       //
-      // The merged item carries the MOST PERMISSIVE gate of the seven it
-      // replaces — no `proOnly` (two of them were open to Free accounts) and no
-      // `minRole` (one of them asked for none). Anything stricter would take
-      // away a screen somebody can reach today; the tabs behind it are what
-      // they always were.
-      { to: '/inventory',     icon: Package,       label: 'Materials', module: 'inventory' },
+      // Gating moved DOWN a level rather than being merged away. The item keeps
+      // the `proOnly` the stock tracker always had, and carries NO `minRole`,
+      // because four of its seven tabs were open to every role and a role gate
+      // here would take the whole screen off them. The three that did ask for a
+      // supervisor (bills of material, orders, requirements) still do:
+      // MATERIALS_SUPERVISOR_TABS in
+      // components/materials/materialsTabs.ts is the one list, and the screen
+      // both hides those tabs and turns their URLs away.
+      {
+        to: '/inventory', icon: Package, label: 'Materials',
+        proOnly: true, module: 'inventory',
+        altPaths: ['/purchasing', '/shipments', '/requirements'],
+      },
       { to: '/reports/inventory', icon: BarChart3, label: 'Reports',   module: 'inventory' },
     ],
   },
@@ -238,9 +250,19 @@ export function useVisibleSections(): NavSection[] {
 // owns it rather than a shorter one, and legacy deep links like
 // `/training/certs` still resolve to People through the `/training` item.
 
-/** True when `pathname` is `itemPath` itself or a sub-route of it. */
-function pathMatchesItem(pathname: string, itemPath: string): boolean {
-  return pathname === itemPath || pathname.startsWith(`${itemPath}/`);
+/** True when `pathname` is `base` itself or a sub-route of it. */
+function pathUnder(pathname: string, base: string): boolean {
+  return pathname === base || pathname.startsWith(`${base}/`);
+}
+
+/** Every path an item owns: its own, plus any `altPaths`. */
+export function itemPaths(item: NavItem): string[] {
+  return [item.to, ...(item.altPaths ?? [])];
+}
+
+/** True when `pathname` is one of `item`'s paths, or a sub-route of one. */
+export function pathMatchesItem(pathname: string, item: NavItem): boolean {
+  return itemPaths(item).some(base => pathUnder(pathname, base));
 }
 
 /**
@@ -252,13 +274,6 @@ function pathMatchesItem(pathname: string, itemPath: string): boolean {
  */
 const PATH_SECTIONS: { prefix: string; section: SectionId }[] = [
   { prefix: '/departments', section: 'production' },
-  // The three URLs the retired Materials menu items handed out that do not sit
-  // under /inventory. They render the Materials screen on the matching tab, so
-  // the Inventory workspace has to stay lit while somebody is reading one —
-  // otherwise a printed purchase order's link looks like it left the app.
-  { prefix: '/purchasing', section: 'inventory' },
-  { prefix: '/shipments', section: 'inventory' },
-  { prefix: '/requirements', section: 'inventory' },
 ];
 
 /** The section that owns `pathname`, or null for routes outside the nav
@@ -272,16 +287,18 @@ export function findSectionForPath(
   let bestLen = -1;
   for (const section of sections) {
     for (const item of section.items) {
-      if (pathMatchesItem(pathname, item.to) && item.to.length > bestLen) {
-        best = section;
-        bestLen = item.to.length;
+      for (const base of itemPaths(item)) {
+        if (pathUnder(pathname, base) && base.length > bestLen) {
+          best = section;
+          bestLen = base.length;
+        }
       }
     }
   }
   if (best) return best;
 
   for (const alias of PATH_SECTIONS) {
-    if (!pathMatchesItem(pathname, alias.prefix)) continue;
+    if (!pathUnder(pathname, alias.prefix)) continue;
     const section = sections.find(s => s.id === alias.section);
     if (section) return section;
   }

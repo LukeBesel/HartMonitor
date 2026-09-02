@@ -219,17 +219,31 @@ describe('one Materials screen', () => {
     }
   });
 
-  it('carries the most permissive gate of the items it merged', () => {
-    // Kitting and Receiving were open to Free accounts, and Kitting asked for
-    // no minimum role. A stricter merged item would take a screen away from
-    // somebody who can reach it today.
+  it('keeps the plan gate at the menu and moves the role gate into the screen', () => {
+    // The seven items it replaces did not agree: four were open to every role,
+    // three asked for a supervisor. Merging them could only have thrown one of
+    // those away. So the item keeps the `proOnly` the stock tracker always had
+    // and carries NO `minRole` — a role gate here would take the four open tabs
+    // off the roles that could always reach them — and the three that asked for
+    // a supervisor still ask, one level down, in MATERIALS_SUPERVISOR_TABS.
     const materials = inventory().items[0];
-    expect(materials.proOnly).toBeUndefined();
+    expect(materials.proOnly).toBe(true);
     expect(materials.minRole).toBeUndefined();
     expect(materials.module).toBe('inventory');
     // Not `exact`: the item stays lit on /inventory/boms and on the kit URL a
     // traveller's barcode prints.
     expect(materials.exact).toBeUndefined();
+  });
+
+  it('owns the three addresses that do not sit under /inventory', () => {
+    // /purchasing, /shipments and /requirements still render this screen, so
+    // the item that replaced their menu entries has to own them too — a side
+    // table of aliases is a second place to forget.
+    const materials = inventory().items[0];
+    expect(materials.altPaths).toEqual(['/purchasing', '/shipments', '/requirements']);
+    for (const url of ['/purchasing/vendors', '/shipments', '/requirements']) {
+      expect(findSectionForPath(url)?.id, url).toBe('inventory');
+    }
   });
 
   it('still hides the whole workspace when the module is off', () => {
