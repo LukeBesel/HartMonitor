@@ -708,7 +708,7 @@ function indexBy(rows, key = 'dept_id') {
  *
  * `scope` and `workOrderRows` are for a route that has ALREADY resolved the
  * scope and already run workOrderStates() over it: passing them in is what
- * stops /plant-view and /manager-view running the work-order select twice per
+ * stops /plant-view running the work-order select twice per
  * request. The rows MUST come from the same scope — they are grouped by
  * department here, not re-filtered.
  */
