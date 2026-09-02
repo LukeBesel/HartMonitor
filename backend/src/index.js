@@ -270,6 +270,12 @@ app.use('/api/v1', apiKeyLimiter, apiKeyAuth, v1Router);
 
 app.use('/api',               requireAuth); // protect everything below
 app.use('/api/apps',          writeRole('supervisor'), appsRouter);
+// Qualified people only — but only when the company has asked for it. The gate
+// is a middleware, not an edit to the completions router, so the file that
+// books runs stays untouched by it; with `training_enforcement` unset (which is
+// every existing customer) it returns before reading a single training row.
+// See backend/src/qualification.js.
+app.post('/api/completions', require('./qualification').enforceQualification);
 app.use('/api/completions',   writeRole('operator'),   completionsRouter);
 app.use('/api/tables',        writeRole('supervisor'), tablesRouter);
 app.use('/api/stations',      writeRole('supervisor'), stationsRouter);

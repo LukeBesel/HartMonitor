@@ -1,9 +1,151 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db');
+const vocab = require('../vocab');
 const { plantDayShift } = require('../plantDay');
+const { requireRole } = require('../middleware/auth');
+const { logActivity } = require('../activity');
+const { redeemGrant } = require('../authorization');
+const {
+  enforcementMode, setEnforcementMode, checkQualification,
+  issueOverrideToken, blockedStartsByApp, OVERRIDE_TTL_MS,
+} = require('../qualification');
 
 const router = express.Router();
+
+// ─── The enforcement gate ─────────────────────────────────────────────────────
+// Everything in this section serves ONE promise: a company that has not chosen
+// an enforcement mode is unaffected by all of it. Reading the mode of a company
+// that never set one returns 'off', and 'off' is a hard short circuit in
+// backend/src/qualification.js — no training row is read at run start at all.
+
+// GET /enforcement — what this company does when someone unqualified starts.
+router.get('/enforcement', (req, res) => {
+  res.json({
+    enforcement: enforcementMode(req.companyId),
+    options: vocab.values('TRAINING_ENFORCEMENT'),
+  });
+});
+
+// PUT /enforcement — manager and above. Supervisors run the floor; deciding
+// that the floor can be STOPPED by a missing certificate is a plant policy.
+router.put('/enforcement', requireRole('manager'), (req, res) => {
+  const value = req.body?.enforcement;
+  if (!vocab.isValid('TRAINING_ENFORCEMENT', value)) {
+    return res.status(400).json({
+      error: `enforcement must be one of: ${vocab.values('TRAINING_ENFORCEMENT').join(', ')}`,
+    });
+  }
+  setEnforcementMode(req.companyId, value);
+  logActivity(req.companyId, 'settings', req.companyId,
+    `Training enforcement set to ${value}`, req.user?.display_name);
+  res.json({ enforcement: value, options: vocab.values('TRAINING_ENFORCEMENT') });
+});
+
+// GET /records/check?app_id=&user_id=|operator_name= — exactly what the gate
+// would decide for this person and this app, without starting anything. The
+// player can ask before it offers a job; a supervisor can ask before a shift.
+router.get('/records/check', (req, res) => {
+  const { app_id, user_id, operator_name } = req.query;
+  if (!app_id) return res.status(400).json({ error: 'app_id required' });
+  res.json(checkQualification(req.companyId, {
+    userId: user_id || null,
+    operatorName: operator_name || '',
+    appId: String(app_id),
+  }));
+});
+
+// POST /overrides — a supervisor lets one uncertified start through.
+//
+// The PIN is NOT checked here. POST /api/operators/verify-authorizer already
+// does that (roster scan, role gate, brute-force lockout) and mints a single
+// use grant; this endpoint redeems that grant and hands back a token scoped to
+// one app and one operator for ten minutes. Reusing the existing proof is the
+// point: there is one place in this codebase that compares a PIN.
+router.post('/overrides', (req, res) => {
+  const { app_id, user_id, operator_name = '', authorizer_proof, reason = '' } = req.body || {};
+  if (!app_id) return res.status(400).json({ error: 'app_id required' });
+  if (!user_id && !String(operator_name).trim()) {
+    return res.status(400).json({ error: 'user_id or operator_name required' });
+  }
+  if (!authorizer_proof) {
+    return res.status(400).json({
+      error: 'authorizer_proof required — verify a supervisor PIN at POST /api/operators/verify-authorizer first',
+    });
+  }
+  const app = db.prepare('SELECT id, name FROM apps WHERE id = ? AND company_id = ?')
+    .get(app_id, req.companyId);
+  if (!app) return res.status(404).json({ error: 'App not found' });
+
+  const grant = redeemGrant(authorizer_proof, req.companyId, 'qualification_override');
+  if (!grant) {
+    return res.status(403).json({
+      error: 'That supervisor authorization is not valid, has expired, or has already been used.',
+      code: 'AUTHORIZATION_INVALID',
+    });
+  }
+
+  const token = issueOverrideToken({
+    companyId: req.companyId,
+    appId: app.id,
+    userId: user_id || null,
+    operatorName: String(operator_name || ''),
+    approvedBy: { user_id: grant.user_id, display_name: grant.display_name },
+    reason: String(reason || ''),
+  });
+
+  res.status(201).json({
+    token,
+    expires_in_seconds: Math.round(OVERRIDE_TTL_MS / 1000),
+    app_id: app.id,
+    app_name: app.name,
+    approved_by: grant.display_name,
+  });
+});
+
+// GET /overrides — every exception that was actually used, newest first. This
+// is the record an auditor asks for: who ran what without a sign-off, who let
+// them, and which run it was.
+router.get('/overrides', (req, res) => {
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 100, 1), 500);
+  res.json(db.prepare(`
+    SELECT o.*,
+           a.name  AS app_name,
+           u.display_name AS operator_display_name
+    FROM qualification_overrides o
+    LEFT JOIN apps  a ON a.id = o.app_id
+    LEFT JOIN users u ON u.id = o.user_id
+    WHERE o.company_id = ?
+    ORDER BY o.created_at DESC, o.rowid DESC
+    LIMIT ?
+  `).all(req.companyId, limit));
+});
+
+// GET /blocked-starts?days=7 — what the setting is costing, per app.
+//
+// An app that has refused nobody is reported with blocked: null, not 0. "No
+// starts were blocked" and "nothing has been measured here" are different
+// facts and the screen prints '—' for the second.
+router.get('/blocked-starts', (req, res) => {
+  const days = Math.min(Math.max(parseInt(req.query.days, 10) || 7, 1), 365);
+  const counts = blockedStartsByApp(req.companyId, days);
+  const apps = db.prepare(
+    `SELECT id, name FROM apps WHERE company_id = ? AND status = 'published' ORDER BY name`
+  ).all(req.companyId);
+  const measured = Object.keys(counts).length > 0;
+  res.json({
+    days,
+    enforcement: enforcementMode(req.companyId),
+    // Nothing has ever been refused: say so once, rather than printing a
+    // column of confident zeroes for a gate that may never have been on.
+    empty_reason: measured ? null : 'no starts have been blocked yet',
+    apps: apps.map(a => ({
+      app_id: a.id,
+      app_name: a.name,
+      blocked: measured ? (counts[a.id] ?? 0) : null,
+    })),
+  });
+});
 
 // ─── GET /summary ─────────────────────────────────────────────────────────────
 
