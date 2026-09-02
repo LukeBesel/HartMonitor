@@ -61,6 +61,26 @@ const PAGE_MODULE_IDS = [
   'routings', 'departments', 'sqdc', 'stations',
 ];
 
+/** Every element the dashboard tour points at, as the page would render them.
+ *  A step whose target is missing is deliberately dropped (see the spotlight
+ *  tests below), so a tour rendered over a bare document would be empty — which
+ *  is correct behaviour and useless for testing the rest of the dialog. */
+const tourHosts: HTMLElement[] = [];
+
+function mountTourTargets(only?: string[]) {
+  const targets = (WALKTHROUGHS.dashboard ?? [])
+    .map(s => s.target)
+    .filter((t): t is string => !!t)
+    .filter(t => !only || only.includes(t));
+  const host = document.createElement('div');
+  host.innerHTML = targets
+    .map(t => `<div ${t.replace(/^\[|\]$/g, '')}>x</div>`)
+    .join('');
+  document.body.appendChild(host);
+  tourHosts.push(host);
+  return () => host.remove();
+}
+
 function renderOnboarding(moduleId: string) {
   return render(
     <ModuleOnboarding
@@ -79,7 +99,13 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-afterEach(() => { localStorage.clear(); });
+afterEach(() => {
+  localStorage.clear();
+  // These are appended to document.body by hand, so RTL's own cleanup does not
+  // know about them — and a target left behind would make the NEXT test's tour
+  // think the page is showing something it is not.
+  while (tourHosts.length) tourHosts.pop()!.remove();
+});
 
 describe('a page tour waits to be asked', () => {
   it('opens nothing on arrival, even with no seen-key stored', () => {
@@ -94,6 +120,7 @@ describe('a page tour waits to be asked', () => {
   });
 
   it('opens the walkthrough on click, and records the seen state on dismiss', () => {
+    mountTourTargets();
     renderOnboarding('dashboard');
     fireEvent.click(screen.getByRole('button', { name: /show me around/i }));
 
@@ -109,6 +136,7 @@ describe('a page tour waits to be asked', () => {
   });
 
   it('closes on Escape', () => {
+    mountTourTargets();
     renderOnboarding('dashboard');
     fireEvent.click(screen.getByRole('button', { name: /show me around/i }));
     expect(screen.getByRole('dialog')).toBeInTheDocument();
@@ -117,6 +145,7 @@ describe('a page tour waits to be asked', () => {
   });
 
   it('does not claim to be modal, because nothing here traps focus', () => {
+    mountTourTargets();
     renderOnboarding('dashboard');
     fireEvent.click(screen.getByRole('button', { name: /show me around/i }));
     // aria-modal tells a screen reader the rest of the page is inert. There is
@@ -152,6 +181,45 @@ describe('a page tour waits to be asked', () => {
       expect(screen.queryByRole('dialog')).toBeNull();
       unmount();
     }
+  });
+});
+
+describe('a step points at the thing it is describing', () => {
+  it('rings the element the current step names, and scrolls it into view', () => {
+    const scrolled: string[] = [];
+    Element.prototype.scrollIntoView = function () { scrolled.push((this as HTMLElement).outerHTML); };
+    const cleanup = mountTourTargets();
+    renderOnboarding('dashboard');
+    fireEvent.click(screen.getByRole('button', { name: /show me around/i }));
+
+    const first = WALKTHROUGHS.dashboard[0];
+    const ring = screen.getByTestId('tour-spotlight');
+    expect(ring).toHaveAttribute('data-tour-target', first.target!);
+    expect(scrolled.length).toBeGreaterThan(0);
+    cleanup();
+  });
+
+  it('drops a step whose element is not on this page', () => {
+    const steps = WALKTHROUGHS.dashboard;
+    const present = [steps[0].target!];
+    const cleanup = mountTourTargets(present);
+    renderOnboarding('dashboard');
+    fireEvent.click(screen.getByRole('button', { name: /show me around/i }));
+
+    // One step of the tour is on screen, plus the system overview page — the
+    // other five describe elements this page is not showing, and narrating them
+    // would send the reader hunting for furniture that is not there.
+    expect(screen.getByText(steps[0].title)).toBeInTheDocument();
+    expect(screen.getByText(/Step 1 of \d/)).toHaveTextContent('Step 1 of 1');
+    expect(screen.queryByText(steps[1].title)).toBeNull();
+    cleanup();
+  });
+
+  it('says nothing at all when none of what it describes is on screen', () => {
+    renderOnboarding('dashboard');
+    fireEvent.click(screen.getByRole('button', { name: /show me around/i }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(screen.queryByTestId('tour-spotlight')).toBeNull();
   });
 });
 

@@ -14,6 +14,15 @@ describe('findSectionForPath (route → workspace derivation)', () => {
     expect(findSectionForPath('/analytics')?.id).toBe('reporting');
   });
 
+  it('keeps a department page inside Production without a menu item for it', () => {
+    // A department's page is opened from a card on the Command Center, not from
+    // the sidebar. The workspace still has to light up while somebody reads it,
+    // or clicking through from the Command Center looks like leaving the app.
+    expect(SECTIONS.flatMap(s => s.items).some(i => i.to === '/departments')).toBe(false);
+    expect(findSectionForPath('/departments/dept-1')?.id).toBe('production');
+    expect(findSectionForPath('/departments/dept-1/tv')?.id).toBe('production');
+  });
+
   it('maps deep links (sub-routes) to the owning workspace', () => {
     expect(findSectionForPath('/quality/ncr-123')?.id).toBe('quality_ops');
     expect(findSectionForPath('/apps/abc/build')?.id).toBe('apps');
@@ -65,6 +74,36 @@ describe('findSectionForPath (route → workspace derivation)', () => {
     const withoutInventory = filterNavByModules(SECTIONS, key => key !== 'inventory');
     expect(findSectionForPath('/inventory', withoutInventory)).toBeNull();
     expect(findSectionForPath('/dashboard', withoutInventory)?.id).toBe('production');
+  });
+});
+
+describe('one live-floor screen', () => {
+  // Four screens used to answer "what is the floor doing right now" and they
+  // disagreed at the same minute. The menu is where that started: Production
+  // offered the Command Center AND a Departments list, and Planning hid a third
+  // floor screen under "Manager View". There is one now, and the department
+  // pages are reached from it.
+  it('gives Production exactly one live-floor entry', () => {
+    const production = SECTIONS.find(s => s.id === 'production')!;
+    const floorItems = production.items.filter(i => ['/dashboard', '/departments', '/manager', '/plant', '/sqdc'].includes(i.to));
+    expect(floorItems.map(i => i.to)).toEqual(['/dashboard']);
+    expect(floorItems[0].label).toBe('Command Center');
+  });
+
+  it('offers no menu item for a screen that is now a redirect', () => {
+    const paths = SECTIONS.flatMap(s => s.items.map(i => i.to));
+    for (const gone of ['/departments', '/manager', '/transaction-log', '/leaderboard/tv', '/sqdc', '/plant', '/step-metrics']) {
+      expect(paths, `nav still points at ${gone}`).not.toContain(gone);
+    }
+    const labels = SECTIONS.flatMap(s => s.items.map(i => i.label));
+    for (const gone of ['Departments', 'Manager View', 'Transaction Log']) {
+      expect(labels, `nav still lists "${gone}"`).not.toContain(gone);
+    }
+  });
+
+  it('keeps the one production log, under its one name', () => {
+    const paths = SECTIONS.flatMap(s => s.items.map(i => i.to));
+    expect(paths.filter(p => p === '/audit-log')).toHaveLength(1);
   });
 });
 

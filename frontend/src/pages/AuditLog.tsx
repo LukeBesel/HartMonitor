@@ -6,7 +6,7 @@ import type { AuditLogEntry } from '../types';
 const REFRESH_INTERVAL_MS = 10_000;
 
 // ── Entity type options ───────────────────────────────────────────────────────
-// The Transaction Log is a production log: it only surfaces shop-floor events
+// The Audit Log is a production log: it only surfaces shop-floor events
 // (jobs started/finished, units logged against work orders, NCRs, station
 // downtime, safety). Settings/admin entity types are intentionally excluded
 // from the dropdown, and the backend defaults to scope=production to match.
@@ -126,7 +126,7 @@ export default function AuditLog() {
           </div>
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold text-gray-900 tracking-tight">Transaction Log</h1>
+              <h1 className="text-xl font-bold text-gray-900 tracking-tight">Audit Log</h1>
               <span className="inline-flex items-center gap-1.5 text-[11px] font-medium text-green-600 bg-green-50 rounded-full px-2 py-0.5">
                 <span className="relative flex h-2 w-2">
                   <span className="absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75 animate-ping" />

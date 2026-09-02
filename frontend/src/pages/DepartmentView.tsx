@@ -1,6 +1,9 @@
 import { useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { api } from '../api/client';
+import { getFloorSnapshot } from '../api/floor';
+import type { FloorSnapshot } from '../api/floor';
+import { onTrackSentence } from '../utils/floorWording';
 import {
   CheckCircle2, Activity, TrendingUp, Clock, RefreshCw,
   ArrowLeft, Monitor, User, ChevronRight, Calendar, AlertTriangle
@@ -9,15 +12,15 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
 import { fmtDuration } from '../components/apps/appModel';
+import DepartmentTeam from '../components/departments/DepartmentTeam';
 
 interface DeptViewData {
   department: { id: string; name: string; color: string; manager_name: string; description: string; headcount: number };
-  kpis: {
-    completed_today: number; active_now: number; pass_rate: number | null;
-    // `avg_cycle_time` is whole minutes and reads 0 for anything under 30
-    // seconds; `avg_cycle_seconds` is what a screen should render.
-    avg_cycle_time: number; avg_cycle_seconds: number | null; wos_on_track: number; wos_total: number;
-  };
+  // NO `kpis` here on purpose. Finished today, running now, the average cycle,
+  // the pass rate and the on-track share are read from GET /api/floor/snapshot
+  // (api/floor.ts) with this department's id, so this page, the Command Center
+  // and the wall board cannot answer the same question three ways. The endpoint
+  // below still sends a `kpis` object for older clients; nothing reads it.
   stations: Array<{
     id: string; name: string; location: string; status: string;
     current_status: string; current_status_since: string | null;
@@ -110,13 +113,21 @@ function runSeconds(c: { started_at?: string | null; completed_at: string; statu
 export default function DepartmentView() {
   const { id } = useParams<{ id: string }>();
   const [data, setData] = useState<DeptViewData | null>(null);
+  const [snapshot, setSnapshot] = useState<FloorSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const load = useCallback(async () => {
     if (!id) return;
     try {
-      setData(await api.getDepartmentView(id));
+      // The lists come from this department's own endpoint; every NUMBER comes
+      // from the plant's one definition of its day, scoped to this department.
+      const [view, snap] = await Promise.all([
+        api.getDepartmentView(id),
+        getFloorSnapshot({ department_id: id }).catch(() => null),
+      ]);
+      setData(view);
+      if (snap) setSnapshot(snap);
       setError('');
     } catch (err: any) {
       setError(err?.message || 'Failed to load department');
@@ -147,14 +158,15 @@ export default function DepartmentView() {
     </div>
   );
 
-  const { department: dept, kpis } = data;
+  const { department: dept } = data;
   const stations = data.stations ?? [];
   const workOrders = data.work_orders ?? [];
   const recentCompletions = data.recent_completions ?? [];
 
-  const onTrackNote = kpis.wos_total > 0
-    ? `${kpis.wos_on_track} of ${kpis.wos_total} on track`
-    : 'No open work orders';
+  // The same sentence, from the same payload, as the Command Center tile and
+  // the wall board — written once in utils/floorWording.
+  const onTrack = onTrackSentence(snapshot);
+  const onTrackNote = onTrack ?? `— ${snapshot?.on_track_reason ?? 'no open work order to be on track with'}`;
 
   return (
     // The app shell owns the page background and the scroll container, so this
@@ -183,22 +195,33 @@ export default function DepartmentView() {
         />
       </div>
 
-      {/* KPIs. Four, not five: the work-order ratio moved into the Work Orders
-          card's own header, where it sits next to the orders it describes. */}
+      {/* KPIs — the same four the Command Center shows for this department,
+          from the same snapshot, with the on-track share in the Work Orders
+          card's own header where it sits next to the orders it describes.
+          A number nobody measured is '—' beside the payload's reason. */}
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 sm:gap-4">
-        <KPICard icon={<CheckCircle2 size={18} className="text-green-600" />} bg="bg-green-50" label="Finished today" value={kpis.completed_today} />
-        <KPICard icon={<Activity size={18} className="text-blue-600" />} bg="bg-blue-50" label="Running now" value={kpis.active_now} />
+        <KPICard
+          icon={<CheckCircle2 size={18} className="text-green-600" />} bg="bg-green-50"
+          label="Finished today"
+          value={snapshot ? snapshot.finished_today : '—'}
+          testId="dept-finished-today"
+        />
+        <KPICard
+          icon={<Activity size={18} className="text-blue-600" />} bg="bg-blue-50"
+          label="Running now"
+          value={snapshot ? snapshot.running_now : '—'}
+        />
         <KPICard
           icon={<Clock size={18} className="text-orange-600" />} bg="bg-orange-50"
           label="Average cycle time"
-          value={kpis.avg_cycle_seconds != null ? fmtDuration(kpis.avg_cycle_seconds) : '—'}
-          note={kpis.avg_cycle_seconds != null ? undefined : 'no completed runs here yet'}
+          value={snapshot?.avg_cycle_seconds != null ? fmtDuration(snapshot.avg_cycle_seconds) : '—'}
+          note={snapshot?.avg_cycle_seconds != null ? undefined : snapshot?.avg_cycle_reason ?? 'no run has finished yet'}
         />
         <KPICard
           icon={<TrendingUp size={18} className="text-purple-600" />} bg="bg-purple-50"
-          label="Pass rate (7 days)"
-          value={kpis.pass_rate !== null ? `${kpis.pass_rate}%` : '—'}
-          note={kpis.pass_rate !== null ? undefined : 'no pass/fail check recorded'}
+          label="Pass rate"
+          value={snapshot?.pass_rate != null ? `${snapshot.pass_rate}%` : '—'}
+          note={snapshot?.pass_rate != null ? undefined : snapshot?.pass_rate_reason ?? 'no pass/fail result recorded yet'}
         />
       </div>
 
@@ -260,7 +283,7 @@ export default function DepartmentView() {
           <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
             <div className="min-w-0">
               <h2 className="font-semibold text-gray-900">Work Orders</h2>
-              <p className="text-[11px] text-gray-500">{onTrackNote}</p>
+              <p className="text-[11px] text-gray-500" data-testid="dept-on-track">{onTrackNote}</p>
             </div>
             <Link to="/schedule" className="text-xs text-blue-600 hover:text-blue-700 flex items-center gap-1">
               Schedule <ChevronRight size={12} />
@@ -349,17 +372,25 @@ export default function DepartmentView() {
           </div>
         </div>
       </div>
+
+      {/* Who this department's help requests reach.
+          Last on the page on purpose. It is a setup panel, not production
+          status, and on a phone its "nobody is here yet" state is a whole
+          screen of scrolling between the reader and the numbers they came
+          for. Work first, then who to call about it. */}
+      <DepartmentTeam departmentId={dept.id} departmentName={dept.name} />
     </div>
   );
 }
 
-function KPICard({ icon, bg, label, value, note }: {
+function KPICard({ icon, bg, label, value, note, testId }: {
   icon: React.ReactNode; bg: string; label: string; value: string | number;
   /** Why the value is a dash. Present only when there is nothing to report. */
   note?: string;
+  testId?: string;
 }) {
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-5">
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-5" data-testid={testId}>
       <div className={`w-9 h-9 ${bg} rounded-lg flex items-center justify-center mb-3`}>{icon}</div>
       <div className="text-2xl font-bold text-gray-900 tabular-nums">{value}</div>
       <div className="text-xs text-gray-500 mt-0.5">{label}</div>

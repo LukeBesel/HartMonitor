@@ -401,15 +401,6 @@ export interface PlantViewData {
   work_order_summary: { on_track: number; at_risk: number; behind: number; not_started: number; completed: number; };
 }
 
-export interface ManagerViewData {
-  active_completions: {
-    id: string; operator_name: string; app_name: string; app_id: string;
-    started_at: string; work_order_number?: string; station_name?: string;
-  }[];
-  work_orders: WorkOrder[];
-  department_stats: { id: string; name: string; color: string; active_count: number; on_track_count: number; behind_count: number; }[];
-}
-
 // ── Daily brief / attention ──────────────────────────────────────────────────
 
 export type AttentionType =
