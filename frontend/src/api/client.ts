@@ -163,6 +163,10 @@ export interface AppAnalyticsResponse {
     avg_duration_basis: DurationBasis;
     avg_hands_on_seconds?: number | null;
     avg_elapsed_seconds?: number | null;
+    /** Fastest run in the slice. Null when nothing in it was ever timed. */
+    best_duration_s?: number | null;
+    /** Inspected runs behind `first_pass_yield` — 0 ⇒ the yield is null. */
+    qc_sample_size?: number;
   };
   series: { date: string; completed: number; avg_duration_s: number | null }[];
   by_operator: { operator_name: string; runs: number; avg_duration_s: number | null }[];
@@ -176,6 +180,10 @@ export interface AppAnalyticsResponse {
     id: string; started_at: string; completed_at: string | null; status: string;
     operator_name: string;
     work_order_number: string | null; product_type_name: string | null;
+    /** 'pass' / 'fail' from this run's own pass/fail checks — the same rows
+     *  first-pass yield is taken over. Null means nobody inspected it, which
+     *  is not the same as passing. */
+    pass_fail?: 'pass' | 'fail' | null;
   })[];
 }
 
@@ -408,8 +416,6 @@ export const api = {
     request<AppAnalyticsResponse>(`/apps/${id}/analytics${appAnalyticsQS(params)}`),
   downloadAppAnalyticsCsv: (id: string, params?: AppAnalyticsParams) =>
     downloadBlob(`/apps/${id}/export.csv${appAnalyticsQS(params)}`, 'app-analytics-export.csv'),
-  downloadAllCompanyData: () =>
-    downloadBlob('/config/export-data', `hartmonitor-export-${new Date().toISOString().slice(0, 10)}.json`),
 
   // ── Completions
   getCompletions: (params?: { limit?: number; status?: string; operator_name?: string }) => {

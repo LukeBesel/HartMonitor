@@ -77,6 +77,15 @@ describe('findSectionForPath (route → workspace derivation)', () => {
   });
 });
 
+describe('one screen per app, one screen to compare apps', () => {
+  it('names the cross-app screen App comparison and gives OEE no item of its own', () => {
+    const reporting = SECTIONS.find(s => s.id === 'reporting')!;
+    const analytics = reporting.items.find(i => i.to === '/analytics');
+    expect(analytics?.label).toBe('App comparison');
+    expect(reporting.items.some(i => i.to === '/oee')).toBe(false);
+  });
+});
+
 describe('one live-floor screen', () => {
   // Four screens used to answer "what is the floor doing right now" and they
   // disagreed at the same minute. The menu is where that started: Production
@@ -92,11 +101,14 @@ describe('one live-floor screen', () => {
 
   it('offers no menu item for a screen that is now a redirect', () => {
     const paths = SECTIONS.flatMap(s => s.items.map(i => i.to));
-    for (const gone of ['/departments', '/manager', '/transaction-log', '/leaderboard/tv', '/sqdc', '/plant', '/step-metrics']) {
+    for (const gone of ['/departments', '/manager', '/transaction-log', '/leaderboard/tv', '/sqdc', '/plant', '/step-metrics',
+      // Three per-app screens became tabs on /apps/:id, and /oee became a tab
+      // on App comparison. None of them is a menu item any more.
+      '/apps/dashboard', '/apps/:id/history', '/apps/:id/analytics', '/oee']) {
       expect(paths, `nav still points at ${gone}`).not.toContain(gone);
     }
     const labels = SECTIONS.flatMap(s => s.items.map(i => i.label));
-    for (const gone of ['Departments', 'Manager View', 'Transaction Log']) {
+    for (const gone of ['Departments', 'Manager View', 'Transaction Log', 'OEE Tracker', 'Operation Analytics']) {
       expect(labels, `nav still lists "${gone}"`).not.toContain(gone);
     }
   });
@@ -118,9 +130,12 @@ describe('SECTIONS shape', () => {
       .toEqual(['planning', 'inventory', 'kaizen', 'reporting']);
   });
 
-  it('gives Apps its library, its dashboard and the operator portal', () => {
+  it('gives Apps one entrance to app data, plus the operator portal', () => {
+    // The app card in the library is the only way into a single app's runs —
+    // the "Dashboard" item was a second front door to the same numbers under a
+    // second set of labels.
     const apps = SECTIONS.find(s => s.id === 'apps')!;
-    expect(apps.items.map(i => i.to)).toEqual(['/apps', '/apps/dashboard', '/operator']);
+    expect(apps.items.map(i => i.to)).toEqual(['/apps', '/operator']);
     // The App Library must not also live in another workspace, or the tab bar
     // would light up two places for the same screen.
     expect(SECTIONS.flatMap(s => s.items).filter(i => i.to === '/apps')).toHaveLength(1);

@@ -249,7 +249,7 @@ function AppBuilderMock() {
   );
 }
 
-// 5 — Operation Analytics
+// 5 — App comparison
 function AnalyticsMock() {
   return (
     <div className="space-y-3">
@@ -304,7 +304,7 @@ const MES_PREVIEWS = [
   { icon: ClipboardCheck, label: 'SQDC Board', node: <SqdcMock />, caption: 'A digital Safety / Quality / Delivery / Cost board that replaces the whiteboard and updates itself from floor data.' },
   { icon: Tv, label: 'Department TV', node: <TvMock />, caption: 'Big-screen shift displays that keep every team aligned on targets, output, scrap, and downtime as it happens.' },
   { icon: Blocks, label: 'App Builder', node: <AppBuilderMock />, caption: 'Drag widgets into guided work instructions — no code. Build a paperless process and publish it to the floor in minutes.' },
-  { icon: BarChart3, label: 'Operation Analytics', node: <AnalyticsMock />, caption: 'Drill into OEE, cycle-time trends, and quality by operation, product, and date — decisions backed by real data.' },
+  { icon: BarChart3, label: 'App comparison', node: <AnalyticsMock />, caption: 'Drill into OEE, cycle-time trends, and quality by app, product, and date — decisions backed by real data.' },
   { icon: Trophy, label: 'Leaderboard', node: <LeaderboardMock />, caption: 'Recognize top performers and drive friendly competition with points earned from on-time, high-quality work.' },
 ];
 

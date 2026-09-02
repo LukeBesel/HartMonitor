@@ -19,7 +19,7 @@ const PRO_FEATURES = [
   'Up to 50 production apps',
   'Up to 10 dashboards',
   'Product Routing & Scheduling',
-  'OEE Tracker & advanced analytics',
+  'OEE (App comparison tab) & advanced analytics',
   'Full data export (JSON bundle)',
   'Purchase orders & vendors',
   'NCR / Quality management',
@@ -459,7 +459,7 @@ export function PlanTab() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
             {([
               { icon: GitBranch,   label: 'Product Routing',      desc: 'Step-by-step manufacturing sequences with cycle times' },
-              { icon: Cpu,         label: 'OEE Tracker',          desc: 'Overall Equipment Effectiveness tracking and reporting' },
+              { icon: Cpu,         label: 'OEE (App comparison tab)', desc: 'Overall Equipment Effectiveness per station, on the OEE tab of App comparison' },
               { icon: Package,     label: 'Inventory',            desc: 'Manage raw materials, WIP, and finished goods' },
               { icon: ShoppingCart,label: 'Purchasing',           desc: 'Purchase orders and vendor management' },
               { icon: ShieldCheck, label: 'NCR / Quality',        desc: 'Non-conformance reporting and resolution workflow' },

@@ -1080,6 +1080,10 @@ router.get('/:id/analytics', (req, res) => {
            SUM(CASE WHEN c.status = 'abandoned' THEN 1 ELSE 0 END) AS abandoned,
            ${AVG_DURATION_S} AS avg_duration_s,
            ${AVG_BASIS}      AS avg_duration_basis,
+           -- The fastest run in the slice, by the same definition the average
+           -- uses. MIN() skips NULLs on its own, which is the rule: a run
+           -- nobody timed is not a run that took no time.
+           MIN(${DURATION_S}) AS best_duration_s,
            AVG(${handsOnSecondsSQL('c')}) AS avg_hands_on_seconds,
            AVG(${elapsedSecondsSQL('c')}) AS avg_elapsed_seconds
     FROM completions c WHERE ${where}
@@ -1266,7 +1270,12 @@ router.get('/:id/analytics', (req, res) => {
     `).all(req.params.id, req.companyId),
   };
 
-  // ── Recent runs (for the dashboard's table) ──
+  // ── Recent runs (for the per-app screen's Runs tab) ──
+  // `pass_fail` is read from the SAME rows first-pass yield is computed over —
+  // completion_values of type 'pass_fail' — so "3 failed of 40" on the tile and
+  // the runs a reader clicks through to can never be two different sets. A run
+  // that recorded no check at all is null, not 'pass': never inspected and
+  // inspected-and-passed are different facts.
   const recent = db.prepare(`
     SELECT c.id, c.started_at, c.completed_at, c.status, c.operator_name,
            ${DURATION_S}                 AS duration_s,
@@ -1274,6 +1283,12 @@ router.get('/:id/analytics', (req, res) => {
            ${handsOnSecondsSQL('c')}     AS hands_on_seconds,
            ${elapsedSecondsSQL('c')}     AS elapsed_seconds,
            ${elapsedSoFarSecondsSQL('c')} AS elapsed_so_far_seconds,
+           (SELECT CASE
+                     WHEN MAX(CASE WHEN v.value_text = 'fail' THEN 1 ELSE 0 END) = 1 THEN 'fail'
+                     ELSE 'pass'
+                   END
+              FROM completion_values v
+             WHERE v.completion_id = c.id AND v.value_type = 'pass_fail') AS pass_fail,
            wo.work_order_number, pt.name AS product_type_name
     FROM completions c
     LEFT JOIN work_orders wo ON wo.id = c.work_order_id
@@ -1295,7 +1310,11 @@ router.get('/:id/analytics', (req, res) => {
       /** Both measurements, so the tile can name the gap instead of hiding it. */
       avg_hands_on_seconds: roundSeconds(totalsRow.avg_hands_on_seconds),
       avg_elapsed_seconds: roundSeconds(totalsRow.avg_elapsed_seconds),
+      /** Fastest run in the slice. Null when no run in it was ever timed. */
+      best_duration_s: roundSeconds(totalsRow.best_duration_s),
       first_pass_yield: fpy.total > 0 ? Math.round(((fpy.passed || 0) / fpy.total) * 1000) / 10 : null,
+      /** Runs behind that yield — inspected runs, not all runs. 0 ⇒ null above. */
+      qc_sample_size: fpy.total || 0,
     },
     series,
     by_operator: byOperator,
