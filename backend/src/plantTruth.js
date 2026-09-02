@@ -1129,6 +1129,33 @@ function workOrderNumberCandidates(query) {
 }
 
 /**
+ * "WO-1001" and "ABC123-WO-1001" are the same job said two ways.
+ *
+ * Every no-sign-in demo sandbox lives in its own org, so numbers that are only
+ * unique per company still had to be minted with a per-org tag ('ABC123-') to
+ * clear the GLOBAL unique constraints the schema used to carry. Those
+ * constraints are per-company now and the seed mints plain numbers again — but
+ * a sandbox created before that change, or any customer whose ERP prefixes a
+ * plant code onto the traveller, still stores the prefixed spelling. The screen
+ * prints the number without its prefix, and an exact-match search box then
+ * answered "not found" about the job on the screen behind it.
+ *
+ * So a candidate matches a stored number either exactly, or as the part after a
+ * hyphenated prefix. Written as one SQL fragment, applied to whichever column
+ * the caller is asking about, with the candidates bound TWICE (once for the IN
+ * list, once for the LIKE) in that order.
+ *
+ * @param {string} column   the column expression to test (already qualified)
+ * @param {number} n        how many candidates will be bound
+ * @returns {string} SQL, parenthesised, expecting 2 × n bindings
+ */
+function numberMatchSql(column, n) {
+  const inList = `UPPER(${column}) IN (${Array.from({ length: n }, () => '?').join(',')})`;
+  const likeList = Array.from({ length: n }, () => `UPPER(${column}) LIKE '%-' || ?`).join(' OR ');
+  return `(${inList} OR ${likeList})`;
+}
+
+/**
  * How many jobs one part-number search will answer about.
  *
  * A part with sixty open jobs is a real answer, and printing sixty sentences
@@ -1314,7 +1341,13 @@ function wipSearch(ctxOrCompanyId, rawQuery) {
   // per company and there are three candidate spellings), so only the part
   // group can ever be capped.
   const candidates = workOrderNumberCandidates(query);
-  const numberMatch = `UPPER(wo.work_order_number) IN (${candidates.map(() => '?').join(',')})`;
+  // Both halves ignore a hyphenated prefix on the STORED value — see
+  // numberMatchSql() for why a demo sandbox's 'ABC123-WO-1001' has to answer to
+  // 'WO-1001'. The bindings are the candidates twice over, in that order.
+  const numberMatch = numberMatchSql('wo.work_order_number', candidates.length);
+  const numberParams = [...candidates, ...candidates];
+  const partMatch = numberMatchSql('wo.part_number', 1);
+  const upperQuery = query.toUpperCase();
   const matched = db.prepare(`
     SELECT * FROM (
       SELECT m.*,
@@ -1331,7 +1364,7 @@ function wipSearch(ctxOrCompanyId, rawQuery) {
           AND (
             ${numberMatch}
             OR (
-              UPPER(wo.part_number) = ?
+              ${partMatch}
               -- Work IN PROGRESS: a part search is "where are my jobs for this
               -- part", and a finished or cancelled job is not one of them.
               -- Asking by NUMBER still finds them, and says plainly they are over.
@@ -1341,10 +1374,10 @@ function wipSearch(ctxOrCompanyId, rawQuery) {
       ) m
     ) WHERE rn <= ?
   `).all(
-    ...candidates,
+    ...numberParams,
     companyId,
-    ...candidates,
-    query.toUpperCase(),
+    ...numberParams,
+    upperQuery, upperQuery,
     ...WIP_FINISHED,
     WIP_PART_LIMIT,
   );

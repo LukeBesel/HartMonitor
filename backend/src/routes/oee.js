@@ -246,6 +246,13 @@ function calcOEE(station, context = null) {
 // ─── GET / - all machines with live OEE ───────────────────────────────────────
 
 router.get('/', (req, res) => {
+  // This view measures TODAY (calcOEE's window is the plant's day so far), so
+  // there is no window to widen — but `?days=-1` and `?days=abc` were answered
+  // 200 with a full board of tiles, which reads as "your window was honoured".
+  // A parameter this endpoint cannot honour is refused in the same words
+  // /losses uses, rather than silently ignored.
+  const window = scrapModel.parseDays(req.query.days, 1);
+  if (!window.ok) return res.status(400).json({ error: window.error, field: 'days' });
   const stations = db.prepare('SELECT * FROM stations WHERE company_id = ? ORDER BY name ASC').all(req.companyId);
   // One day, resolved once, for every tile on the screen.
   const ctx = plantTruth.plantContext(req.companyId);
@@ -373,7 +380,15 @@ router.get('/losses', (req, res) => {
       code: r.code,
       label: r.label,
       loss_bucket: r.loss_bucket,
-      bucket_label: BUCKET_LABELS[r.loss_bucket] || null,
+      // The bucket a reason rolls up into, and NULL when the two are the same
+      // word. Several default reason codes ARE their bucket ('Breakdown' in
+      // 'breakdown'), and a screen that prints "label · bucket_label" then
+      // stuttered "Breakdown · Breakdown". Null is the honest answer to "what
+      // else does this row tell you" — nothing — and is what stops the repeat
+      // at the source rather than asking every reader to de-duplicate.
+      bucket_label: (BUCKET_LABELS[r.loss_bucket] && BUCKET_LABELS[r.loss_bucket] !== r.label)
+        ? BUCKET_LABELS[r.loss_bucket]
+        : null,
       stops: r.stops,
       minutes: round1(r.minutes),
       pct: pct(r.minutes),
@@ -431,6 +446,10 @@ router.get('/scrap', (req, res) => {
 // ─── GET /:id - single machine detail ─────────────────────────────────────────
 
 router.get('/:id', (req, res) => {
+  // Same rule as GET / above: today's window, and a malformed one is refused
+  // rather than ignored.
+  const window = scrapModel.parseDays(req.query.days, 1);
+  if (!window.ok) return res.status(400).json({ error: window.error, field: 'days' });
   const s = db.prepare('SELECT * FROM stations WHERE id = ? AND company_id = ?').get(req.params.id, req.companyId);
   if (!s) return res.status(404).json({ error: 'Not found' });
   res.json({

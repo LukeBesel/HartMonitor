@@ -90,6 +90,32 @@ router.get('/overview', (req, res) => {
   // different instants — which is how one page ends up with two "todays".
   const ctx = plantTruth.plantContext(cid);
   const scope = plantTruth.scopeFromQuery(req);
+
+  // ── An id this company does not own narrows to NOTHING, and says so ────────
+  // Same contract as /plant-view: a site, department, app or product type from
+  // another tenant (or one that simply does not exist) is not quietly dropped —
+  // dropping it WIDENS the answer to the whole plant while the page still shows
+  // the filter as applied, which is how a scoped screen prints plant-wide
+  // numbers under a department's name. Every figure is empty and `scope_valid`
+  // is false, so the client can say which filter it could not honour.
+  if (!scope.valid) {
+    return res.json({
+      scope: { site_id: null, department_id: null, app_id: null, product_type_id: null },
+      /** False when an id in the request belongs to no record this company owns. */
+      scope_valid: false,
+      totalCompletions: 0, todayCompletions: 0, inProgress: 0,
+      totalApps: 0, publishedApps: 0, activeStations: 0,
+      avgCycleTime: null, avgCycleSeconds: null, avgCycleBasis: null, avgCycleSample: 0,
+      passRate: null, qcSampleSize: 0,
+      avg_cycle_reason: plantTruth.REASONS.avg_cycle,
+      pass_rate_reason: plantTruth.REASONS.pass_rate,
+      avg_cycle_window: 'all',
+      pass_rate_window: 'all',
+      plant_date: ctx.plant_date,
+      timezone: ctx.timezone,
+    });
+  }
+
   const totalCompletions  = db.prepare(`SELECT COUNT(*) as c FROM completions WHERE company_id = ? AND status='completed'${f.clause}`).get(cid, ...f.params).c;
   const todayCompletions  = plantTruth.finishedToday(ctx, scope);
   const inProgress        = plantTruth.runningNow(ctx, scope);
@@ -119,6 +145,13 @@ router.get('/overview', (req, res) => {
   const quality = plantTruth.passRate(ctx, scope, 'all');
 
   res.json({
+    /** What the server actually applied, so a client never has to assume a
+     *  parameter it sent was honoured. */
+    scope: {
+      site_id: scope.site_id, department_id: scope.department_id,
+      app_id: scope.app_id, product_type_id: scope.product_type_id ?? null,
+    },
+    scope_valid: true,
     totalCompletions, todayCompletions, inProgress, totalApps, publishedApps, activeStations,
     avgCycleTime, avgCycleSeconds,
     /** 'hands_on' | 'elapsed' | 'mixed' | null — what the average was measured with. */
@@ -1279,13 +1312,34 @@ router.get('/daily-brief', (req, res) => {
     SELECT COUNT(*) as c FROM completions
     WHERE company_id = ? AND status='completed' AND date(completed_at, ?)=date('now', ?)${cf.clause}
   `).get(cid, day, day, ...cf.params).c;
+  // ── "vs the 7-day average" — over the days the plant actually ran ──────────
+  //
+  // The divisor used to be a flat 7. A company three days old, or a plant that
+  // runs Monday to Wednesday, therefore had four or five ZERO days folded into
+  // its own baseline: the average came out roughly half of what the plant
+  // really does in a day, and today read "+108% vs 7-day average" on an
+  // entirely ordinary shift. Nobody can see that number is wrong.
+  //
+  // So the baseline is output per DAY WITH OUTPUT — a plant day on which
+  // anything at all was finished — and the payload says how many days that was,
+  // so a reader can judge it. Fewer than two such days is not an average and is
+  // reported as null with the reason, never as a percentage.
   const weekAvgRow = db.prepare(`
-    SELECT COUNT(*) / 7.0 as avg
+    SELECT COUNT(*) AS runs, COUNT(DISTINCT date(completed_at, ?)) AS days
     FROM completions
     WHERE company_id = ? AND status='completed' AND date(completed_at, ?) >= date('now', ?, '-7 days') AND date(completed_at, ?) < date('now', ?)${cf.clause}
-  `).get(cid, day, day, day, day, ...cf.params);
-  const weekAvg = weekAvgRow?.avg || 0;
-  const vsAvgPct = weekAvg > 0 ? Math.round(((completedToday - weekAvg) / weekAvg) * 100) : null;
+  `).get(day, cid, day, day, day, day, ...cf.params);
+  const weekDays = weekAvgRow?.days || 0;
+  const weekAvg = weekDays > 0 ? (weekAvgRow.runs / weekDays) : 0;
+  const MIN_BASELINE_DAYS = 2;
+  const vsAvgReason = weekDays < MIN_BASELINE_DAYS
+    ? (weekDays === 0
+      ? 'nothing was finished in the seven days before today'
+      : 'only one day in the last seven has any output — not yet an average')
+    : null;
+  const vsAvgPct = (!vsAvgReason && weekAvg > 0)
+    ? Math.round(((completedToday - weekAvg) / weekAvg) * 100)
+    : null;
 
   const activeNow = db.prepare(`
     SELECT COUNT(*) as c FROM completions
@@ -1366,6 +1420,11 @@ router.get('/daily-brief', (req, res) => {
     kpis: {
       completed_today: completedToday,
       vs_7day_avg_pct: vsAvgPct,
+      /** How many of the seven days before today the baseline is built from —
+       *  days the plant finished anything, not calendar days. */
+      vs_7day_sample_days: weekDays,
+      /** Why the comparison is null, when it is. Printed instead of a bare dash. */
+      vs_7day_reason: vsAvgReason,
       active_now: activeNow,
       pass_rate_7d: passRate7d,
       schedule_adherence: scheduleAdherence,
@@ -1374,7 +1433,10 @@ router.get('/daily-brief', (req, res) => {
     },
     due_soon: dueSoon,
     throughput_7d: days7,
+    /** Output per day WITH output over the last seven days — the same baseline
+     *  vs_7day_avg_pct is measured against, and 0 when nothing ran at all. */
     week_avg_per_day: Math.round(weekAvg * 10) / 10,
+    week_avg_basis: 'days with any completion in the last 7',
     is_pro: !!isPro,
   });
 });

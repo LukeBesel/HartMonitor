@@ -1601,13 +1601,16 @@ function loadSampleDataForCompany(companyId) {
       driveLive: false,
     });
 
-    const revisions = seedShapes.seedTwoRevisions(companyId, {
+    // Rev 1 ten days back, Rev 2 two days back — BEFORE the week of history
+    // this function has already written, so no run is ever stamped with a
+    // revision that (on the dates the page prints) had not been published yet.
+    seedShapes.seedTwoRevisions(companyId, {
       appId, publisherUserId: owner.id, approverUserId: supervisorId,
     });
 
-    // Stamp the app's own history with the revision it actually ran under:
-    // every earlier run Rev 1, the latest Rev 2 — the same rule the sandbox
-    // seed follows, applied to the completions this function already wrote.
+    // Stamp the app's own history with the revision it actually ran under —
+    // the same rule the sandbox seed follows, applied to the completions this
+    // function already wrote (see stampRunsWithRevisions below).
     const appRow = db.prepare('SELECT name FROM apps WHERE id = ? AND company_id = ?').get(appId, companyId);
 
     // A dedicated, most-recent completion for the trainee — never a randomly
@@ -1628,12 +1631,24 @@ function loadSampleDataForCompany(companyId) {
     seedShapes.stampCompletionValues(companyId, appId, traineeCompletionId, appWidgets,
       { ppe_worn: true, bolt_count: 8, final_inspection: 'Pass' }, 1);
 
-    const appCompletions = db.prepare(
-      `SELECT id FROM completions WHERE company_id = ? AND app_id = ? AND id != ? ORDER BY completed_at ASC`
-    ).all(companyId, appId, traineeCompletionId);
-    const stampRevision = db.prepare(`UPDATE completions SET app_revision_id = ? WHERE id = ? AND company_id = ?`);
-    appCompletions.forEach(c => stampRevision.run(revisions.rev1.id, c.id, companyId));
-    stampRevision.run(revisions.rev2.id, traineeCompletionId, companyId);
+    // One rule, applied to every run this function wrote: the revision that was
+    // in force when the run STARTED. The version this replaces stamped Rev 1 on
+    // everything except the newest run — which reads, on a run from last
+    // Tuesday, as "measured against instructions published today".
+    seedShapes.stampRunsWithRevisions(companyId, appId);
+
+    // A PM that has already put a job on the board. driveLive: false — a real
+    // company may have a webhook subscribed to 'maintenance.pm_raised', and
+    // sample data must never fire a customer's live integration; the rows the
+    // sweeper writes are still exactly the rows that appear.
+    const sampleAssetId = uuidv4();
+    db.prepare(`
+      INSERT INTO assets (id, company_id, name, asset_number, category, type, department_id, location, status, updated_at)
+      VALUES (?, ?, 'Sample Drive Gearbox', 'AST-SAMPLE-01', 'Conveyance', 'Conveyance', ?, 'Building A', 'active', datetime('now'))
+    `).run(sampleAssetId, companyId, deptId);
+    seedShapes.seedPmRaisedJob(companyId, {
+      assetId: sampleAssetId, assignedTo: 'Line Supervisor', driveLive: false,
+    });
 
     seedShapes.seedTrainingOverride(companyId, {
       appId, operatorUserId: traineeId, operatorName: 'Sample Trainee',

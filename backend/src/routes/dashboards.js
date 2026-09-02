@@ -148,7 +148,7 @@ function resolveFilters(query, companyId) {
 // A card pinned to one app plus a page filter for a different app is an empty
 // intersection. A sentinel id that matches no row keeps every query shape and
 // parameter binding identical instead of special-casing each card type.
-const NO_MATCH = ' no-match';
+const NO_MATCH = '__no-match__';
 
 function effectiveAppId(card, filters) {
   if (card.app_id && filters.app_id && card.app_id !== filters.app_id) return NO_MATCH;
