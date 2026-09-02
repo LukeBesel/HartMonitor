@@ -254,3 +254,115 @@ describe('Command Center attention list stays triageable', () => {
     assert.equal(overflow.link, '/schedule');
   });
 });
+
+describe('Seeded sandbox tiles: no 0 stands in for something nobody measured', () => {
+  // The sandbox is a plant with a full day of real activity behind it, so
+  // every tile this suite checks SHOULD read as measured (sample > 0). The
+  // rule under test is the contract each of these payloads documents on
+  // itself: a value and its `_sample` (or `sample`) count travel together, and
+  // a value is only ever null when its sample is 0 — never a bare 0 standing
+  // in for "nobody counted this yet". Asserting sample > 0 here is therefore
+  // also proof that the new wave-3/4 tiles (WIP good/scrap, the scrap yield,
+  // the andon within-target figure) are actually populated by the seed, not
+  // just that they fail safe when empty (screen-data-honesty's other describe
+  // blocks already cover the empty case, against a fresh company).
+  let token;
+
+  before(async () => {
+    const demo = await api('POST', '/api/auth/demo');
+    assert.equal(demo.status, 201, `demo sandbox: ${JSON.stringify(demo.json)}`);
+    token = demo.json.token;
+  });
+
+  // A value/sample/reason triad: if the sample is 0, the value MUST be null
+  // and a reason MUST be given; if the sample is > 0, the value must be a real
+  // number — the two can never both be true at once, and neither can print a
+  // bare 0 in the sample's absence.
+  function assertHonestTriad(label, value, sample, reason) {
+    assert.ok(Number.isFinite(sample), `${label}: sample must be a number (got ${JSON.stringify(sample)})`);
+    if (sample > 0) {
+      assert.notEqual(value, null, `${label}: sample is ${sample} but the value is null`);
+    } else {
+      assert.equal(value, null, `${label}: sample is 0, so the value must be null, not a fabricated ${JSON.stringify(value)}`);
+      assert.ok(reason, `${label}: a null value must carry a reason`);
+    }
+  }
+
+  it('GET /api/floor/snapshot: cycle time and pass rate are measured, with samples', async () => {
+    const r = await api('GET', '/api/floor/snapshot', { token });
+    assert.equal(r.status, 200);
+    assertHonestTriad('avg_cycle_seconds', r.json.avg_cycle_seconds, r.json.avg_cycle_sample, r.json.avg_cycle_reason);
+    assertHonestTriad('pass_rate', r.json.pass_rate, r.json.pass_rate_sample, r.json.pass_rate_reason);
+    assert.ok(r.json.avg_cycle_sample > 0, 'the sandbox has real cycle-time samples');
+    assert.ok(r.json.pass_rate_sample > 0, 'the sandbox has real pass/fail samples');
+  });
+
+  it('GET /api/floor/wip-summary: today\'s good/scrap carry a real sample', async () => {
+    const r = await api('GET', '/api/floor/wip-summary', { token });
+    assert.equal(r.status, 200);
+    assertHonestTriad('totals.good_today', r.json.totals.good_today, r.json.totals.good_today_sample, r.json.totals.good_today_reason);
+    assertHonestTriad('totals.scrap_today', r.json.totals.scrap_today, r.json.totals.scrap_today_sample, r.json.totals.scrap_today_reason);
+    assert.ok(r.json.totals.good_today_sample > 0, 'the seeded Weld runs count toward today\'s good units');
+    assert.ok(r.json.totals.scrap_today_sample > 0, 'the seeded Weld runs count toward today\'s scrap');
+    assert.ok(r.json.totals.good_today > 0);
+    assert.ok(r.json.totals.scrap_today > 0);
+    for (const dept of r.json.departments) {
+      assertHonestTriad(`departments[${dept.department_name}].good_today`, dept.good_today, dept.good_today_sample, dept.good_today_reason);
+      assertHonestTriad(`departments[${dept.department_name}].scrap_today`, dept.scrap_today, dept.scrap_today_sample, dept.scrap_today_reason);
+    }
+  });
+
+  it('GET /api/oee/losses: every Pareto bar is a real, positive number of minutes', async () => {
+    const r = await api('GET', '/api/oee/losses?days=1', { token });
+    assert.equal(r.status, 200);
+    assert.ok(r.json.pareto.length > 0, 'the Pareto is not empty');
+    for (const row of r.json.pareto) {
+      assert.ok(row.minutes > 0, `Pareto row "${row.label}" must carry real minutes, not a placeholder 0`);
+      assert.ok(row.stops > 0, `Pareto row "${row.label}" must carry a real stop count`);
+    }
+    // The six big losses always print all six buckets (that is real: "0
+    // minutes of speed loss" is itself measured, not unmeasured) — but the
+    // buckets our seed actually populated must show up as positive minutes,
+    // not the same fabricated placeholder every empty bucket would show.
+    const populated = r.json.six_big_losses.filter(b => b.minutes > 0);
+    assert.ok(populated.length >= 3, `at least 3 of the six buckets have real minutes (got ${populated.map(b => b.bucket).join(', ')})`);
+  });
+
+  it('GET /api/completions/scrap: first-pass yield is real, never a fabricated 0% or 100%', async () => {
+    const r = await api('GET', '/api/completions/scrap?days=1', { token });
+    assert.equal(r.status, 200);
+    assert.ok(r.json.totals.sample > 0, 'the totals carry a real sample');
+    assert.notEqual(r.json.totals.fpy, null, 'a sample > 0 must produce a real yield, not null');
+    assert.ok(r.json.totals.fpy > 0 && r.json.totals.fpy <= 1, 'fpy is a real fraction');
+    for (const part of r.json.parts) {
+      if (part.sample > 0) {
+        assert.notEqual(part.fpy, null, `part ${part.part_number}: sample > 0 but fpy is null`);
+      } else {
+        assert.equal(part.fpy, null, `part ${part.part_number}: sample is 0, fpy must be null not fabricated`);
+        assert.ok(part.fpy_reason, `part ${part.part_number}: a null fpy must carry a reason`);
+      }
+    }
+  });
+
+  it('GET /api/andon/summary: within-target is a measured number, with its sample', async () => {
+    const r = await api('GET', '/api/andon/summary', { token });
+    assert.equal(r.status, 200);
+    if (r.json.within_target_sample > 0) {
+      assert.notEqual(r.json.within_target_pct, null, 'sample > 0 but within_target_pct is null');
+    } else {
+      assert.equal(r.json.within_target_pct, null, 'within_target_sample is 0, so the pct must be null, not a fabricated 0%');
+      assert.ok(r.json.within_target_reason, 'a null within_target_pct must carry a reason');
+    }
+    assert.ok(r.json.within_target_sample > 0, 'the seeded acknowledged call gives this a real sample');
+    assert.ok(r.json.escalated_open >= 1, 'the seeded escalated call is counted');
+  });
+
+  it('GET /api/analytics/overview: pass rate and cycle time are real, sampled numbers', async () => {
+    const r = await api('GET', '/api/analytics/overview', { token });
+    assert.equal(r.status, 200);
+    assertHonestTriad('passRate', r.json.passRate, r.json.qcSampleSize, r.json.pass_rate_reason);
+    assertHonestTriad('avgCycleSeconds', r.json.avgCycleSeconds, r.json.avgCycleSample, r.json.avg_cycle_reason);
+    assert.ok(r.json.qcSampleSize > 0);
+    assert.ok(r.json.avgCycleSample > 0);
+  });
+});

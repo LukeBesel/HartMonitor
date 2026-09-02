@@ -1535,6 +1535,84 @@ function loadSampleDataForCompany(companyId) {
       .run(uuidv4(), 'Production Overview', 'Sample dashboard — customize or delete.', JSON.stringify(cards), companyId);
   }
 
+  // ── Waves 3/4 shapes: a routed job, coded scrap/downtime, an escalated
+  // andon call, a change-controlled app on Rev 2, and a training override.
+  // Same shared helpers the no-sign-in sandbox uses (backend/src/seedShapes.js)
+  // so a real signup that clicks "Load sample data" sees the same modules
+  // alive that the public demo does — required lazily, here, so nothing
+  // outside this function changes. Every "today" timestamp is placed in THIS
+  // company's own timezone, not the server's.
+  const seedShapes = require('./seedShapes');
+  const tag = uuidv4().replace(/-/g, '').slice(0, 6).toUpperCase();
+
+  const reasonIds = seedShapes.seedReasonCodes(companyId);
+  const routing = seedShapes.seedBracketLineRouting(companyId, {
+    tag, deptId, siteId, weldAppId: appId, inspectAppId: null, weldStationId: s1, inspectStationId: null,
+  });
+  seedShapes.seedWeldScrapRuns(companyId, {
+    appId, stationId: s1,
+    workOrderId: routing.inProgress.workOrderId,
+    workOrderOperationId: routing.inProgress.op2Id,
+    operatorUserId: null, operatorName: operators[0],
+    scrapReasonCodeId: reasonIds.scrap.weld_porosity,
+  });
+  seedShapes.seedDowntimePareto(companyId, {
+    stationIds: [s1, s2],
+    reasonIds: {
+      breakdown: reasonIds.downtime.breakdown,
+      changeover: reasonIds.downtime.changeover,
+      jam: reasonIds.downtime.jam,
+    },
+  });
+
+  // The signed-in owner who clicked "Load sample data" publishes and
+  // certifies; a manager or developer always exists here (the route that
+  // calls this function is gated at manager role or above).
+  const owner = db.prepare(`
+    SELECT id, display_name FROM users
+    WHERE company_id = ? AND role IN ('manager', 'developer') AND is_active = 1
+    ORDER BY created_at ASC LIMIT 1
+  `).get(companyId);
+
+  if (owner) {
+    seedShapes.seedAndonCalls(companyId, {
+      deptId, stationId: s1, raiserUserId: null, raiserName: operators[0],
+    });
+
+    // A second person for the app-revision approval and the training
+    // override sign-off — a supervisor really has to be someone other than
+    // the publisher, or neither the approval nor the override means anything.
+    const supervisorId = uuidv4();
+    db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role, company_id) VALUES (?, ?, 'Line Supervisor', ?, 'supervisor', ?)`)
+      .run(supervisorId, `sample-supervisor-${tag.toLowerCase()}@hartmonitor.local`, hashPwDemo(uuidv4()), companyId);
+    const traineeId = uuidv4();
+    db.prepare(`INSERT INTO users (id, email, display_name, password_hash, role, company_id) VALUES (?, ?, 'Sample Trainee', ?, 'operator', ?)`)
+      .run(traineeId, `sample-trainee-${tag.toLowerCase()}@hartmonitor.local`, hashPwDemo(uuidv4()), companyId);
+
+    const revisions = seedShapes.seedTwoRevisions(companyId, {
+      appId, publisherUserId: owner.id, approverUserId: supervisorId,
+    });
+
+    // Stamp the app's own history with the revision it actually ran under:
+    // every earlier run Rev 1, the latest Rev 2 — the same rule the sandbox
+    // seed follows, applied to the completions this function already wrote.
+    const appCompletions = db.prepare(
+      `SELECT id FROM completions WHERE company_id = ? AND app_id = ? ORDER BY completed_at ASC`
+    ).all(companyId, appId);
+    const stampRevision = db.prepare(`UPDATE completions SET app_revision_id = ? WHERE id = ? AND company_id = ?`);
+    appCompletions.forEach((c, i) => {
+      stampRevision.run(i === appCompletions.length - 1 ? revisions.rev2.id : revisions.rev1.id, c.id, companyId);
+    });
+    const latest = appCompletions[appCompletions.length - 1] || null;
+
+    seedShapes.seedTrainingOverride(companyId, {
+      appId, operatorUserId: traineeId, operatorName: 'Sample Trainee',
+      certifierUserId: owner.id,
+      supervisorUserId: supervisorId, supervisorName: 'Line Supervisor',
+      completionId: latest ? latest.id : null,
+    });
+  }
+
   return { appId, deptId, stationIds: [s1, s2], locationId: locId };
 }
 
