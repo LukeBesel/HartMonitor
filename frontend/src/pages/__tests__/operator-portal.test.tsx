@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 
 // ─── The portal lists what this operator should actually run ──────────────────
 //
@@ -192,10 +192,17 @@ function thirteenOpenRuns() {
   return runs;
 }
 
+/** The current URL, on screen, so a test can assert what a tap navigated to. */
+function LocationProbe() {
+  const location = useLocation();
+  return <div data-testid="location">{location.pathname + location.search}</div>;
+}
+
 function renderPortal() {
   return render(
     <MemoryRouter initialEntries={['/operator']}>
       <OperatorPortal />
+      <LocationProbe />
     </MemoryRouter>,
   );
 }
@@ -312,6 +319,25 @@ describe('an interrupted job comes back as ONE row', () => {
     expect(stamp).not.toEqual(utcStamp);
     expect(screen.getByText(`Started ${stamp}`)).toBeTruthy();
     expect(screen.queryByText(`Started ${utcStamp}`)).toBeNull();
+  });
+
+  it('resumes THAT run by id, so the player carries on instead of guessing', async () => {
+    renderPortal();
+    await clockIn();
+    await screen.findAllByTestId('resume-row');
+
+    fireEvent.click(screen.getAllByText('Resume')[0]);
+
+    const url = new URL(screen.getByTestId('location').textContent ?? '', 'http://x');
+    // run-0 is the newest run on the first (job, operation, app) key, which is
+    // the one this row is offering.
+    expect(url.searchParams.get('run')).toBe('run-0');
+    expect(url.searchParams.get('wo')).toBe('wo-1');
+    expect(url.searchParams.get('op')).toBe('op-1');
+    expect(url.searchParams.get('from')).toBe('operator');
+    // A job with three open runs on it: the id is the whole point — without it
+    // the player has only 'wo-1' and cannot tell which unit was meant.
+    expect(url.pathname).toBe('/play/app-weld');
   });
 
   it('caps the list and offers the rest, rather than an uncapped pile', async () => {

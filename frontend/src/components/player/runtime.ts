@@ -547,6 +547,16 @@ export interface PlayLinkParams {
    * inferred from the job's pointer a shift later.
    */
   operationId?: string | null;
+  /**
+   * An in-progress completion to CARRY ON, rather than a new run to start.
+   *
+   * A tablet that reloads mid-run leaves its completion open, and the operator
+   * coming back is resuming that unit — not starting a second one against the
+   * same job. The portal knows exactly which run it is offering, so it names
+   * it; the player resumes that id at its saved step instead of inferring
+   * which of several open runs was meant.
+   */
+  runId?: string | null;
   operatorName?: string | null;
   operatorUserId?: string | null;
   stationId?: string | null;
@@ -557,13 +567,20 @@ export interface PlayLinkParams {
   from?: string | null;
 }
 
-/** Deep link into the player, carrying the VERIFIED identity (uid) so the run
- *  is attributed to the person, not to their typing — and, since the queue
- *  knows it, the exact operation the job is standing on. */
+/**
+ * Deep link into the player, carrying the VERIFIED identity (uid) so the run is
+ * attributed to the person, not to their typing — and, since the queue knows
+ * them, the exact operation the job is standing on and the open run being
+ * picked back up.
+ *
+ * Parameter order is fixed — wo, op, run, name, uid, station, from — so the
+ * links are comparable by eye in a log, a screenshot or a test.
+ */
 export function buildPlayLink(p: PlayLinkParams): string {
   const q = new URLSearchParams();
   if (p.workOrderId) q.set('wo', p.workOrderId);
   if (p.operationId) q.set('op', p.operationId);
+  if (p.runId) q.set('run', p.runId);
   const name = (p.operatorName ?? '').trim();
   if (name) q.set('name', name);
   if (p.operatorUserId) q.set('uid', p.operatorUserId);

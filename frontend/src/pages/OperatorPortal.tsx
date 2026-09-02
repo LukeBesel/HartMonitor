@@ -352,6 +352,11 @@ export default function OperatorPortal() {
       appId: run.app_id,
       workOrderId: run.work_order_id,
       operationId: run.work_order_operation_id ?? null,
+      // THE run, by id. Without it the player has only the job to go on, and a
+      // job with two open runs on it is a guess — so it asks, or worse, starts
+      // a third. This row is an offer to carry on with a specific unit, and the
+      // link says which one.
+      runId: run.id,
       operatorName,
       operatorUserId,
       stationId: run.station_id || stationId || null,
