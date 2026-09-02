@@ -1337,11 +1337,16 @@ function PMSchedulesTab({ pms, loading, onRefresh, onNewPM, highlightId }: PMSch
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Title</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Frequency</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Next Due</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Raises its own job</th>
+                  <th className="text-left px-3 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide" title="Raise a work order automatically when this PM comes due, and how many days early">Auto</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Last Done</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Assigned To</th>
                   <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Est. Hrs</th>
-                  <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide">Actions</th>
+                  {/* Pinned to the right edge of the scroll box. Nine columns do
+                      not fit 1280 beside the sidebar, and the one column nobody
+                      can afford to lose off the end is the one with the button
+                      on it — a table you have to scroll sideways to find the
+                      action in is a table people give up on. */}
+                  <th className="sticky right-0 z-10 bg-gray-50 text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wide border-l border-gray-200">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100">
@@ -1354,7 +1359,7 @@ function PMSchedulesTab({ pms, loading, onRefresh, onNewPM, highlightId }: PMSch
                     <tr
                       key={pm.id}
                       data-testid={`pm-row-${pm.id}`}
-                      className={`transition-colors ${highlightId === pm.id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
+                      className={`group transition-colors ${highlightId === pm.id ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
                     >
                       <td className="px-4 py-3 text-gray-700">{pm.asset_name || '—'}</td>
                       <td className="px-4 py-3 text-gray-900 font-medium max-w-[200px] truncate">{pm.title}</td>
@@ -1384,41 +1389,45 @@ function PMSchedulesTab({ pms, loading, onRefresh, onNewPM, highlightId }: PMSch
                           <div className="text-xs text-blue-700 mt-0.5">Job raised: {pm.open_wo_number}</div>
                         )}
                       </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          <label className="inline-flex items-center gap-1.5 text-xs text-gray-700">
-                            <input
-                              type="checkbox"
-                              checked={pm.auto_create_wo}
-                              disabled={savingId === pm.id}
-                              aria-label={`Raise a work order automatically for ${pm.title}`}
-                              onChange={e => saveSchedule(pm, { auto_create_wo: e.target.checked })}
-                              className="rounded border-gray-300"
-                            />
-                            Auto
-                          </label>
-                          <label className="inline-flex items-center gap-1.5 text-xs text-gray-500">
-                            <input
-                              type="number"
-                              min={0}
-                              max={365}
-                              defaultValue={pm.lead_days}
-                              disabled={savingId === pm.id || !pm.auto_create_wo}
-                              aria-label={`Days of lead time for ${pm.title}`}
-                              onBlur={e => {
-                                const value = Number(e.target.value);
-                                if (value !== pm.lead_days) saveSchedule(pm, { lead_days: value });
-                              }}
-                              className="w-16 bg-white border border-gray-300 rounded-lg px-2 py-1 text-gray-900 disabled:opacity-50"
-                            />
-                            days early
-                          </label>
+                      {/* Deliberately narrow: two controls and no prose. The
+                          first cut of this column was wide enough to push "Mark
+                          Complete" — the one thing anyone comes to this table to
+                          press — off the right edge at 1280 with the sidebar
+                          open. The header and the tooltips carry the meaning. */}
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={pm.auto_create_wo}
+                            disabled={savingId === pm.id}
+                            title={`Raise a work order automatically when "${pm.title}" comes due`}
+                            aria-label={`Raise a work order automatically for ${pm.title}`}
+                            onChange={e => saveSchedule(pm, { auto_create_wo: e.target.checked })}
+                            className="rounded border-gray-300"
+                          />
+                          <input
+                            type="number"
+                            min={0}
+                            max={365}
+                            defaultValue={pm.lead_days}
+                            disabled={savingId === pm.id || !pm.auto_create_wo}
+                            title={`Days before the due date to raise the job for "${pm.title}"`}
+                            aria-label={`Days of lead time for ${pm.title}`}
+                            onBlur={e => {
+                              const value = Number(e.target.value);
+                              if (value !== pm.lead_days) saveSchedule(pm, { lead_days: value });
+                            }}
+                            className="w-14 bg-white border border-gray-300 rounded-lg px-1.5 py-1 text-gray-900 disabled:opacity-50"
+                          />
+                          <span className="text-xs text-gray-500">d</span>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-gray-500">{formatDate(pm.last_completed_at)}</td>
                       <td className="px-4 py-3 text-gray-500">{pm.assigned_to || '—'}</td>
                       <td className="px-4 py-3 text-gray-500">{pm.estimated_hours}h</td>
-                      <td className="px-4 py-3">
+                      <td className={`sticky right-0 z-10 px-4 py-3 border-l border-gray-200 ${
+                        highlightId === pm.id ? 'bg-blue-50' : 'bg-white group-hover:bg-gray-50'
+                      }`}>
                         <button
                           onClick={() => handleComplete(pm.id)}
                           disabled={completingId === pm.id}

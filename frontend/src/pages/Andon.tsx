@@ -18,7 +18,7 @@ import { fmtDuration } from '../components/apps/appModel';
 import {
   getAndonTargets, updateAndonTarget, secondsToTarget, secondsSinceEscalation, parseUtc,
 } from '../api/andon';
-import type { AndonCallLive, AndonSummaryLive, AndonTarget } from '../api/andon';
+import type { AndonCallLive, AndonSummaryLive, AndonTarget, AndonTargetUpdate } from '../api/andon';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
 import type { DepartmentOption } from '../hooks/useDepartmentFilter';
@@ -154,12 +154,29 @@ function EscalationBadge({ call, now }: { call: AndonCallLive; now: number }) {
 
 const PRIORITY_ORDER: Array<'critical' | 'high' | 'normal'> = ['critical', 'high', 'normal'];
 
+/** The rungs a target may be pointed at: the four routing teams, then
+ *  management at the top. Mirrors ESCALATE_TO_OPTIONS on the server, which is
+ *  what actually validates the choice — the picker must never offer something
+ *  the API would refuse. */
+const ESCALATE_TO_CHOICES: { id: string; label: string }[] = [
+  ...ANDON_TEAM_ORDER.map(team => ({ id: team as string, label: ANDON_TEAMS[team].label })),
+  { id: 'manager', label: 'Management' },
+];
+
+const targetKey = (row: AndonTarget) => `${row.team}|${row.priority}`;
+
 function TargetsPanel() {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<AndonTarget[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [error, setError] = useState('');
+  // What the server holds is the only thing these inputs ever show. A draft
+  // exists only while somebody is typing in one; a refused edit drops its draft,
+  // so the field snaps back to the stored value instead of leaving a number on
+  // screen that was never saved.
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (!open || rows || loading) return;
@@ -170,18 +187,29 @@ function TargetsPanel() {
       .finally(() => setLoading(false));
   }, [open, rows, loading]);
 
-  async function save(row: AndonTarget, patch: { respond_minutes?: number; escalate_minutes?: number }) {
-    const key = `${row.team}|${row.priority}`;
+  async function save(row: AndonTarget, patch: Partial<AndonTargetUpdate>, draftKeys: string[] = []) {
+    const key = targetKey(row);
     setSavingKey(key);
     setError('');
+    setRowErrors(prev => ({ ...prev, [key]: '' }));
     try {
       const saved = await updateAndonTarget({ team: row.team, priority: row.priority, ...patch });
       setRows(prev => (prev || []).map(r => (r.id === row.id ? { ...r, ...saved } : r)));
     } catch (err) {
-      // A refused edit must not leave an edited-looking number on screen.
-      setError(err instanceof Error ? err.message : 'Only a manager can change response targets.');
-      setRows(prev => (prev ? [...prev] : prev));
+      // The server refused it. Say which row and why, and let the input fall
+      // back to the value that is actually stored.
+      setRowErrors(prev => ({
+        ...prev,
+        [key]: err instanceof Error ? err.message : 'Only a manager can change response targets.',
+      }));
     } finally {
+      // Either way the draft goes: on success the server's value is newer, on
+      // failure it is the only true one.
+      setDrafts(prev => {
+        const next = { ...prev };
+        for (const k of draftKeys) delete next[k];
+        return next;
+      });
       setSavingKey(null);
     }
   }
@@ -189,6 +217,31 @@ function TargetsPanel() {
   const ordered = (rows || []).slice().sort((a, b) =>
     a.team_label.localeCompare(b.team_label) ||
     PRIORITY_ORDER.indexOf(a.priority) - PRIORITY_ORDER.indexOf(b.priority));
+
+  const numberCell = (row: AndonTarget, field: 'respond_minutes' | 'escalate_minutes') => {
+    const key = targetKey(row);
+    const draftKey = `${key}|${field}`;
+    const stored = String(row[field]);
+    const value = drafts[draftKey] ?? stored;
+    return (
+      <input
+        type="number"
+        min={1}
+        value={value}
+        disabled={savingKey === key}
+        aria-label={`${field === 'respond_minutes' ? 'Respond' : 'Escalate'} minutes for ${row.team_label} ${row.priority}`}
+        onChange={e => setDrafts(prev => ({ ...prev, [draftKey]: e.target.value }))}
+        onBlur={() => {
+          if (value === stored) {
+            setDrafts(prev => { const next = { ...prev }; delete next[draftKey]; return next; });
+            return;
+          }
+          void save(row, { [field]: Number(value) } as Partial<AndonTargetUpdate>, [draftKey]);
+        }}
+        className="w-20 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-white tnum disabled:opacity-50"
+      />
+    );
+  };
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-xl">
@@ -229,49 +282,42 @@ function TargetsPanel() {
                 </thead>
                 <tbody className="divide-y divide-gray-800">
                   {ordered.map(row => {
-                    const key = `${row.team}|${row.priority}`;
-                    const busy = savingKey === key;
+                    const key = targetKey(row);
                     return (
                       <tr key={row.id}>
                         <td className="py-2 pr-4 text-gray-200">{row.team_label}</td>
                         <td className="py-2 pr-4 capitalize text-gray-400">{row.priority}</td>
+                        <td className="py-2 pr-4">{numberCell(row, 'respond_minutes')}</td>
                         <td className="py-2 pr-4">
-                          <input
-                            type="number"
-                            min={1}
-                            defaultValue={row.respond_minutes}
-                            disabled={busy}
-                            aria-label={`Respond minutes for ${row.team_label} ${row.priority}`}
-                            onBlur={e => {
-                              const value = Number(e.target.value);
-                              if (value !== row.respond_minutes) void save(row, { respond_minutes: value });
-                            }}
-                            className="w-20 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-white tnum disabled:opacity-50"
-                          />
+                          {numberCell(row, 'escalate_minutes')}
+                          {rowErrors[key] && (
+                            <span className="block max-w-[22rem] whitespace-normal text-xs text-red-300 mt-1">
+                              {rowErrors[key]}
+                            </span>
+                          )}
                         </td>
-                        <td className="py-2 pr-4">
-                          <input
-                            type="number"
-                            min={1}
-                            defaultValue={row.escalate_minutes}
-                            disabled={busy}
-                            aria-label={`Escalate minutes for ${row.team_label} ${row.priority}`}
-                            onBlur={e => {
-                              const value = Number(e.target.value);
-                              if (value !== row.escalate_minutes) void save(row, { escalate_minutes: value });
-                            }}
-                            className="w-20 bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-white tnum disabled:opacity-50"
-                          />
+                        <td className="py-2">
+                          <select
+                            value={row.escalate_to_team || 'supervisor'}
+                            disabled={savingKey === key}
+                            aria-label={`Escalates to, for ${row.team_label} ${row.priority}`}
+                            onChange={e => void save(row, { escalate_to_team: e.target.value })}
+                            className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1 text-white disabled:opacity-50"
+                          >
+                            {ESCALATE_TO_CHOICES.map(choice => (
+                              <option key={choice.id} value={choice.id}>{choice.label}</option>
+                            ))}
+                          </select>
                         </td>
-                        <td className="py-2 text-gray-400">{row.escalate_to_label}</td>
                       </tr>
                     );
                   })}
                 </tbody>
               </table>
               <p className="mt-3 text-xs text-gray-500">
-                A call nobody acknowledges within its respond time is escalated to the next team, then once more —
-                twice at most. Managers can edit these; everyone else sees them.
+                A call nobody acknowledges within its respond time is escalated to the team named here, then once more to
+                management — twice at most, and never to somebody who was already alerted. Respond has to be shorter than
+                escalate. Managers can edit these; everyone else sees them.
               </p>
             </div>
           )}
@@ -782,10 +828,16 @@ export default function Andon() {
                 </p>
                 {/* How many of those have already missed their target — the
                     number a supervisor actually has to act on. */}
-                {(summary.overdue ?? 0) > 0 && (
+                {/* Escalating pushes the respond-by forward, so an escalated
+                    call is briefly NOT past target — and the old condition hid
+                    the escalation count exactly when it mattered most. Each
+                    number stands on its own. */}
+                {((summary.overdue ?? 0) > 0 || (summary.escalated_open ?? 0) > 0) && (
                   <p data-testid="stat-overdue" className="text-xs text-red-400 mt-1">
-                    {summary.overdue} past target
-                    {(summary.escalated_open ?? 0) > 0 ? ` · ${summary.escalated_open} escalated` : ''}
+                    {[
+                      (summary.overdue ?? 0) > 0 ? `${summary.overdue} past target` : '',
+                      (summary.escalated_open ?? 0) > 0 ? `${summary.escalated_open} escalated` : '',
+                    ].filter(Boolean).join(' · ')}
                   </p>
                 )}
               </div>

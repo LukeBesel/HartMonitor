@@ -14,10 +14,14 @@
 //
 // The three rules that keep it from becoming a spam generator:
 //
-//   1. ONE OPEN JOB PER SCHEDULE. The query skips any schedule that already has
-//      a maintenance work order neither completed nor cancelled. So the second
-//      sweep of the same due PM raises nothing, and a plant that leaves a PM
-//      job open for a fortnight gets one job, not fourteen.
+//   1. ONE OPEN JOB PER SCHEDULE, AND ONE A DAY AT MOST. The query skips any
+//      schedule that already has a maintenance work order neither completed nor
+//      cancelled, so a plant that leaves a PM job open for a fortnight gets one
+//      job, not fourteen. It also skips a schedule already raised TODAY on the
+//      plant's clock (last_raised_at), which is what stops the other loop: a
+//      job that somebody CANCELS is no longer open, so without that guard the
+//      next sweep raised it again, and the next, for as long as the PM stayed
+//      due. Cancelling has to mean "not today", or the button does nothing.
 //   2. THE PLANT'S DAY DECIDES. Due-ness is a calendar comparison, and the
 //      calendar is the plant's, not Greenwich's — plantDayShift() is bound on
 //      BOTH sides. A PM due tomorrow morning must not be raised all of this
@@ -65,10 +69,24 @@ function nextWONumber(companyId) {
   return `${prefix}${String(last + 1).padStart(3, '0')}`;
 }
 
-/** The SQL predicate for "this PM is overdue", in the plant's own day. Shared
- *  by the list, the summary tile and this sweeper so the three can never
- *  disagree about how many PMs are late. Binds the shift twice. */
-const OVERDUE_SQL = "date(next_due_at, ?) < date('now', ?)";
+/**
+ * The SQL predicate for "this PM is overdue", in the plant's own day. Shared by
+ * the list, the summary tile and this sweeper so the three can never disagree
+ * about how many PMs are late. Binds the shift twice.
+ *
+ * The frequency filter is load-bearing, not decoration. An hours- or
+ * cycles-based schedule has no calendar due date, so it can never be overdue —
+ * but a row whose next_due_at was set before it was switched to hours still has
+ * a stale date sitting in the column, and a bare date comparison counted it.
+ * The tile then showed an overdue PM that the list marked "Needs a meter
+ * reading", with nothing anybody could do to clear it.
+ */
+function overdueSql(alias = '') {
+  const p = alias ? `${alias}.` : '';
+  return `${p}frequency_type IN (${RAISABLE_FREQUENCIES.map(f => `'${f}'`).join(',')})`
+    + ` AND date(${p}next_due_at, ?) < date('now', ?)`;
+}
+const OVERDUE_SQL = overdueSql();
 
 /**
  * Schedules that should raise a job right now, for one company.
@@ -81,7 +99,7 @@ function dueSchedules(companyId) {
   const day = plantDayShift(companyId);
   return db.prepare(`
     SELECT p.*, a.name AS asset_name, a.asset_number,
-           CASE WHEN ${OVERDUE_SQL.replace(/next_due_at/g, 'p.next_due_at')} THEN 1 ELSE 0 END AS is_overdue
+           CASE WHEN ${overdueSql('p')} THEN 1 ELSE 0 END AS is_overdue
       FROM pm_schedules p
       LEFT JOIN assets a ON a.id = p.asset_id
      WHERE p.company_id = ?
@@ -95,8 +113,9 @@ function dueSchedules(companyId) {
                 AND w.company_id = p.company_id
                 AND w.status NOT IN ${OPEN_WO_STATUSES}
            )
+       AND (p.last_raised_at IS NULL OR date(p.last_raised_at, ?) <> date('now', ?))
      ORDER BY p.next_due_at ASC
-  `).all(day, day, companyId, day, day);
+  `).all(day, day, companyId, day, day, day, day);
 }
 
 /**
@@ -173,10 +192,12 @@ function raiseFor(schedule) {
  * and none on the second" is the whole behaviour, and a timer cannot be asked
  * to prove it.
  */
-function runOnce() {
-  const companies = db.prepare(
-    'SELECT DISTINCT company_id FROM pm_schedules WHERE company_id IS NOT NULL AND auto_create_wo = 1'
-  ).all();
+function runOnce(companyId = null) {
+  const companies = companyId
+    ? [{ company_id: companyId }]
+    : db.prepare(
+      'SELECT DISTINCT company_id FROM pm_schedules WHERE company_id IS NOT NULL AND auto_create_wo = 1'
+    ).all();
   const raised = [];
   for (const { company_id } of companies) {
     let due = [];
@@ -224,5 +245,5 @@ function startPmScheduler() {
 
 module.exports = {
   runOnce, startPmScheduler, dueSchedules, raiseFor, nextWONumber,
-  RAISABLE_FREQUENCIES, METER_REASON, OVERDUE_SQL, OPEN_WO_STATUSES,
+  RAISABLE_FREQUENCIES, METER_REASON, OVERDUE_SQL, overdueSql, OPEN_WO_STATUSES,
 };

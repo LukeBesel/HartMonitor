@@ -81,13 +81,17 @@ async function api(method, pathname, { token, body } = {}) {
 
 // ─── Cast ─────────────────────────────────────────────────────────────────────
 // Widget Co (A): quinn answers quality calls in Assembly, sana is Assembly's
-// supervisor (tier 1), tomas is a company-wide supervisor in another department
-// (tier 2). Gadget Co (B) exists to prove tenant scoping and to keep one company
-// with NOTHING acknowledged, so the summary's honest null can be asserted.
+// supervisor (the rung above a function team), tomas is a company-wide
+// supervisor in another department, and mo is the MANAGEMENT tier — the top of
+// the ladder, where a supervisor call and every level 2 ends up.
+//
+// Gadget Co (B) is deliberately a one-person company: it proves tenant scoping,
+// keeps one company with NOTHING acknowledged so the summary's honest null can
+// be asserted, and is the shop where the ladder runs out of people.
 
 let tokenA, tokenB, opToken;
-let quinn, sana, tomas;
-let quinnToken, sanaToken, tomasToken;
+let quinn, sana, tomas, mo, ownerA;
+let quinnToken, sanaToken, tomasToken, moToken;
 let assemblyId, packagingId, stationId;
 
 before(async () => {
@@ -98,6 +102,7 @@ before(async () => {
   });
   assert.equal(a.status, 201, `signup A: ${JSON.stringify(a.json)}`);
   tokenA = a.json.token;
+  ownerA = a.json.user?.id || a.json.id;
 
   const b = await api('POST', '/api/auth/signup', {
     body: { company_name: 'Gadget Co', email: 'owner@gadget-esc.test', password: 'supersecret1', display_name: 'Gary Owner' },
@@ -119,10 +124,12 @@ before(async () => {
   quinn = await mkUser('quinn@widget-esc.test', 'Quinn Quality', 'supervisor');
   sana  = await mkUser('sana@widget-esc.test', 'Sana Supervisor', 'supervisor');
   tomas = await mkUser('tomas@widget-esc.test', 'Tomas Tier2', 'supervisor');
+  mo    = await mkUser('mo@widget-esc.test', 'Mo Manager', 'manager');
   await mkUser('olive@widget-esc.test', 'Olive Operator', 'operator');
   quinnToken = await login('quinn@widget-esc.test');
   sanaToken  = await login('sana@widget-esc.test');
   tomasToken = await login('tomas@widget-esc.test');
+  moToken    = await login('mo@widget-esc.test');
   opToken    = await login('olive@widget-esc.test');
 
   const assembly = await api('POST', '/api/departments', { token: tokenA, body: { name: 'Assembly' } });
@@ -172,6 +179,13 @@ async function messageIds(token) {
 async function newMessages(token, before_) {
   const r = await api('GET', '/api/messages?limit=200', { token });
   return r.json.filter(m => !before_.has(m.id));
+}
+
+/** Activity lines recorded against one call. */
+async function activityFor(token, callId) {
+  const r = await api('GET', '/api/activity?scope=all&limit=500', { token });
+  assert.equal(r.status, 200);
+  return r.json.filter(a => a.entity_id === callId).map(a => a.action);
 }
 
 /** One escalation tick, optionally after moving a call's respond_by into the past. */
@@ -244,22 +258,114 @@ test('a call past its target escalates one level per tick, at most twice, to som
   assert.equal((await getCall(tokenA, call.id)).escalation_level, 1);
   assert.equal((await newMessages(sanaToken, beforeSana)).length, 1, 'still exactly one message for level 1');
 
-  // ── Past the escalate window: level 2, a different person again ──
+  // ── Past the escalate window: level 2 ends at management ──
+  const beforeMo = await messageIds(moToken);
   const third = await tick(tokenA, { backdate_call_id: call.id, backdate_seconds: 60 });
-  assert.equal(third.count, 1);
+  assert.equal(third.count, 1, `level 2 escalated: ${JSON.stringify(third)}`);
+  assert.equal(third.escalated[0].recipients.length > 0, true,
+    'a claimed level always reached somebody — that is what claiming it means');
   const afterSecond = await getCall(tokenA, call.id);
   assert.equal(afterSecond.escalation_level, 2);
-  assert.equal(afterSecond.escalated_to_user_id, tomas, 'level 2 reaches past the people levels 0 and 1 already alerted');
-  assert.equal((await newMessages(tomasToken, beforeTomas)).length, 1);
+  assert.equal(afterSecond.escalated_to_label, 'Management', 'the top of the ladder, not another lap of the same rung');
+  assert.equal(afterSecond.escalated_to_user_id, mo, 'level 2 reaches past everyone levels 0 and 1 already alerted');
+  assert.equal((await newMessages(moToken, beforeMo)).length, 1);
+  assert.equal((await newMessages(tomasToken, beforeTomas)).length, 0, 'a supervisor is not the management tier');
   assert.equal((await newMessages(sanaToken, beforeSana)).length, 1, 'no repeat for the tier that already heard');
 
   // ── Level 2 is the end of the chain ──
   const fourth = await tick(tokenA, { backdate_call_id: call.id, backdate_seconds: 3600 });
   assert.equal(fourth.count, 0, 'two chases is the policy — not one a minute forever');
   assert.equal((await getCall(tokenA, call.id)).escalation_level, 2);
-  assert.equal((await newMessages(tomasToken, beforeTomas)).length, 1);
+  assert.equal((await newMessages(moToken, beforeMo)).length, 1);
 
   await api('PUT', `/api/andon/${call.id}/resolve`, { token: tokenA });
+});
+
+test('a supervisor call and a safety call climb to management, not back to themselves', async () => {
+  // The bug this pins: escalate_to used to be 'supervisor' for EVERY team, so a
+  // plain "Call for help" (already the supervisor's) escalated to the
+  // supervisors — minus the supervisors who had just ignored it. That resolves
+  // to nobody, and the board painted a red badge over an alert nobody received.
+  for (const [body, what] of [
+    [{ team: 'supervisor', department_id: assemblyId, title: 'Line stopped, need a decision' }, 'a supervisor call'],
+    [{ type: 'safety', station_id: stationId, title: 'Guard interlock bypassed' }, 'a safety call'],
+  ]) {
+    const call = await raiseCall(tokenA, body);
+    const beforeMo = await messageIds(moToken);
+    const beforeSana = await messageIds(sanaToken);
+
+    const swept = await tick(tokenA, { backdate_call_id: call.id, backdate_seconds: 120 });
+    assert.equal(swept.count, 1, `${what} escalated: ${JSON.stringify(swept)}`);
+    assert.equal(swept.stalled_count, 0);
+
+    const after = await getCall(tokenA, call.id);
+    assert.equal(after.escalation_level, 1);
+    assert.equal(after.escalated_to_label, 'Management', `${what} climbs to management`);
+    assert.equal(after.escalated_to_user_id, mo);
+    assert.equal((await newMessages(moToken, beforeMo)).length, 1, `${what} actually reached a manager`);
+    assert.equal((await newMessages(sanaToken, beforeSana)).length, 0);
+
+    await api('PUT', `/api/andon/${call.id}/resolve`, { token: tokenA });
+  }
+});
+
+test('the escalation line counts minutes in English', async () => {
+  // "no acknowledgement within 1 minutes" is the sort of sentence that tells a
+  // customer nobody read the screen. A critical safety call has a one-minute
+  // target, which is the case a bracketed (s) gets wrong.
+  const call = await raiseCall(tokenA, { type: 'safety', priority: 'critical', title: 'Interlock bypassed again' });
+  assert.equal(call.target_seconds, 60, 'a critical safety call is answered in a minute');
+  const swept = await tick(tokenA, { backdate_call_id: call.id, backdate_seconds: 90 });
+  assert.equal(swept.count, 1);
+
+  const lines = await activityFor(tokenA, call.id);
+  const escalation = lines.find(a => /^Escalated to/.test(a));
+  assert.ok(escalation, `an escalation line was written: ${JSON.stringify(lines)}`);
+  assert.match(escalation, /within 1 minute\b/, 'one minute, singular');
+  assert.equal(/1 minutes/.test(escalation), false);
+
+  const plural = await raiseCall(tokenA, { team: 'quality', department_id: assemblyId, title: 'Ten-minute target' });
+  await tick(tokenA, { backdate_call_id: plural.id, backdate_seconds: 90 });
+  const pluralLine = (await activityFor(tokenA, plural.id)).find(a => /^Escalated to/.test(a));
+  assert.match(pluralLine, /within 10 minutes\b/, 'ten minutes, plural');
+
+  for (const id of [call.id, plural.id]) await api('PUT', `/api/andon/${id}/resolve`, { token: tokenA });
+});
+
+test('a tier with nobody in it is not an escalation', async () => {
+  // Gadget Co is one person: the owner, who raised the call. There is nobody
+  // above them to chase. The level must NOT be claimed — a call the board says
+  // was escalated, to a tier that heard nothing, is worse than one that is
+  // plainly still waiting.
+  const call = await raiseCall(tokenB, { team: 'maintenance', title: 'Nobody above me' });
+
+  const first = await tick(tokenB, { backdate_call_id: call.id, backdate_seconds: 120 });
+  assert.equal(first.count, 0, 'nothing was escalated, because nothing was told');
+  assert.equal(first.stalled_count, 1, 'and the sweep says so rather than staying silent');
+
+  const after = await getCall(tokenB, call.id);
+  assert.equal(after.escalation_level, 0, 'the level is not claimed');
+  assert.equal(after.escalated_at, null);
+  assert.equal(after.escalated_to_label, null, 'so the board paints no "Escalated to …" badge');
+  assert.equal(after.status, 'open');
+
+  const lines = await activityFor(tokenB, call.id);
+  const nobody = lines.filter(a => /Nobody to escalate to/.test(a));
+  assert.equal(nobody.length, 1, `one line naming what is missing: ${JSON.stringify(lines)}`);
+  assert.match(nobody[0], /add a manager or a team member/);
+
+  // Retried every tick — but never logged twice.
+  const second = await tick(tokenB);
+  assert.equal(second.count, 0);
+  assert.equal(second.stalled_count, 1, 'it keeps trying, so adding a manager fixes it');
+  const again = (await activityFor(tokenB, call.id)).filter(a => /Nobody to escalate to/.test(a));
+  assert.equal(again.length, 1, 'and it does not fill the log with the same sentence');
+
+  const summary = await api('GET', '/api/andon/summary', { token: tokenB });
+  assert.equal(summary.json.escalated_open, 0, 'nothing was escalated, so nothing is counted as escalated');
+  assert.equal(summary.json.overdue, 1, 'it is simply overdue, which is the truth');
+
+  await api('PUT', `/api/andon/${call.id}/resolve`, { token: tokenB });
 });
 
 test('acknowledging before the target leaves the call at level 0 forever', async () => {
@@ -295,12 +401,14 @@ test('the summary reports against target, and says "nothing acknowledged" rather
   assert.equal(summaryB.json.overdue, 0, 'raised just now — not overdue yet');
   assert.equal(summaryB.json.escalated_open, 0);
 
-  // Once it is past its target it counts as overdue, and once escalated it is
-  // counted as escalated — while still being 'open'.
+  // Once it is past its target it counts as overdue — and in this one-person
+  // company there is nobody to escalate to, so it stays at level 0 and is
+  // counted as overdue, not as escalated.
   await tick(tokenB, { backdate_call_id: call.id, backdate_seconds: 120 });
   const overdueB = await api('GET', '/api/andon/summary', { token: tokenB });
-  assert.equal(overdueB.json.escalated_open, 1);
-  assert.equal(overdueB.json.within_target_pct, null, 'an escalation is not an answer');
+  assert.equal(overdueB.json.overdue, 1);
+  assert.equal(overdueB.json.escalated_open, 0);
+  assert.equal(overdueB.json.within_target_pct, null, 'being late is not an answer');
 
   // Widget Co answered one call inside its target today.
   const summaryA = await api('GET', '/api/andon/summary', { token: tokenA });
@@ -317,8 +425,14 @@ test('response targets are readable by everyone and editable by managers only', 
   const supervisorNormal = list.json.find(t => t.team === 'supervisor' && t.priority === 'normal');
   assert.equal(supervisorNormal.respond_minutes, 15);
   assert.equal(supervisorNormal.escalate_minutes, 30);
+  assert.equal(supervisorNormal.escalate_to_label, 'Management',
+    'the supervisor rung climbs to management — a ladder has to go up');
+  const qualityNormal = list.json.find(t => t.team === 'quality' && t.priority === 'normal');
+  assert.equal(qualityNormal.escalate_to_label, 'Supervisor');
   const safetyCritical = list.json.find(t => t.team === 'safety' && t.priority === 'critical');
   assert.equal(safetyCritical.respond_minutes, 1, 'a critical call is answered in half the time');
+  assert.ok(supervisorNormal.escalate_to_options.some(o => o.id === 'manager'),
+    'the panel is offered exactly what the validator accepts');
 
   const denied = await api('PUT', '/api/andon/targets', {
     token: opToken, body: { team: 'quality', priority: 'normal', respond_minutes: 90 },
@@ -331,15 +445,73 @@ test('response targets are readable by everyone and editable by managers only', 
   assert.equal(saved.status, 200);
   assert.equal(saved.json.respond_minutes, 25);
 
-  // A zero-minute target would make every call late the instant it is raised.
-  const clamped = await api('PUT', '/api/andon/targets', {
-    token: tokenA, body: { team: 'materials', priority: 'normal', respond_minutes: 0 },
+  // ── Refusals are refusals: 400 and an unchanged row, never a silent
+  //    substitution answered with 200. A manager who typed 0 has to learn that
+  //    it was not stored; the old behaviour told them it was.
+  for (const [body, why] of [
+    [{ respond_minutes: 0 }, 'a zero-minute target'],
+    [{ respond_minutes: 2.5 }, 'a fraction of a minute'],
+    [{ escalate_minutes: -5 }, 'a negative escalate window'],
+    [{ respond_minutes: 'soon' }, 'a word where a number goes'],
+    [{ respond_minutes: 5000 }, 'a target longer than a day'],
+    [{ respond_minutes: 30, escalate_minutes: 30 }, 'escalating the moment the target runs out'],
+    [{ respond_minutes: 40, escalate_minutes: 20 }, 'escalating BEFORE the target runs out'],
+    [{ escalate_to_team: 'the_ceo' }, 'a rung that does not exist'],
+  ]) {
+    const refused = await api('PUT', '/api/andon/targets', {
+      token: tokenA, body: { team: 'materials', priority: 'normal', ...body },
+    });
+    assert.equal(refused.status, 400, `${why} is refused: ${JSON.stringify(refused.json)}`);
+    assert.ok(refused.json.error, 'and says why, in words a manager reads');
+    assert.equal(/[a-z]/.test(refused.json.error), true);
+    const after = await api('GET', '/api/andon/targets', { token: tokenA });
+    const row = after.json.find(t => t.team === 'materials' && t.priority === 'normal');
+    assert.equal(row.respond_minutes, 25, `${why} left the stored target alone`);
+    assert.equal(row.escalate_minutes, 45);
+  }
+
+  // The ladder itself is editable — a plant that wants materials chased by
+  // management says so here.
+  const repointed = await api('PUT', '/api/andon/targets', {
+    token: tokenA, body: { team: 'materials', priority: 'normal', escalate_to_team: 'manager' },
   });
-  assert.equal(clamped.json.respond_minutes, 25, 'a nonsense target is refused, not stored');
+  assert.equal(repointed.status, 200);
+  assert.equal(repointed.json.escalate_to_team, 'manager');
+  assert.equal(repointed.json.escalate_to_label, 'Management');
 
   const raised = await raiseCall(tokenA, { team: 'materials', title: 'Uses the edited target' });
   assert.equal(raised.target_seconds, 25 * 60);
+  const beforeMo = await messageIds(moToken);
+  const swept = await tick(tokenA, { backdate_call_id: raised.id, backdate_seconds: 60 });
+  assert.equal(swept.count, 1);
+  assert.equal((await getCall(tokenA, raised.id)).escalated_to_label, 'Management',
+    'the edited ladder is the one the sweeper walks');
+  assert.equal((await newMessages(moToken, beforeMo)).length, 1);
   await api('PUT', `/api/andon/${raised.id}/resolve`, { token: tokenA });
+
+  // Put it back, so a later test reads the seeded ladder.
+  await api('PUT', '/api/andon/targets', {
+    token: tokenA, body: { team: 'materials', priority: 'normal', escalate_to_team: 'supervisor' },
+  });
+});
+
+test('even the test-only sweep is single-tenant', async () => {
+  // A harness that sweeps every company on the box can make another suite's
+  // assertions come true. This one is scoped like every other route here.
+  const theirs = await raiseCall(tokenB, { team: 'quality', title: 'Gadget Co is not Widget Co' });
+  await api('POST', '/api/andon/sweep', {
+    token: tokenB, body: { backdate_call_id: theirs.id, backdate_seconds: 300 },
+  });
+
+  const mine = await raiseCall(tokenA, { team: 'quality', department_id: assemblyId, title: 'Widget Co only' });
+  const swept = await tick(tokenA, { backdate_call_id: mine.id, backdate_seconds: 300 });
+  assert.equal(swept.count, 1);
+  assert.equal(swept.escalated.every(e => e.company_id !== undefined), true);
+  assert.equal(swept.escalated.some(e => e.id === theirs.id), false, 'another tenant is never swept');
+  assert.equal(swept.stalled.some(e => e.id === theirs.id), false);
+
+  await api('PUT', `/api/andon/${mine.id}/resolve`, { token: tokenA });
+  await api('PUT', `/api/andon/${theirs.id}/resolve`, { token: tokenB });
 });
 
 // ─── The coded reason list ───────────────────────────────────────────────────
@@ -429,6 +601,28 @@ test('reason-code writes are manager-gated and validated against vocab.js', asyn
   assert.equal(withInactive.json.some(r => r.id === ok.json.id), true, 'but is never deleted from history');
 });
 
+test('deleting a reason code retires it, so last quarter\'s scrap still reads', async () => {
+  const made = await api('POST', '/api/andon/reason-codes', {
+    token: tokenA, body: { kind: 'rework', code: 'temporary', label: 'Temporary code' },
+  });
+  assert.equal(made.status, 201);
+
+  assert.equal((await api('DELETE', `/api/andon/reason-codes/${made.json.id}`, { token: opToken })).status, 403);
+
+  const removed = await api('DELETE', `/api/andon/reason-codes/${made.json.id}`, { token: tokenA });
+  assert.equal(removed.status, 200);
+  assert.equal(removed.json.is_active, false);
+  assert.equal(removed.json.retired, true);
+
+  const picker = await api('GET', '/api/andon/reason-codes?kind=rework', { token: tokenA });
+  assert.equal(picker.json.some(r => r.id === made.json.id), false, 'gone from the picker');
+  const history = await api('GET', '/api/andon/reason-codes?kind=rework&include_inactive=true', { token: tokenA });
+  assert.equal(history.json.some(r => r.id === made.json.id), true,
+    'but still there, so a row recorded against it keeps reading correctly');
+
+  assert.equal((await api('DELETE', `/api/andon/reason-codes/${made.json.id}`, { token: tokenB })).status, 404);
+});
+
 // ─── The schema and the code quote the same words ────────────────────────────
 
 test('migration 007 CHECK lists are vocab.js, letter for letter', () => {
@@ -444,6 +638,12 @@ test('migration 007 CHECK lists are vocab.js, letter for letter', () => {
 
   assert.deepEqual(listFor('kind'), [...vocab.REASON_KIND],
     'reason_codes.kind must quote vocab.REASON_KIND exactly — a CHECK cannot be altered later');
+  // '' leads the list and is NOT a vocabulary value: it means "no OEE loss
+  // bucket", which is the honest answer for every scrap and rework reason.
+  // Documented in MIGRATIONS.md's note on 007, because a CHECK cannot be
+  // altered afterwards without rebuilding the table on live data.
   assert.deepEqual(listFor('loss_bucket'), ['', ...vocab.LOSS_BUCKET],
-    "reason_codes.loss_bucket is '' plus vocab.LOSS_BUCKET, in order");
+    "reason_codes.loss_bucket is '' (no bucket) plus vocab.LOSS_BUCKET, in order");
+  assert.equal(vocab.LOSS_BUCKET.includes(''), false,
+    "'' is the column's way of saying 'no bucket' — it is not a loss");
 });

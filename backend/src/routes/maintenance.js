@@ -5,7 +5,7 @@ const { logActivity } = require('../activity');
 const { plantDayShift } = require('../plantDay');
 const {
   startPmScheduler, runOnce: sweepPmSchedules, nextWONumber,
-  RAISABLE_FREQUENCIES, METER_REASON, OVERDUE_SQL, OPEN_WO_STATUSES,
+  RAISABLE_FREQUENCIES, METER_REASON, OVERDUE_SQL, overdueSql, OPEN_WO_STATUSES,
 } = require('../pmScheduler');
 
 const router = express.Router();
@@ -109,7 +109,7 @@ function listPMs(req, res) {
   const day = plantDayShift(req.companyId);
   let sql = `
     SELECT p.*, a.name as asset_name, a.asset_number,
-           CASE WHEN date(p.next_due_at, ?) < date('now', ?) THEN 1 ELSE 0 END AS is_overdue,
+           CASE WHEN ${overdueSql('p')} THEN 1 ELSE 0 END AS is_overdue,
            (SELECT w.id FROM maintenance_work_orders w
              WHERE w.pm_schedule_id = p.id AND w.company_id = p.company_id
                AND w.status NOT IN ${OPEN_WO_STATUSES}
@@ -125,7 +125,7 @@ function listPMs(req, res) {
   const params = [day, day, req.companyId];
   if (asset_id) { sql += ' AND p.asset_id = ?'; params.push(asset_id); }
   // Due strictly before today is overdue; due today still has the day to run.
-  if (overdue === 'true') { sql += ` AND ${OVERDUE_SQL.replace(/next_due_at/g, 'p.next_due_at')}`; params.push(day, day); }
+  if (overdue === 'true') { sql += ` AND ${overdueSql('p')}`; params.push(day, day); }
   sql += ' ORDER BY p.next_due_at ASC NULLS LAST';
   res.json(db.prepare(sql).all(...params).map(decoratePM));
 }
@@ -166,7 +166,7 @@ function onePM(id, companyId) {
   const day = plantDayShift(companyId);
   const row = db.prepare(`
     SELECT p.*, a.name as asset_name, a.asset_number,
-           CASE WHEN date(p.next_due_at, ?) < date('now', ?) THEN 1 ELSE 0 END AS is_overdue,
+           CASE WHEN ${overdueSql('p')} THEN 1 ELSE 0 END AS is_overdue,
            (SELECT w.id FROM maintenance_work_orders w
              WHERE w.pm_schedule_id = p.id AND w.company_id = p.company_id
                AND w.status NOT IN ${OPEN_WO_STATUSES}
@@ -287,9 +287,19 @@ router.post(['/pm/:id/complete', '/pm-schedules/:id/complete'], completePM);
 // waiting an hour. Outside a test environment the route does not exist.
 router.post('/pm-sweep', (req, res) => {
   if (process.env.NODE_ENV !== 'test') return res.status(404).json({ error: 'Not found', code: 'NOT_FOUND' });
-  const raised = sweepPmSchedules();
-  const mine = raised.filter(w => w.company_id === req.companyId);
-  res.json({ raised: mine, count: mine.length, swept: raised.length });
+  // `backdate_raised_id` walks one schedule's last_raised_at into the past,
+  // which is how a suite reaches "the next day" without waiting for one — the
+  // once-a-day guard is otherwise untestable inside a single run.
+  const { backdate_raised_id, backdate_days = 1 } = req.body || {};
+  if (backdate_raised_id) {
+    const days = Math.max(1, Math.round(Number(backdate_days) || 1));
+    db.prepare(`UPDATE pm_schedules SET last_raised_at = datetime('now', ?) WHERE id = ? AND company_id = ?`)
+      .run(`-${days} days`, backdate_raised_id, req.companyId);
+  }
+  // Single-tenant even in the harness: a sweep that writes work orders into
+  // every company on the box can make another suite's assertions come true.
+  const raised = sweepPmSchedules(req.companyId);
+  res.json({ raised, count: raised.length });
 });
 
 // ─── Maintenance Work Orders ───────────────────────────────────────────────────

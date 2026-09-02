@@ -29,13 +29,19 @@
 //   3. NEVER THE SAME PERSON TWICE. The people already alerted are passed to
 //      resolveRecipients as excludeUserIds, so an escalation always reaches
 //      somebody new — or falls through to the company's alert address.
+//   4. A LEVEL IS ONLY CLAIMED WHEN SOMEBODY IS ACTUALLY TOLD. If the tier
+//      resolves to nobody (a one-supervisor shop, a company with no manager),
+//      the level is NOT stamped, no webhook fires and the board paints no
+//      badge. One activity line says who is missing, and the call is retried on
+//      the next tick — so adding the manager makes the escalation happen rather
+//      than leaving a call that was "escalated" to an empty room.
 
 const { v4: uuidv4 } = require('uuid');
 const db = require('./db');
 const { logActivity } = require('./activity');
 const { broadcast, sendToUsers } = require('./ws');
 const { deliverWebhooks } = require('./webhooks');
-const { teamOf, teamLabel } = require('./andonTeams');
+const { TEAMS, teamOf, teamLabel } = require('./andonTeams');
 const { resolveRecipients, SEVERITY_BY_PRIORITY } = require('./andonRouting');
 const { sendAndonAlertEmail } = require('./email');
 
@@ -52,13 +58,33 @@ const SWEEP_INTERVAL_MS = 60 * 1000;
 // 'safety' is not one of the four routing teams — it is an andon *type* that
 // routes to the supervisor — but a safety call is the one that must never wait,
 // so it gets a row of its own and the lookup prefers it. Two minutes, then five.
+//
+// escalate_to is a LADDER, and a ladder has to go UP. Escalating a supervisor
+// call to the supervisors is not an escalation: the people who did not answer
+// are excluded, which in a normal shop leaves nobody, and the board would paint
+// a red badge over an alert that reached an empty room. So the function teams
+// climb to the supervisor, and the supervisor — and safety, which must never
+// sit — climb to MANAGEMENT. Level 2 always ends at management, whatever the
+// team, because there is nowhere above it inside one company.
+const MANAGER_TIER = 'manager';
+
 const DEFAULT_TARGETS = Object.freeze({
-  safety:      { respond: 2,  escalate: 5,  escalate_to: 'supervisor' },
+  safety:      { respond: 2,  escalate: 5,  escalate_to: MANAGER_TIER },
   quality:     { respond: 10, escalate: 20, escalate_to: 'supervisor' },
   maintenance: { respond: 10, escalate: 20, escalate_to: 'supervisor' },
-  supervisor:  { respond: 15, escalate: 30, escalate_to: 'supervisor' },
+  supervisor:  { respond: 15, escalate: 30, escalate_to: MANAGER_TIER },
   materials:   { respond: 20, escalate: 40, escalate_to: 'supervisor' },
 });
+
+/** What a target's escalate_to may name: one of the four routing teams, or
+ *  management. Validated by the route, so a typo is a 400 and not a silent
+ *  coercion that quietly re-points a plant's escalation path. */
+const ESCALATE_TO_OPTIONS = Object.freeze([...Object.keys(TEAMS), MANAGER_TIER]);
+
+/** "Quality", "Supervisor", "Management" — the label for either kind of tier. */
+function tierLabel(tier) {
+  return tier === MANAGER_TIER ? 'Management' : teamLabel(tier);
+}
 
 const PRIORITIES = ['normal', 'high', 'critical'];
 
@@ -70,10 +96,17 @@ function scaleForPriority(minutes, priority) {
   return minutes;
 }
 
-/** Seeds a company's default targets once. Idempotent (INSERT OR IGNORE on the
- *  UNIQUE(company_id, team, priority) key), so a later call adds only what a
- *  new team or priority introduced. */
+/** Seeds a company's default targets on its first read, and only then.
+ *
+ *  The cheap check is the point: every board poll asks for the targets, and
+ *  fifteen INSERT OR IGNOREs per poll is fifteen writes a second on a wall
+ *  display doing nothing but re-proving what it proved a moment ago. One COUNT
+ *  answers it. INSERT OR IGNORE stays for the race where two requests seed at
+ *  once, and because a company seeded before a new team existed gets the new
+ *  rows the next time this runs against an empty result. */
 function seedTargets(companyId) {
+  const existing = db.prepare('SELECT COUNT(*) AS n FROM andon_targets WHERE company_id = ?').get(companyId).n;
+  if (existing > 0) return;
   const insert = db.prepare(`
     INSERT OR IGNORE INTO andon_targets
       (id, company_id, team, priority, respond_minutes, escalate_minutes, escalate_to_team)
@@ -130,6 +163,22 @@ function targetFor(companyId, team, priority) {
   };
 }
 
+/** A stored stamp as epoch ms, UTC whatever shape it is in. SQLite's DEFAULT
+ *  writes 'YYYY-MM-DD HH:MM:SS' with no zone marker; the route writes ISO. */
+function asUtcMs(ts) {
+  if (!ts) return null;
+  const str = String(ts).trim().replace(' ', 'T');
+  const ms = Date.parse(/[Zz]$|[+-]\d{2}:?\d{2}$/.test(str) ? str : `${str}Z`);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+/** "1 minute" / "20 minutes" — a sentence a person wrote, not a template with a
+ *  bracketed (s) in it. */
+function minutesPhrase(n) {
+  const value = Math.max(0, Math.round(Number(n) || 0));
+  return `${value} minute${value === 1 ? '' : 's'}`;
+}
+
 /** ISO instant `minutes` from `from`. */
 function plusMinutes(minutes, from = new Date()) {
   return new Date(from.getTime() + Math.max(0, Number(minutes) || 0) * 60000).toISOString();
@@ -161,6 +210,80 @@ function logNotification(companyId, recipient, subject, body) {
   }
 }
 
+/**
+ * The people who ARE the management tier: every active user in the company at
+ * manager level or above, minus anyone already alerted.
+ *
+ * Deliberately a ROLE query, not a department_members one. Management is the
+ * top of the ladder precisely because it does not depend on somebody having
+ * been added to a team — a plant that never filled in its department roster
+ * still has an owner, and an unanswered safety call has to reach them. The
+ * shape matches what resolveRecipients returns, so the delivery loop does not
+ * care which kind of tier it is looking at.
+ */
+function resolveManagers(companyId, excludeUserIds = []) {
+  const excluded = new Set((excludeUserIds || []).filter(Boolean));
+  const rows = db.prepare(`
+    SELECT id AS user_id, display_name, email
+      FROM users
+     WHERE company_id = ? AND is_active = 1 AND role IN ('manager', 'developer')
+     ORDER BY display_name ASC
+  `).all(companyId);
+  return rows
+    .filter(r => r.user_id && !excluded.has(r.user_id))
+    .map(r => ({
+      ...r,
+      // Management has no per-department notification preferences to honour —
+      // this tier exists because the ones that do have them stayed silent.
+      notify_email: 1,
+      notify_in_app: 1,
+      team_role: MANAGER_TIER,
+      department_id: null,
+      department_name: null,
+    }));
+}
+
+/** One tier of the ladder, whichever kind it is. */
+function resolveTier(companyId, tier, call, excludeUserIds) {
+  if (tier === MANAGER_TIER) {
+    return { recipients: resolveManagers(companyId, excludeUserIds), scope: 'manager' };
+  }
+  return resolveRecipients(companyId, {
+    team: tier,
+    departmentId: call.department_id,
+    targetType: 'team',
+    excludeUserIds,
+  });
+}
+
+/**
+ * Records — once per call and level — that the ladder ran out of people.
+ *
+ * The alternative shipped for about a day: stamp the level anyway, log
+ * "Escalated to Supervisor", fire the webhook and paint the badge, having told
+ * nobody. That is worse than not escalating, because the board then says the
+ * call is being handled. This says what is actually wrong and who would fix it.
+ *
+ * The guard is the log itself: the same sentence for the same call and level is
+ * written once, however many ticks retry it. No new column, and it survives a
+ * restart — which an in-memory set does not.
+ */
+function noteNobodyToEscalateTo(call, level, tier) {
+  const action = `Nobody to escalate to for ${tierLabel(tier)} — add a manager or a team member (level ${level})`;
+  const already = db.prepare(`
+    SELECT 1 FROM activity_log
+     WHERE company_id = ? AND entity_type = 'andon' AND entity_id = ? AND action = ?
+  `).get(call.company_id, call.id, action);
+  if (already) return false;
+  try {
+    logActivity(call.company_id, 'andon', call.id, action, 'System',
+      { department_id: call.department_id || null, station_id: call.station_id || null });
+  } catch (e) {
+    console.error('[andon-escalation] could not log the empty tier:', e.message);
+  }
+  return true;
+}
+
 /** Who heard about this call when it was RAISED — the original recipients plus
  *  the person who raised it (nobody needs chasing about their own call).
  *  Recomputed from the same cascade that alerted them, because who is on a team
@@ -187,7 +310,12 @@ function escalateOne(call, at = new Date()) {
   const level = call.escalation_level + 1;
   const priority = call.priority || 'normal';
   const target = targetFor(companyId, targetTeamOf(call), priority);
-  const escalateTeam = target.escalate_to_team || 'supervisor';
+  // Level 1 climbs to whatever this team's target says. Level 2 always ends at
+  // management: there is no rung above it, and "escalate the supervisor to the
+  // supervisors" is how a chase reaches nobody.
+  const tier = level >= MAX_ESCALATION_LEVEL
+    ? MANAGER_TIER
+    : (target.escalate_to_team || 'supervisor');
 
   const exclude = originallyAlerted(call);
   // A second climb also skips everyone the first climb reached. That tier is
@@ -197,22 +325,24 @@ function escalateOne(call, at = new Date()) {
   // again. escalated_to_user_id (the head of that tier) is added afterwards as
   // the belt to that braces.
   if (level > 1) {
-    const first = resolveRecipients(companyId, {
-      team: escalateTeam,
-      departmentId: call.department_id,
-      targetType: 'team',
-      excludeUserIds: [...exclude],
-    });
+    const firstTier = target.escalate_to_team || 'supervisor';
+    const first = resolveTier(companyId, firstTier, call, [...exclude]);
     for (const r of first.recipients) if (r.user_id) exclude.add(r.user_id);
   }
   if (call.escalated_to_user_id) exclude.add(call.escalated_to_user_id);
 
-  const { recipients, scope } = resolveRecipients(companyId, {
-    team: escalateTeam,
-    departmentId: call.department_id,
-    targetType: 'team',
-    excludeUserIds: [...exclude],
-  });
+  const { recipients, scope } = resolveTier(companyId, tier, call, [...exclude]);
+
+  // ── Nobody up there ────────────────────────────────────────────────────────
+  // The level is NOT claimed. A one-supervisor shop, or a company with no
+  // manager on the roster, must not end up with a call the board says was
+  // escalated and a tier that never heard a thing. The call keeps its level,
+  // stays visibly past its target, and every later tick tries again — so the
+  // moment somebody is added, the escalation actually happens.
+  if (recipients.length === 0) {
+    const logged = noteNobodyToEscalateTo(call, level, tier);
+    return { id: call.id, company_id: companyId, level, tier, skipped: 'no_recipients', logged };
+  }
 
   const nowIso = at.toISOString();
   const firstUser = recipients.find(r => r.user_id)?.user_id || null;
@@ -231,16 +361,19 @@ function escalateOne(call, at = new Date()) {
   // write: no message goes out, because this level is not ours to send.
   if (claimed.changes !== 1) return null;
 
-  const label = teamLabel(escalateTeam);
+  const label = tierLabel(tier);
   const title = call.title || call.description || 'Help request';
   const where = call.station_id
     ? (db.prepare('SELECT name FROM stations WHERE id = ?').get(call.station_id)?.name || '')
     : '';
-  const waited = Math.max(1, Math.round((at.getTime() - new Date(String(call.created_at).replace(' ', 'T') + (/[Zz]$/.test(String(call.created_at)) ? '' : 'Z')).getTime()) / 60000));
+  const createdAt = asUtcMs(call.created_at);
+  const waited = createdAt === null ? null : Math.max(1, Math.round((at.getTime() - createdAt) / 60000));
   const subject = `Escalated to ${label} — ${title}`;
-  const body = `Nobody acknowledged this help request within the ${target.respond_minutes}-minute target.`
-    + ` It has been waiting ${waited} minute${waited === 1 ? '' : 's'}.`;
-  const severity = call.priority === 'critical' ? 'urgent' : (SEVERITY_BY_PRIORITY[call.priority] || 'warning');
+  const body = `Nobody acknowledged this help request within the ${minutesPhrase(target.respond_minutes)} target.`
+    + (waited === null ? '' : ` It has been waiting ${minutesPhrase(waited)}.`);
+  // An escalation is never "info": it exists because the first ping was
+  // ignored. A critical call shouts; everything else is at least a warning.
+  const severity = call.priority === 'critical' ? 'urgent' : 'warning';
 
   const pinged = [];
   for (const person of recipients) {
@@ -280,7 +413,7 @@ function escalateOne(call, at = new Date()) {
   try {
     logActivity(
       companyId, 'andon', call.id,
-      `Escalated to ${label} — no acknowledgement within ${target.respond_minutes} minutes (level ${level})`,
+      `Escalated to ${label} — no acknowledgement within ${minutesPhrase(target.respond_minutes)} (level ${level})`,
       'System',
       { department_id: call.department_id || null, station_id: call.station_id || null },
     );
@@ -291,7 +424,7 @@ function escalateOne(call, at = new Date()) {
   const updated = db.prepare('SELECT * FROM andon_calls WHERE id = ?').get(call.id);
   const payload = {
     ...updated,
-    escalated_to_team: escalateTeam,
+    escalated_to_team: tier,
     escalated_to_label: label,
     escalation_level: level,
     notified: recipients.filter(r => r.user_id).map(r => ({ user_id: r.user_id, display_name: r.display_name })),
@@ -302,7 +435,7 @@ function escalateOne(call, at = new Date()) {
   }
   try { broadcast(companyId, { type: 'andon', action: 'escalated', call: payload }); } catch { /* board will poll */ }
 
-  return { id: call.id, company_id: companyId, level, team: escalateTeam, recipients: payload.notified };
+  return { id: call.id, company_id: companyId, level, team: tier, tier, recipients: payload.notified };
 }
 
 /**
@@ -313,28 +446,38 @@ function escalateOne(call, at = new Date()) {
  * timer — "escalates on the first tick, sends nothing on the second" is a claim
  * a sleep cannot make.
  */
-function runOnce(at = new Date()) {
+function runOnce(at = new Date(), companyId = null) {
+  // ONE instant decides both what is due and what the stamps say. Selecting on
+  // julianday('now') while stamping `at` let the two drift apart by however long
+  // the sweep took — and made a test that passes an explicit instant a test of
+  // the wall clock instead.
+  const atIso = at.toISOString();
   const due = db.prepare(`
     SELECT * FROM andon_calls
      WHERE status = 'open'
        AND respond_by IS NOT NULL
        AND escalation_level < ?
-       AND julianday(respond_by) <= julianday('now')
+       AND julianday(respond_by) <= julianday(?)
+       AND (? IS NULL OR company_id = ?)
      ORDER BY created_at ASC
-  `).all(MAX_ESCALATION_LEVEL);
+  `).all(MAX_ESCALATION_LEVEL, atIso, companyId, companyId);
 
   const escalated = [];
+  const stalled = [];
   for (const call of due) {
     if (!call.company_id) continue;
     try {
       const done = escalateOne(call, at);
-      if (done) escalated.push(done);
+      if (!done) continue;
+      if (done.skipped) stalled.push(done);
+      else escalated.push(done);
     } catch (e) {
       console.error('[andon-escalation] could not escalate', call.id, '-', e.message);
     }
   }
   if (escalated.length) console.log(`[andon-escalation] escalated ${escalated.length} call(s)`);
-  return escalated;
+  if (stalled.length) console.log(`[andon-escalation] ${stalled.length} call(s) have nobody to escalate to`);
+  return { escalated, stalled };
 }
 
 let started = false;
@@ -362,7 +505,7 @@ function startAndonEscalation() {
 }
 
 module.exports = {
-  runOnce, startAndonEscalation, escalateOne,
-  seedTargets, listTargets, targetFor, targetTeamOf, respondByFor,
-  DEFAULT_TARGETS, MAX_ESCALATION_LEVEL, PRIORITIES,
+  runOnce, startAndonEscalation, escalateOne, resolveTier, resolveManagers,
+  seedTargets, listTargets, targetFor, targetTeamOf, respondByFor, tierLabel,
+  DEFAULT_TARGETS, MAX_ESCALATION_LEVEL, PRIORITIES, MANAGER_TIER, ESCALATE_TO_OPTIONS,
 };

@@ -66,15 +66,24 @@ export interface AndonTarget {
   /** Minutes the next tier gets before the call climbs again. */
   escalate_minutes: number;
   escalate_to_team: string | null;
+  /** "Supervisor", "Management" — ready to print. */
   escalate_to_label: string;
+  /** The rungs this row may be pointed at, as the server defines them. */
+  escalate_to_options?: { id: string; label: string }[];
 }
+
+/** A rung of the ladder: one of the routing teams, or management at the top. */
+export type EscalationTier = AndonTeam | 'manager';
 
 export interface AndonTargetUpdate {
   team: string;
   priority: 'normal' | 'high' | 'critical';
+  /** Whole minutes, at least 1, and strictly less than escalate_minutes — the
+   *  server refuses anything else with a 400 rather than quietly storing a
+   *  substitute. */
   respond_minutes?: number;
   escalate_minutes?: number;
-  escalate_to_team?: AndonTeam;
+  escalate_to_team?: EscalationTier | string;
 }
 
 /** What a coded reason explains. Mirrors vocab.REASON_KIND. */

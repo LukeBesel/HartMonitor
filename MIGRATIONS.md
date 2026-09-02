@@ -136,12 +136,22 @@ picking `006` in parallel worktrees is a merge conflict that only shows up at bo
 | 004 | `004_sessions_cleanup_index.sql` | (shipped) | session cleanup indexes |
 | 005 | `005_company_modules.sql` | (shipped) | per-company module toggles |
 | 006 | `006_*.sql` | erp-door | ERP import/export door |
-| 007 | `007_andon_escalation_and_reason_codes.sql` | calls-escalate-and-pm-raises-jobs | andon calls + reason_codes |
+| 007 | `007_andon_escalation_and_reason_codes.sql` | calls-escalate-and-pm-raises-jobs | andon calls + reason_codes (see note) |
 | 008 | `008_pm_auto_raise.sql` | calls-escalate-and-pm-raises-jobs | preventive maintenance (PM) |
 | 009 | `009_*.sql` | work-orders-carry-operations | operations on work orders |
 | 010 | `010_*.sql` | app-revisions-and-approval | app revisions + approval |
 | 011 | `011_*.sql` | run-start-gated-and-one-tap | qualification gate on run start |
 | 012 | `012_*.sql` | scrap-rework-and-coded-downtime | scrap/rework + coded downtime |
+
+**Note on 007's `reason_codes.loss_bucket`.** Its CHECK list is `''` followed by
+`vocab.LOSS_BUCKET`, in that order. The empty string is not a vocabulary value
+and is deliberately absent from `vocab.js`: it means **"no OEE loss bucket"** —
+the honest answer for every scrap and rework reason, which explain a defect
+rather than a stoppage. Only a downtime reason rolls into one of the six losses.
+The column is `NOT NULL DEFAULT ''`, so "unbucketed" is a stated value and never
+a NULL to be interpreted. `backend/test/andon-escalation.test.js` asserts the
+file's list equals `['', ...vocab.LOSS_BUCKET]`, so the two cannot drift — and
+the CHECK cannot be altered later without rebuilding the table.
 
 ### Reserved test ports
 

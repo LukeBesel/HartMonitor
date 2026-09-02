@@ -129,11 +129,14 @@ async function createPM(body) {
   return r.json;
 }
 
-async function sweep() {
-  const r = await api('POST', '/api/maintenance/pm-sweep', { token });
+async function sweep(body) {
+  const r = await api('POST', '/api/maintenance/pm-sweep', { token, body });
   assert.equal(r.status, 200, `sweep: ${JSON.stringify(r.json)}`);
   return r.json;
 }
+
+/** Walk a schedule's last_raised_at back N days — "tomorrow", without waiting. */
+const nextDay = (id, days = 1) => sweep({ backdate_raised_id: id, backdate_days: days });
 
 async function pmById(id) {
   const r = await api('GET', '/api/maintenance/pm-schedules', { token });
@@ -245,6 +248,31 @@ test('auto_create_wo = 0 raises nothing; lead_days raises early on purpose', asy
   assert.equal((await sweep()).count, 0);
 });
 
+test('a cancelled PM job is not raised again the same day', async () => {
+  // The loop this closes: cancelling the job made it no longer open, so the
+  // "already has an open job" guard lifted and the next sweep raised another
+  // one — and the next, and the next, for as long as the PM stayed due. A
+  // cancelled job has to mean "not today", or the Cancel button does nothing.
+  const pm = await createPM({ title: 'Belt inspection', frequency_type: 'monthly', next_due_at: atPlantDay(-1) });
+  assert.equal((await sweep()).count, 1);
+  const job = (await wosFor(pm.id))[0];
+
+  const cancelled = await api('PUT', `/api/maintenance/work-orders/${job.id}`, { token, body: { status: 'cancelled' } });
+  assert.equal(cancelled.status, 200);
+  assert.equal(cancelled.json.status, 'cancelled');
+
+  assert.equal((await sweep()).count, 0, 'cancelling a PM job does not re-open it a minute later');
+  assert.equal((await sweep()).count, 0, 'or on any other sweep today');
+  assert.equal((await wosFor(pm.id)).length, 1, 'still exactly one job for this schedule today');
+
+  // Tomorrow, with the PM still due and nothing open against it, it is raised
+  // again — the guard is a day, not a tombstone.
+  const tomorrow = await nextDay(pm.id, 1);
+  assert.equal(tomorrow.count, 1, 'a PM that is still due is still raised the next day');
+  assert.equal((await wosFor(pm.id)).length, 2);
+  assert.equal((await wosFor(pm.id)).filter(w => w.status === 'open').length, 1);
+});
+
 test('a meter-based schedule says what it needs instead of returning nothing', async () => {
   const hours = await createPM({ title: '250-hour oil change', frequency_type: 'hours', frequency_value: 250 });
   assert.equal(hours.next_due_at, null);
@@ -264,6 +292,32 @@ test('a meter-based schedule says what it needs instead of returning nothing', a
   assert.equal(list.json.some(p => p.id === hours.id), false);
 });
 
+test('a schedule switched to hours stops being counted as overdue', async () => {
+  // The stuck tile: a schedule created on a calendar cadence keeps its old
+  // next_due_at when it is switched to hours. A bare date comparison counted
+  // that stale date, so "Overdue PMs: 1" sat next to a list row reading "Needs
+  // a meter reading" — a number nobody could clear by doing any work.
+  const before = await api('GET', '/api/maintenance/summary', { token });
+  const pm = await createPM({ title: 'Spindle check', frequency_type: 'monthly', next_due_at: atPlantDay(-3), auto_create_wo: false });
+  const withDate = await api('GET', '/api/maintenance/summary', { token });
+  assert.equal(withDate.json.overdue_pms, before.json.overdue_pms + 1, 'overdue while it had a date');
+
+  const switched = await api('PUT', `/api/maintenance/pm-schedules/${pm.id}`, {
+    token, body: { frequency_type: 'hours', frequency_value: 400 },
+  });
+  assert.equal(switched.status, 200);
+  assert.equal(switched.json.next_due_reason, 'needs a meter reading');
+  assert.equal(switched.json.is_overdue, false, 'a schedule with no calendar date cannot be late');
+
+  const after = await api('GET', '/api/maintenance/summary', { token });
+  assert.equal(after.json.overdue_pms, before.json.overdue_pms,
+    'and the tile lets go of it, so the count is one a person can actually clear');
+
+  const overdueList = await api('GET', '/api/maintenance/pm-schedules?overdue=true', { token });
+  assert.equal(overdueList.json.some(p => p.id === pm.id), false);
+  assert.equal((await sweep()).count, 0, 'and the sweeper leaves it alone');
+});
+
 test('the Overdue PMs tile counts exactly the rows the overdue list returns, on the plant clock', async () => {
   // Three schedules pinned to Auckland days either side of the boundary: two
   // overdue, one due today (which still has the day to run) and one tomorrow.
@@ -276,17 +330,24 @@ test('the Overdue PMs tile counts exactly the rows the overdue list returns, on 
   assert.equal(overdueList.status, 200);
   const summary = await api('GET', '/api/maintenance/summary', { token });
   assert.equal(summary.status, 200);
-  assert.equal(summary.json.overdue_pms, overdueList.json.length,
-    'the tile and the list are one predicate, or the screen contradicts itself');
+  const everySchedule = await api('GET', '/api/maintenance/pm-schedules', { token });
+  const flaggedRows = everySchedule.json.filter(p => p.is_overdue);
+  // The tile counts what the ROWS SAY, not merely what the filter returns: the
+  // two agreed on a count while disagreeing about which schedules, because the
+  // tile also counted meter-based rows the list marks "Needs a meter reading".
+  assert.equal(summary.json.overdue_pms, flaggedRows.length,
+    'the tile counts exactly the rows the list flags overdue');
+  assert.deepEqual(
+    overdueList.json.map(p => p.id).sort(), flaggedRows.map(p => p.id).sort(),
+    'and the filter selects exactly those rows',
+  );
+  assert.equal(flaggedRows.every(p => p.next_due_at && p.next_due_reason === null), true,
+    'nothing flagged overdue is a schedule with no date');
   assert.ok(overdueList.json.length >= 2, `the two backdated schedules are overdue: ${overdueList.json.map(p => p.title)}`);
   assert.equal(overdueList.json.some(p => p.id === today.id), false, 'due today still has the day to run');
   assert.equal(overdueList.json.some(p => p.id === tomorrow.id), false);
 
-  // The full list agrees with the filtered one, row for row.
-  const all = await api('GET', '/api/maintenance/pm-schedules', { token });
-  const flagged = all.json.filter(p => p.is_overdue).map(p => p.id).sort();
-  assert.deepEqual(flagged, overdueList.json.map(p => p.id).sort(),
-    'is_overdue on a row means exactly what ?overdue=true selects');
+  assert.ok(flaggedRows.length >= 2, 'both backdated schedules are flagged on the rows too');
 });
 
 test('the shipped /pm path and the /pm-schedules path are the same list', async () => {

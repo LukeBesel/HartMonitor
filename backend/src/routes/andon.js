@@ -22,7 +22,8 @@ const { deliverAlert } = require('../andonRouting');
 const { isValid, REASON_KIND, LOSS_BUCKET } = require('../vocab');
 const { ROLE_LEVELS } = require('../middleware/auth');
 const {
-  startAndonEscalation, runOnce, listTargets, seedTargets, targetTeamOf, respondByFor, PRIORITIES,
+  startAndonEscalation, runOnce, listTargets, seedTargets, targetTeamOf, respondByFor,
+  tierLabel, PRIORITIES, ESCALATE_TO_OPTIONS, MANAGER_TIER, MAX_ESCALATION_LEVEL,
 } = require('../andonEscalation');
 
 const router = express.Router();
@@ -93,7 +94,12 @@ function decorate(row, targets) {
   // call, which is measured on the (much shorter) safety clock.
   const target = targets?.get(`${targetTeamOf(row)}|${row.priority || 'normal'}`) || null;
   const level = Number(row.escalation_level || 0);
-  const escalateTeam = target?.escalate_to_team || 'supervisor';
+  // The ladder: level 1 climbs to the team's own escalate_to, level 2 always
+  // ends at management. Reading escalate_to for a level-2 call would label the
+  // badge with the rung below the one that was actually told.
+  const escalateTeam = level >= MAX_ESCALATION_LEVEL
+    ? MANAGER_TIER
+    : (target?.escalate_to_team || 'supervisor');
   const respondIn = row.respond_by ? (row.respond_in_seconds ?? null) : null;
   return {
     ...row,
@@ -121,7 +127,7 @@ function decorate(row, targets) {
     escalated_at: row.escalated_at || null,
     escalated_to_user_id: row.escalated_to_user_id || null,
     escalated_to_team: level > 0 ? escalateTeam : null,
-    escalated_to_label: level > 0 ? teamLabel(escalateTeam) : null,
+    escalated_to_label: level > 0 ? tierLabel(escalateTeam) : null,
     // Open, past its target, and nobody has said "on my way".
     overdue: row.status === 'open' && respondIn != null && respondIn < 0,
     // Measured, never estimated: null until somebody actually acknowledged.
@@ -285,7 +291,10 @@ router.get('/targets', (req, res) => {
   res.json(listTargets(req.companyId).map(t => ({
     ...t,
     team_label: TEAMS[t.team] ? teamLabel(t.team) : (t.team === 'safety' ? 'Safety' : t.team),
-    escalate_to_label: teamLabel(t.escalate_to_team || 'supervisor'),
+    escalate_to_label: tierLabel(t.escalate_to_team || 'supervisor'),
+    // The rungs this row may be pointed at, so the panel's picker and the
+    // validator below cannot offer and refuse different things.
+    escalate_to_options: ESCALATE_TO_OPTIONS.map(id => ({ id, label: tierLabel(id) })),
   })));
 });
 
@@ -300,17 +309,43 @@ router.put('/targets', (req, res) => {
     .get(req.companyId, team, priority);
   if (!existing) return res.status(404).json({ error: 'Not found' });
 
-  // A zero-minute target is not a target, it is a call that is late the instant
-  // it is raised; the floor learns to ignore the board rather than answer it.
-  const minutes = (value, fallback) => {
+  // A refused value is a 400, never a quiet substitution. Coercing 0 to the old
+  // number and answering 200 tells the manager their edit was saved, leaves the
+  // rejected figure sitting in the input, and hides the fact that the plant's
+  // escalation policy is not what the screen says it is.
+  const minutes = (value) => {
     const n = Number(value);
-    return Number.isFinite(n) && n >= 1 ? Math.min(Math.round(n), 24 * 60) : fallback;
+    return Number.isInteger(n) && n >= 1 && n <= 24 * 60 ? n : null;
   };
-  const respond = minutes(req.body.respond_minutes, existing.respond_minutes);
-  const escalate = minutes(req.body.escalate_minutes, existing.escalate_minutes);
-  const escalateTo = req.body.escalate_to_team !== undefined
-    ? (TEAMS[req.body.escalate_to_team] ? req.body.escalate_to_team : 'supervisor')
-    : existing.escalate_to_team;
+  const field = (name) => {
+    if (req.body[name] === undefined) return { ok: true, value: existing[name] };
+    const value = minutes(req.body[name]);
+    return value === null ? { ok: false } : { ok: true, value };
+  };
+  const respondField = field('respond_minutes');
+  if (!respondField.ok) {
+    return res.status(400).json({ error: 'Respond must be a whole number of minutes, from 1 to 1440.' });
+  }
+  const escalateField = field('escalate_minutes');
+  if (!escalateField.ok) {
+    return res.status(400).json({ error: 'Escalate after must be a whole number of minutes, from 1 to 1440.' });
+  }
+  const respond = respondField.value;
+  const escalate = escalateField.value;
+  // Escalating sooner than the target is asked for is a contradiction: the call
+  // would climb before anyone was late.
+  if (respond >= escalate) {
+    return res.status(400).json({
+      error: `Respond (${respond} min) has to be shorter than escalate after (${escalate} min) — a call cannot climb before its response target has run out.`,
+    });
+  }
+  let escalateTo = existing.escalate_to_team;
+  if (req.body.escalate_to_team !== undefined) {
+    if (!ESCALATE_TO_OPTIONS.includes(req.body.escalate_to_team)) {
+      return res.status(400).json({ error: `Escalates to must be one of: ${ESCALATE_TO_OPTIONS.join(', ')}.` });
+    }
+    escalateTo = req.body.escalate_to_team;
+  }
 
   db.prepare(`
     UPDATE andon_targets SET respond_minutes = ?, escalate_minutes = ?, escalate_to_team = ?
@@ -319,7 +354,12 @@ router.put('/targets', (req, res) => {
   logActivity(req.companyId, 'andon', existing.id,
     `Response target changed — ${team} / ${priority}: respond ${respond}m, escalate ${escalate}m`,
     req.user?.display_name);
-  res.json(db.prepare('SELECT * FROM andon_targets WHERE id = ?').get(existing.id));
+  const saved = db.prepare('SELECT * FROM andon_targets WHERE id = ?').get(existing.id);
+  res.json({
+    ...saved,
+    team_label: TEAMS[saved.team] ? teamLabel(saved.team) : (saved.team === 'safety' ? 'Safety' : saved.team),
+    escalate_to_label: tierLabel(saved.escalate_to_team || 'supervisor'),
+  });
 });
 
 // ─── /andon/reason-codes — the company's ONE coded reason list ───────────────
@@ -454,6 +494,22 @@ router.put('/reason-codes/:id', (req, res) => {
   res.json(reasonRow(db.prepare('SELECT * FROM reason_codes WHERE id = ?').get(row.id)));
 });
 
+// ─── DELETE /andon/reason-codes/:id — retire a code, never erase it ─────────
+// A soft delete on purpose: scrap and downtime rows recorded against a code
+// have to keep reading correctly for as long as they are kept, and a hard
+// delete would leave last quarter's Pareto chart pointing at nothing. The code
+// leaves the picker (is_active = 0) and stays in history.
+
+router.delete('/reason-codes/:id', (req, res) => {
+  if (!canManage(req)) return res.status(403).json({ error: 'Requires manager role or higher', code: 'FORBIDDEN' });
+  const row = db.prepare('SELECT * FROM reason_codes WHERE id = ? AND company_id = ?')
+    .get(req.params.id, req.companyId);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  db.prepare('UPDATE reason_codes SET is_active = 0 WHERE id = ? AND company_id = ?').run(row.id, req.companyId);
+  logActivity(req.companyId, 'reason_code', row.id, `Reason code retired — ${row.kind}: ${row.label}`, req.user?.display_name);
+  res.json({ ...reasonRow(db.prepare('SELECT * FROM reason_codes WHERE id = ?').get(row.id)), retired: true });
+});
+
 // ─── POST /andon/sweep — drive one escalation tick (test harness only) ───────
 // The sweeper runs on a timer in production and is deliberately off under
 // NODE_ENV=test, so a suite can prove "escalates on the first tick, sends
@@ -474,9 +530,16 @@ router.post('/sweep', (req, res) => {
       UPDATE andon_calls SET respond_by = datetime('now', ?) WHERE id = ? AND company_id = ?
     `).run(`-${seconds} seconds`, backdate_call_id, req.companyId);
   }
-  const escalated = runOnce();
-  const mine = escalated.filter(e => e.company_id === req.companyId);
-  res.json({ escalated: mine, count: mine.length, swept: escalated.length });
+  // Scoped to the caller's company even here: a test harness that sweeps every
+  // tenant on the box is a harness that can make another suite's assertions
+  // come true, and it is the one route in the file that would not be caught by
+  // the tenant-isolation tests.
+  const { escalated, stalled } = runOnce(new Date(), req.companyId);
+  res.json({
+    escalated, count: escalated.length,
+    // Calls that are past target with nobody above them to tell.
+    stalled, stalled_count: stalled.length,
+  });
 });
 
 // ─── POST /andon — raise a help request ───────────────────────────────────────
