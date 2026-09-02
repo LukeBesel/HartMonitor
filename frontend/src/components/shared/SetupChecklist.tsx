@@ -6,7 +6,7 @@ import { useModules } from '../../context/ModulesContext';
 import { api } from '../../api/client';
 import type { App } from '../../types';
 import {
-  readTrainingPrefs, trainingMilestones, TRAINING_PREFS_EVENT,
+  readTrainingPrefs, trainingGraduated, TRAINING_PREFS_EVENT,
 } from '../apps/useAppTraining';
 
 interface ChecklistItem {
@@ -28,11 +28,17 @@ interface ChecklistItem {
 // for the whole arc and leaves the teaching to the coach. What remains here is
 // the account setup the coach never covers.
 //
+// "Set up a work station" used to sit between the app and the team. The publish
+// modal in AppBuilder says "You can leave these blank to publish without a
+// target", and the player's start screen labels the field "Station (optional)"
+// — so this list was raising, as an unticked setup step, the exact thing the
+// product had just told the same person they could skip. Two screens, opposite
+// advice, one account. The other two are right, so the box is gone.
+//
 // Every box below ticks itself from real data.
 const INITIAL_ITEMS: ChecklistItem[] = [
   { id: 'account',  label: 'Create account',               done: true },
   { id: 'app',      label: 'Build and run your first app', done: false, to: '/apps' },
-  { id: 'station',  label: 'Set up a work station',        done: false, to: '/stations' },
   { id: 'team',     label: 'Invite a team member',         done: false, to: '/settings?tab=users' },
 ];
 
@@ -60,10 +66,9 @@ export function SetupChecklist() {
     // Check which items are actually done
     (async () => {
       try {
-        const [apps, stats, stations, users] = await Promise.all([
+        const [apps, stats, users] = await Promise.all([
           api.getApps(),
           api.getAppsStats().catch(() => null),
-          api.getStations(),
           api.getUsers(),
         ]);
         if (cancelled) return;
@@ -71,9 +76,8 @@ export function SetupChecklist() {
         setItems(prev => prev.map(item => {
           // Built, published AND run. Anything short of that is not yet a
           // working app on the floor, which is what this box claims.
-          if (item.id === 'app')     return { ...item, done: ranOnFloor };
-          if (item.id === 'station') return { ...item, done: stations.length > 0 };
-          if (item.id === 'team')    return { ...item, done: users.length > 1 };
+          if (item.id === 'app')  return { ...item, done: ranOnFloor };
+          if (item.id === 'team') return { ...item, done: users.length > 1 };
           return item;
         }));
 
@@ -82,13 +86,13 @@ export function SetupChecklist() {
         // confusing even though each is right about its own thing. The coach is
         // the deeper of the two and it is the one actively teaching, so this
         // list stands down until the training is finished or dismissed.
+        // Same question the coach asks itself, so the two can never both be on
+        // screen and can never both be absent: the coach is running until the
+        // account has a published app and a completed run (or the user
+        // dismissed it), and this list waits for exactly that moment.
         const prefs = readTrainingPrefs(user?.id);
-        const trainingDone = trainingMilestones(
-          Array.isArray(apps) ? (apps as App[]) : [],
-          ranOnFloor,
-          prefs.dataSeen,
-        ).every(m => m.done);
-        setCoachRunning(canEdit && appsEnabled && !prefs.dismissed && !trainingDone);
+        const graduated = trainingGraduated(Array.isArray(apps) ? (apps as App[]) : [], ranOnFloor);
+        setCoachRunning(canEdit && appsEnabled && !prefs.dismissed && !graduated);
         setLoadState('ready');
       } catch {
         // No progress read means there is nothing truthful to show. An
