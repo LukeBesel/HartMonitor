@@ -8,6 +8,12 @@ const db = require('../db');
 const { logActivity } = require('../activity');
 const appRevisions = require('../appRevisions');
 const { ROLE_LEVELS } = require('../middleware/auth');
+// The ONE name a screen is allowed to print for a role. The stored values are a
+// permission level and a CHECK constraint, not job titles — 'developer' is the
+// account creator, and no plant has ever called that person a developer — so
+// every refusal below names the role the way roles.js does, exactly as
+// requireRole's own refusal already does.
+const { displayRole } = require('../roles');
 
 const router = express.Router();
 
@@ -512,7 +518,7 @@ router.get('/:id', (req, res) => {
   if (wantsDraft && (ROLE_LEVELS[req.user?.role] ?? 0) < ROLE_LEVELS.supervisor) {
     // An operator's client has no business reading unpublished work — and if it
     // could, it would run steps no revision vouches for.
-    return res.status(403).json({ error: 'Requires supervisor role or higher', code: 'FORBIDDEN' });
+    return res.status(403).json({ error: `Requires ${displayRole('supervisor')} role or higher`, code: 'FORBIDDEN' });
   }
 
   const { definition, revision, isDraft } = appRevisions.servedDefinition(app, { draft: wantsDraft });
@@ -817,7 +823,7 @@ router.put('/:id', (req, res) => {
   if (requires_approval !== undefined && (requires_approval ? 1 : 0) !== (app.requires_approval ? 1 : 0)) {
     const level = ROLE_LEVELS[req.user?.role] ?? 0;
     if (level < ROLE_LEVELS.manager) {
-      return res.status(403).json({ error: 'Requires manager role or higher', code: 'FORBIDDEN' });
+      return res.status(403).json({ error: `Requires ${displayRole('manager')} role or higher`, code: 'FORBIDDEN' });
     }
   }
 
@@ -914,7 +920,7 @@ router.post('/:id/publish', (req, res) => {
     // decorative, which is worse than having none.
     if ((ROLE_LEVELS[approver.role] ?? 0) < ROLE_LEVELS.supervisor) {
       return res.status(400).json({
-        error: 'An approver must be a supervisor or above',
+        error: `An approver must be a ${displayRole('supervisor')} or above`,
         code: 'APPROVER_ROLE_TOO_LOW',
       });
     }

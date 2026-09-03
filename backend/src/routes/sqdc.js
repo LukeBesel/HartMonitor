@@ -4,7 +4,7 @@ const db = require('../db');
 const { requireRole } = require('../middleware/auth');
 const { plantDayShift, plantToday, plantDateFn } = require('../plantDay');
 
-const { runSecondsSQL, elapsedSecondsSQL } = require('../cycleTime');
+const { runSecondsSQL, elapsedSecondsSQL, roundSeconds } = require('../cycleTime');
 
 const router = express.Router();
 
@@ -597,8 +597,20 @@ router.get('/department/:id', (req, res) => {
   //   1. In-progress completions: elapsed time since started_at vs the work
   //      order's takt_time_minutes.
   //   2. Completions finished today whose duration exceeded the takt target.
-  // We surface the worst offenders (most minutes over) so the TV banner can call
+  // We surface the worst offenders (most seconds over) so the TV banner can call
   // out exactly which station/operator/job has slipped and by how much.
+  //
+  // In SECONDS, all the way through. This block used to work in minutes and
+  // round both figures to a tenth of one before they left the process, so the
+  // board could only ever render a number that had already been rounded — in
+  // six-second steps. The takt read here is the WORK ORDER's, and the demo
+  // seeds that at 365 seconds (6.0833 min): it left as 6.1 and the wall called
+  // it a "6m 6s" takt for a job whose takt is 6m 5s, with every overrun beside
+  // it snapped to the same six-second grid. Seconds are the unit the rest of
+  // the system carries (see src/cycleTime.js) and the unit the board's own
+  // formatter takes, and the field names say so, so no screen can hand one to a
+  // formatter expecting minutes. There is no `_minutes` twin: two units for one
+  // measurement is how the two drift apart.
   const taktRows = db.prepare(`
     SELECT c.operator_name, c.app_name, c.started_at, c.completed_at, c.status,
            st.name AS station_name,
@@ -617,26 +629,36 @@ router.get('/department/:id', (req, res) => {
   const nowMs = Date.now();
   const behindTakt = [];
   for (const r of taktRows) {
-    const takt = r.takt_time_minutes;
-    let elapsedMin = null;
+    // The work order stores takt in minutes; this is the one place that reads
+    // it, and it converts once, here, at full precision.
+    const taktSeconds = r.takt_time_minutes * 60;
+    let elapsedSeconds = null;
     let live = false;
     if (r.status === 'in_progress' && r.started_at) {
-      elapsedMin = (nowMs - new Date(r.started_at).getTime()) / 60000;
+      elapsedSeconds = (nowMs - new Date(r.started_at).getTime()) / 1000;
       live = true;
     } else if (r.status === 'completed' && r.started_at && r.completed_at) {
-      elapsedMin = (new Date(r.completed_at).getTime() - new Date(r.started_at).getTime()) / 60000;
+      elapsedSeconds = (new Date(r.completed_at).getTime() - new Date(r.started_at).getTime()) / 1000;
     }
-    if (elapsedMin == null || elapsedMin <= takt) continue;
+    if (elapsedSeconds == null || elapsedSeconds <= taktSeconds) continue;
+    // Rounded exactly once, on the way out, by the module that owns that rule.
+    // An overrun finer than the clock that measured it comes back null there —
+    // two timestamps that could not be separated are not evidence anybody is
+    // behind takt, so that job does not go on the wall.
+    const overBySeconds = roundSeconds(elapsedSeconds - taktSeconds);
+    if (overBySeconds === null) continue;
     behindTakt.push({
       work_order_number: r.work_order_number || '—',
       operator_name: r.operator_name || 'Unknown',
       station: r.station_name || r.app_name || '—',
-      takt_minutes: Math.round(takt * 10) / 10,
-      over_by_minutes: Math.round((elapsedMin - takt) * 10) / 10,
+      takt_seconds: roundSeconds(taktSeconds),
+      over_by_seconds: overBySeconds,
       live,
     });
   }
-  behindTakt.sort((a, b) => b.over_by_minutes - a.over_by_minutes);
+  // Worst first, in the same seconds the banner prints, so the order and the
+  // numbers on the wall cannot tell different stories.
+  behindTakt.sort((a, b) => b.over_by_seconds - a.over_by_seconds);
   const topBehind = behindTakt.slice(0, 6);
 
   res.json({

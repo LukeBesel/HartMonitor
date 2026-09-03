@@ -225,7 +225,10 @@ cancel each other, so every stream gets its own block and uses only its own.
 | 3414 | dispatch |
 | 3415 | demo-seed |
 | 3416 | demo-dead-ends (post-audit demo fixes) |
-| 3522 | seed-search (wave 6: the demo's race, and search by part name) |
+| 3417 | guards-words (wave 6: the daily brief's scope guard) |
+| 3418 | guards-words (wave 6: the department board's takt in seconds) |
+| 3419 | guards-words (wave 6: role words on the app screens) |
+| 3420 | seed-search (wave 6: the demo's race, and search by part name) |
 
 Already in use elsewhere, do not reuse: existing tests hold **3171–3199**,
 **3231–3258**, **3306** and **3308**. The app's default port is **3001**

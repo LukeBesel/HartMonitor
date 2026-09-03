@@ -36,7 +36,7 @@ process.env.NODE_ENV = 'test';
 const { shiftShape, seededStepTimes, BENCH_PACE_S } = require('../src/sandbox');
 const { weldScrapRunSeconds } = require('../src/seedShapes');
 
-const PORT = 3522; // reserved for this stream (seed-search) in MIGRATIONS.md
+const PORT = 3420; // reserved for this suite in MIGRATIONS.md (3501+ is agent scratch)
 const BASE = `http://localhost:${PORT}`;
 const DB_PATH = path.join(os.tmpdir(), `mes-seed-search-${Date.now()}.db`);
 
