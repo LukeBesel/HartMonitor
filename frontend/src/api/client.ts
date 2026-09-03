@@ -5,7 +5,7 @@ import type {
   AuditLogEntry, SSOProviderInfo,
   InventoryTrackerSummary, InventoryMovement,
   App, Step, StepGroup, AppVariable,
-  BOM, BOMLine, Kit, KitLine, KitLineStatus,
+  BOM, BOMLine, ResolvedBOM, Kit, KitLine, KitLineStatus,
   CompletionValue, CompletionValueInput,
   MESTable,
   AndonCall, AndonCallInput, AndonSummary, AndonTeam,
@@ -464,9 +464,13 @@ export const api = {
   activateBOM: (id: string) => request<BOM>(`/boms/${id}/activate`, { method: 'POST' }),
   newBOMVersion: (id: string) => request<BOM>(`/boms/${id}/new-version`, { method: 'POST' }),
   deleteBOM: (id: string) => request<any>(`/boms/${id}`, { method: 'DELETE' }),
-  // WO → product_type → active BOM + lines; 404 {code:'NO_BOM'} when absent.
+  // WO → product type → active BOM + lines. A job with NO bill of materials is
+  // not an error and does not throw: the route answers 200 with an explicitly
+  // empty body (null id, no lines, the reason in words), so branch on `id`
+  // rather than on a rejection. A 404 here means the work order itself does not
+  // exist, or belongs to another company.
   resolveBOM: (workOrderId: string) =>
-    request<BOM & { lines: BOMLine[] }>(`/boms/resolve?work_order_id=${encodeURIComponent(workOrderId)}`),
+    request<ResolvedBOM>(`/boms/resolve?work_order_id=${encodeURIComponent(workOrderId)}`),
 
   // ── Kits (one per work order, generated from the active BOM)
   generateKit: (data: { work_order_id: string; location_id?: string }) =>
