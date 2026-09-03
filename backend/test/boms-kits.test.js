@@ -324,15 +324,39 @@ test('GET /api/boms/resolve joins WO → product type → active BOM', async () 
   assert.equal(resolved.json.id, bomV2, 'resolves the active version');
   assert.equal(resolved.json.lines.length, 2);
 
-  // WO without a product type → NO_BOM
+  // Cross-tenant WO → 404
+  assert.equal((await api('GET', `/api/boms/resolve?work_order_id=${woId}`, { token: tokenB })).status, 404);
+});
+
+// Having no bill of materials is the NORMAL case — a routed job carries its app
+// on the operation and no product type at all — and the player asks this route
+// on every start. Answering 404 there printed a red failure in the console of a
+// perfectly ordinary job and fired the caller's error path, so the empty answer
+// is a 200 that says it is empty. The two real errors stay 404.
+test('a job with no bill of materials resolves 200-and-empty, not 404', async () => {
   const bare = await api('POST', '/api/work-orders', {
     token: tokenA, body: { part_number: 'B-1', part_name: 'Bare', quantity: 1, app_id: appId },
   });
-  const noBom = await api('GET', `/api/boms/resolve?work_order_id=${bare.json.id}`, { token: tokenA });
-  assert.equal(noBom.status, 404);
-  assert.equal(noBom.json.code, 'NO_BOM');
+  const noType = await api('GET', `/api/boms/resolve?work_order_id=${bare.json.id}`, { token: tokenA });
+  assert.equal(noType.status, 200, 'no product type is not an error');
+  assert.equal(noType.json.id, null, 'nothing to render');
+  assert.deepEqual(noType.json.lines, []);
+  assert.match(noType.json.reason, /no product type/i, 'the emptiness says why');
 
-  // Cross-tenant WO → 404
+  // A product type nobody has activated a BOM for: same answer, its own reason.
+  const typed = await api('POST', '/api/work-orders', {
+    token: tokenA,
+    body: { part_number: 'B-2', part_name: 'Model Y unit', quantity: 1, app_id: appId, product_type_id: emptyProductTypeId },
+  });
+  assert.equal(typed.json.product_type_id, emptyProductTypeId);
+  const noActive = await api('GET', `/api/boms/resolve?work_order_id=${typed.json.id}`, { token: tokenA });
+  assert.equal(noActive.status, 200, 'no active version is not an error either');
+  assert.equal(noActive.json.id, null);
+  assert.match(noActive.json.reason, /activated/i);
+
+  // The genuine errors are still errors, and still indistinguishable from each
+  // other: a work order that does not exist, and one this company cannot see.
+  assert.equal((await api('GET', '/api/boms/resolve?work_order_id=no-such-wo', { token: tokenA })).status, 404);
   assert.equal((await api('GET', `/api/boms/resolve?work_order_id=${woId}`, { token: tokenB })).status, 404);
 });
 

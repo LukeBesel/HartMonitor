@@ -906,15 +906,26 @@ export interface ConcurrentRun<J> {
   operatorName: string;
   /** Seconds since it started, or null when the stamp is unreadable. */
   ageSeconds: number | null;
+  /**
+   * Is the holder the person standing at the tablet? A tablet that reloaded
+   * mid-run leaves the operator's OWN run open on the unit in front of them,
+   * and that is the commonest way this card appears — so the screen has to
+   * know whose run it is before it words anything, or it tells somebody a
+   * colleague has the unit they are themselves holding.
+   */
+  isMine: boolean;
 }
 
 interface JobLike {
   id: string;
   operator_name: string;
+  /** The verified user behind that name, when the run has one. A name is typed
+   *  and a shift shares them, so this is what decides `isMine`. */
+  operator_user_id?: string | null;
   started_at: string;
   work_order_id: string | null;
   data?: Record<string, unknown> | null;
-  last_session?: { operator_name: string; started_at: string } | null;
+  last_session?: { operator_name: string; started_at: string; operator_user_id?: string | null } | null;
 }
 
 /**
@@ -930,6 +941,7 @@ export function concurrentRun<J extends JobLike>(
   jobs: J[],
   workOrderId: string,
   partNumber: string,
+  me: RunIdentity = {},
   now: number = Date.now(),
 ): ConcurrentRun<J> | null {
   const pn = partNumber.trim().toLowerCase();
@@ -949,7 +961,27 @@ export function concurrentRun<J extends JobLike>(
     operatorName: (match.last_session?.operator_name || match.operator_name || '').trim(),
     // An unreadable stamp is stated as unknown, never rendered as "0s ago".
     ageSeconds: Number.isFinite(parsed) ? Math.max(0, Math.round((now - parsed) / 1000)) : null,
+    // Whose run it is, decided by the ONE definition of that — the same one
+    // `resumeTarget` uses, so a ?run= link and this card cannot disagree.
+    isMine: isOwnRun(match, me),
   };
+}
+
+/**
+ * The hold, in the words the operator has to answer.
+ *
+ * Their own run and a colleague's are two different decisions. Resuming your
+ * own unit is picking up where you left off — a tablet reload, a break, a
+ * shift interruption. Joining somebody else's means the two of you record one
+ * unit together, which is legitimate and sometimes right, but it is theirs to
+ * agree to. Naming the wrong one of those is the screen blaming the wrong
+ * person, so the sentence says which it is and names the colleague whenever
+ * the run says who they are.
+ */
+export function concurrentHoldReason(run: ConcurrentRun<unknown>): string {
+  if (run.isMine) return 'You already have this unit open — resume it, or start a separate run.';
+  const who = run.operatorName || 'Someone else';
+  return `${who} already has this unit open — choose whether to join them.`;
 }
 
 // --- Units this run ---------------------------------------------------------
