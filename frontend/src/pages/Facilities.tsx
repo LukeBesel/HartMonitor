@@ -10,6 +10,7 @@ import type { SiteShiftInput } from '../api/client';
 import { usePlan } from '../context/PlanContext';
 import { useToast } from '../context/ToastContext';
 import { timeAgo } from '../utils/time';
+import { runStatusLabel } from '../utils/runStatus';
 import { DAY_LETTERS, formatShiftRange, parseDays } from '../utils/shifts';
 import type { SiteShift } from '../utils/shifts';
 
@@ -268,7 +269,7 @@ export default function Facilities() {
                   }`} />
                   <div className="min-w-0 flex-1">
                     <div className="font-medium text-gray-900 text-sm truncate">{op.app_name}</div>
-                    <div className="text-xs text-gray-400 truncate">{op.operator_name} · {(op.status || 'unknown').replace('_', ' ')}</div>
+                    <div className="text-xs text-gray-400 truncate">{op.operator_name} · {runStatusLabel(op.status)}</div>
                   </div>
                   {/* No second parse of the stamp here: `timeAgo` states an
                       unreadable one as "—" itself, and the guard this row

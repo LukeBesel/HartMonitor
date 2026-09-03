@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync, existsSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import { dirname, join, relative } from 'node:path';
 
 // ─── The type says what the route sends, and nothing else ────────────────────
 //
@@ -12,11 +12,14 @@ import { dirname, join } from 'node:path';
 // alone.
 //
 // `api.getIntegrations` declared the setup half as REQUIRED, so a manager's
-// perfectly valid response did not match its own type and a screen reading
-// `payments.env_vars.length` type-checked all the way to a crash. This test
-// reads both sides and keeps them honest: a key the route only sets in its
-// staff-only branch has to be optional in the client, a key it always sets has
-// to be required, and a key it never sets at all must not be declared.
+// perfectly valid response did not match its own type. Nothing calls
+// getIntegrations yet, so no screen has been burnt by that — which is exactly
+// why the shape is worth correcting now: it costs nothing today, and the first
+// settings screen written against it would otherwise have trusted a promise
+// the route keeps only for platform staff. This test reads both sides and
+// keeps them honest: a key the route only sets in its staff-only branch has to
+// be optional in the client, a key it always sets has to be required, and a
+// key it never sets at all must not be declared.
 
 /** Walk up from the test until both halves of the repo are in reach. */
 const ROOT = (() => {
@@ -29,6 +32,15 @@ const ROOT = (() => {
 })();
 
 const read = (...parts: string[]) => readFileSync(join(ROOT, ...parts), 'utf-8');
+
+/** Every .ts/.tsx file under `dir`. */
+function walk(dir: string): string[] {
+  return readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) return walk(full);
+    return /\.tsx?$/.test(entry.name) ? [full] : [];
+  });
+}
 
 /** Strip // and /* comments, so a field named in prose is not read as code. */
 const uncommented = (source: string) =>
@@ -84,5 +96,19 @@ describe('api.getIntegrations matches GET /config/integrations', () => {
   it('promises no field the route never sends', () => {
     const invented = [...fields.keys()].filter(f => !mentions(always, f) && !mentions(staffOnly, f));
     expect(invented).toEqual([]);
+  });
+
+  // The note in client.ts argues the optionality from the route alone, and says
+  // plainly that nothing calls this yet. That second half is a fact with a
+  // shelf life, so it is checked rather than trusted: when the first settings
+  // screen lands, this fails and the sentence comes out of both files. What it
+  // must never do is drift back into a story about a screen that crashed —
+  // there has never been one.
+  it('still has no caller, which is what the note in client.ts claims', () => {
+    const callers = walk(join(ROOT, 'frontend', 'src')).filter(file => {
+      if (/client\.ts$|integrations-shape\.test\.ts$/.test(file)) return false;
+      return /\bgetIntegrations\s*\(/.test(readFileSync(file, 'utf-8'));
+    });
+    expect(callers.map(f => relative(ROOT, f))).toEqual([]);
   });
 });

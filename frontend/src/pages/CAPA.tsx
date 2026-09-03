@@ -7,7 +7,6 @@ import {
 import { api } from '../api/client';
 import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
 import DepartmentFilter from '../components/shared/DepartmentFilter';
-import { timeAgo } from '../utils/time';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 

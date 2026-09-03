@@ -12,9 +12,13 @@
 // So: one definition, and it borrows both halves rather than inventing a rule
 // of its own. The stamp goes through `parseServerTime` — this app's single rule
 // for reading what the server wrote, the one `stampIn` and the run screens
-// resolve a plant stamp with — and the wording matches `formatFreshness` in
-// components/shared/LastRefreshed.tsx, which says the same thing about an age
-// already measured in milliseconds.
+// resolve a plant stamp with — and the wording follows `formatFreshness` in
+// components/shared/LastRefreshed.tsx, which words an age already measured in
+// milliseconds. Follows, not matches: the shared buckets are spelled the same
+// ("just now", "5m ago", "3h ago", "12d ago"), but the two ends differ on
+// purpose. formatFreshness counts SECONDS at the near end because it ticks
+// under a live refresh indicator; this one runs out to MONTHS at the far end
+// because an activity log and an idea board hold last quarter's rows.
 
 import { parseServerTime } from '../components/apps/appModel';
 

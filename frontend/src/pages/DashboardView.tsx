@@ -17,6 +17,7 @@ import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
 import DashboardFilterBar, { FilterOption } from '../components/shared/DashboardFilterBar';
 import { fmtDuration, fmtMinutes, parseServerTime } from '../components/apps/appModel';
+import { runStatusLabel } from '../utils/runStatus';
 
 // ── Card palette config ───────────────────────────────────────────────────────
 
@@ -306,7 +307,7 @@ function CardDataRenderer({ card, data }: { card: DashboardCard; data: any }) {
                   <td className="py-1.5 px-2">{r.operator_name}</td>
                   <td className="py-1.5 px-2">
                     <span className={`px-1.5 py-0.5 rounded-full ${r.status === 'completed' ? 'bg-green-100 text-green-700' : r.status === 'in_progress' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600'}`}>
-                      {r.status}
+                      {runStatusLabel(r.status)}
                     </span>
                   </td>
                   <td className="py-1.5 px-2 text-right text-gray-500">

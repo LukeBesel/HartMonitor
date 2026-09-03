@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { timeAgo } from '../time';
+import { formatFreshness } from '../../components/shared/LastRefreshed';
 
 // ─── One clock ────────────────────────────────────────────────────────────────
 //
@@ -85,9 +86,40 @@ describe('timeAgo words an age one way', () => {
   });
 });
 
+describe('timeAgo follows the freshness indicator’s wording, and says where it does not', () => {
+  // The header of utils/time.ts claims the two agree on the buckets they share
+  // and diverge at the ends on purpose. That is a claim about another file, so
+  // it is read out of that file rather than trusted.
+  it('spells a shared bucket exactly as formatFreshness does', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    const minute = 60_000;
+    expect(timeAgo('2026-09-02 11:59:00')).toBe(formatFreshness(minute));
+    expect(timeAgo('2026-09-02 11:30:00')).toBe(formatFreshness(30 * minute));
+    expect(timeAgo('2026-09-02 09:00:00')).toBe(formatFreshness(180 * minute));
+    expect(timeAgo('2026-08-21 12:00:00')).toBe(formatFreshness(12 * 1440 * minute));
+  });
+
+  it('parts company at the two ends, deliberately', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(NOW);
+    // Near end: the refresh indicator ticks in seconds under a live fetch; an
+    // activity row does not, so anything under a minute is simply "just now".
+    expect(formatFreshness(10_000)).toBe('10s ago');
+    expect(timeAgo('2026-09-02 11:59:50')).toBe('just now');
+    // Far end: a log holds last quarter, and "120d ago" is a number nobody
+    // converts in their head.
+    expect(formatFreshness(120 * 1440 * 60_000)).toBe('120d ago');
+    expect(timeAgo('2026-05-05 12:00:00')).toBe('4mo ago');
+  });
+});
+
 describe('no screen keeps a private copy of it', () => {
   // The four copies were found by reading the screens, which is exactly the
   // method that lets the fifth one back in — so it is a test.
+  // Every screen the private copies lived on or were pointed at. CAPA is here
+  // because it HELD one of the copies, not because it shows an age — its copy
+  // was never called by anything, so CAPA must end up importing nothing.
   const SCREENS = [
     'src/pages/Quality.tsx',
     'src/pages/CAPA.tsx',
@@ -97,10 +129,23 @@ describe('no screen keeps a private copy of it', () => {
     'src/components/shared/AlertsBell.tsx',
   ];
 
-  it.each(SCREENS)('%s asks utils/time for the age', file => {
+  const IMPORTS_IT = /import \{ timeAgo \} from '\.{1,2}(\.\.)?\/*.*utils\/time'/;
+
+  it.each(SCREENS)('%s keeps no second definition of the age', file => {
     const src = readFileSync(resolve(process.cwd(), file), 'utf-8');
     expect(src).not.toMatch(/function timeAgo/);
-    expect(src).toMatch(/import \{ timeAgo \} from '\.{1,2}(\.\.)?\/*.*utils\/time'/);
+  });
+
+  // Deliberately NOT "every screen imports it". Requiring the import of a
+  // screen that shows no age is how a dead import gets locked in and the next
+  // person to tidy the file gets a red suite for doing the right thing. The
+  // rule is the two-way one: show an age and you take the shared definition;
+  // show none and you carry no import for it.
+  it.each(SCREENS)('%s imports the age exactly if it shows one', file => {
+    const src = readFileSync(resolve(process.cwd(), file), 'utf-8');
+    const uses = /\btimeAgo\(/.test(src);
+    if (uses) expect(src).toMatch(IMPORTS_IT);
+    else expect(src).not.toMatch(IMPORTS_IT);
   });
 
   it('leaves no screen guarding the stamp on timeAgo’s behalf', () => {
