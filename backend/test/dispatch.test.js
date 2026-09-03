@@ -526,7 +526,9 @@ describe('dispatch: what to run next here', () => {
     assert.equal(res.result.released, false);
     assert.equal(res.result.operation_sequence, null);
     assert.equal(res.result.operation_count, 0);
-    assert.equal(res.answer, 'WO-2026-046 is not released: at pending');
+    // The sentence is English, not a status token dressed up as a place: a
+    // person reads "at pending" as somewhere the job is standing.
+    assert.equal(res.answer, 'WO-2026-046 has not been released yet, so it is not on the floor');
   });
 
   it('finds nothing at all rather than another company\'s job', async () => {

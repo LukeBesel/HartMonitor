@@ -15,11 +15,8 @@
 // Every writer below prefers the product's OWN function over a raw INSERT
 // (workOrderOperations.instantiate/advance, appRevisions.publish,
 // qualification.setEnforcementMode) so the seed can never drift from what
-// those modules actually do. Two exceptions, both documented at the point
-// they matter:
-//   - reason_codes: routes/andon.js keeps its own seedReasonCodes() as a
-//     module-private function, not exported, so this file carries a second
-//     copy of the same default list. A test compares the two byte for byte.
+// those modules actually do. One exception, documented at the point it
+// matters:
 //   - andon escalation on a REAL company's seeded data (loadSampleDataForCompany)
 //     never calls andonEscalation.escalateOne() — that function emails and
 //     webhooks whoever it resolves, and a real signup's sample data must not
@@ -35,7 +32,6 @@ const andonEscalation = require('./andonEscalation');
 const qualification = require('./qualification');
 const pmScheduler = require('./pmScheduler');
 const { logActivity } = require('./activity');
-const { REASON_KIND } = require('./vocab');
 const { offsetMinutes, companyTimeZone } = require('./plantDay');
 
 // ─── Timing helpers: "N minutes ago", safe against the plant's OWN midnight ──
@@ -85,8 +81,23 @@ const ago = m => `-${Math.max(0, Math.round(m))} minutes`;
  *          same order as the input, startAgo > endAgo, non-overlapping
  */
 function layOutAgo(companyId, durationsMin, tailMin = 2) {
+  return layOutAgoAt(minutesSincePlantMidnight(companyId), durationsMin, tailMin);
+}
+
+/**
+ * layOutAgo()'s arithmetic with the clock passed in rather than read.
+ *
+ * Same function, one argument earlier: a seeded run's duration is a function of
+ * how far into the plant day it is, so anything that has to be true of those
+ * runs ALL DAY — the wall board's "Fastest Today" is one run per operator, and
+ * no two of them share a time — can only be checked by replaying every minute.
+ * A property proven at the minute the suite happened to run is not proven.
+ *
+ * @param {number} minutesToday  minutes elapsed since the plant day began
+ */
+function layOutAgoAt(minutesToday, durationsMin, tailMin = 2) {
   const gap = 1;
-  const available = Math.max(durationsMin.length, minutesSincePlantMidnight(companyId) - tailMin);
+  const available = Math.max(durationsMin.length, minutesToday - tailMin);
   const totalNeeded = durationsMin.reduce((a, d) => a + d, 0) + gap * durationsMin.length;
   const scale = totalNeeded > available ? available / totalNeeded : 1;
   const scaled = durationsMin.map(d => Math.max(1, Math.round(d * scale)));
@@ -106,73 +117,19 @@ function layOutAgo(companyId, durationsMin, tailMin = 2) {
 
 // ─── Coded reasons (scrap / rework / downtime) ────────────────────────────────
 //
-// The same default list GET /api/andon/reason-codes seeds on a company's first
-// read (routes/andon.js seedReasonCodes). That function only ever runs off an
-// HTTP request and is not exported, so it cannot be called directly from a
-// seed — reported to the coordinator as a small gap in an earlier wave (the
-// fix is to export it, e.g. `router.seedReasonCodes = seedReasonCodes`).
-// Until then this is a second copy of the same table, kept byte-for-byte
-// identical to routes/andon.js's REASON_DEFAULTS; demo-seed-truth.test.js
-// parses routes/andon.js's own source and diffs the two so they cannot drift
-// without a test failing.
-const REASON_DEFAULTS = Object.freeze({
-  scrap: [
-    ['weld_porosity', 'Weld porosity', ''],
-    ['dimensional', 'Dimensional out of tolerance', ''],
-    ['surface_defect', 'Surface defect', ''],
-    ['material_defect', 'Material defect', ''],
-    ['setup_scrap', 'Setup scrap', ''],
-    ['handling_damage', 'Handling damage', ''],
-  ],
-  rework: [
-    ['weld_repair', 'Weld repair', ''],
-    ['dimensional_touch_up', 'Dimensional touch-up', ''],
-    ['refinish', 'Surface refinish', ''],
-    ['reassemble', 'Reassembly', ''],
-    ['retest', 'Retest after adjustment', ''],
-  ],
-  downtime: [
-    ['breakdown', 'Breakdown', 'breakdown'],
-    ['changeover', 'Changeover / setup', 'setup_adjustment'],
-    ['no_material', 'No material', 'minor_stop'],
-    ['no_operator', 'No operator', 'minor_stop'],
-    ['jam', 'Jam', 'minor_stop'],
-    ['running_slow', 'Running slow', 'speed_loss'],
-    ['startup_reject', 'Startup reject', 'startup_reject'],
-    ['process_reject', 'Process reject', 'process_reject'],
-  ],
-});
-
-/** Seeds the three default reason-code lists, exactly as a company's first
- *  GET /api/andon/reason-codes would — keyed on the company having none at all,
- *  so it is safe to call unconditionally at seed time. Returns { kind: { code:
- *  id } } so the caller can stamp scrap_reason_code_id / reason_code_id without
- *  a second query. */
-function seedReasonCodes(companyId) {
-  const byKindCode = {};
-  for (const kind of REASON_KIND) byKindCode[kind] = {};
-
-  const existing = db.prepare('SELECT id, kind, code FROM reason_codes WHERE company_id = ?').all(companyId);
-  if (existing.length > 0) {
-    for (const r of existing) byKindCode[r.kind][r.code] = r.id;
-    return byKindCode;
-  }
-
-  const insert = db.prepare(`
-    INSERT OR IGNORE INTO reason_codes (id, company_id, kind, code, label, loss_bucket, sort_order)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  db.transaction(() => {
-    for (const kind of REASON_KIND) {
-      (REASON_DEFAULTS[kind] || []).forEach(([code, label, bucket], i) => {
-        const id = uuidv4();
-        insert.run(id, companyId, kind, code, label, bucket, (i + 1) * 10);
-        byKindCode[kind][code] = id;
-      });
-    }
-  })();
-  return byKindCode;
-}
+// ONE list, and it lives where the API writes it: routes/andon.js exports both
+// its REASON_DEFAULTS and the seedReasonCodes() a company's first
+// GET /api/andon/reason-codes runs, so a seed writes exactly the vocabulary the
+// screens read back. This file used to carry a second copy of the same table,
+// which is precisely how a Pareto and the stop reason it came from end up
+// naming the same stoppage two different things.
+//
+// seedReasonCodes(companyId) is keyed on the company having no codes at all, so
+// it is safe to call unconditionally at seed time, and returns
+// { kind: { code: id } } for stamping scrap_reason_code_id / reason_code_id
+// without a second query. Both names are re-exported below for the seeds and
+// the tests that already ask this module for them.
+const { REASON_DEFAULTS, seedReasonCodes } = require('./routes/andon');
 
 // ─── Widget index — variableName → { step_id, widget_id, type } ─────────────
 // The same tiny helper sandbox.js keeps inline for its own apps, exported
@@ -386,6 +343,40 @@ function seedBracketLineRouting(companyId, opts) {
   };
 }
 
+/** The two Weld scrap runs' nominal minutes, and how long before "now" the
+ *  newer of them ends — compressed together by layOutAgo() when the plant day
+ *  is younger than they are. */
+const WELD_SCRAP_MIN = Object.freeze([8, 8]);
+const WELD_SCRAP_TAIL_MIN = 16;
+
+/** The step timers one Weld scrap run records: a short setup, then the rest of
+ *  its window at the arc. Their SUM is the run's duration everywhere the
+ *  product measures one (runSecondsSQL prefers hands-on time over wall clock),
+ *  which is why it is written once. */
+function weldScrapStepTimes(runIndex, durationMin) {
+  const setupS = 5 + runIndex;
+  return { 0: setupS, 1: Math.max(1, durationMin - 1) * 60 - setupS };
+}
+
+/**
+ * What the two Weld scrap runs weigh on a "fastest run today" board, in
+ * seconds, at a given point in the plant day.
+ *
+ * They are the demo's OTHER completions in the Assembly department today, so a
+ * claim about that board is not a claim about the seeded assembly shift alone —
+ * these runs are ranked beside it, and unlike it they shrink as the plant day
+ * gets shorter. Exported so the claim can be checked at every minute.
+ *
+ * @param {number} minutesToday  minutes elapsed since the plant day began
+ */
+function weldScrapRunSeconds(minutesToday) {
+  return layOutAgoAt(minutesToday, WELD_SCRAP_MIN, WELD_SCRAP_TAIL_MIN)
+    .map((w, i) => {
+      const t = weldScrapStepTimes(i, w.durationMin);
+      return t[0] + t[1];
+    });
+}
+
 // ─── Scrap with a coded reason, booked against operation 2 (Weld) ────────────
 //
 // Two runs of the app the Weld step names, each carrying real
@@ -420,7 +411,7 @@ function seedWeldScrapRuns(companyId, opts) {
 
   // Non-overlapping, always real-duration windows, scaled to fit inside
   // today even if the plant's day just started (layOutAgo — see above).
-  const windows = layOutAgo(companyId, [8, 8], 16);
+  const windows = layOutAgo(companyId, WELD_SCRAP_MIN, WELD_SCRAP_TAIL_MIN);
 
   const serialPrefix = tag ? `${tag}-` : '';
   const runs = [
@@ -439,7 +430,7 @@ function seedWeldScrapRuns(companyId, opts) {
       id, appId, appName, stationId, operatorName, operatorUserId, workOrderId, productTypeId,
       workOrderOperationId, ago(w.startAgo), ago(w.endAgo),
       JSON.stringify(data),
-      JSON.stringify({ 0: 5 + i, 1: Math.max(1, w.durationMin - 1) * 60 - (5 + i) }),
+      JSON.stringify(weldScrapStepTimes(i, w.durationMin)),
       r.good, r.scrap, r.rework, r.reason, companyId,
     );
     stampCompletionValues(companyId, appId, id, widgets, data, w.endAgo);
@@ -864,5 +855,7 @@ module.exports = {
   minutesSincePlantMidnight,
   safeMinutesAgo,
   layOutAgo,
+  layOutAgoAt,
+  weldScrapRunSeconds,
   REASON_DEFAULTS,
 };

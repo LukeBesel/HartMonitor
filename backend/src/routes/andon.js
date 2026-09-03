@@ -21,6 +21,7 @@ const { TEAMS, TEAM_BY_TYPE, teamOf, teamLabel } = require('../andonTeams');
 const { deliverAlert } = require('../andonRouting');
 const { isValid, REASON_KIND, LOSS_BUCKET } = require('../vocab');
 const { ROLE_LEVELS } = require('../middleware/auth');
+const { displayRole } = require('../roles');
 const {
   startAndonEscalation, runOnce, listTargets, seedTargets, targetTeamOf, respondByFor,
   tierLabel, PRIORITIES, ESCALATE_TO_OPTIONS, MANAGER_TIER, MAX_ESCALATION_LEVEL,
@@ -41,6 +42,15 @@ startAndonEscalation();
 function canManage(req) {
   return (ROLE_LEVELS[req.user?.role] ?? 0) >= ROLE_LEVELS.manager;
 }
+
+/** The one 403 body those configuration routes answer with. The role is named
+ *  with the word the users grid prints, not the stored token — src/roles.js is
+ *  the only place that mapping lives, and a person told they need to be a
+ *  "manager" is being sent to look for a word no screen of ours uses. */
+const NEEDS_MANAGER = Object.freeze({
+  error: `Requires the ${displayRole('manager')} role or higher`,
+  code: 'FORBIDDEN',
+});
 
 // Returns the id if the row exists in this company, else null (cross-tenant FK guard).
 function ownedOrNull(table, id, companyId) {
@@ -299,7 +309,7 @@ router.get('/targets', (req, res) => {
 });
 
 router.put('/targets', (req, res) => {
-  if (!canManage(req)) return res.status(403).json({ error: 'Requires manager role or higher', code: 'FORBIDDEN' });
+  if (!canManage(req)) return res.status(403).json(NEEDS_MANAGER);
   const { team, priority } = req.body || {};
   if (!team || !PRIORITIES.includes(priority)) {
     return res.status(400).json({ error: `team and priority (${PRIORITIES.join(', ')}) required` });
@@ -401,12 +411,28 @@ const REASON_DEFAULTS = {
   ],
 };
 
-/** Seeds the three default lists the first time a company reads any of them.
- *  Keyed on the company having NO codes at all, so deleting or deactivating one
- *  never resurrects it on the next read. */
+/**
+ * Seeds the three default lists the first time a company reads any of them.
+ * Keyed on the company having NO codes at all, so deleting or deactivating one
+ * never resurrects it on the next read.
+ *
+ * Returns `{ kind: { code: id } }` — filled from the rows already there when
+ * there were any — so a seeder can stamp scrap_reason_code_id / reason_code_id
+ * without a second query. Exported beside the router, because the demo seeds
+ * (src/seedShapes.js, and through it db.js's "Load sample data") need this
+ * exact vocabulary: a second copy of the list is how a Pareto and the stop
+ * reason it came from stop naming the same thing.
+ */
 function seedReasonCodes(companyId) {
-  const existing = db.prepare('SELECT COUNT(*) as n FROM reason_codes WHERE company_id = ?').get(companyId).n;
-  if (existing > 0) return;
+  const byKindCode = {};
+  for (const kind of REASON_KIND) byKindCode[kind] = {};
+
+  const existing = db.prepare('SELECT id, kind, code FROM reason_codes WHERE company_id = ?').all(companyId);
+  if (existing.length > 0) {
+    for (const r of existing) byKindCode[r.kind][r.code] = r.id;
+    return byKindCode;
+  }
+
   const insert = db.prepare(`
     INSERT OR IGNORE INTO reason_codes (id, company_id, kind, code, label, loss_bucket, sort_order)
     VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -414,10 +440,13 @@ function seedReasonCodes(companyId) {
   db.transaction(() => {
     for (const kind of REASON_KIND) {
       (REASON_DEFAULTS[kind] || []).forEach(([code, label, bucket], i) => {
-        insert.run(uuidv4(), companyId, kind, code, label, bucket, (i + 1) * 10);
+        const id = uuidv4();
+        insert.run(id, companyId, kind, code, label, bucket, (i + 1) * 10);
+        byKindCode[kind][code] = id;
       });
     }
   })();
+  return byKindCode;
 }
 
 const reasonRow = r => ({ ...r, is_active: !!r.is_active });
@@ -437,7 +466,7 @@ router.get('/reason-codes', (req, res) => {
 });
 
 router.post('/reason-codes', (req, res) => {
-  if (!canManage(req)) return res.status(403).json({ error: 'Requires manager role or higher', code: 'FORBIDDEN' });
+  if (!canManage(req)) return res.status(403).json(NEEDS_MANAGER);
   seedReasonCodes(req.companyId);
   const { kind, code, label, loss_bucket = '', sort_order = 0 } = req.body || {};
   if (!isValid('REASON_KIND', kind)) {
@@ -467,7 +496,7 @@ router.post('/reason-codes', (req, res) => {
 });
 
 router.put('/reason-codes/:id', (req, res) => {
-  if (!canManage(req)) return res.status(403).json({ error: 'Requires manager role or higher', code: 'FORBIDDEN' });
+  if (!canManage(req)) return res.status(403).json(NEEDS_MANAGER);
   const row = db.prepare('SELECT * FROM reason_codes WHERE id = ? AND company_id = ?')
     .get(req.params.id, req.companyId);
   if (!row) return res.status(404).json({ error: 'Not found' });
@@ -501,7 +530,7 @@ router.put('/reason-codes/:id', (req, res) => {
 // leaves the picker (is_active = 0) and stays in history.
 
 router.delete('/reason-codes/:id', (req, res) => {
-  if (!canManage(req)) return res.status(403).json({ error: 'Requires manager role or higher', code: 'FORBIDDEN' });
+  if (!canManage(req)) return res.status(403).json(NEEDS_MANAGER);
   const row = db.prepare('SELECT * FROM reason_codes WHERE id = ? AND company_id = ?')
     .get(req.params.id, req.companyId);
   if (!row) return res.status(404).json({ error: 'Not found' });
@@ -722,3 +751,8 @@ router.delete('/:id', (req, res) => {
 });
 
 module.exports = router;
+// The demo seeds need the reason-code vocabulary this file already owns, and a
+// router is a function, so it carries them. ONE list of stop reasons, in the
+// place the API writes it from.
+module.exports.REASON_DEFAULTS = REASON_DEFAULTS;
+module.exports.seedReasonCodes = seedReasonCodes;
