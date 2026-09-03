@@ -1169,6 +1169,34 @@ const WIP_PART_LIMIT = 25;
 const WIP_FINISHED = Object.freeze(['completed', 'cancelled']);
 
 /**
+ * What to say about a job that has no operation to stand on, one sentence per
+ * state it can be in.
+ *
+ * The sentence has to be English. "WO-1001 is not released: at in_progress" is
+ * the database talking — `in_progress` is a stored token, and a person reads
+ * "at in_progress" as a place. So each state says the true thing in words, and
+ * says what that means for the searcher, who asked where the job is.
+ *
+ * work_orders.status allows five values; 'completed' and 'cancelled' are
+ * answered before this point, so these three are every state this branch can
+ * see. Anything else — a legacy row, a value a later migration adds — falls
+ * back to the part that is true whatever the status, rather than dressing the
+ * token up as a sentence.
+ */
+const UNRELEASED_ANSWERS = Object.freeze({
+  pending:     n => `${n} has not been released yet, so it is not on the floor`,
+  in_progress: n => `${n} is running, but nobody released its operations — there is no step to point at`,
+  overdue:     n => `${n} is past its due date and was never released to the floor`,
+});
+
+function unreleasedAnswer(wo) {
+  const say = UNRELEASED_ANSWERS[wo.status];
+  return say
+    ? say(wo.work_order_number)
+    : `${wo.work_order_number} has no released operations, so there is no step to point at`;
+}
+
+/**
  * Where ONE job stands, in the shape the search box prints.
  *
  * `summary` is workOrderOperations' own answer about which operation the job is
@@ -1239,7 +1267,7 @@ function wipRow(ctx, wo, summary, startedAt) {
       quantity_required: wo.quantity,
       status: wo.status,
       started_at: null,
-      answer: `${wo.work_order_number} is not released: at ${wo.status}`,
+      answer: unreleasedAnswer(wo),
     };
   }
 
@@ -1297,13 +1325,22 @@ function wipRows(ctx, workOrders) {
 }
 
 /**
- * Answer "where is WO-1042?" in one sentence.
+ * Answer "where is WO-1042?" — or "where is the Standard Bracket?" — in one
+ * sentence.
  *
- * A work-order number wins over a part number — somebody typing a job number is
- * asking about that job. Either can match more than one job, and then the
- * answer is the LIST rather than a silent pick of the first row: two jobs with
- * the same number is a data problem the searcher needs to see, not one this
- * function should hide by choosing.
+ * Three questions, in this order: a work-order number wins over a part number,
+ * and a part number wins over a part NAME. Somebody typing a job number is
+ * asking about that job; somebody typing words is asking about a part, and the
+ * name is what every screen prints beside the number, so a box that matched
+ * only the number told a supervisor "not found" about the words in front of
+ * them. The name matches on a fragment — "bracket" finds Standard Bracket —
+ * because that is how a person searches for something they can see.
+ *
+ * Any of the three can match more than one job, and then the answer is the LIST
+ * rather than a silent pick of the first row: two jobs with the same number is a
+ * data problem the searcher needs to see, not one this function should hide by
+ * choosing. The payload says which question was answered (`match`), so a caller
+ * can tell a number hit from a name hit.
  *
  * Company-scoped at the SELECT: another tenant's work order is not "found and
  * hidden", it is simply not found, and no name of theirs is ever read.
@@ -1328,61 +1365,69 @@ function wipSearch(ctxOrCompanyId, rawQuery) {
     truncated_note: null,
   };
 
-  if (!query) return { ...base, reason: 'type a work order or part number' };
+  if (!query) return { ...base, reason: 'type a work order, part number or part name' };
 
-  // ── ONE statement for both questions ───────────────────────────────────────
-  // "Is this a work-order number?" and "is it a part number?" used to be two
-  // selects plus a count, and this box is typed into on two screens. A single
-  // pass tags each row with which question it answered, carries its group's
-  // total in a window function, and caps each group's page — so the cost of a
-  // keystroke does not depend on how many jobs the plant has on that part.
+  // ── ONE statement for all three questions ──────────────────────────────────
+  // "Is this a work-order number?", "is it a part number?" and "is it a part
+  // name?" used to be two selects plus a count (and the third was not asked at
+  // all), and this box is typed into on two screens. A single pass tags each row
+  // with which question it answered, carries its group's total in a window
+  // function, and caps each group's page — so the cost of a keystroke does not
+  // depend on how many jobs the plant has on that part.
   //
   // The number group is at most a handful of rows (work_order_number is unique
-  // per company and there are three candidate spellings), so only the part
-  // group can ever be capped.
+  // per company and there are three candidate spellings), so only the two part
+  // groups can ever be capped.
   const candidates = workOrderNumberCandidates(query);
-  // Both halves ignore a hyphenated prefix on the STORED value — see
+  // The number halves ignore a hyphenated prefix on the STORED value — see
   // numberMatchSql() for why a demo sandbox's 'ABC123-WO-1001' has to answer to
   // 'WO-1001'. The bindings are the candidates twice over, in that order.
   const numberMatch = numberMatchSql('wo.work_order_number', candidates.length);
   const numberParams = [...candidates, ...candidates];
   const partMatch = numberMatchSql('wo.part_number', 1);
+  // A name is words, not an identifier: it matches anywhere inside the stored
+  // name, so "bracket" and "standard bracket" both find Standard Bracket.
+  const nameMatch = `UPPER(wo.part_name) LIKE '%' || ? || '%'`;
   const upperQuery = query.toUpperCase();
+  // The CASE decides the match kind AND the membership: a row that answered no
+  // question is tagged NULL and dropped one level up. Written once rather than
+  // once in the SELECT and again in a WHERE, so the tag on a row can never
+  // disagree with the reason the row is here.
   const matched = db.prepare(`
     SELECT * FROM (
       SELECT m.*,
-             COUNT(*)     OVER (PARTITION BY m.matched_number) AS group_total,
-             ROW_NUMBER() OVER (PARTITION BY m.matched_number
+             COUNT(*)     OVER (PARTITION BY m.matched_on) AS group_total,
+             ROW_NUMBER() OVER (PARTITION BY m.matched_on
                                 ORDER BY (m.due_date IS NULL), m.due_date ASC,
                                          m.work_order_number ASC) AS rn
       FROM (
         SELECT wo.*, d.name AS department_name,
-               CASE WHEN ${numberMatch} THEN 1 ELSE 0 END AS matched_number
+               CASE
+                 WHEN ${numberMatch} THEN 'work_order'
+                 -- Work IN PROGRESS: a part search is "where are my jobs for
+                 -- this part", and a finished or cancelled job is not one of
+                 -- them. Asking by NUMBER still finds them, and says plainly
+                 -- they are over.
+                 WHEN wo.status IN (${WIP_FINISHED.map(() => '?').join(',')}) THEN NULL
+                 WHEN ${partMatch} THEN 'part_number'
+                 WHEN ${nameMatch} THEN 'part_name'
+               END AS matched_on
         FROM work_orders wo
         LEFT JOIN departments d ON d.id = wo.department_id
         WHERE wo.company_id = ?
-          AND (
-            ${numberMatch}
-            OR (
-              ${partMatch}
-              -- Work IN PROGRESS: a part search is "where are my jobs for this
-              -- part", and a finished or cancelled job is not one of them.
-              -- Asking by NUMBER still finds them, and says plainly they are over.
-              AND wo.status NOT IN (${WIP_FINISHED.map(() => '?').join(',')})
-            )
-          )
       ) m
+      WHERE m.matched_on IS NOT NULL
     ) WHERE rn <= ?
   `).all(
     ...numberParams,
-    companyId,
-    ...numberParams,
-    upperQuery, upperQuery,
     ...WIP_FINISHED,
+    upperQuery, upperQuery,
+    upperQuery,
+    companyId,
     WIP_PART_LIMIT,
   );
 
-  const byNumber = matched.filter(r => r.matched_number === 1)
+  const byNumber = matched.filter(r => r.matched_on === 'work_order')
     // Newest first, the way the number path has always answered. The group is
     // at most a handful of rows, so this is free.
     .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
@@ -1408,37 +1453,64 @@ function wipSearch(ctxOrCompanyId, rawQuery) {
     };
   }
 
-  const byPart = matched.filter(r => r.matched_number === 0);
-  if (byPart.length === 0) {
-    return { ...base, reason: `no work order or part number matches "${query}"` };
-  }
+  // The two part groups answer in the same shape — one job answers as itself,
+  // several answer as a list that says how many there really are and whether
+  // the list is all of them — and only the sentence for "several" differs.
+  const partAnswer = (rows, match, many) => {
+    const total = rows[0].group_total;
+    const results = wipRows(ctx, rows);
+    const truncated = total > results.length;
 
-  const total = byPart[0].group_total;
-  const results = wipRows(ctx, byPart);
-  const truncated = total > results.length;
-  const truncatedNote = truncated
-    ? `showing the first ${results.length} of ${total} open jobs on this part`
-    : null;
-
-  if (results.length === 1 && !truncated) {
+    if (results.length === 1 && !truncated) {
+      return {
+        ...base,
+        match,
+        result: results[0],
+        results,
+        answer: results[0].answer,
+        total_matches: total,
+      };
+    }
     return {
       ...base,
-      match: 'part_number',
-      result: results[0],
+      match,
+      result: null,
       results,
-      answer: results[0].answer,
+      answer: many(total, results, truncated),
       total_matches: total,
+      truncated,
+      truncated_note: truncated
+        ? `showing the first ${results.length} of ${total} open jobs on this part`
+        : null,
     };
+  };
+
+  const byPart = matched.filter(r => r.matched_on === 'part_number');
+  if (byPart.length > 0) {
+    return partAnswer(byPart, 'part_number',
+      total => `${total} work orders carry part ${byPart[0].part_number}`);
   }
+
+  const byName = matched.filter(r => r.matched_on === 'part_name');
+  if (byName.length > 0) {
+    // A fragment can span two parts — "bracket" finds the standard one and the
+    // heavy-duty one — so the sentence names a part only when the whole match
+    // really is that one part, and otherwise quotes what was typed rather than
+    // letting one part speak for the rest. A capped page cannot see the names
+    // it did not fetch, so it never claims one either.
+    return partAnswer(byName, 'part_name', (total, results, truncated) => {
+      const names = [...new Set(results.map(r => r.part_name))];
+      return !truncated && names.length === 1
+        ? `${total} work orders are on ${names[0]}`
+        : `${total} work orders match "${query}"`;
+    });
+  }
+
+  // Says all three questions were asked, so nobody retypes the same words in
+  // the hope that the box also knows about names.
   return {
     ...base,
-    match: 'part_number',
-    result: null,
-    results,
-    answer: `${total} work orders carry part ${byPart[0].part_number}`,
-    total_matches: total,
-    truncated,
-    truncated_note: truncatedNote,
+    reason: `no work order or part number matches "${query}", and no part is called that`,
   };
 }
 

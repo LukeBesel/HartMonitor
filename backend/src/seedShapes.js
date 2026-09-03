@@ -15,11 +15,8 @@
 // Every writer below prefers the product's OWN function over a raw INSERT
 // (workOrderOperations.instantiate/advance, appRevisions.publish,
 // qualification.setEnforcementMode) so the seed can never drift from what
-// those modules actually do. Two exceptions, both documented at the point
-// they matter:
-//   - reason_codes: routes/andon.js keeps its own seedReasonCodes() as a
-//     module-private function, not exported, so this file carries a second
-//     copy of the same default list. A test compares the two byte for byte.
+// those modules actually do. One exception, documented at the point it
+// matters:
 //   - andon escalation on a REAL company's seeded data (loadSampleDataForCompany)
 //     never calls andonEscalation.escalateOne() — that function emails and
 //     webhooks whoever it resolves, and a real signup's sample data must not
@@ -35,7 +32,6 @@ const andonEscalation = require('./andonEscalation');
 const qualification = require('./qualification');
 const pmScheduler = require('./pmScheduler');
 const { logActivity } = require('./activity');
-const { REASON_KIND } = require('./vocab');
 const { offsetMinutes, companyTimeZone } = require('./plantDay');
 
 // ─── Timing helpers: "N minutes ago", safe against the plant's OWN midnight ──
@@ -106,73 +102,19 @@ function layOutAgo(companyId, durationsMin, tailMin = 2) {
 
 // ─── Coded reasons (scrap / rework / downtime) ────────────────────────────────
 //
-// The same default list GET /api/andon/reason-codes seeds on a company's first
-// read (routes/andon.js seedReasonCodes). That function only ever runs off an
-// HTTP request and is not exported, so it cannot be called directly from a
-// seed — reported to the coordinator as a small gap in an earlier wave (the
-// fix is to export it, e.g. `router.seedReasonCodes = seedReasonCodes`).
-// Until then this is a second copy of the same table, kept byte-for-byte
-// identical to routes/andon.js's REASON_DEFAULTS; demo-seed-truth.test.js
-// parses routes/andon.js's own source and diffs the two so they cannot drift
-// without a test failing.
-const REASON_DEFAULTS = Object.freeze({
-  scrap: [
-    ['weld_porosity', 'Weld porosity', ''],
-    ['dimensional', 'Dimensional out of tolerance', ''],
-    ['surface_defect', 'Surface defect', ''],
-    ['material_defect', 'Material defect', ''],
-    ['setup_scrap', 'Setup scrap', ''],
-    ['handling_damage', 'Handling damage', ''],
-  ],
-  rework: [
-    ['weld_repair', 'Weld repair', ''],
-    ['dimensional_touch_up', 'Dimensional touch-up', ''],
-    ['refinish', 'Surface refinish', ''],
-    ['reassemble', 'Reassembly', ''],
-    ['retest', 'Retest after adjustment', ''],
-  ],
-  downtime: [
-    ['breakdown', 'Breakdown', 'breakdown'],
-    ['changeover', 'Changeover / setup', 'setup_adjustment'],
-    ['no_material', 'No material', 'minor_stop'],
-    ['no_operator', 'No operator', 'minor_stop'],
-    ['jam', 'Jam', 'minor_stop'],
-    ['running_slow', 'Running slow', 'speed_loss'],
-    ['startup_reject', 'Startup reject', 'startup_reject'],
-    ['process_reject', 'Process reject', 'process_reject'],
-  ],
-});
-
-/** Seeds the three default reason-code lists, exactly as a company's first
- *  GET /api/andon/reason-codes would — keyed on the company having none at all,
- *  so it is safe to call unconditionally at seed time. Returns { kind: { code:
- *  id } } so the caller can stamp scrap_reason_code_id / reason_code_id without
- *  a second query. */
-function seedReasonCodes(companyId) {
-  const byKindCode = {};
-  for (const kind of REASON_KIND) byKindCode[kind] = {};
-
-  const existing = db.prepare('SELECT id, kind, code FROM reason_codes WHERE company_id = ?').all(companyId);
-  if (existing.length > 0) {
-    for (const r of existing) byKindCode[r.kind][r.code] = r.id;
-    return byKindCode;
-  }
-
-  const insert = db.prepare(`
-    INSERT OR IGNORE INTO reason_codes (id, company_id, kind, code, label, loss_bucket, sort_order)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `);
-  db.transaction(() => {
-    for (const kind of REASON_KIND) {
-      (REASON_DEFAULTS[kind] || []).forEach(([code, label, bucket], i) => {
-        const id = uuidv4();
-        insert.run(id, companyId, kind, code, label, bucket, (i + 1) * 10);
-        byKindCode[kind][code] = id;
-      });
-    }
-  })();
-  return byKindCode;
-}
+// ONE list, and it lives where the API writes it: routes/andon.js exports both
+// its REASON_DEFAULTS and the seedReasonCodes() a company's first
+// GET /api/andon/reason-codes runs, so a seed writes exactly the vocabulary the
+// screens read back. This file used to carry a second copy of the same table,
+// which is precisely how a Pareto and the stop reason it came from end up
+// naming the same stoppage two different things.
+//
+// seedReasonCodes(companyId) is keyed on the company having no codes at all, so
+// it is safe to call unconditionally at seed time, and returns
+// { kind: { code: id } } for stamping scrap_reason_code_id / reason_code_id
+// without a second query. Both names are re-exported below for the seeds and
+// the tests that already ask this module for them.
+const { REASON_DEFAULTS, seedReasonCodes } = require('./routes/andon');
 
 // ─── Widget index — variableName → { step_id, widget_id, type } ─────────────
 // The same tiny helper sandbox.js keeps inline for its own apps, exported

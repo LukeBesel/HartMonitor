@@ -74,6 +74,23 @@ function shiftShape(minutesToday, idealCycleS) {
   return { runs, windowMin, plannedHours };
 }
 
+/**
+ * The dial one seeded run turns for one of its step timers: 0 … span-1, decided
+ * by the run's index across the seed and by which step is asking.
+ *
+ * Deterministic, because a sandbox that timed itself differently on every boot
+ * could not be tested and the demo would stop matching what we say it shows.
+ * But NOT a short cycle. The times this replaces were `k % 4`, `k % 5` and
+ * `k % 3`: they repeat inside one screenful of a run table, and their minimum —
+ * the sum of the three bases — was the fastest run of every seeded day, so the
+ * wall board's "Fastest Today" printed the arithmetic floor of a formula rather
+ * than somebody's good run.
+ */
+function runDial(runIndex, step, span) {
+  const h = Math.imul(runIndex * 3 + step + 1, 2654435761) >>> 0;
+  return ((h ^ (h >>> 15)) >>> 0) % span;
+}
+
 /** A SQLite foreign-key (or other constraint) violation, whatever better-sqlite3
  *  chose to call it — used by deleteSandboxOrg's retry sweep below. */
 function isConstraintFailure(err) {
@@ -487,18 +504,35 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
     }
   }
 
-  const ops = [[opId.bob, 'Bob Operator'], [opId.maria, 'Maria Lopez'], [opId.priya, 'Priya Shah']];
+  // Who is on the bench, and how each of them works. The third field is the
+  // seconds this operator spends on Assembly beyond the quickest hand on the
+  // line — the one step where the difference between two people shows, and the
+  // entire content of the wall board's "Fastest Today". Everybody working at
+  // the same pace turns that board into a dead heat, which is how a prospect
+  // decides the numbers were invented.
+  const ops = [
+    [opId.bob,   'Bob Operator',  0],
+    [opId.maria, 'Maria Lopez',  12],
+    [opId.priya, 'Priya Shah',   22],
+  ];
+  /** Who ran the nth completion of the seed. The rotation is written once: a
+   *  run's timers and the name on its row have to come from the same index, or
+   *  the demo shows one person's hands against another person's clock. */
+  const opFor = runIndex => ops[runIndex % ops.length];
 
   // One shift's worth of runs, tiled evenly across `spanMin` minutes ending
-  // `endsAgoS` seconds ago. Run 0 is the most recent.
+  // `endsAgoS` seconds ago. Run 0 is the most recent. `firstRun` is the index
+  // this shift's first run carries across the whole seed: the operator rotation
+  // and the timers both hang off it, so a person's pace follows the person
+  // rather than their position in the day.
   //
-  // Step timers sit around each step's takt (60 / 240 / 120 s) and total ~7 min
-  // of hands-on work; wall clock adds the seconds an operator loses mid-run, and
-  // the slot adds the idle before the next unit starts. Those are three
-  // different, genuinely different numbers — which is why /apps/:id/history
-  // (step timers) and /apps/:id/analytics (start → finish) do not, and should
-  // not, agree to the second.
-  function layOutShift(count, spanMin, endsAgoS, tailS, scrap) {
+  // Step timers sit around each step's takt (5 / 240 / 120 s) and total a little
+  // over five minutes of hands-on work; wall clock adds the seconds an operator
+  // loses mid-run, and the slot adds the idle before the next unit starts. Those
+  // are three different, genuinely different numbers — which is why
+  // /apps/:id/history (step timers) and /apps/:id/analytics (start → finish) do
+  // not, and should not, agree to the second.
+  function layOutShift(count, spanMin, endsAgoS, tailS, scrap, firstRun) {
     // Runs tile the shift: `tailS` is the quiet bit at the end (today the bench
     // is three minutes into the next unit), the rest divides evenly.
     const slotS = Math.max(1, ((spanMin * 60) - tailS) / count);
@@ -507,15 +541,18 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
     for (let n = 0; n < scrap; n++) scrapAt.add(Math.floor(count * (0.28 + n * 0.42)) % count);
     const out = [];
     for (let k = 0; k < count; k++) {
+      const runIndex = firstRun + k;
+      const [, , paceS] = opFor(runIndex);
       const stepTimes = stepTakts.map((takt, idx) => {
-        if (idx === 0) return 3 + (k % 4);         // Safety Check      (takt 5)
-        if (idx === 1) return 218 + (k % 5) * 13;  // Assembly          (takt 240)
-        return 108 + (k % 3) * 11;                 // Final Inspection  (takt 120)
+        if (idx === 0) return 3 + runDial(runIndex, 0, 5);             // Safety Check      (takt 5)
+        if (idx === 1) return 205 + paceS + runDial(runIndex, 1, 58);  // Assembly          (takt 240)
+        return 104 + runDial(runIndex, 2, 29);                         // Final Inspection  (takt 120)
       });
       const handsOnS = stepTimes.reduce((a, b) => a + b, 0);
-      const wallS = handsOnS + 20 + (k % 3) * 9;
+      const wallS = handsOnS + 18 + runDial(runIndex, 3, 26);
       const endedAgoS = endsAgoS + k * slotS;
       out.push({
+        runIndex,
         endedAgoS,
         startedAgoS: endedAgoS + wallS,
         stepTimes,
@@ -542,12 +579,16 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
   }
 
   let failedCompletionId = null, failedSerial = null, failedAgoS = null, failedWoId = null;
-  let serial = 1001;
+  // `firstRun` walks the shifts in order, so one index across the whole seed
+  // decides who ran a unit AND what serial it carries — one counter, rather
+  // than two that can drift apart.
+  let firstRun = 0;
   for (const plan of shiftPlan) {
-    for (const run of layOutShift(plan.runs, plan.spanMin, plan.endsAgoS, plan.tailS, scrapIn(plan.runs))) {
+    for (const run of layOutShift(plan.runs, plan.spanMin, plan.endsAgoS, plan.tailS, scrapIn(plan.runs), firstRun)) {
       const cid = uuidv4();
-      const i = serial - 1001;
-      const [operatorUserId, operatorName] = ops[i % 3];
+      const i = run.runIndex;
+      const serial = 1001 + i;
+      const [operatorUserId, operatorName] = opFor(i);
       const torque = Number((14.6 + (i % 9) * 0.1).toFixed(1));
       const data = {
         ppe_worn: true, area_clear: true,
@@ -571,8 +612,8 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
         failedAgoS = run.endedAgoS; failedWoId = plan.woId;
       }
       addValues(cid, run.endedAgoS, data);
-      serial++;
     }
+    firstRun += plan.runs;
   }
 
   // A live in-progress run for the "active now" tiles.
