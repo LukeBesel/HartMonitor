@@ -41,6 +41,13 @@ function bomWithLines(id, companyId) {
   return { ...bom, lines: getBomLines(id) };
 }
 
+/** What /resolve answers when the job simply has no bill of materials: an
+ *  explicitly empty body a caller tells apart by `id` alone, carrying the
+ *  reason rather than leaving the absence to be guessed at. */
+function noBomResolved(reason) {
+  return { id: null, product_type_id: null, lines: [], reason };
+}
+
 // ─── GET / — list BOM headers + line counts ───────────────────────────────────
 // Filters: product_type_id, app_id (via the product type's app).
 
@@ -67,6 +74,16 @@ router.get('/', (req, res) => {
 
 // ─── GET /resolve?work_order_id= — runtime join: WO → product type → active BOM
 // Must be declared before /:id so "resolve" isn't captured as an id.
+//
+// HAVING NO BILL OF MATERIALS IS NOT AN ERROR. Most routed jobs have none — a
+// routing decides what each station runs, so work_orders.product_type_id is
+// legitimately NULL — and plenty of product types have no version activated
+// yet. The player asks this route on every start, so answering 404 printed a
+// red failure in the console of a perfectly normal job and fired the caller's
+// error path. The empty answer is therefore a 200 that SAYS it is empty: no
+// id, no lines, and the reason in words. 404 is kept for the two genuine
+// errors — a work order that does not exist, and one belonging to another
+// company, which this route must go on refusing to distinguish.
 
 router.get('/resolve', requireRole('operator'), (req, res) => {
   const { work_order_id } = req.query;
@@ -75,7 +92,9 @@ router.get('/resolve', requireRole('operator'), (req, res) => {
   const wo = db.prepare('SELECT id, product_type_id FROM work_orders WHERE id = ? AND company_id = ?')
     .get(work_order_id, req.companyId);
   if (!wo) return res.status(404).json({ error: 'Work order not found' });
-  if (!wo.product_type_id) return res.status(404).json({ error: 'Work order has no product type, so no BOM resolves', code: 'NO_BOM' });
+  if (!wo.product_type_id) {
+    return res.json(noBomResolved('This job has no product type, so no bill of materials applies'));
+  }
 
   const bom = db.prepare(`
     SELECT b.*, pt.name AS product_type_name, pt.app_id
@@ -83,7 +102,9 @@ router.get('/resolve', requireRole('operator'), (req, res) => {
     WHERE b.company_id = ? AND b.product_type_id = ? AND b.status = 'active'
     ORDER BY b.version DESC LIMIT 1
   `).get(req.companyId, wo.product_type_id);
-  if (!bom) return res.status(404).json({ error: 'No active BOM for this product type', code: 'NO_BOM' });
+  if (!bom) {
+    return res.json(noBomResolved('No bill of materials has been activated for this product type'));
+  }
 
   res.json({ ...bom, lines: getBomLines(bom.id) });
 });

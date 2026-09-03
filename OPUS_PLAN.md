@@ -6,83 +6,51 @@
 
 ## 1. Current state (as of this file's commit)
 
-- **Production** (Railway → hartmonitorapp.com + www, DNS on Cloudflare, TLS via Railway) auto-deploys `main`. Volume mounted at `/data`; DB/uploads/backups live there. `EARLY_ACCESS` defaults ON (everything free, no billing prompts). Secrets self-heal on boot (`.hm-secrets.json` beside the DB) — explicit env vars win.
-- **Shipped** through PR #24 (Apps-first wave), #25 (department filters; five modules that 500'd on every database; dark-mode contrast), #26 (**builder canvas renders real player widgets** — preview differs only by being full screen; **App Dashboard** at `/apps/dashboard`; nav → Production/Apps/Quality/Maintenance/People + "More"; shift notes open; Kaizen "Reviewing" fixed), #27 (step-list takt for legacy apps), and **#28 — the full-app sweep**: an 8-agent audit (dogfood, security, UI×3-viewport, correctness, + fixers) whose confirmed findings were fixed. Headline of #28: an **SSRF guard on developer webhooks** (URLs resolving to private/reserved/loopback addresses are rejected before any server-side fetch), the Completion Detail crash fixed, capacity headcount no longer saved to the wrong department, `next*Number` id helpers no longer misnumber past `-999` (were lexically sorted), routings-list department filter, a mobile/phone operator-critical pass, and a second seeded demo app so the App Dashboard picker demonstrates itself.
-- **Production verified after #28**: deployed bundle hash matches the merge byte-for-byte; a create-everything sweep through a demo sandbox pressed **34 create endpoints with 0 server errors**; the SSRF guard rejects `127.0.0.1`/`localhost` and allows valid https.
-- **Test baseline**: 296 backend / 298 frontend, typecheck + build clean. Standing guards: `backend/test/schema-drift.test.js` walks every INSERT/UPDATE against the live schema AND presses all create endpoints for 5xx; `backend/test/partial-update.test.js` pins absent-vs-cleared; the webhook SSRF rejection is tested. **Perf** (M10): at 5k completions / 50k values / 500 WOs every hot endpoint runs 3–104ms on the existing indexes — no missing-index cliff (baseline in scratch/perf-baseline.md if regenerated).
-- **Email**: Resend live and domain-verified (`noreply@hartmonitorapp.com`); `RESEND_API_KEY` + `EMAIL_FROM` set in Railway. Test email delivered.
-- **Railway API access**: project token in the owner's chat history; IDs — project `531029d3-79ff-497d-ad78-7a655ad72eb2`, env `0577bb97-2495-43bd-b8b5-39b51f054610`, service `f6a8e76d-2fe6-4a42-8796-934bd754a8c0`. GraphQL at `backboard.railway.app/graphql/v2` with `Project-Access-Token` header. Cloudflare zone `b580de7184699a955822c37f85e9a8e3` (token in chat; NEVER commit tokens).
-- **Owner's standing priority**: apps first. A new account lands on `/apps`, meets a "Build your first app" hero and a seven-step in-product training coach. Everything else is secondary to that path working well — verify it after any nav or onboarding change.
+- **Production** (Railway → hartmonitorapp.com + www, DNS on Cloudflare, TLS via Railway) auto-deploys `main`. A volume at `/data` holds the database, uploads and backups. `EARLY_ACCESS` defaults ON (everything free, no billing prompts). Secrets self-heal on boot (`.hm-secrets.json` beside the DB) — explicit env vars win.
+- **Railway API access**: project token in the owner's chat history; IDs — project `531029d3-79ff-497d-ad78-7a655ad72eb2`, env `0577bb97-2495-43bd-b8b5-39b51f054610`, service `f6a8e76d-2fe6-4a42-8796-934bd754a8c0`. GraphQL at `backboard.railway.app/graphql/v2` with a `Project-Access-Token` header. Cloudflare zone `b580de7184699a955822c37f85e9a8e3`. **NEVER commit a token.**
+- **Shipped**: everything through PR #31 (launch readiness), then the five-wave **improvement program** — PRs #32-#36, all merged to `main` and deployed:
+  - **#32 wave 1** — numbered migrations with a runner and written rules (`backend/src/db/migrations/` + `runMigrations.js` + `MIGRATIONS.md`), ONE definition of the plant day (`plantDay.js`), ONE duration model (`cycleTime.js` server-side, the `appModel.ts` formatters client-side), a player that enforces takt and explains itself, one in-product guide.
+  - **#33 wave 2** — one floor screen (`plantTruth.js`: snapshot / departments / dispatch / WIP search) served from `/api/floor`, settings that fit every device, the ERP door (`/api/v1`), andon escalation, preventive-maintenance auto-raise.
+  - **#34 wave 3** — routings that execute (`workOrderOperations.js`: release → operations, `advance()` with good/scrap/rework and the ready-running-on_hold rules), apps as two screens, instruction revisions with a change note and an approver who is not the author (`appRevisions.js`), one-tap run start gated by qualification (`qualification.js`).
+  - **#35 wave 4** — counted completions (`quantity_good/scrap/rework` + coded scrap reasons, advance inside the completion transaction), coded downtime feeding the OEE quality basis and a loss Pareto, dispatch + the operator portal, one Materials screen.
+  - **#36 wave 5** — one vocabulary on every screen (enforced by `frontend/src/config/__tests__/vocabulary.test.ts`), one report builder, one demo seed (`seedShapes.js`) in which every module is visibly alive, plus the fixes from a hostile end-to-end audit — its first verdict was NO-GO on three demo dead ends, the re-audit was GO.
+- **Test baseline** (at the #36 merge): **740 backend** across 62 files, **884 frontend** across 48 files, **fit crawl 57/57** at 390/768/1920 with zero overflow, typecheck and build clean, and a real-database boot against a copy of production `mes.db` that applies migrations 001-012 with zero backfill. CI runs both workflows on every push.
+- **Standing guards to know before you write anything**: `backend/test/migration-discipline.test.js` (applies every shipped `.sql` through db.js), `schema-drift.test.js` (walks every INSERT/UPDATE against the live schema AND presses the create endpoints for 5xx), `partial-update.test.js` (absent vs cleared), `tenant-isolation.test.js`, `frontend/src/pages/__tests__/duration-formatter.test.tsx` (one duration formatter, allowlisted exceptions only), `vocabulary.test.ts` (banned words in frontend source), `frontend/test/viewport-fit.check.mjs` (every route at three widths; `FIT_ROUTES` narrows it and failures print the widest element).
+- **Email**: Resend live and domain-verified (`noreply@hartmonitorapp.com`); `RESEND_API_KEY` + `EMAIL_FROM` set in Railway.
+- **Owner's standing priorities**, in order: (1) the software must be SIMPLE — the floor's paths are one tap; (2) cycle times captured by apps, reported live and historically, are the whole point of the product; (3) NEVER an invented customer-visible number — unknown prints `—` with a reason, never 0, never 100%; (4) every screen fits every device; (5) never auto-focus an input or open the keyboard; (6) every input keeps its sub-text.
+- **Owner-side items still open**: `PLATFORM_STAFF_EMAILS` on Railway, `PROD_URL` as a GitHub Actions variable, rotation of the keys pasted in chat, and the Stripe webhook secret (only when selling starts).
 
-## 1b. Full-sweep wave (this session) — shipped to the branch
+## 1b. Deferred follow-ups (real, not blocking; verify before acting)
 
-An 8-agent sweep (4 fixers in worktrees + 4 read-only auditors) plus coordinator
-work. All merged, tested, pushed. Highlights:
-
-- **Data integrity (correctness audit):** a stale autosave could overwrite a
-  finished run's data/values, rewrite completed_at (skewing every duration/OEE),
-  and shrink the multi-operator roster. Terminal runs are now immutable to a
-  partial flush; completed_at stamps only on the real transition; the roster only
-  grows. (`completions.js`, `backend/test/completion-integrity.test.js`)
-- **Security (audit):** CRITICAL — forgot-password returned the reset token in
-  the response (account takeover); now never returned, recovery via admin
-  endpoint only. HIGH — SSRF via customer webhooks; now blocks private/reserved
-  targets by DNS resolution at registration + delivery. MED — PIN endpoints had
-  no lockout and a viewer could call verify-authorizer; added per-company/IP
-  lockout + operator+ gate. MED — free self-upgrade to Enterprise; now requires
-  checkout when billing is configured. (`auth.js`, `webhooks.js`, `operators.js`,
-  `config.js`, + regression suites)
-- **Quality honesty (dogfood):** "no Pass/Fail recorded" was counted as a pass
-  across /analytics/quality, OEE quality, the SQDC trend, and app per-field
-  stats; all now count only inspected runs / return null. avgCycleTime returns
-  null (renders "—") for empty slices. (`analytics.js`, `oee.js`, `sqdc.js`,
-  `apps.js`, `quality-honesty.test.js`)
-- **Carried-forward defects:** capacity headcount saved to the wrong department
-  (now keyed by id), every next*Number helper misnumbered past 999 (now numeric
-  max), routings list department filter, N+1s collapsed in inventory/kits/BOM/PO
-  and analytics, redundant CAPA fetch, status-aware Andon empty state.
-- **UI audit (58 screens × 3 viewports × 2 themes):** fixed the CompletionDetail
-  hard crash (undefined variance_pct), the light-in-dark mobile header (1.01→16:1)
-  and demo button (1.96→8.3:1), and lifted secondary page text to AA in light
-  mode (2.43→4.6:1, scoped to `main` so the dark sidebar is untouched).
-- **Perf:** volume pass at 5k completions — every hot endpoint 3-104ms; added
-  the company-first analytics indexes + routing_steps department index the audits
-  justified. Second demo app seeded so the App Dashboard picker isn't trivial.
-
-### Deferred follow-ups (real, not blocking; do carefully)
-- **Contrast pass round 2 (UI audit medium items):** `.btn-primary` white-on-accent
-  3.53:1; the operator green primary button 2.28:1; oversized colored stat numbers
-  ~2.5:1 (large-text 3.0 floor); PRO badges 2.86:1; dark-mode `text-gray-500` on
-  the lighter slate "running job" cards 2.25:1; OEE amber hint 1.59:1. These are
-  component/token-level — change `.btn-primary`, StatCard, the player button, and
-  the dark card token, and re-measure. Don't blanket-sed; the sidebar taught us a
-  fixed-dark surface inverts the rule.
-- **Two widget renderers by step MODE** (stacked `PlayerWidget` vs free-form
-  `WidgetView`) — converting a step between modes changes the operator's view.
-- **"On track" defined differently** across Plant/Command vs Manager view
-  (completed WOs counted in one, not the other) — pick one definition.
-- **Capacity VIEW filter still matches department by name** — now that /capacity
-  emits department_id, switch the picker to id.
-- **review-fixes.test.js is flaky under the full parallel `npm test`** (port-3180
-  server contention at startup) — passes in isolation and on rerun. Stagger
-  server startups or give it a unique port; three agents independently hit it.
-- **next*Number is still read-then-write** (TOCTOU) — a UNIQUE(company_id, number)
-  or atomic allocate would close the concurrent-duplicate race.
+- **Two widget renderers by step MODE** — stacked `components/player/PlayerWidgets.tsx` vs free-form `components/app/WidgetView.tsx`. Converting a step between modes changes what the operator sees.
+- **Capacity's department filter still matches by NAME** — `/capacity` summary rows carry `department_name` and no id, so the shared predicate falls back to the name (documented at `frontend/src/pages/CapacityPlanning.tsx:104`). Emit `department_id` and switch the picker.
+- **`next*Number` helpers are read-then-write** (`db.js`, `pmScheduler.js`, `routes/capa.js`, `ci-projects.js`, `kaizen.js`, `purchasing.js`) — a `UNIQUE(company_id, number)` or an atomic allocate closes the concurrent-duplicate race.
+- **API keys carry no scopes** — an existing key can write work orders through `/api/v1`.
+- **Contrast round 2** (`.btn-primary` white-on-accent, the operator green primary button, oversized coloured stat numbers, PRO badges, dark-mode `text-gray-500` on the lighter "running job" cards, the OEE amber hint). These were measured before the theme work; re-measure before touching tokens, and remember that a fixed-dark surface inverts the rule.
+- **`review-fixes.test.js`** was flaky under a full parallel run (port 3180 contention). Not seen in the last four full runs; stagger server startups if it returns.
 
 ## 2. Operating protocol (hard-won; follow exactly)
 
 1. **Worktree discipline**: every sub-agent works in an isolated git worktree branched from the CURRENT branch tip; commits locally; NEVER pushes (the git proxy 503s non-`claude/*` branch pushes). The coordinator merges local worktree branches.
 2. **Merge hygiene — the #1 failure mode**: after EVERY `git merge`, run `grep -rln "^<<<<<<< " backend/src frontend/src` and `git status --short | grep -E "^(UU|AA)"` BEFORE committing. A sealed conflict marker took production-candidate tests from 145-pass to 93-fail once. Resolve `db.js` conflicts by keeping BOTH additive blocks and checking backtick balance (template literals!). `client.ts`/`types.ts` conflicts: stack labeled append-blocks inside the `api` object / after it — watch that a block doesn't land inside an interface.
 3. **Verification with REAL exit codes** (pipes eat failures): run each as its own command and check `$?` or `&& echo OK || echo FAIL` — never `cmd | grep` as the last word:
-   - `cd backend && node --test test/*.test.js` (152+ tests)
+   - `cd backend && node --test test/*.test.js` (740 tests, 62 files — never from the repo root, and never two agents at once: the suites bind fixed ports and a collision silently CANCELS a suite while still exiting 0)
    - `npm run typecheck --workspace=frontend`, `npm test --workspace=frontend`, `npm run build --workspace=frontend` (workspace root)
 4. **Backend test ports registry** (server-spawning suites; unique per file — a shared port silently *cancels* the other suite's tests while the run still exits `0`, so verify `# cancelled 0` and that the total went UP): 3176 team-calls · 3177 dashboard-filters · 3178 schema-drift · 3179 partial-update · 3180 review-fixes · 3181 app-detail · 3182 alert-routing · 3183 auth-flows · 3184 screen-data-honesty · 3185 sandbox-seed · 3186 shifts-validation · 3187 app-templates · 3188 category-reports · 3189 player-batch · 3190 app-analytics · 3191 table-import · 3192 completion-values · 3193 boms-kits · 3194 analytics-department-filter · 3195 audit · 3196 modules · 3197 tenant-isolation · 3198 launch-features · 3199 smoke. New suites no longer take 3175 downward: **`MIGRATIONS.md` now holds the port registry** and reserves 3401-3415, one per workstream of the improvement program — claim your port there, not here. Check with `grep -rhoE "PORT = 3[0-9]{3}" backend/test/*.js | sort | uniq -c` before claiming one. **Agent scratch servers** (manual browser checks, not test suites) take **3501 upward**, one per concurrent agent.
 5. **Shared UI primitives — reach for these before hand-rolling**: `useDepartmentFilter(scope)` + `<DepartmentFilter/>` (department scoping on management screens), `useAutoRefresh` + `<LastRefreshed/>` (polling and freshness), `<DashboardFilterBar/>` (department/app/site scoping on dashboards), `<EmptyState/>`, `<PageHeader/>`. A page that grows its own private version of one of these is how the same filter ends up behaving three different ways.
-6. **Non-negotiables**: additive-only migrations (guarded PRAGMA/IF NOT EXISTS in `db.js` — no runMigrations dir on this lineage); tenant scoping (`company_id = req.companyId`) + FK ownership checks; TypeScript strict, no `any` in new code; v1 app blobs keep working (`normalizeApp`); every enum rendered by a page config map MUST have a fallback (see Kaizen `catOf`/`statusOf`) — and seeds must use page-known values; existing tests pass unmodified.
+6. **Non-negotiables**: additive-only migrations — numbered `.sql` files in `backend/src/db/migrations/`, applied transactionally by `runMigrations.js` at `require('./db.js')` time AFTER every CREATE block; the rules and the reserved-number/port registry live in `MIGRATIONS.md`; tenant scoping (`company_id = req.companyId`) + FK ownership checks; TypeScript strict, no `any` in new code; v1 app blobs keep working (`normalizeApp`); every enum rendered by a page config map MUST have a fallback (see Kaizen `catOf`/`statusOf`) — and seeds must use page-known values; existing tests pass unmodified.
 7. **Browser E2E pattern**: build frontend; boot backend (`NODE_ENV=test PORT=32xx DATABASE_PATH=/tmp/... SEED_DEMO_DATA=false`); it serves `frontend/dist`; `POST /api/auth/demo` gives a fully-seeded sandbox; Playwright via `npm install playwright-core` in a scratch dir with `executablePath: '/opt/pw-browsers/chromium'`. Read your screenshots.
 8. **Shipping**: PR to `main` → CI green (both workflows) → merge → Railway auto-deploys → check `https://hartmonitorapp.com/api/health`, then click through the changed surfaces on production.
 
 ## 3. Mission queue
+
+### Status (updated with this file)
+
+- **M0-M4 and M6-M10 are shipped.** M1's `SCREEN_REVIEW.md` findings and M9's enum/vocabulary work were superseded and completed by the improvement program's waves 2-5, which is the authoritative record.
+- **M5 (real-plant dogfood)** is the owner's step, not an agent's: it needs a real routing, real part numbers and a real shift on the owner's own floor. Nothing in the code blocks it.
+- **M11 (mobile & PWA/native)**: the 390px phone width is now covered continuously by `npm run test:fit` on every route, so the manual phone pass is no longer the guard. Still unverified: the Capacitor `cap:sync` dry run and the PWA install/update flow.
+- **M12 (docs & release)**: this section and §1 are that update. `v1.0.0` is NOT tagged, and `package.json` still says 1.0.0 while `main` is far past it — pick a version scheme before tagging.
+
 
 Execute roughly in order; M0 first, M-numbered groups may parallelize where file scopes don't overlap. Each mission = one focused agent (or small crew) + coordinator merge/verify.
 

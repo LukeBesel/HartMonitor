@@ -844,6 +844,20 @@ export interface BOM {
   product_type_name?: string; app_id?: string;
 }
 
+/**
+ * What `/boms/resolve` answers for ONE work order.
+ *
+ * Having no bill of materials is not an error — a routing decides what each
+ * station runs, so most routed jobs carry no product type at all, and plenty of
+ * product types have no version activated yet. The route says so with a 200 and
+ * an explicitly empty body, and a caller tells the two apart by `id`: a null id
+ * is nothing to render, and the reason is there in words when a screen wants to
+ * explain the absence.
+ */
+export type ResolvedBOM =
+  | (BOM & { lines: BOMLine[] })
+  | { id: null; product_type_id: null; lines: []; reason: string };
+
 export type KitStatus = 'open' | 'picking' | 'complete' | 'short' | 'cancelled';
 export type KitLineStatus = 'pending' | 'picked' | 'verified' | 'short';
 

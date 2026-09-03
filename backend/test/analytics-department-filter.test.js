@@ -405,6 +405,25 @@ describe('Andon summary department scoping', () => {
     assert.equal(paintCalls.length, paint.open);
   });
 
+  // A link that names the same filter twice is a link, not an attack: a copied
+  // URL, a back button, a filter added to a query string that already had it.
+  // Express hands the repeat over as an array, and an array bound to one
+  // placeholder used to throw "Too many parameter values were provided" —
+  // every one of these routes answered 500 for it. They read the first value,
+  // the way the guarded routes already did.
+  it('answers a repeated filter instead of failing on it', async () => {
+    const twice = `department_id=${A.weld.id}&department_id=${A.weld.id}`;
+    for (const route of ['/api/analytics/overview', '/api/analytics/throughput', '/api/analytics/cycle-times', '/api/analytics/operator-performance', '/api/analytics/app-performance', '/api/analytics/plant-view']) {
+      const r = await api('GET', `${route}?${twice}`, { token: A.token });
+      assert.equal(r.status, 200, `GET ${route} with a repeated department → ${r.status} ${JSON.stringify(r.json)}`);
+    }
+    // And the repeat means the same thing as the single value, rather than
+    // quietly widening back to the whole plant.
+    const once  = await get(A.token, `/api/analytics/overview${qs({ department_id: A.weld.id })}`);
+    const twiceOver = await get(A.token, `/api/analytics/overview?${twice}`);
+    assert.deepEqual(twiceOver, once, 'naming the department twice shows the department once');
+  });
+
   it("another tenant's department id counts nothing", async () => {
     const s = await get(A.token, `/api/andon/summary${qs({ department_id: A.otherDept.id })}`);
     assert.equal(s.open, 0);

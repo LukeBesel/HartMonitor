@@ -287,7 +287,7 @@ describe('step helpers', () => {
 // ─── Nothing the portal already knows is asked twice ─────────────────────────
 
 import {
-  setupNeeded, concurrentRun, buildPlayLink, resumeTarget, isOwnRun,
+  setupNeeded, concurrentRun, concurrentHoldReason, buildPlayLink, resumeTarget, isOwnRun,
   playableWorkOrders, routedLookupCandidates,
 } from '../runtime';
 
@@ -437,35 +437,87 @@ describe('concurrentRun — a run already open on the same unit', () => {
   const NOW = Date.parse('2026-09-02T10:06:00Z');
 
   it('matches by work order and reports who has it and for how long', () => {
-    const found = concurrentRun([job()], 'wo1', '', NOW);
+    const found = concurrentRun([job()], 'wo1', '', {}, NOW);
     expect(found?.operatorName).toBe('Alex');
     expect(found?.ageSeconds).toBe(360);
   });
 
   it('matches an unrouted run by part number instead', () => {
     const j = job({ work_order_id: null, data: { _part_number: 'PN-4471' } });
-    expect(concurrentRun([j], '', 'pn-4471', NOW)?.job.id).toBe('j1');
-    expect(concurrentRun([j], '', 'PN-9999', NOW)).toBeNull();
+    expect(concurrentRun([j], '', 'pn-4471', {}, NOW)?.job.id).toBe('j1');
+    expect(concurrentRun([j], '', 'PN-9999', {}, NOW)).toBeNull();
   });
 
   it('does not treat a different unit as a conflict', () => {
-    expect(concurrentRun([job({ work_order_id: 'wo2' })], 'wo1', '', NOW)).toBeNull();
+    expect(concurrentRun([job({ work_order_id: 'wo2' })], 'wo1', '', {}, NOW)).toBeNull();
   });
 
   it('says nothing when no unit has been chosen yet', () => {
-    expect(concurrentRun([job()], '', '', NOW)).toBeNull();
+    expect(concurrentRun([job()], '', '', {}, NOW)).toBeNull();
   });
 
   it('prefers the last stint over the original start for who and when', () => {
     const j = job({ last_session: { operator_name: 'Bo', started_at: '2026-09-02 10:05:00' } });
-    const found = concurrentRun([j], 'wo1', '', NOW);
+    const found = concurrentRun([j], 'wo1', '', {}, NOW);
     expect(found?.operatorName).toBe('Bo');
     expect(found?.ageSeconds).toBe(60);
   });
 
   it('states an unreadable timestamp as unknown rather than "0s ago"', () => {
-    const found = concurrentRun([job({ started_at: 'not a date' })], 'wo1', '', NOW);
+    const found = concurrentRun([job({ started_at: 'not a date' })], 'wo1', '', {}, NOW);
     expect(found?.ageSeconds).toBeNull();
+  });
+
+  // A tablet that reloads mid-run leaves the operator's OWN run open on the
+  // unit in front of them. That is the commonest way this card appears, and it
+  // used to be reported as "Someone else already has this unit open" — the
+  // screen blaming the wrong person, about the person reading it.
+  it('knows when the holder is the operator standing there', () => {
+    const ada = { operatorUserId: 'u-ada', operatorName: 'Ada' };
+    const mine = job({ operator_name: 'Ada', operator_user_id: 'u-ada' });
+    expect(concurrentRun([mine], 'wo1', '', ada, NOW)?.isMine).toBe(true);
+
+    // The verified id decides it, not the name two people on a shift share.
+    const sameName = job({ operator_name: 'Ada', operator_user_id: 'u-bo' });
+    expect(concurrentRun([sameName], 'wo1', '', ada, NOW)?.isMine).toBe(false);
+
+    // And the LAST stint holds it, not whoever started the job.
+    const handedToMe = job({
+      operator_name: 'Bo', operator_user_id: 'u-bo',
+      last_session: { operator_name: 'Ada', operator_user_id: 'u-ada', started_at: '2026-09-02 10:05:00' },
+    });
+    expect(concurrentRun([handedToMe], 'wo1', '', ada, NOW)?.isMine).toBe(true);
+  });
+
+  it('is nobody in particular\u2019s run when there is no identity to compare', () => {
+    // Unprovable is not "yours": the choice goes to the operator, worded as a
+    // colleague's run, which is the safe half of the mistake.
+    expect(concurrentRun([job({ operator_name: '' })], 'wo1', '', {}, NOW)?.isMine).toBe(false);
+  });
+});
+
+// ─── The words on the hold ───────────────────────────────────────────────────
+// The setup screen holds Start until the operator answers "there is already a
+// run on this unit". Which answer they are being asked for depends entirely on
+// whose run it is, so the sentence has to say — one definition, shared by the
+// card and the disabled button's reason line.
+describe('concurrentHoldReason — whose unit is this, in words', () => {
+  const base = { job: { id: 'j1' }, ageSeconds: 360 };
+
+  it('offers the operator their own run back, and a separate one', () => {
+    const reason = concurrentHoldReason({ ...base, operatorName: 'Ada', isMine: true });
+    expect(reason).toBe('You already have this unit open — resume it, or start a separate run.');
+    expect(reason).not.toMatch(/someone else|Ada/i);
+  });
+
+  it('names the colleague who has it', () => {
+    expect(concurrentHoldReason({ ...base, operatorName: 'Bo', isMine: false }))
+      .toBe('Bo already has this unit open — choose whether to join them.');
+  });
+
+  it('says "Someone else" only when the run does not say who', () => {
+    expect(concurrentHoldReason({ ...base, operatorName: '', isMine: false }))
+      .toBe('Someone else already has this unit open — choose whether to join them.');
   });
 });
 

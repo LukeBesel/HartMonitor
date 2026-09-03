@@ -5,7 +5,7 @@ import type {
   AuditLogEntry, SSOProviderInfo,
   InventoryTrackerSummary, InventoryMovement,
   App, Step, StepGroup, AppVariable,
-  BOM, BOMLine, Kit, KitLine, KitLineStatus,
+  BOM, BOMLine, ResolvedBOM, Kit, KitLine, KitLineStatus,
   CompletionValue, CompletionValueInput,
   MESTable,
   AndonCall, AndonCallInput, AndonSummary, AndonTeam,
@@ -464,9 +464,13 @@ export const api = {
   activateBOM: (id: string) => request<BOM>(`/boms/${id}/activate`, { method: 'POST' }),
   newBOMVersion: (id: string) => request<BOM>(`/boms/${id}/new-version`, { method: 'POST' }),
   deleteBOM: (id: string) => request<any>(`/boms/${id}`, { method: 'DELETE' }),
-  // WO → product_type → active BOM + lines; 404 {code:'NO_BOM'} when absent.
+  // WO → product type → active BOM + lines. A job with NO bill of materials is
+  // not an error and does not throw: the route answers 200 with an explicitly
+  // empty body (null id, no lines, the reason in words), so branch on `id`
+  // rather than on a rejection. A 404 here means the work order itself does not
+  // exist, or belongs to another company.
   resolveBOM: (workOrderId: string) =>
-    request<BOM & { lines: BOMLine[] }>(`/boms/resolve?work_order_id=${encodeURIComponent(workOrderId)}`),
+    request<ResolvedBOM>(`/boms/resolve?work_order_id=${encodeURIComponent(workOrderId)}`),
 
   // ── Kits (one per work order, generated from the active BOM)
   generateKit: (data: { work_order_id: string; location_id?: string }) =>
@@ -869,10 +873,25 @@ export const api = {
   resetPermissions: () => request<RolePermissionMap>('/permissions/reset', { method: 'DELETE' }),
 
   // ── Integrations setup status (Stripe / SSO) — managers+
+  // Two halves, and only the first one is every manager's. Whether payments
+  // and SSO are live on this deployment is a fact about their own account;
+  // WHICH env vars to set, the Stripe webhook endpoint to register and each
+  // provider's OAuth redirect URI are instructions to whoever runs the
+  // servers, and GET /config/integrations returns them to HartMonitor's own
+  // staff alone: backend/src/routes/config.js sends the status half to
+  // everyone, then returns early for anyone who is not platform staff and adds
+  // all six setup keys below that line.
+  // So the setup half is optional here, every field of it. A manager's
+  // response legitimately does not carry those keys, and declaring them
+  // required made this type promise something the route never agreed to.
+  // Nothing calls getIntegrations yet, which is the reason to correct the
+  // shape NOW — before a settings screen is written against a shape the
+  // server does not honour for the role that would open it.
   getIntegrations: () => request<{
-    app_url: string; app_url_explicit: boolean;
-    payments: { configured: boolean; mode: string; webhook_url: string; events: string[]; env_vars: string[] };
-    sso: { id: string; name: string; configured: boolean; redirect_uri: string; env_vars: string[] }[];
+    payments: { configured: boolean; mode: string; webhook_url?: string; events?: string[]; env_vars?: string[] };
+    sso: { id: string; name: string; configured: boolean; redirect_uri?: string; env_vars?: string[] }[];
+    app_url?: string;
+    app_url_explicit?: boolean;
   }>('/config/integrations'),
 
   // ── Developer: API keys & webhooks (Enterprise)

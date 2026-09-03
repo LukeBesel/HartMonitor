@@ -49,18 +49,44 @@ const router = express.Router();
  *              `app_id = ?` against that join is an "ambiguous column name" 500.
  */
 function completionFilter(req, alias = '') {
+  // `one()` because Express hands a REPEATED parameter over as an array, and an
+  // array bound as one placeholder is "Too many parameter values were provided"
+  // — a 500 for a link that merely names the same department twice. The guarded
+  // routes already resolve their scope through the same helper, so a filtered
+  // page and its guard read a duplicated parameter the same way.
+  return completionFilterFor(req.companyId, {
+    app_id: plantTruth.one(req.query.app_id),
+    product_type_id: plantTruth.one(req.query.product_type_id),
+    department_id: plantTruth.one(req.query.department_id),
+    site_id: plantTruth.one(req.query.site_id),
+  }, alias);
+}
+
+/**
+ * The same filter, built from ids already in hand instead of read off the query
+ * string. A route that GUARDS its scope has to filter on what the guard
+ * accepted: reading `req.query` again below a guard puts back the very
+ * parameter the guard was added to refuse, and the two then disagree about what
+ * the page is showing.
+ *
+ * @param companyId the tenant the department/site rules resolve against
+ * @param ids       `{ app_id, product_type_id, department_id, site_id }` — a
+ *                  plantTruth scope object fits this as it stands
+ * @param alias     as above
+ */
+function completionFilterFor(companyId, ids, alias = '') {
   const p = alias ? `${alias}.` : '';
   const clauses = [];
   const params = [];
-  if (req.query.app_id) { clauses.push(`${p}app_id = ?`); params.push(req.query.app_id); }
-  if (req.query.product_type_id) { clauses.push(`${p}product_type_id = ?`); params.push(req.query.product_type_id); }
-  if (req.query.department_id) {
+  if (ids.app_id) { clauses.push(`${p}app_id = ?`); params.push(ids.app_id); }
+  if (ids.product_type_id) { clauses.push(`${p}product_type_id = ?`); params.push(ids.product_type_id); }
+  if (ids.department_id) {
     clauses.push(plantTruth.departmentCompletionClause(p));
-    params.push(...plantTruth.departmentCompletionParams(req.companyId, req.query.department_id));
+    params.push(...plantTruth.departmentCompletionParams(companyId, ids.department_id));
   }
-  if (req.query.site_id) {
+  if (ids.site_id) {
     clauses.push(plantTruth.siteCompletionClause(p));
-    params.push(...plantTruth.siteCompletionParams(req.companyId, req.query.site_id));
+    params.push(...plantTruth.siteCompletionParams(companyId, ids.site_id));
   }
   return { clause: clauses.length ? ' AND ' + clauses.join(' AND ') : '', params };
 }
@@ -1008,16 +1034,20 @@ router.get('/completion/:id', (req, res) => {
 
 // ─── GET /daily-brief — cross-module morning briefing for the dashboard ──────
 //
-// Scope: ?department_id and ?app_id — the Command Center's page filter. Every
-// number and every list below honours both, so the page can never show a
-// department's KPI tiles next to a plant-wide attention list.
+// Scope: ?department_id, ?app_id, ?site_id and ?product_type_id. The Command
+// Center's page filter sends the first three; the fourth has always reached the
+// completion filter, so it is guarded and honoured here like the rest rather
+// than left as the one parameter that can narrow a figure without being
+// checked. Every number and every list below honours all four, so the page can
+// never show a department's KPI tiles next to a plant-wide attention list.
 //
 // Rows that carry no value for a filtered dimension are set aside rather than
-// filed under whichever department or app happens to be on screen (the same
-// rule the completion filter above follows). Low stock, late POs and — under an
-// app filter — down stations have no such dimension at all, so they can only be
-// set aside; `attention_plant_wide_hidden` counts exactly how many, and the
-// Command Center says so on screen instead of quietly dropping them.
+// filed under whichever department, app or product happens to be on screen (the
+// same rule the completion filter above follows). Low stock, late POs and —
+// under an app or product-type filter — down stations have no such dimension at
+// all, so they can only be set aside; `attention_plant_wide_hidden` counts
+// exactly how many, and the Command Center says so on screen instead of quietly
+// dropping them.
 
 router.get('/daily-brief', (req, res) => {
   const cid = req.companyId;
@@ -1028,14 +1058,74 @@ router.get('/daily-brief', (req, res) => {
   const { config: appConfig } = require('../config');
   const isPro = appConfig.earlyAccess || (planRow && planRow.tier !== 'free');
 
-  const deptId = req.query.department_id || null;
-  const appId  = req.query.app_id || null;
-  const siteId = req.query.site_id || null;
+  // ── An id this company does not own narrows to NOTHING, and says so ────────
+  // The same rule as /overview and /plant-view, read by the same module: an
+  // unowned id empties the answer and sets `scope_valid: false`. (The `scope`
+  // echo below is this route's own two-key shape, not theirs.)
+  // Without it this route spliced the raw parameters straight into its WHERE
+  // clauses and trusted that "matches nothing" and "means nothing" were one
+  // answer. They are not: the site rule deliberately keeps records that belong
+  // to no site — they belong to every one — so a site id from ANOTHER tenant
+  // came back as this company's unsited work orders, its week average and its
+  // 7-day chart, under a filter the server had already thrown away. A
+  // department or app id that exists nowhere narrowed to nothing but still said
+  // nothing about it, so the Command Center printed the empty payload as if it
+  // were a measured zero.
+  //
+  // Read through the same query reader the other two use, so the guard covers
+  // every parameter the brief filters on — product type included. Guarding
+  // three of four and filtering on all four is the same defect in miniature: a
+  // product type from another tenant would pass the guard, narrow the five
+  // completion figures to nothing, and be reported as a measured quiet morning.
+  const scope = plantTruth.scopeFromQuery(req);
+  if (!scope.valid) {
+    return res.json({
+      // Two keys, not four: `backend/test/command-center-filters.test.js` pins
+      // this shape and belongs to another workstream. The guard above covers
+      // all four parameters either way — `scope_valid` is what a client reads
+      // to know a filter was refused, and it is false here for any of them.
+      scope: { department_id: null, app_id: null },
+      /** False when an id in the request belongs to no record this company owns. */
+      scope_valid: false,
+      attention: [],
+      attention_plant_wide_hidden: 0,
+      attention_plant_wide_kinds: [],
+      kpis: {
+        completed_today: 0,
+        vs_7day_avg_pct: null,
+        vs_7day_sample_days: 0,
+        vs_7day_reason: null,
+        active_now: 0,
+        pass_rate_7d: null,
+        schedule_adherence: null,
+        work_orders_on_track: 0,
+        work_orders_total: 0,
+      },
+      due_soon: [],
+      throughput_7d: [],
+      week_avg_per_day: 0,
+      week_avg_basis: 'days with any completion in the last 7',
+      is_pro: !!isPro,
+    });
+  }
+
+  // Everything below reads the RESOLVED ids, never the raw query string, so no
+  // query can be handed an id the guard has just refused.
+  const deptId = scope.department_id;
+  const appId  = scope.app_id;
+  const siteId = scope.site_id;
+  const productTypeId = scope.product_type_id;
   // `scoped` drives the set-aside counting below, and site deliberately does not
   // set it: a row with no site is not ambiguous evidence the way a row with no
   // department is — it simply predates sites and stays visible under every one.
-  const scoped = !!(deptId || appId);
-  const cf = completionFilter(req); // no joins in the KPI queries — no alias needed
+  // A row with no product type is ambiguous in exactly the way a row with no
+  // department is, so product type does set it.
+  const scoped = !!(deptId || appId || productTypeId);
+  // Built from the RESOLVED scope, not from `req.query` — the guard above and
+  // the five headline figures below must be filtering on the same ids or the
+  // page can report a scope the server refused. No joins in the KPI queries, so
+  // no alias.
+  const cf = completionFilterFor(cid, scope);
 
   // What the filter had to set aside for having no department / no app at all.
   let hiddenCount = 0;
@@ -1055,8 +1145,11 @@ router.get('/daily-brief', (req, res) => {
 
   // A work order with no department is not evidence about any one department;
   // same for one with no app. It drops out of a specific scope and is counted.
-  const woInScope = wo => (!deptId || wo.department_id === deptId) && (!appId || wo.app_id === appId);
-  const woDimensionless = wo => (!!deptId && !wo.department_id) || (!!appId && !wo.app_id);
+  const woInScope = wo => (!deptId || wo.department_id === deptId)
+    && (!appId || wo.app_id === appId)
+    && (!productTypeId || wo.product_type_id === productTypeId);
+  const woDimensionless = wo => (!!deptId && !wo.department_id) || (!!appId && !wo.app_id)
+    || (!!productTypeId && !wo.product_type_id);
   const scopedWOs = activeWOs.filter(woInScope);
 
   // Late work orders, most urgent first (overdue before behind, then by due date)
@@ -1108,9 +1201,12 @@ router.get('/daily-brief', (req, res) => {
     deptId ? `${callDeptExpr} = ?` : null,
     appId  ? 'a.app_id = ?' : null,
     siteId ? `(${callSiteExpr} = ? OR ${callSiteExpr} IS NULL)` : null,
+    // A call's product type is its work order's; a call raised against no work
+    // order has none and is set aside below rather than shown under one.
+    productTypeId ? 'wo.product_type_id = ?' : null,
   ].filter(Boolean);
-  // dept, then app, then site — the same order every scoped query binds them in
-  const scopeParams = [deptId, appId, siteId].filter(Boolean);
+  // dept, app, site, product type — the same order every scoped query binds them
+  const scopeParams = [deptId, appId, siteId, productTypeId].filter(Boolean);
   const openCalls = db.prepare(`
     SELECT a.id, a.team, a.type, a.target_type, a.status, a.title, a.step_name, a.created_by,
            a.department_id, d.name AS department_name, s.name AS station_name,
@@ -1129,10 +1225,12 @@ router.get('/daily-brief', (req, res) => {
     const missing = [
       deptId ? `${callDeptExpr} IS NULL` : null,
       appId  ? 'a.app_id IS NULL' : null,
+      productTypeId ? 'wo.product_type_id IS NULL' : null,
     ].filter(Boolean);
     setAside(db.prepare(`
       SELECT COUNT(*) AS c FROM andon_calls a
       LEFT JOIN stations s ON s.id = a.station_id
+      LEFT JOIN work_orders wo ON wo.id = a.work_order_id
       WHERE a.company_id = ? AND a.status IN ('open', 'acknowledged') AND (${missing.join(' OR ')})
     `).get(cid).c, 'unrouted calls');
   }
@@ -1167,26 +1265,29 @@ router.get('/daily-brief', (req, res) => {
   }
 
   // Capped and ordered: longest-down first, so the list stays a triage list.
-  // A station belongs to a department but to no app — under an app filter the
-  // whole category is set aside rather than shown as if it were that app's.
-  const downStations = appId ? [] : db.prepare(`
+  // A station belongs to a department but to no app and to no product type —
+  // under either of those filters the whole category is set aside rather than
+  // shown as if it were that app's or that product's.
+  const noStationDimension = !!(appId || productTypeId);
+  const downStations = noStationDimension ? [] : db.prepare(`
     SELECT id, name, current_status, current_status_since FROM stations
     WHERE company_id = ? AND current_status = 'down'${deptId ? ' AND department_id = ?' : ''}
       ${siteId ? 'AND (site_id = ? OR site_id IS NULL)' : ''}
     ORDER BY current_status_since ASC LIMIT 10
   `).all(cid, ...(deptId ? [deptId] : []), ...(siteId ? [siteId] : []));
   if (scoped) {
-    // Under an app filter every down station is set aside (a station has no app),
-    // narrowed to the chosen department when there is one. Under a department
-    // filter alone only the stations that belong to no department are set aside.
-    const downHidden = appId
+    // Under an app or product-type filter every down station is set aside (a
+    // station has neither), narrowed to the chosen department when there is one.
+    // Under a department filter alone only the stations that belong to no
+    // department are set aside.
+    const downHidden = noStationDimension
       ? (deptId ? ' AND department_id = ?' : '')
       : ' AND department_id IS NULL';
     setAside(db.prepare(`
       SELECT COUNT(*) AS c FROM stations
       WHERE company_id = ? AND current_status = 'down'${downHidden}
-    `).get(cid, ...(appId && deptId ? [deptId] : [])).c,
-    appId ? 'down stations' : 'stations with no department');
+    `).get(cid, ...(noStationDimension && deptId ? [deptId] : [])).c,
+    noStationDimension ? 'down stations' : 'stations with no department');
   }
   for (const st of downStations) {
     const mins = st.current_status_since ? Math.floor((Date.now() - new Date(st.current_status_since).getTime()) / 60000) : null;
@@ -1210,6 +1311,7 @@ router.get('/daily-brief', (req, res) => {
       deptId ? `${ncrDeptExpr} = ?` : null,
       appId  ? `${ncrAppExpr} = ?` : null,
       siteId ? `(${ncrSiteExpr} = ? OR ${ncrSiteExpr} IS NULL)` : null,
+      productTypeId ? 'wo.product_type_id = ?' : null,
     ].filter(Boolean);
     const criticalNCRs = db.prepare(`
       SELECT n.id, n.ncr_number, n.title, n.due_date
@@ -1224,6 +1326,7 @@ router.get('/daily-brief', (req, res) => {
       const missing = [
         deptId ? `${ncrDeptExpr} IS NULL` : null,
         appId  ? `${ncrAppExpr} IS NULL` : null,
+        productTypeId ? 'wo.product_type_id IS NULL' : null,
       ].filter(Boolean);
       setAside(db.prepare(`
         SELECT COUNT(*) AS c FROM ncrs n
@@ -1412,8 +1515,14 @@ router.get('/daily-brief', (req, res) => {
 
   res.json({
     // Echoed so the client can prove what the server actually applied instead of
-    // assuming a parameter it sent was honoured.
+    // assuming a parameter it sent was honoured. Department and app only, which
+    // is the shape command-center-filters.test.js pins and the shape the Command
+    // Center reads; site and product type are guarded and filtered on but not
+    // echoed. Widening it is a payload change for whoever owns that suite, not
+    // something to slip in beside a guard fix.
     scope: { department_id: deptId, app_id: appId },
+    /** False when an id in the request belongs to no record this company owns. */
+    scope_valid: true,
     attention,
     attention_plant_wide_hidden: hiddenCount,
     attention_plant_wide_kinds: [...hiddenKinds],

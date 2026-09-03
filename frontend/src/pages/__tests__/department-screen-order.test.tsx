@@ -85,9 +85,9 @@ const TV_DATA = {
     { operator_name: 'Bo Chen', app_name: 'Weld Check', duration_minutes: 7, duration_seconds: 420 },
   ],
   behind_takt: [
-    { work_order_number: 'B5E656-WO-1001', operator_name: 'Ana Diaz', station: 'Cell 1', takt_minutes: 6, over_by_minutes: 2, live: true },
-    { work_order_number: 'B5E656-WO-1001', operator_name: 'Ana Diaz', station: 'Cell 1', takt_minutes: 6, over_by_minutes: 9, live: false },
-    { work_order_number: 'B5E656-WO-1002', operator_name: 'Bo Chen', station: 'Cell 2', takt_minutes: 6, over_by_minutes: 1, live: true },
+    { work_order_number: 'B5E656-WO-1001', operator_name: 'Ana Diaz', station: 'Cell 1', takt_seconds: 360, over_by_seconds: 120, live: true },
+    { work_order_number: 'B5E656-WO-1001', operator_name: 'Ana Diaz', station: 'Cell 1', takt_seconds: 360, over_by_seconds: 540, live: false },
+    { work_order_number: 'B5E656-WO-1002', operator_name: 'Bo Chen', station: 'Cell 2', takt_seconds: 360, over_by_seconds: 60, live: true },
   ],
   any_behind: true,
 };
@@ -241,6 +241,29 @@ describe("a department's wall board", () => {
     expect(screen.queryByText('+2m')).toBeNull();
     // The banner's count matches what the banner lists: two jobs, not three rows.
     expect(screen.getByText('WO-1002')).toBeInTheDocument();
+  });
+
+  it("prints the demo work order's 365-second takt as 6m 5s, not 6m 6s", async () => {
+    // sqdc.js used to pre-round the WORK ORDER's takt to a tenth of a MINUTE
+    // before this board ever saw it, and the demo seeds that takt at 365s: it
+    // arrived as 6.1 and fmtMinutes(6.1) printed a "6m 6s" takt, one second
+    // nobody measured. The overrun sat on the same six-second grid — 63s over
+    // came through as 1.1 min and read out as "1m 6s".
+    // Seconds in, seconds out, through the one duration formatter.
+    getDepartmentTV.mockResolvedValue({
+      ...TV_DATA,
+      behind_takt: [{
+        work_order_number: 'B5E656-WO-1003', operator_name: 'Cleo Ruiz', station: 'Cell 3',
+        takt_seconds: 365, over_by_seconds: 63, live: true,
+      }],
+    });
+    renderBoard();
+
+    expect(await screen.findByText(/over 6m 5s takt/)).toHaveTextContent(
+      'Cleo Ruiz @ Cell 3 · over 6m 5s takt (live)');
+    expect(screen.queryByText(/6m 6s/)).toBeNull();
+    expect(screen.getByText('+1m 3s')).toBeInTheDocument();
+    expect(screen.queryByText('+1m 6s')).toBeNull();
   });
 
   it('prints the id the floor says, with the stored id in the title', async () => {

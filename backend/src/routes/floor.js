@@ -82,8 +82,10 @@ router.get('/dispatch', (req, res) => {
 // GET /api/floor/wip?q=WO-1042
 //
 // One sentence: which operation a job is standing on, how far through it is,
-// and — for a job nobody released — that it was never released and what status
-// it is sitting at instead. A part number that matches several open jobs
+// and — for a job nobody released — that it was never released and where it has
+// got to instead. The box answers to a work-order number, a part number and the
+// part's NAME — the half of the label every screen prints beside the number, and
+// the half a supervisor actually types. A query matching several open jobs
 // answers with the list rather than picking one.
 router.get('/wip', (req, res) => {
   res.json(wipSearch(plantContext(req.companyId), req.query.q));

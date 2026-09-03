@@ -300,6 +300,106 @@ describe('a run already open on the same unit', () => {
     await screen.findByRole('button', { name: /start process/i });
     expect(screen.queryByTestId('concurrent-run-warning')).not.toBeInTheDocument();
   });
+
+  // A tablet that reloads mid-run leaves the operator's OWN run open on the
+  // unit in front of them, and that is the commonest way this card appears.
+  // It used to read "Someone else already has this unit open — choose whether
+  // to join them", to the person who has it open. Their own run and a
+  // colleague's are two different decisions, and only one of them is theirs
+  // alone to make.
+  it('offers the operator their OWN open run back, without blaming anyone', async () => {
+    getJobsInProgress.mockResolvedValue([jobOnSameUnit({
+      operator_name: 'Alex Operator',
+      last_session: {
+        operator_name: 'Alex Operator', operator_user_id: 'u-alex',
+        started_at: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
+        ended_at: null, handoff_comment: '',
+      },
+    })]);
+    renderPlayer(`?uid=u-alex&name=Alex%20Operator&wo=${WORK_ORDER.id}&from=operator`);
+
+    const start = await screen.findByRole('button', { name: /start process/i });
+    const warning = screen.getByTestId('concurrent-run-warning');
+
+    expect(within(warning).getByText(/^You started this/)).toBeInTheDocument();
+    expect(within(warning).queryByText(/joining will share the run/i)).not.toBeInTheDocument();
+    expect(within(warning).getByRole('button', { name: /resume your run/i })).toBeInTheDocument();
+
+    // The hold still holds — starting a second run on a unit you already have
+    // open double-counts it — but it names the choice honestly.
+    expect(start).toBeDisabled();
+    expect(screen.getByText(/^You already have this unit open/)).toBeInTheDocument();
+    expect(screen.queryByText(/someone else already has this unit open/i)).not.toBeInTheDocument();
+    expect(startCalls()).toHaveLength(0);
+  });
+
+  // The same run, held by somebody whose name the run knows: today's wording,
+  // with the colleague named instead of "Someone else".
+  it('names the colleague who has it, when the run says who', async () => {
+    getJobsInProgress.mockResolvedValue([jobOnSameUnit({ operator_name: 'Bo Nguyen' })]);
+    renderPlayer(`?uid=u-alex&name=Alex%20Operator&wo=${WORK_ORDER.id}&from=operator`);
+
+    await screen.findByRole('button', { name: /start process/i });
+    expect(screen.getByText(/^Bo Nguyen already has this unit open/)).toBeInTheDocument();
+    expect(within(screen.getByTestId('concurrent-run-warning'))
+      .getByRole('button', { name: /resume their run/i })).toBeInTheDocument();
+  });
+});
+
+// ─── A job with no bill of materials is not a failure ────────────────────────
+//
+// The player asks /boms/resolve on every start. Most routed jobs have no bill
+// of materials at all — the routing decides what each station runs — so the
+// route answers 200 with an explicitly empty body rather than the 404 that
+// used to print a red failure in the console of an ordinary job and fire this
+// caller's error path. An empty answer has no id, and no id is nothing to
+// render.
+
+describe('the bill of materials a job may not have', () => {
+  /** The same app with a kit step in front — the only place a bill of
+   *  materials reaches the screen at all. */
+  function appWithKitStep() {
+    const app = appBlob();
+    app.steps = [
+      { id: 's-kit', name: 'Pick parts', order: 0, step_type: 'kit', widgets: [] },
+      ...app.steps,
+    ] as typeof app.steps;
+    return app;
+  }
+
+  const BOM_LINE = {
+    id: 'bl-1', bom_id: 'bom-1', item_id: 'i-1', item_name: 'Resistor 100R',
+    sku: 'RES-100', qty_per: 2, unit: 'ea', reference: 'R1', scan_code: '', step_id: '',
+    notes: '', sort_order: 0,
+  };
+
+  it('renders nothing at all when the route answers 200-and-empty', async () => {
+    getApp.mockResolvedValue(appWithKitStep());
+    resolveBOM.mockResolvedValue({
+      id: null, product_type_id: null, lines: [],
+      reason: 'This job has no product type, so no bill of materials applies',
+    });
+    renderPlayer(`?uid=u-alex&name=Alex%20Operator&station=${STATION.id}&wo=${WORK_ORDER.id}&from=operator`);
+
+    await screen.findByText('Pick parts');
+    await waitFor(() => expect(resolveBOM).toHaveBeenCalledWith(WORK_ORDER.id));
+    // No bill of materials is claimed, and nothing is reported as broken.
+    expect(screen.queryByText('Bill of materials')).not.toBeInTheDocument();
+    expect(screen.queryByText(/couldn't|failed/i)).not.toBeInTheDocument();
+  });
+
+  it('still shows the bill of materials when the job has one', async () => {
+    getApp.mockResolvedValue(appWithKitStep());
+    resolveBOM.mockResolvedValue({
+      id: 'bom-1', product_type_id: 'pt-1', version: 2, status: 'active',
+      notes: '', created_by: '', created_at: '', updated_at: '', lines: [BOM_LINE],
+    });
+    renderPlayer(`?uid=u-alex&name=Alex%20Operator&station=${STATION.id}&wo=${WORK_ORDER.id}&from=operator`);
+
+    await screen.findByText('Pick parts');
+    expect(await screen.findByText('Bill of materials')).toBeInTheDocument();
+    expect(screen.getByText('Resistor 100R')).toBeInTheDocument();
+  });
 });
 
 // ─── 3. Abandon is a sheet, not a browser confirm ────────────────────────────
@@ -524,5 +624,52 @@ describe('"Jobs in progress" names the job each run is bound to', () => {
     expect(row).toBeInTheDocument();
     expect(row).toHaveAttribute('title', '158D03-WO-1042');
     expect(screen.queryByText('No work order')).toBeNull();
+  });
+});
+
+// ─── What the tablet remembers about where it is standing ────────────────────
+//
+// hm_station is the one answer the portal and the player share. An operator who
+// deliberately chose the whole plant answered "no station", and the player used
+// to DELETE the key when it started a run without one — which downstream reads
+// as "nobody has ever been asked", so the portal helpfully derived a cell and
+// their choice lasted exactly one unit.
+
+describe('the station this tablet remembers, after a run is started', () => {
+  /** Start a run from the setup screen and wait for the POST to land. */
+  async function startFromSetup() {
+    await userEvent.click(await screen.findByRole('button', { name: /start process/i }));
+    await waitFor(() => expect(startCalls()).toHaveLength(1));
+  }
+
+  it('keeps an explicit All stations answer instead of deleting it', async () => {
+    // Stored empty, not absent: this operator chose the whole plant.
+    localStorage.setItem('hm_station', '');
+    renderPlayer(`?uid=u-alex&name=Alex%20Operator&wo=${WORK_ORDER.id}&from=operator`);
+    await startFromSetup();
+
+    // Still an answer — and still the same one.
+    expect(localStorage.getItem('hm_station')).toBe('');
+    const body = JSON.parse((startCalls()[0][1] as { body: string }).body);
+    expect(body.station_id).toBeUndefined();
+  });
+
+  it('does not invent an answer when nobody has ever been asked', async () => {
+    // Nothing stored, and a run started without a station is not an answer to a
+    // question nobody put — the portal is still free to derive a default.
+    renderPlayer(`?uid=u-alex&name=Alex%20Operator&wo=${WORK_ORDER.id}&from=operator`);
+    await startFromSetup();
+
+    expect(localStorage.getItem('hm_station')).toBeNull();
+  });
+
+  it('remembers the station a run was actually booked to', async () => {
+    localStorage.setItem('hm_station', '');
+    renderPlayer(`?uid=u-alex&name=Alex%20Operator&wo=${WORK_ORDER.id}&from=operator`);
+    await screen.findByRole('button', { name: /start process/i });
+    await userEvent.selectOptions(screen.getByLabelText(/station/i), STATION.id);
+    await startFromSetup();
+
+    expect(localStorage.getItem('hm_station')).toBe(STATION.id);
   });
 });

@@ -221,11 +221,16 @@ function useLiveElapsed(startedAt: string | null | undefined, fallback: number |
 // disagree.
 const scopeKey = (userId?: string) => `hm_command_center_filters_${userId ?? 'anon'}`;
 
-/** The brief, plus the two fields the server adds to explain what a narrowed
- *  scope could not account for. */
+/** The brief, plus the fields the server adds to explain what it did with the
+ *  scope it was given: what a narrowed scope could not account for, and whether
+ *  it could honour the scope at all. */
 type ScopedBrief = DailyBrief & {
   attention_plant_wide_hidden?: number;
   attention_plant_wide_kinds?: string[];
+  /** False when an id in the request belongs to no record this company owns.
+   *  The payload beside it is then explicitly empty — zeros that were never
+   *  measured — so nothing on this page may render it. */
+  scope_valid?: boolean;
 };
 
 function loadStoredScope(userId?: string): DashboardFilters {
@@ -584,6 +589,50 @@ export default function Dashboard() {
   /** The heading over the tiles: the plant, or the slice of it being read. */
   const scopeHeading = selectedDept?.name ?? 'The whole plant';
   const onTrack = onTrackSentence(snapshot);
+
+  // ── A scope the server would not answer ────────────────────────────────────
+  //
+  // An id in the URL belongs to no department, app or site this company owns —
+  // a link forwarded from another tenant, or one whose department has since
+  // been deleted. The server refuses that rather than widening it back to the
+  // whole plant: every figure comes back empty with `scope_valid: false`.
+  //
+  // Those zeros were never measured, so the page must not draw them. A tile
+  // reading "0 finished today" is indistinguishable from a real quiet morning,
+  // and a chart flat on the axis reads as a plant that stopped. The reason
+  // replaces the numbers instead. (The repair effect above drops an id the
+  // option lists say is gone; this stands in for the ids only the server can
+  // judge, and for the moment before those lists have loaded.)
+  if (brief?.scope_valid === false) {
+    return (
+      <div className="p-4 sm:p-6 space-y-6 animate-fade-in">
+        <PageHeader
+          title={<>{getGreeting()}{user?.display_name ? `, ${user.display_name.split(' ')[0]}` : ''}</>}
+          subtitle={<>{formatDate()}{companyName ? ` · ${companyName}` : ''}</>}
+        />
+        <div data-testid="scope-refused" className="card p-6 max-w-2xl">
+          <div className="flex items-start gap-4">
+            <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center flex-shrink-0">
+              <AlertTriangle size={20} />
+            </div>
+            <div className="min-w-0">
+              <h2 className="font-semibold text-gray-900">This filter isn't one of yours</h2>
+              <p className="text-sm text-gray-600 mt-1">
+                The department, app or site this page was asked to narrow to doesn't belong
+                to {companyName || 'this company'} — it may have been deleted, or the link may
+                have come from somewhere else. Showing the whole plant's numbers under a filter
+                you can't see is broken would be worse than showing nothing, so nothing is what
+                you get until the filter changes.
+              </p>
+              <button type="button" onClick={() => applyFilters({})} className="btn-primary mt-4">
+                Show the whole plant
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4 sm:p-6 space-y-6 animate-fade-in">

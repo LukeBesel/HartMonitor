@@ -90,17 +90,41 @@ Differentiators: the **no-code app builder** (operators run guided procedures bu
 - **Release flow:** feature branch → PR → CI green → merge `main` → Railway deploys → check `/api/health`. Rollback = redeploy previous build (data is safe on the volume). Optional staging service documented in `STAGING.md`.
 - Deployment runbooks: `DEPLOYMENT.md`, `GO_LIVE.md`, `PROJECT_PLAN.md` (visual), `STRIPE_SETUP.md`, `LAUNCH.md`.
 
-## 8. Current state (July 2026)
+## 8. Current state (September 2026)
 
-**Done and merged to `main`:** all modules above; composable module system; multi-tenant auth/RBAC hardening (6 cross-tenant leaks fixed, SQL injection, SVG XSS, session expiry); full Stripe billing with trial/grace; transactional email; admin dashboard; additive migration system; automated backups; customer data export; visual design system + redesigned dashboard; UX hardening across 33 pages (loading/empty/error/mobile states); app-editor upload fix (15MB images, visible errors, HEIC guidance); CI (35 backend tests, frontend tests, typecheck, build); Capacitor config for app stores; complete documentation set.
+**Live** at hartmonitorapp.com; `main` auto-deploys to Railway with the database, uploads and
+backups on a `/data` volume. Early access is ON, so every module is free and no billing prompt
+appears.
+
+**Done and merged to `main`:** every module listed above; the composable module system;
+multi-tenant auth and RBAC hardening; Stripe billing with trial and grace; transactional email
+through Resend; the admin dashboard; additive numbered migrations with a runner
+(`backend/src/db/migrations/`, rules in `MIGRATIONS.md`); automated backups; customer data
+export; the visual design system; and a five-wave improvement program (PRs #32-#36) that gave
+the product its spine:
+
+- one definition of the plant day, of a duration, and of "what is running now" — so two screens
+  can no longer disagree about the same shift;
+- routings that execute: release a work order and its operations advance with good, scrap and
+  rework counted at the operation;
+- instructions with revisions, a change note and an approver who is not the author, and the
+  revision that produced each run stamped on the run;
+- coded scrap and coded downtime feeding quality, OEE and a loss Pareto;
+- one vocabulary on every screen, one report builder, and a demo seed in which every module is
+  visibly alive — verified by an independent hostile audit (NO-GO, fixed, then GO).
+
+**Test baseline:** 740 backend tests, 884 frontend tests, a 57-route fit crawl at 390/768/1920
+with zero overflow, typecheck and build clean, and a boot against a copy of the production
+database that applies migrations 001-012 with zero backfill. CI runs all of it on every push.
 
 **Remaining — owner's checklist:**
-1. Railway: set required env vars (deploy currently failing healthcheck on missing `JWT_SECRET`/`SESSION_SECRET`) + attach `/data` volume
-2. Custom domain + update `APP_URL`
-3. Stripe: live keys + webhook endpoint
+1. Railway: set `PLATFORM_STAFF_EMAILS`; set `PROD_URL` as a GitHub Actions variable
+2. Rotate any key that was pasted into a chat (Railway, Cloudflare, Resend, Stripe test)
+3. Stripe: live keys + webhook endpoint — only when you start charging
 4. Business: LLC + EIN + business bank + real Terms/Privacy text (pages exist at `/terms`, `/privacy`)
-5. Off-platform backup copies + one restore drill
-6. Optional: SMTP (SendGrid), Sentry, staging service, app-store submissions
+5. Off-platform backup copies and one restore drill
+6. Run a real job on your own floor: a real routing, real part numbers, one real shift
+7. Optional: Sentry, a staging service, app-store submissions
 
 ## 9. Working on this codebase
 
