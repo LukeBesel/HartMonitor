@@ -91,6 +91,38 @@ function runDial(runIndex, step, span) {
   return ((h ^ (h >>> 15)) >>> 0) % span;
 }
 
+/**
+ * Seconds each operator on the demo bench spends on Assembly beyond the
+ * quickest hand on the line — the one step where the difference between two
+ * people shows, and the entire content of the wall board's "Fastest Today".
+ * Everybody working at the same pace turns that board into a dead heat, which
+ * is how a prospect decides the numbers were invented.
+ *
+ * Index n is the operator who runs runs n, n+3, n+6 … The bench inside
+ * createSandbox() is written in this same order on purpose: a run's timers and
+ * the name on its row have to come from one index, or the demo shows one
+ * person's hands against another person's clock.
+ */
+const BENCH_PACE_S = Object.freeze([0, 12, 22]);
+
+/**
+ * The step timers the nth seeded run records — Safety Check, Assembly, Final
+ * Inspection, in seconds, around the sample app's own 5 / 240 / 120 takts.
+ *
+ * A pure function of the run's index across the whole seed, and exported for
+ * that reason: the wall board ranks the SUM of these (see runSecondsSQL), so a
+ * test can replay every run the seed would lay down at any minute of the day
+ * rather than judging the board at the one minute the suite happened to run.
+ */
+function seededStepTimes(runIndex) {
+  const paceS = BENCH_PACE_S[runIndex % BENCH_PACE_S.length];
+  return [
+    3 + runDial(runIndex, 0, 5),             // Safety Check      (takt 5)
+    205 + paceS + runDial(runIndex, 1, 58),  // Assembly          (takt 240)
+    104 + runDial(runIndex, 2, 29),          // Final Inspection  (takt 120)
+  ];
+}
+
 /** A SQLite foreign-key (or other constraint) violation, whatever better-sqlite3
  *  chose to call it — used by deleteSandboxOrg's retry sweep below. */
 function isConstraintFailure(err) {
@@ -504,16 +536,14 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
     }
   }
 
-  // Who is on the bench, and how each of them works. The third field is the
-  // seconds this operator spends on Assembly beyond the quickest hand on the
-  // line — the one step where the difference between two people shows, and the
-  // entire content of the wall board's "Fastest Today". Everybody working at
-  // the same pace turns that board into a dead heat, which is how a prospect
-  // decides the numbers were invented.
+  // Who is on the bench. IN THE SAME ORDER AS BENCH_PACE_S at the top of this
+  // file — that array says how much longer each of them takes on Assembly, and
+  // the two are read by one index, so reordering one without the other hands a
+  // person somebody else's pace.
   const ops = [
-    [opId.bob,   'Bob Operator',  0],
-    [opId.maria, 'Maria Lopez',  12],
-    [opId.priya, 'Priya Shah',   22],
+    [opId.bob,   'Bob Operator'],
+    [opId.maria, 'Maria Lopez'],
+    [opId.priya, 'Priya Shah'],
   ];
   /** Who ran the nth completion of the seed. The rotation is written once: a
    *  run's timers and the name on its row have to come from the same index, or
@@ -542,12 +572,11 @@ function seedSandboxData(orgId, tag, siteId, visitorUserId) {
     const out = [];
     for (let k = 0; k < count; k++) {
       const runIndex = firstRun + k;
-      const [, , paceS] = opFor(runIndex);
-      const stepTimes = stepTakts.map((takt, idx) => {
-        if (idx === 0) return 3 + runDial(runIndex, 0, 5);             // Safety Check      (takt 5)
-        if (idx === 1) return 205 + paceS + runDial(runIndex, 1, 58);  // Assembly          (takt 240)
-        return 104 + runDial(runIndex, 2, 29);                         // Final Inspection  (takt 120)
-      });
+      // One timer per step of the sample app's three (sampleAppSteps below).
+      // seededStepTimes() at the top of this file is the whole arithmetic,
+      // written once so the board it feeds can be replayed by a test at every
+      // minute of the day rather than judged at the minute the suite ran.
+      const stepTimes = seededStepTimes(runIndex);
       const handsOnS = stepTimes.reduce((a, b) => a + b, 0);
       const wallS = handsOnS + 18 + runDial(runIndex, 3, 26);
       const endedAgoS = endsAgoS + k * slotS;
@@ -1130,4 +1159,4 @@ function startSandboxSweeper() {
   setInterval(sweep, 60 * 60 * 1000).unref();
 }
 
-module.exports = { createSandbox, cleanupExpiredSandboxes, deleteSandboxOrg, startSandboxSweeper, shiftShape, SANDBOX_EMAIL_DOMAIN, TARGET_PERF, DEMO_PINS };
+module.exports = { createSandbox, cleanupExpiredSandboxes, deleteSandboxOrg, startSandboxSweeper, shiftShape, seededStepTimes, BENCH_PACE_S, SANDBOX_EMAIL_DOMAIN, TARGET_PERF, DEMO_PINS };

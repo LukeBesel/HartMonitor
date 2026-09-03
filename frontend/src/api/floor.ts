@@ -253,7 +253,11 @@ export interface WipAnswer {
   plant_date: string;
   timezone: string;
   query: string;
-  match: 'work_order' | 'part_number' | 'none';
+  /** Which of the three questions the server answered — a number, a part
+   *  number, or the part NAME printed beside them on every screen. Every value
+   *  the server can send is here: a union missing one is a `switch` that
+   *  compiles while the case it needs is unreachable. */
+  match: 'work_order' | 'part_number' | 'part_name' | 'none';
   /** The one job, when the query resolved to exactly one. */
   result: WipRow | null;
   /** Every job that matched — several when a part number is shared. */

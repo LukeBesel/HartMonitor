@@ -1455,8 +1455,11 @@ function wipSearch(ctxOrCompanyId, rawQuery) {
 
   // The two part groups answer in the same shape — one job answers as itself,
   // several answer as a list that says how many there really are and whether
-  // the list is all of them — and only the sentence for "several" differs.
-  const partAnswer = (rows, match, many) => {
+  // the list is all of them. Both sentences differ, and both are parameters:
+  // the group's `total` counts every job the QUESTION matched, which for a name
+  // fragment is jobs across several parts, so a capped note that said "on this
+  // part" would be counting the Heavy Duty Brackets and calling them Standard.
+  const partAnswer = (rows, match, many, capped) => {
     const total = rows[0].group_total;
     const results = wipRows(ctx, rows);
     const truncated = total > results.length;
@@ -1479,16 +1482,17 @@ function wipSearch(ctxOrCompanyId, rawQuery) {
       answer: many(total, results, truncated),
       total_matches: total,
       truncated,
-      truncated_note: truncated
-        ? `showing the first ${results.length} of ${total} open jobs on this part`
-        : null,
+      truncated_note: truncated ? capped(total, results.length) : null,
     };
   };
 
   const byPart = matched.filter(r => r.matched_on === 'part_number');
   if (byPart.length > 0) {
     return partAnswer(byPart, 'part_number',
-      total => `${total} work orders carry part ${byPart[0].part_number}`);
+      total => `${total} work orders carry part ${byPart[0].part_number}`,
+      // Every job in this group carries the one part number that was typed, so
+      // "on this part" is a fact about all of them.
+      (total, shown) => `showing the first ${shown} of ${total} open jobs on this part`);
   }
 
   const byName = matched.filter(r => r.matched_on === 'part_name');
@@ -1503,7 +1507,11 @@ function wipSearch(ctxOrCompanyId, rawQuery) {
       return !truncated && names.length === 1
         ? `${total} work orders are on ${names[0]}`
         : `${total} work orders match "${query}"`;
-    });
+    },
+    // A capped page is exactly the case where the fragment may have spanned
+    // more than one part, and it is the case that cannot see the names it did
+    // not fetch — so the note counts what was ASKED, never "this part".
+    (total, shown) => `showing the first ${shown} of ${total} open jobs matching "${query}"`);
   }
 
   // Says all three questions were asked, so nobody retypes the same words in

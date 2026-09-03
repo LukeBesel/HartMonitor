@@ -18,6 +18,10 @@ import { getWip, type WipAnswer } from '../../api/floor';
 // A query that matches nothing prints the server's reason rather than an empty
 // box: "no work order or part number matches …" is an answer; a blank space is
 // a screen that looks broken.
+//
+// Three questions, one box: the server asks "is this a work-order number?",
+// "is it a part number?" and "is it a part name?" in that order, so the
+// placeholder has to name all three or the third one is a secret.
 
 export interface WipSearchProps {
   /** Shown above the box. */
@@ -37,7 +41,10 @@ const DEBOUNCE_MS = 350;
 
 export default function WipSearch({
   label = 'Where is a job?',
-  placeholder = 'Work order number or part number…',
+  // Names the third thing the box answers to. The server matches a part NAME
+  // as well as the two numbers, and a supervisor who is not told that types the
+  // number they had to go and look up instead of the words in front of them.
+  placeholder = 'Work order number, part number or part name…',
   className = '',
   onDark = false,
   'data-testid': testId = 'wip-search',

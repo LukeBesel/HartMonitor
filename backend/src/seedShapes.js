@@ -81,8 +81,23 @@ const ago = m => `-${Math.max(0, Math.round(m))} minutes`;
  *          same order as the input, startAgo > endAgo, non-overlapping
  */
 function layOutAgo(companyId, durationsMin, tailMin = 2) {
+  return layOutAgoAt(minutesSincePlantMidnight(companyId), durationsMin, tailMin);
+}
+
+/**
+ * layOutAgo()'s arithmetic with the clock passed in rather than read.
+ *
+ * Same function, one argument earlier: a seeded run's duration is a function of
+ * how far into the plant day it is, so anything that has to be true of those
+ * runs ALL DAY — the wall board's "Fastest Today" is one run per operator, and
+ * no two of them share a time — can only be checked by replaying every minute.
+ * A property proven at the minute the suite happened to run is not proven.
+ *
+ * @param {number} minutesToday  minutes elapsed since the plant day began
+ */
+function layOutAgoAt(minutesToday, durationsMin, tailMin = 2) {
   const gap = 1;
-  const available = Math.max(durationsMin.length, minutesSincePlantMidnight(companyId) - tailMin);
+  const available = Math.max(durationsMin.length, minutesToday - tailMin);
   const totalNeeded = durationsMin.reduce((a, d) => a + d, 0) + gap * durationsMin.length;
   const scale = totalNeeded > available ? available / totalNeeded : 1;
   const scaled = durationsMin.map(d => Math.max(1, Math.round(d * scale)));
@@ -328,6 +343,40 @@ function seedBracketLineRouting(companyId, opts) {
   };
 }
 
+/** The two Weld scrap runs' nominal minutes, and how long before "now" the
+ *  newer of them ends — compressed together by layOutAgo() when the plant day
+ *  is younger than they are. */
+const WELD_SCRAP_MIN = Object.freeze([8, 8]);
+const WELD_SCRAP_TAIL_MIN = 16;
+
+/** The step timers one Weld scrap run records: a short setup, then the rest of
+ *  its window at the arc. Their SUM is the run's duration everywhere the
+ *  product measures one (runSecondsSQL prefers hands-on time over wall clock),
+ *  which is why it is written once. */
+function weldScrapStepTimes(runIndex, durationMin) {
+  const setupS = 5 + runIndex;
+  return { 0: setupS, 1: Math.max(1, durationMin - 1) * 60 - setupS };
+}
+
+/**
+ * What the two Weld scrap runs weigh on a "fastest run today" board, in
+ * seconds, at a given point in the plant day.
+ *
+ * They are the demo's OTHER completions in the Assembly department today, so a
+ * claim about that board is not a claim about the seeded assembly shift alone —
+ * these runs are ranked beside it, and unlike it they shrink as the plant day
+ * gets shorter. Exported so the claim can be checked at every minute.
+ *
+ * @param {number} minutesToday  minutes elapsed since the plant day began
+ */
+function weldScrapRunSeconds(minutesToday) {
+  return layOutAgoAt(minutesToday, WELD_SCRAP_MIN, WELD_SCRAP_TAIL_MIN)
+    .map((w, i) => {
+      const t = weldScrapStepTimes(i, w.durationMin);
+      return t[0] + t[1];
+    });
+}
+
 // ─── Scrap with a coded reason, booked against operation 2 (Weld) ────────────
 //
 // Two runs of the app the Weld step names, each carrying real
@@ -362,7 +411,7 @@ function seedWeldScrapRuns(companyId, opts) {
 
   // Non-overlapping, always real-duration windows, scaled to fit inside
   // today even if the plant's day just started (layOutAgo — see above).
-  const windows = layOutAgo(companyId, [8, 8], 16);
+  const windows = layOutAgo(companyId, WELD_SCRAP_MIN, WELD_SCRAP_TAIL_MIN);
 
   const serialPrefix = tag ? `${tag}-` : '';
   const runs = [
@@ -381,7 +430,7 @@ function seedWeldScrapRuns(companyId, opts) {
       id, appId, appName, stationId, operatorName, operatorUserId, workOrderId, productTypeId,
       workOrderOperationId, ago(w.startAgo), ago(w.endAgo),
       JSON.stringify(data),
-      JSON.stringify({ 0: 5 + i, 1: Math.max(1, w.durationMin - 1) * 60 - (5 + i) }),
+      JSON.stringify(weldScrapStepTimes(i, w.durationMin)),
       r.good, r.scrap, r.rework, r.reason, companyId,
     );
     stampCompletionValues(companyId, appId, id, widgets, data, w.endAgo);
@@ -806,5 +855,7 @@ module.exports = {
   minutesSincePlantMidnight,
   safeMinutesAgo,
   layOutAgo,
+  layOutAgoAt,
+  weldScrapRunSeconds,
   REASON_DEFAULTS,
 };

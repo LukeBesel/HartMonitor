@@ -30,6 +30,12 @@ const path = require('node:path');
 // prove there is only one reason-code list left.
 process.env.NODE_ENV = 'test';
 
+// Pure arithmetic out of the seed itself — no second copy of the formulas here,
+// because two definitions of the demo's timings is how a board and the test
+// that guards it drift apart.
+const { shiftShape, seededStepTimes, BENCH_PACE_S } = require('../src/sandbox');
+const { weldScrapRunSeconds } = require('../src/seedShapes');
+
 const PORT = 3522; // reserved for this stream (seed-search) in MIGRATIONS.md
 const BASE = `http://localhost:${PORT}`;
 const DB_PATH = path.join(os.tmpdir(), `mes-seed-search-${Date.now()}.db`);
@@ -103,6 +109,24 @@ let tokenA, tokenB, opTokenB;
 
 const CAP_NAME = 'Capped Fitting';
 const CAP_JOBS = 26;   // one more than WIP_PART_LIMIT, so the cap has to show
+// A second part whose name carries the same fragment, so a capped NAME search
+// is one that really did span more than one part — which is the case where a
+// note reading "on this part" would be counting the flanges as fittings.
+const CAP_SIBLING_NAME = 'Capped Flange';
+const CAP_SIBLING_JOBS = 4;
+const CAP_FRAGMENT = 'Capped';
+
+// The demo app's own step takts, summed: 5 + 240 + 120. Read from the seed in
+// production; pinned here the way sandbox-shift-shape.test.js pins it, so these
+// tests measure the arithmetic rather than the sample app.
+const IDEAL_CYCLE_S = 365;
+
+/** Minutes since UTC midnight, the clock the sandbox seeds itself against
+ *  (sandbox.js reads exactly this expression out of SQLite). */
+const utcMinutesToday = () => {
+  const now = new Date();
+  return now.getUTCHours() * 60 + now.getUTCMinutes();
+};
 
 before(async () => {
   await startServer();
@@ -149,6 +173,14 @@ before(async () => {
       part_number: 'CAP-1', part_name: CAP_NAME,
     });
   }
+  // …and a few on a DIFFERENT part whose name shares a fragment with it. They
+  // sort ahead of the fittings, so the capped page visibly holds two parts.
+  for (let i = 1; i <= CAP_SIBLING_JOBS; i++) {
+    await makeWo(tokenB, {
+      work_order_number: `WO-885${i}`,
+      part_number: 'CAP-2', part_name: CAP_SIBLING_NAME,
+    });
+  }
 
   const operator = await api('POST', '/api/users', {
     token: tokenB,
@@ -181,7 +213,23 @@ test('the wall board names each operator once, and no two best runs share a time
   assert.equal(day.status, 200, JSON.stringify(day.json));
   const board = day.json.leaderboard;
 
-  assert.ok(board.length >= 3, `the bench of three is on the board (got ${board.length} rows)`);
+  // ── How many rows there can BE is a question about the clock ──────────────
+  // The seed lays down as many runs as the plant day has had room for, and the
+  // bench of three rotates one run each, so before roughly 00:24 UTC there has
+  // not been a third run to rank. sandbox.js:40-58 exists because of exactly
+  // this class of bug: the mismatch it fixes "used to exist only between 00:00
+  // and 00:48 UTC, which is precisely the window nobody runs the suite in". A
+  // test that demanded three rows at 00:10 would fail on correct code, so it
+  // asks the same arithmetic the seed asked. Computed two minutes BEHIND the
+  // clock, so a shift that ticked over between seeding and this line is never
+  // claimed. The distinctness this test is really about is proven at every
+  // minute of the day, off the clock entirely, by the last test in this file.
+  const runsWhenSeeded = shiftShape(Math.max(0, utcMinutesToday() - 2), IDEAL_CYCLE_S).runs;
+  // Two Weld scrap runs are booked into this department today whatever the
+  // hour, so there is always at least one operator to rank.
+  assert.ok(board.length >= Math.max(1, Math.min(3, runsWhenSeeded)),
+    `every operator the seed has given a run today is on the board `
+    + `(${runsWhenSeeded} assembly runs so far today, got ${board.length} rows)`);
 
   const names = board.map(r => r.operator_name);
   assert.equal(new Set(names).size, names.length,
@@ -286,6 +334,38 @@ test('a name search is capped, and the payload says it was capped', async () => 
   assert.equal(capped.json.answer, `${CAP_JOBS} work orders match "${CAP_NAME}"`);
 });
 
+test('a capped name search counts what was asked, not "this part"', async () => {
+  // The group total behind a name fragment spans every part the fragment hit.
+  // Printing it under the words "open jobs on this part" is the screen saying
+  // 30 fittings when 4 of them are flanges — and it is the sentence the box
+  // prints, in a case a supervisor reaches by typing one ordinary word.
+  const total = CAP_JOBS + CAP_SIBLING_JOBS;
+  const capped = await wip(tokenB, CAP_FRAGMENT);
+  assert.equal(capped.json.match, 'part_name', JSON.stringify(capped.json));
+  assert.equal(capped.json.total_matches, total, 'the count spans both parts');
+  assert.equal(capped.json.truncated, true);
+
+  const names = new Set(capped.json.results.map(r => r.part_name));
+  assert.ok(names.size > 1, `the page itself holds both parts (got: ${[...names].join(', ')})`);
+
+  assert.equal(capped.json.truncated_note,
+    `showing the first ${capped.json.results.length} of ${total} open jobs matching "${CAP_FRAGMENT}"`);
+  assert.doesNotMatch(capped.json.truncated_note, /on this part/,
+    `${total} jobs across ${names.size} parts were called one part's: ${capped.json.truncated_note}`);
+});
+
+test('a capped part-number search may still say "on this part"', async () => {
+  // The other half of the same rule: every job in a part-NUMBER group really
+  // does carry the one part that was typed, so the note stays specific rather
+  // than being softened everywhere to make one case right.
+  const capped = await wip(tokenB, 'CAP-1');
+  assert.equal(capped.json.match, 'part_number', JSON.stringify(capped.json));
+  assert.equal(capped.json.total_matches, CAP_JOBS);
+  assert.equal(capped.json.truncated, true);
+  assert.equal(capped.json.truncated_note,
+    `showing the first ${capped.json.results.length} of ${CAP_JOBS} open jobs on this part`);
+});
+
 test('another company\'s job on the same part name is simply not there', async () => {
   const mine = await wip(tokenA, 'Standard Bracket');
   const numbers = mine.json.results.map(r => r.work_order_number);
@@ -375,5 +455,58 @@ test('a job with no operation to stand on says so in English, whatever state it 
     assert.doesNotMatch(res.json.answer, /\b(pending|in_progress|overdue|completed|cancelled)\b/,
       `a status token reached a reader: ${res.json.answer}`);
     assert.equal(res.json.result.operation_count, 0, 'no operations is a count, not a guess');
+  }
+});
+
+// ─── A1, off the clock: the race is a race at every minute of the day ─────────
+
+test('no two operators can share a best run, at any minute of the plant day', () => {
+  // The live board above is one sample: whatever the wall shows at the minute
+  // this suite runs. The claim the seed actually has to keep is stronger — the
+  // board is a race EVERY hour the demo is open — and it cannot be sampled,
+  // because both halves of it move with the clock:
+  //
+  //   · the seeded assembly shift grows a run at a time (shiftShape), so which
+  //     of the bench's runs are on the board depends on the hour;
+  //   · the two Weld scrap runs are booked into the SAME department today and
+  //     are compressed to fit inside a young plant day (layOutAgo), so early in
+  //     the morning they are the shortest completions in the department and one
+  //     of them becomes an operator's best run.
+  //
+  // The wall board ranks the sum of a run's step timers (runSecondsSQL prefers
+  // hands-on time over wall clock), so that sum is what is compared here.
+  //
+  // The Weld batches are booked to Maria Lopez today (see the seedWeldScrapRuns
+  // call in sandbox.js). This checks them against every seat on the bench
+  // instead, so a later edit that hands them to somebody else cannot quietly
+  // reintroduce the dead heat.
+  const bench = BENCH_PACE_S.length;
+  assert.ok(bench >= 2, 'a race needs at least two people');
+
+  for (let minutesToday = 0; minutesToday <= 1440; minutesToday++) {
+    const runs = shiftShape(minutesToday, IDEAL_CYCLE_S).runs;
+    const shiftBest = new Map();
+    for (let k = 0; k < runs; k++) {
+      const seconds = seededStepTimes(k).reduce((a, b) => a + b, 0);
+      const seat = k % bench;
+      if (!shiftBest.has(seat) || seconds < shiftBest.get(seat)) shiftBest.set(seat, seconds);
+    }
+
+    const scrapSeconds = weldScrapRunSeconds(minutesToday);
+    for (const s of scrapSeconds) {
+      assert.ok(s > 0, `${minutesToday} min in: a scrap run must have a measured duration (got ${s})`);
+    }
+
+    for (let booker = 0; booker < bench; booker++) {
+      const best = new Map(shiftBest);
+      for (const seconds of scrapSeconds) {
+        if (!best.has(booker) || seconds < best.get(booker)) best.set(booker, seconds);
+      }
+      const board = [...best.values()];
+      assert.equal(new Set(board).size, board.length,
+        `${minutesToday} minutes into the day, with the Weld batches on seat ${booker}: `
+        + `a board that says "fastest" has to have a fastest — got ${board.join(', ')} s `
+        + `from ${runs} assembly runs and scrap runs of ${scrapSeconds.join(', ')} s`);
+    }
   }
 });
