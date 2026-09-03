@@ -1342,8 +1342,15 @@ export default function AppPlayer() {
     // Run-context gate (player batch B): a work order OR a typed part number.
     const gate = runContextGate(requireContext && !previewMode, selectedWorkOrderId, manualPartNumber);
     if (!gate.ok) { setActionError(gate.reason); return; }
+    // What this tablet is standing at, kept for the next run. An EMPTY station
+    // is an answer too — "the whole plant" — so once somebody has answered the
+    // question it is overwritten, never deleted: deleting it reads downstream
+    // as "nobody has ever been asked", and the portal then derives a cell for
+    // an operator who deliberately chose not to have one. Absent stays absent,
+    // because starting a run without a station is not an answer to a question
+    // nobody put.
     if (selectedStationId) localStorage.setItem('hm_station', selectedStationId);
-    else localStorage.removeItem('hm_station');
+    else if (localStorage.getItem('hm_station') !== null) localStorage.setItem('hm_station', '');
     setStarting(true);
     setActionError(null);
     try {

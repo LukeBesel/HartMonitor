@@ -917,3 +917,185 @@ describe('the station picker opens where this operator actually works', () => {
     expect(document.activeElement).toBe(document.body);
   });
 });
+
+// ─── A station the picker is not offering is not a station ───────────────────
+//
+// `stations` is the ACTIVE list. A cell taken down for maintenance, or deleted,
+// is not in it — and a value in the select that has no matching option makes
+// the select show "All stations". Left unchecked, the screen then shows a
+// whole-plant picker over a queue filtered to one invisible cell, and books
+// every run started from it to a station nobody was shown.
+
+describe('the picker and the queue never disagree about the station', () => {
+  const TWO_STATIONS = [
+    { id: 'st-1', name: 'Weld Cell A', status: 'active', department_id: 'd-weld' },
+    { id: 'st-2', name: 'Weld Cell B', status: 'active', department_id: 'd-weld' },
+  ];
+
+  /** The station_id the queue was last asked for. */
+  function lastQueueStation() {
+    const calls = getFloorDispatch.mock.calls;
+    return (calls[calls.length - 1]?.[0] ?? {}).station_id;
+  }
+
+  it('does not default to a station that is no longer on the floor', async () => {
+    // Their last run was booked at a cell that has since been taken down. It is
+    // not on the picker, so it cannot be what this tablet is set to.
+    getStations.mockResolvedValue(TWO_STATIONS);
+    request.mockImplementation((path: string) =>
+      Promise.resolve(typeof path === 'string' && path.includes('status=in_progress')
+        ? [openRun({ station_id: 'st-retired' })]
+        : []));
+
+    renderPortal();
+    await clockIn();
+    await screen.findAllByTestId('job-row');
+
+    const picker = screen.getByLabelText('Station') as HTMLSelectElement;
+    expect(picker.value).toBe('');
+    // The queue below agrees with it: no call ever narrowed to the cell the
+    // picker cannot show.
+    expect(getFloorDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ station_id: 'st-retired' }));
+    expect(lastQueueStation()).toBeUndefined();
+  });
+
+  it('falls back to the only station there is when the derived one is gone', async () => {
+    // One active cell: it is the only possible answer, whatever the old run says.
+    getStations.mockResolvedValue([TWO_STATIONS[0]]);
+    request.mockImplementation((path: string) =>
+      Promise.resolve(typeof path === 'string' && path.includes('status=in_progress')
+        ? [openRun({ station_id: 'st-retired' })]
+        : []));
+
+    renderPortal();
+    await clockIn();
+
+    const picker = await screen.findByLabelText('Station') as HTMLSelectElement;
+    await waitFor(() => expect(picker.value).toBe('st-1'));
+    await waitFor(() => expect(lastQueueStation()).toBe('st-1'));
+  });
+
+  it('lets go of a remembered station the floor no longer has, and says so', async () => {
+    // This one WAS somebody's answer, so it is not swapped quietly: their queue
+    // just went from one cell to the whole plant and the screen says why.
+    getStations.mockResolvedValue(TWO_STATIONS);
+    localStorage.setItem('hm_station', 'st-retired');
+
+    renderPortal();
+    await clockIn();
+    await screen.findAllByTestId('job-row');
+
+    const picker = screen.getByLabelText('Station') as HTMLSelectElement;
+    await waitFor(() => expect(picker.value).toBe(''));
+    await waitFor(() => expect(lastQueueStation()).toBeUndefined());
+    expect(screen.getByTestId('station-retired').textContent).toMatch(/no longer on the floor/i);
+    // And it is forgotten, so the next visit derives afresh instead of
+    // filtering to a cell that is gone.
+    expect(localStorage.getItem('hm_station')).toBeNull();
+  });
+
+  it('moves to the only station there is, and still says what happened', async () => {
+    // The note has to stay true when the replacement is a real station: the
+    // list below is the picker's, not always the whole plant's.
+    getStations.mockResolvedValue([TWO_STATIONS[0]]);
+    localStorage.setItem('hm_station', 'st-retired');
+
+    renderPortal();
+    await clockIn();
+    await screen.findAllByTestId('job-row');
+
+    const picker = screen.getByLabelText('Station') as HTMLSelectElement;
+    await waitFor(() => expect(picker.value).toBe('st-1'));
+    await waitFor(() => expect(lastQueueStation()).toBe('st-1'));
+    expect(screen.getByTestId('station-retired').textContent).toMatch(/station shown above/i);
+  });
+
+  it('leaves a remembered station alone when the station list never arrived', async () => {
+    // An empty list here means the request failed, not that the floor is empty.
+    // Retiring somebody's station on a dropped request is the tablet inventing
+    // a fact about the plant.
+    getStations.mockRejectedValue(new Error('offline'));
+    localStorage.setItem('hm_station', 'st-1');
+
+    renderPortal();
+    await clockIn();
+    await screen.findAllByTestId('job-row');
+
+    expect(localStorage.getItem('hm_station')).toBe('st-1');
+    expect(lastQueueStation()).toBe('st-1');
+  });
+});
+
+// ─── The start of a shift is the tap this is meant to save ───────────────────
+//
+// The default reads the operator's own runs, and an operator who closed
+// everything last shift has none OPEN — which is the ordinary way a shift
+// starts, and exactly the case C1 exists for. So when nothing is open, their
+// recent history is asked the same question.
+
+describe('the station picker at the start of a shift', () => {
+  const TWO_STATIONS = [
+    { id: 'st-1', name: 'Weld Cell A', status: 'active', department_id: 'd-weld' },
+    { id: 'st-2', name: 'Weld Cell B', status: 'active', department_id: 'd-weld' },
+  ];
+
+  /** Every /completions request the portal made, in order. */
+  function completionsPaths() {
+    return request.mock.calls.map(c => String(c[0])).filter(path => path.startsWith('/completions'));
+  }
+
+  /** Nothing open, and a finished run at `stationId` in the history. */
+  function finishedAt(stationId: string) {
+    request.mockImplementation((path: string) => {
+      if (typeof path !== 'string') return Promise.resolve([]);
+      if (path.includes('status=in_progress')) return Promise.resolve([]);
+      return Promise.resolve([openRun({
+        id: 'run-done', station_id: stationId, status: 'completed',
+        completed_at: '2026-09-02 03:10:00',
+      })]);
+    });
+  }
+
+  it('defaults to the station of the last run this operator finished', async () => {
+    getStations.mockResolvedValue(TWO_STATIONS);
+    finishedAt('st-2');
+
+    renderPortal();
+    await clockIn();
+
+    const picker = await screen.findByLabelText('Station') as HTMLSelectElement;
+    await waitFor(() => expect(picker.value).toBe('st-2'));
+    await waitFor(() =>
+      expect(getFloorDispatch).toHaveBeenCalledWith(expect.objectContaining({ station_id: 'st-2' })));
+  });
+
+  it('does not ask for history when a run is still open', async () => {
+    // The open run already answers the question, and this is a second round
+    // trip nobody is waiting on — it is only worth making when it is needed.
+    getStations.mockResolvedValue(TWO_STATIONS);
+    request.mockImplementation((path: string) =>
+      Promise.resolve(typeof path === 'string' && path.includes('status=in_progress')
+        ? [openRun({ station_id: 'st-1' })]
+        : []));
+
+    renderPortal();
+    await clockIn();
+    const picker = await screen.findByLabelText('Station') as HTMLSelectElement;
+    await waitFor(() => expect(picker.value).toBe('st-1'));
+
+    expect(completionsPaths().every(path => path.includes('status=in_progress'))).toBe(true);
+  });
+
+  it('does not ask for history when this tablet already has an answer', async () => {
+    getStations.mockResolvedValue(TWO_STATIONS);
+    localStorage.setItem('hm_station', 'st-1');
+    finishedAt('st-2');
+
+    renderPortal();
+    await clockIn();
+    await screen.findAllByTestId('job-row');
+
+    expect((screen.getByLabelText('Station') as HTMLSelectElement).value).toBe('st-1');
+    expect(completionsPaths().every(path => path.includes('status=in_progress'))).toBe(true);
+  });
+});

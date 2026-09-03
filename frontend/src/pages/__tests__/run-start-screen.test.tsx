@@ -626,3 +626,50 @@ describe('"Jobs in progress" names the job each run is bound to', () => {
     expect(screen.queryByText('No work order')).toBeNull();
   });
 });
+
+// ─── What the tablet remembers about where it is standing ────────────────────
+//
+// hm_station is the one answer the portal and the player share. An operator who
+// deliberately chose the whole plant answered "no station", and the player used
+// to DELETE the key when it started a run without one — which downstream reads
+// as "nobody has ever been asked", so the portal helpfully derived a cell and
+// their choice lasted exactly one unit.
+
+describe('the station this tablet remembers, after a run is started', () => {
+  /** Start a run from the setup screen and wait for the POST to land. */
+  async function startFromSetup() {
+    await userEvent.click(await screen.findByRole('button', { name: /start process/i }));
+    await waitFor(() => expect(startCalls()).toHaveLength(1));
+  }
+
+  it('keeps an explicit All stations answer instead of deleting it', async () => {
+    // Stored empty, not absent: this operator chose the whole plant.
+    localStorage.setItem('hm_station', '');
+    renderPlayer(`?uid=u-alex&name=Alex%20Operator&wo=${WORK_ORDER.id}&from=operator`);
+    await startFromSetup();
+
+    // Still an answer — and still the same one.
+    expect(localStorage.getItem('hm_station')).toBe('');
+    const body = JSON.parse((startCalls()[0][1] as { body: string }).body);
+    expect(body.station_id).toBeUndefined();
+  });
+
+  it('does not invent an answer when nobody has ever been asked', async () => {
+    // Nothing stored, and a run started without a station is not an answer to a
+    // question nobody put — the portal is still free to derive a default.
+    renderPlayer(`?uid=u-alex&name=Alex%20Operator&wo=${WORK_ORDER.id}&from=operator`);
+    await startFromSetup();
+
+    expect(localStorage.getItem('hm_station')).toBeNull();
+  });
+
+  it('remembers the station a run was actually booked to', async () => {
+    localStorage.setItem('hm_station', '');
+    renderPlayer(`?uid=u-alex&name=Alex%20Operator&wo=${WORK_ORDER.id}&from=operator`);
+    await screen.findByRole('button', { name: /start process/i });
+    await userEvent.selectOptions(screen.getByLabelText(/station/i), STATION.id);
+    await startFromSetup();
+
+    expect(localStorage.getItem('hm_station')).toBe(STATION.id);
+  });
+});

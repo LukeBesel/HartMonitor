@@ -12,8 +12,8 @@ import {
 } from '../components/apps/appModel';
 import { getFloorSnapshot, type FloorSnapshot, type DispatchRow } from '../api/floor';
 import {
-  getOperatorQueue, getOperatorRuns, dedupeRuns, stampIn, dispatchRowLabel, getDemoHints,
-  type OperatorRun, type DemoHints,
+  getOperatorQueue, getOperatorRuns, getOperatorHistory, dedupeRuns, stampIn, dispatchRowLabel,
+  getDemoHints, type OperatorRun, type DemoHints,
 } from '../api/operator';
 import { displayId, hasCompanyTag } from '../utils/ids';
 import { tintedChipOn } from '../utils/contrast';
@@ -130,6 +130,11 @@ function rowKey(row: DispatchRow): string {
  *  signal, all of them looking identical. */
 const RESUME_VISIBLE = 5;
 
+/** How far back the station default looks when the operator left nothing open.
+ *  Ten rows, because only the newest one that names a station is read — this is
+ *  a hint, not a history screen. */
+const STATION_HINT_RUNS = 10;
+
 type Tab = 'jobs' | 'history' | 'report' | 'profile';
 
 /** Where a verified sign-in is remembered for the length of this tab's shift.
@@ -213,8 +218,15 @@ export default function OperatorPortal() {
   /** The station this tablet is at. Written by the player and by the return
    *  deep link; chosen here so an operator can move without an admin. */
   const [stations, setStations] = useState<Station[]>([]);
+  /** True once GET /stations has actually answered. Distinguishes "this plant
+   *  has no stations" from "nobody has asked yet", which is the difference
+   *  between a station being gone and the list not being here. */
+  const [stationsLoaded, setStationsLoaded] = useState(false);
   const [remembered] = useState(rememberedStation);
   const [stationId, setStationId] = useState<string>(remembered.id);
+  /** The station this tablet was set to has been retired or deleted since. Said
+   *  out loud rather than silently swapped, because it WAS somebody's answer. */
+  const [stationRetired, setStationRetired] = useState(false);
   /** Has anybody actually answered "where is this tablet standing?" — a
    *  remembered choice, the return link's station, or a tap on the picker,
    *  "All stations" included. An answer is never overwritten by the default
@@ -230,6 +242,11 @@ export default function OperatorPortal() {
 
   /** Runs this operator left open, one row per piece of work. */
   const [openRuns, setOpenRuns] = useState<OperatorRun[] | null>(null);
+  /** The last few runs this operator touched, open or finished. Fetched ONLY to
+   *  answer "where does this person work?", and only when they left nothing
+   *  open — which is what the start of a shift looks like. Never shown: the
+   *  Resume rows are `openRuns`, and a finished run is not resumable. */
+  const [recentRuns, setRecentRuns] = useState<OperatorRun[] | null>(null);
 
   // Floor identity (sign-in) state.
   const [roster, setRoster] = useState<RosterEntry[]>([]);
@@ -267,9 +284,16 @@ export default function OperatorPortal() {
 
   // The stations this tablet could be standing at. Best-effort: a company with
   // none simply has no picker and gets the whole plant's queue.
+  //
+  // `stationsLoaded` is set only when the list actually arrived. A failed
+  // request leaves an empty array too, and an empty array that means "the
+  // request failed" must not be read as "this station no longer exists" below.
   useEffect(() => {
     api.getStations()
-      .then((rows: Station[]) => setStations(Array.isArray(rows) ? rows.filter(st => st.status === 'active') : []))
+      .then((rows: Station[]) => {
+        setStations(Array.isArray(rows) ? rows.filter(st => st.status === 'active') : []);
+        setStationsLoaded(true);
+      })
       .catch(() => setStations([]));
   }, []);
 
@@ -360,6 +384,19 @@ export default function OperatorPortal() {
     }
   };
 
+  /** The operator's last few runs whatever their status, for the station
+   *  default below. A short limit on purpose: the newest row that names a
+   *  station is the whole answer, and this is a second round trip nobody is
+   *  waiting on. */
+  const loadRecentRuns = async (name = operatorName) => {
+    if (!name.trim()) { setRecentRuns([]); return; }
+    try {
+      setRecentRuns(await getOperatorHistory(name.trim(), STATION_HINT_RUNS));
+    } catch {
+      setRecentRuns([]);
+    }
+  };
+
   const loadCompletions = async () => {
     setCompletionsLoading(true);
     try {
@@ -444,6 +481,7 @@ export default function OperatorPortal() {
    *  station rather than forgotten, so the default never talks over it. */
   const chooseStation = (next: string) => {
     stationAnsweredRef.current = true;
+    setStationRetired(false);   // answered again; the note has done its job
     setStationId(next);
     try {
       localStorage.setItem('hm_station', next);
@@ -459,6 +497,7 @@ export default function OperatorPortal() {
     setCompletions(null);
     setSnapshot(null);
     setOpenRuns(null);
+    setRecentRuns(null);
     setActiveTab('jobs');
     setManualMode(false);
     // The derived station belonged to whoever was signed in, not to the tablet:
@@ -466,6 +505,7 @@ export default function OperatorPortal() {
     // station somebody actually chose is an answer, and answers stay.
     if (!stationAnsweredRef.current) {
       stationDefaultedRef.current = false;
+      setStationRetired(false);
       setStationId('');
     }
   };
@@ -502,17 +542,23 @@ export default function OperatorPortal() {
   // exists to remove, one step further along.
   //
   // The best answer anyone has without asking is the station the operator's own
-  // most recent run was booked to — the portal already fetches their runs at
-  // sign-in, so nothing new is asked of the server — and a plant with exactly
-  // one station has only one possible answer at all.
+  // most recent run was booked to, and a plant with exactly one station has
+  // only one possible answer at all.
   //
-  // Both are DEFAULTS. They fill a picker nobody has answered, they are never
-  // written to `hm_station` (a guess must not come back looking like a choice,
-  // and a tablet carried to another cell has to be free to derive a new one),
-  // and they sit in the picker at the top of the jobs list — so the station a
-  // tap books its run to is on screen before the tap, which is the whole
-  // difference between a preselected default and one applied behind somebody's
-  // back.
+  // Both are DEFAULTS. They fill a picker nobody has answered, this screen
+  // never writes them to `hm_station`, and they sit in the picker at the top of
+  // the jobs list — so the station a tap books its run to is on screen before
+  // the tap, which is the whole difference between a preselected default and
+  // one applied behind somebody's back. (A station only becomes a remembered
+  // answer once a run has actually been started with it showing: the player
+  // stores what it booked. Until then it stays a guess this screen can revise.)
+  //
+  // EVERY station that reaches `stationId` here has to be one the picker below
+  // is offering. A station set to maintenance, or deleted, is not in `stations`
+  // — put it in the select anyway and the select shows "All stations" over a
+  // queue filtered to that one cell, and books every run to it. So a value that
+  // is not on the list is dropped, and when it was somebody's own answer the
+  // screen says so rather than quietly widening their queue.
   //
   // It runs after the queue rather than before it — the runs it reads arrive
   // behind the first screen on purpose, and an operator waits for their queue,
@@ -521,15 +567,48 @@ export default function OperatorPortal() {
   // still showed the whole plant.
   useEffect(() => {
     if (step !== 'main') return;
-    if (stationAnsweredRef.current || stationDefaultedRef.current) return;
-    const derived = stationOfLatestRun(openRuns)
+    // Nothing is checked against a list that has not arrived: a failed request
+    // is an empty `stations`, and it must not retire anybody's station.
+    if (!stationsLoaded) return;
+
+    const onTheFloor = (id: string) => !!id && stations.some(st => st.id === id);
+
+    // An answer that names a station the floor no longer has is not an answer
+    // any more. It is forgotten here as well as on this tablet, so the next
+    // visit derives afresh instead of filtering to a cell that is gone.
+    const retired = stationAnsweredRef.current && !!stationId && !onTheFloor(stationId);
+    if (retired) {
+      stationAnsweredRef.current = false;
+      setStationRetired(true);
+      try { localStorage.removeItem('hm_station'); } catch { /* private mode */ }
+    }
+    if (!retired && (stationAnsweredRef.current || stationDefaultedRef.current)) return;
+
+    // Their own most recent run first — but only if that station is still one
+    // of the ones on offer — then the only station a one-station plant has.
+    const latest = stationOfLatestRun(openRuns) || stationOfLatestRun(recentRuns);
+    const derived = (onTheFloor(latest) ? latest : '')
       || (stations.length === 1 ? stations[0].id : '');
-    if (!derived) return;
-    stationDefaultedRef.current = true;
+    // Nothing to derive and nothing to undo: keep looking as more runs arrive.
+    if (!derived && !retired) return;
+    if (derived) stationDefaultedRef.current = true;
     setStationId(derived);
     void loadQueue(derived);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, openRuns, stations]);
+  }, [step, stationsLoaded, openRuns, recentRuns, stations, stationId]);
+
+  // The station default reads the operator's own runs, and an operator who
+  // closed everything last shift has none open — which is the ordinary start of
+  // a shift, and exactly the tap this is meant to save. So when the open runs
+  // come back empty, their recent history is asked for the same question. One
+  // extra request, behind the first screen, only for the operators who need it.
+  useEffect(() => {
+    if (step !== 'main' || !operatorName.trim()) return;
+    if (stationAnsweredRef.current || stationDefaultedRef.current) return;
+    if (openRuns === null || openRuns.length > 0 || recentRuns !== null) return;
+    void loadRecentRuns();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, openRuns, recentRuns, operatorName]);
 
   // Lazy-load completion history the first time that tab is opened.
   useEffect(() => {
@@ -602,6 +681,7 @@ export default function OperatorPortal() {
             stations={stations}
             stationId={stationId}
             onChooseStation={chooseStation}
+            stationRetired={stationRetired}
             openRuns={openRuns}
             onResume={handleResume}
             describeRun={describeRun}
@@ -1025,7 +1105,7 @@ function BottomNav({ active, onChange }: { active: Tab; onChange: (t: Tab) => vo
 
 function JobsTab({
   rows, error, selectedRow, setSelectedRow, onStartJob, onRefresh,
-  stations, stationId, onChooseStation, openRuns, onResume, describeRun, timezone,
+  stations, stationId, onChooseStation, stationRetired, openRuns, onResume, describeRun, timezone,
   filtered, onClearStation,
 }: {
   rows: DispatchRow[];
@@ -1037,6 +1117,9 @@ function JobsTab({
   stations: Station[];
   stationId: string;
   onChooseStation: (id: string) => void;
+  /** The station this tablet was set to is no longer on the floor. Said out
+   *  loud: it was somebody's answer, and their queue just got wider. */
+  stationRetired: boolean;
   openRuns: OperatorRun[] | null;
   onResume: (run: OperatorRun) => void;
   /** What one open run IS, in words — the job it is on, the operation when the
@@ -1144,6 +1227,12 @@ function JobsTab({
           <p id="station-hint" className="text-blue-200/70 text-xs mt-1.5 ml-6">
             Optional. This is the queue for the station you pick — All stations shows the whole plant's.
           </p>
+          {stationRetired && (
+            <p data-testid="station-retired" className="text-amber-300 text-xs mt-1.5 ml-6">
+              The station this tablet was set to is no longer on the floor. The list below is for
+              the station shown above — check it before you start a job.
+            </p>
+          )}
         </div>
       )}
 
