@@ -1759,6 +1759,7 @@ module.exports = {
   resolveScope,
   stationScope,
   scopeFromQuery,
+  one,
   siteCompletionClause,
   siteCompletionParams,
   departmentCompletionClause,

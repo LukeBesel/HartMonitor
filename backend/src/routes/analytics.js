@@ -49,11 +49,16 @@ const router = express.Router();
  *              `app_id = ?` against that join is an "ambiguous column name" 500.
  */
 function completionFilter(req, alias = '') {
+  // `one()` because Express hands a REPEATED parameter over as an array, and an
+  // array bound as one placeholder is "Too many parameter values were provided"
+  // — a 500 for a link that merely names the same department twice. The guarded
+  // routes already resolve their scope through the same helper, so a filtered
+  // page and its guard read a duplicated parameter the same way.
   return completionFilterFor(req.companyId, {
-    app_id: req.query.app_id,
-    product_type_id: req.query.product_type_id,
-    department_id: req.query.department_id,
-    site_id: req.query.site_id,
+    app_id: plantTruth.one(req.query.app_id),
+    product_type_id: plantTruth.one(req.query.product_type_id),
+    department_id: plantTruth.one(req.query.department_id),
+    site_id: plantTruth.one(req.query.site_id),
   }, alias);
 }
 
