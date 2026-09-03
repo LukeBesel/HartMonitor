@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 
 // ─── The portal lists what this operator should actually run ──────────────────
@@ -783,5 +783,137 @@ describe('work order numbers on the jobs list', () => {
     expect(idCell.textContent).toContain('WO-1042');
     expect(idCell.textContent).not.toContain('158D03');
     expect(idCell).toHaveAttribute('title', '158D03-WO-1042');
+  });
+});
+
+// ─── The first tap starts the job, it does not open a setup screen ───────────
+//
+// The picker used to open on "All stations", and a job started with no station
+// leaves the player one question still to ask — so the very first tap landed on
+// the setup screen instead of step one. That is the dead end this portal exists
+// to remove, one step further along.
+//
+// So the picker opens on the station the operator's own most recent run was
+// booked to, and failing that on the only station there is. Both are DEFAULTS
+// derived from what the portal has already fetched: they fill a picker nobody
+// has answered, and they never talk over an answer that exists.
+
+describe('the station picker opens where this operator actually works', () => {
+  const TWO_STATIONS = [
+    { id: 'st-1', name: 'Weld Cell A', status: 'active', department_id: 'd-weld' },
+    { id: 'st-2', name: 'Weld Cell B', status: 'active', department_id: 'd-weld' },
+  ];
+
+  /** Their own open run, booked to a station. */
+  function runAt(stationId: string | null) {
+    return [openRun({ station_id: stationId })];
+  }
+
+  it('defaults to the station of the operator’s most recent run', async () => {
+    getStations.mockResolvedValue(TWO_STATIONS);
+    request.mockImplementation((path: string) =>
+      Promise.resolve(typeof path === 'string' && path.includes('status=in_progress') ? runAt('st-2') : []));
+
+    renderPortal();
+    await clockIn();
+
+    const picker = await screen.findByLabelText('Station') as HTMLSelectElement;
+    await waitFor(() => expect(picker.value).toBe('st-2'));
+    // And the list below matches the picker: a picker naming one station over a
+    // queue for the whole plant is the screen contradicting itself.
+    await waitFor(() =>
+      expect(getFloorDispatch).toHaveBeenCalledWith(expect.objectContaining({ station_id: 'st-2' })));
+  });
+
+  it('defaults to the only station a plant has', async () => {
+    // One station is not a choice, and asking for it is not a question.
+    getStations.mockResolvedValue([TWO_STATIONS[0]]);
+    renderPortal();
+    await clockIn();
+
+    const picker = await screen.findByLabelText('Station') as HTMLSelectElement;
+    await waitFor(() => expect(picker.value).toBe('st-1'));
+  });
+
+  it('leaves the picker on All stations when nothing says where this tablet is', async () => {
+    // Two stations, no run that names one: there is no answer to derive, and a
+    // guess between two cells would book runs to the wrong one.
+    getStations.mockResolvedValue(TWO_STATIONS);
+    request.mockImplementation((path: string) =>
+      Promise.resolve(typeof path === 'string' && path.includes('status=in_progress') ? runAt(null) : []));
+
+    renderPortal();
+    await clockIn();
+    await screen.findAllByTestId('job-row');
+
+    const picker = screen.getByLabelText('Station') as HTMLSelectElement;
+    expect(picker.value).toBe('');
+    expect(within(picker).getByRole('option', { name: 'All stations' })).toBeTruthy();
+  });
+
+  it('never talks over the station this tablet already remembers', async () => {
+    getStations.mockResolvedValue(TWO_STATIONS);
+    localStorage.setItem('hm_station', 'st-1');
+    request.mockImplementation((path: string) =>
+      Promise.resolve(typeof path === 'string' && path.includes('status=in_progress') ? runAt('st-2') : []));
+
+    renderPortal();
+    await clockIn();
+    await screen.findAllByTestId('job-row');
+
+    const picker = screen.getByLabelText('Station') as HTMLSelectElement;
+    expect(picker.value).toBe('st-1');
+    expect(getFloorDispatch).not.toHaveBeenCalledWith(expect.objectContaining({ station_id: 'st-2' }));
+  });
+
+  it('treats an explicit All stations as an answer, not a gap', async () => {
+    // Stored empty, not absent: this operator chose the whole plant on purpose,
+    // and a default that reinstated their last cell would undo it every visit.
+    getStations.mockResolvedValue(TWO_STATIONS);
+    localStorage.setItem('hm_station', '');
+    request.mockImplementation((path: string) =>
+      Promise.resolve(typeof path === 'string' && path.includes('status=in_progress') ? runAt('st-2') : []));
+
+    renderPortal();
+    await clockIn();
+    await screen.findAllByTestId('job-row');
+
+    expect((screen.getByLabelText('Station') as HTMLSelectElement).value).toBe('');
+  });
+
+  it('keeps a chosen station out of the default’s reach, and remembers it', async () => {
+    getStations.mockResolvedValue(TWO_STATIONS);
+    renderPortal();
+    await clockIn();
+    await screen.findAllByTestId('job-row');
+
+    const picker = screen.getByLabelText('Station') as HTMLSelectElement;
+    fireEvent.change(picker, { target: { value: 'st-2' } });
+    await waitFor(() => expect(picker.value).toBe('st-2'));
+    expect(localStorage.getItem('hm_station')).toBe('st-2');
+
+    // Back to the whole plant: still an answer, and it is stored as one.
+    fireEvent.change(picker, { target: { value: '' } });
+    await waitFor(() => expect(picker.value).toBe(''));
+    expect(localStorage.getItem('hm_station')).toBe('');
+  });
+
+  it('still says the station is optional', async () => {
+    // The station is a filter, not a gate. Every input on this screen keeps its
+    // sub-text, and this one has to say the queue narrows with it.
+    getStations.mockResolvedValue(TWO_STATIONS);
+    renderPortal();
+    await clockIn();
+
+    const picker = await screen.findByLabelText('Station');
+    const hintId = picker.getAttribute('aria-describedby');
+    expect(hintId).toBeTruthy();
+    const hint = document.getElementById(hintId as string);
+    expect(hint?.textContent).toMatch(/optional/i);
+    expect(hint?.textContent).toMatch(/all stations/i);
+
+    // And nothing here grabs focus: an on-screen keyboard over the jobs list is
+    // the first thing an operator has to dismiss before they can work.
+    expect(document.activeElement).toBe(document.body);
   });
 });

@@ -156,6 +156,36 @@ function verifiedIdentity(): OperatorIdentity | null {
   }
 }
 
+/**
+ * What this tablet was last TOLD about where it is standing.
+ *
+ * `hm_station` present but empty is a real answer — "the whole plant" — and is
+ * not the same thing as never having been asked. Only the second gets the
+ * default below; the first is the operator's own choice and outranks it.
+ */
+function rememberedStation(): { answered: boolean; id: string } {
+  try {
+    const raw = localStorage.getItem('hm_station');
+    return { answered: raw !== null, id: raw || '' };
+  } catch {
+    return { answered: false, id: '' };   // private mode — nothing is remembered
+  }
+}
+
+/**
+ * The station this operator was last working at, out of the runs the portal has
+ * already fetched for them at sign-in.
+ *
+ * `dedupeRuns` hands them over newest-first, so the first row that names a
+ * station is the most recent one that knows. A run with no station recorded
+ * says nothing about the question and is skipped rather than counted as "the
+ * whole plant".
+ */
+function stationOfLatestRun(runs: OperatorRun[] | null): string {
+  const run = (runs ?? []).find(r => (r.station_id || '').trim());
+  return run ? (run.station_id || '').trim() : '';
+}
+
 export default function OperatorPortal() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -183,9 +213,16 @@ export default function OperatorPortal() {
   /** The station this tablet is at. Written by the player and by the return
    *  deep link; chosen here so an operator can move without an admin. */
   const [stations, setStations] = useState<Station[]>([]);
-  const [stationId, setStationId] = useState<string>(() => {
-    try { return localStorage.getItem('hm_station') || ''; } catch { return ''; }
-  });
+  const [remembered] = useState(rememberedStation);
+  const [stationId, setStationId] = useState<string>(remembered.id);
+  /** Has anybody actually answered "where is this tablet standing?" — a
+   *  remembered choice, the return link's station, or a tap on the picker,
+   *  "All stations" included. An answer is never overwritten by the default
+   *  derived below, on this render or any later one. */
+  const stationAnsweredRef = useRef(remembered.answered);
+  /** The default has had its one go. Kept apart from the answer above so a
+   *  tablet that could not derive one keeps looking as more runs arrive. */
+  const stationDefaultedRef = useRef(false);
 
   /** The plant's own day, and the zone every stamp on this screen is printed
    *  in. Never the tablet's. */
@@ -402,12 +439,14 @@ export default function OperatorPortal() {
   };
 
   /** Move the tablet to another station: the queue is the station's, so it is
-   *  reloaded, and the choice is remembered the way the player remembers it. */
+   *  reloaded, and the choice is remembered the way the player remembers it.
+   *  Choosing "All stations" is an answer too — it is stored as an empty
+   *  station rather than forgotten, so the default never talks over it. */
   const chooseStation = (next: string) => {
+    stationAnsweredRef.current = true;
     setStationId(next);
     try {
-      if (next) localStorage.setItem('hm_station', next);
-      else localStorage.removeItem('hm_station');
+      localStorage.setItem('hm_station', next);
     } catch { /* private mode — the choice lasts this visit */ }
     void loadQueue(next);
   };
@@ -422,6 +461,13 @@ export default function OperatorPortal() {
     setOpenRuns(null);
     setActiveTab('jobs');
     setManualMode(false);
+    // The derived station belonged to whoever was signed in, not to the tablet:
+    // it goes with them, so the next operator's own runs decide it afresh. A
+    // station somebody actually chose is an answer, and answers stay.
+    if (!stationAnsweredRef.current) {
+      stationDefaultedRef.current = false;
+      setStationId('');
+    }
   };
 
   // Coming back from a finished unit (/operator?uid=…&station=…): pick the
@@ -439,6 +485,7 @@ export default function OperatorPortal() {
     const station = searchParams.get('station');
     if (station) {
       try { localStorage.setItem('hm_station', station); } catch { /* private mode */ }
+      stationAnsweredRef.current = true;
       setStationId(station);
     }
     const onRoster = roster.find(r => r.id === uid);
@@ -447,6 +494,42 @@ export default function OperatorPortal() {
     void identify({ id: onRoster.id, display_name: onRoster.display_name });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rosterLoaded, roster, step, searchParams]);
+
+  // ── Where this tablet is standing, when nobody has said ───────────────────
+  // The picker used to open on "All stations", and with no station the player
+  // still has one question left to ask — so the very first tap on a job landed
+  // on the setup screen instead of step one, which is the dead end this portal
+  // exists to remove, one step further along.
+  //
+  // The best answer anyone has without asking is the station the operator's own
+  // most recent run was booked to — the portal already fetches their runs at
+  // sign-in, so nothing new is asked of the server — and a plant with exactly
+  // one station has only one possible answer at all.
+  //
+  // Both are DEFAULTS. They fill a picker nobody has answered, they are never
+  // written to `hm_station` (a guess must not come back looking like a choice,
+  // and a tablet carried to another cell has to be free to derive a new one),
+  // and they sit in the picker at the top of the jobs list — so the station a
+  // tap books its run to is on screen before the tap, which is the whole
+  // difference between a preselected default and one applied behind somebody's
+  // back.
+  //
+  // It runs after the queue rather than before it — the runs it reads arrive
+  // behind the first screen on purpose, and an operator waits for their queue,
+  // not for one more round trip — so the queue is reloaded for the station it
+  // lands on. Otherwise the picker would name a station while the list below
+  // still showed the whole plant.
+  useEffect(() => {
+    if (step !== 'main') return;
+    if (stationAnsweredRef.current || stationDefaultedRef.current) return;
+    const derived = stationOfLatestRun(openRuns)
+      || (stations.length === 1 ? stations[0].id : '');
+    if (!derived) return;
+    stationDefaultedRef.current = true;
+    setStationId(derived);
+    void loadQueue(derived);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, openRuns, stations]);
 
   // Lazy-load completion history the first time that tab is opened.
   useEffect(() => {
@@ -1036,23 +1119,32 @@ function JobsTab({
       </div>
 
       {/* Where this tablet is standing. The queue is the STATION's — and the
-          server reads the department off the station, so one choice says both. */}
+          server reads the department off the station, so one choice says both.
+          It opens on the station this operator's last run was booked to, or on
+          the only station there is; both are defaults, and All stations is
+          always one tap away. */}
       {stations.length > 0 && (
-        <label className="flex items-center gap-2 mb-3">
-          <Tablet size={14} className="text-blue-300 flex-shrink-0" aria-hidden="true" />
-          <span className="sr-only">Station</span>
-          <select
-            aria-label="Station"
-            value={stationId}
-            onChange={e => onChooseStation(e.target.value)}
-            className="dark flex-1 min-w-0 h-11 rounded-xl bg-white/10 border border-white/15 text-white text-sm px-3"
-          >
-            <option value="">All stations</option>
-            {stations.map(st => (
-              <option key={st.id} value={st.id}>{st.name}</option>
-            ))}
-          </select>
-        </label>
+        <div className="mb-3">
+          <label className="flex items-center gap-2">
+            <Tablet size={14} className="text-blue-300 flex-shrink-0" aria-hidden="true" />
+            <span className="sr-only">Station</span>
+            <select
+              aria-label="Station"
+              aria-describedby="station-hint"
+              value={stationId}
+              onChange={e => onChooseStation(e.target.value)}
+              className="dark flex-1 min-w-0 h-11 rounded-xl bg-white/10 border border-white/15 text-white text-sm px-3"
+            >
+              <option value="">All stations</option>
+              {stations.map(st => (
+                <option key={st.id} value={st.id}>{st.name}</option>
+              ))}
+            </select>
+          </label>
+          <p id="station-hint" className="text-blue-200/70 text-xs mt-1.5 ml-6">
+            Optional. This is the queue for the station you pick — All stations shows the whole plant's.
+          </p>
+        </div>
       )}
 
       {scanMessage && (

@@ -49,7 +49,8 @@ import { targetLabel, targetPayload } from '../config/andonTeams';
 import type { AlertTarget } from '../config/andonTeams';
 import { subscribeRealtime, isAndonEvent } from '../utils/realtime';
 import {
-  claimSideEffect, collectStepTriggers, concurrentRun, evaluateKitScan, exitTarget, formatDur,
+  claimSideEffect, collectStepTriggers, concurrentHoldReason, concurrentRun, evaluateKitScan,
+  exitTarget, formatDur,
   getStepBlocks, kitProgress, kitWidgetFor, legacyKey, operatorAttribution,
   operatorDisplayName, operatorReturnLink, playableWorkOrders, routedLookupCandidates,
   runContextGate, runContextRequired, setupNeeded,
@@ -1322,8 +1323,14 @@ export default function AppPlayer() {
           return api.getKit(active.id).then(full => { setKitState(full); });
         }
         setKitState(null);
+        // No kit was generated for this job, so the bill of materials itself is
+        // the next best parts list — when the job has one. Most routed jobs do
+        // not, and /boms/resolve says so with a 200 and an empty body (see
+        // routes/boms.js): a null id is nothing to render, and rendering
+        // nothing is the whole answer. It used to be a 404, which printed a red
+        // failure in the console of every ordinary job and fired this catch.
         return api.resolveBOM(workOrderId)
-          .then(b => setBomFallback(b))
+          .then(b => setBomFallback(b?.id ? b : null))
           .catch(() => setBomFallback(null));
       })
       .catch(() => undefined);
@@ -1469,8 +1476,9 @@ export default function AppPlayer() {
   // tap on a job and the operator is on step one.
   //
   // It waits for the in-progress list, because skipping setup must never skip
-  // the concurrent-run warning — a silent auto-start onto a unit somebody else
-  // already has open would be worse than the screen it replaces. And it counts
+  // the concurrent-run warning — a silent auto-start onto a unit that already
+  // has a run open on it, the operator's own after a tablet reload as often as
+  // a colleague's, would be worse than the screen it replaces. And it counts
   // only a station the LINK named: a station merely remembered in this
   // browser's localStorage is offered as a preselected default on the setup
   // screen, never used to book a run nobody was shown.
@@ -1492,8 +1500,8 @@ export default function AppPlayer() {
     resumeParamRef.current = true;
     const target = resumeTarget(jobs, runParam, { operatorUserId, operatorName });
     // Somebody else's run, or a run that has closed: land on setup and say so.
-    // The concurrent-run card below offers "Resume their run" — joining a job
-    // is a decision two people share, not something a link does quietly.
+    // The concurrent-run card below offers the run back — joining a job is a
+    // decision two people share, not something a link does quietly.
     if (target.kind === 'gone' || target.kind === 'theirs') { setLinkNotice(target.notice); return; }
     if (target.kind !== 'resume') return;
     void resumeJob(target.job);
@@ -1924,12 +1932,16 @@ export default function AppPlayer() {
     // A run already open on THIS unit. Joining it is legitimate and often
     // right, but it must be a decision made before starting, not something
     // discovered afterwards — so it sits above the button and holds it.
-    const concurrent = previewMode ? null : concurrentRun(jobs, selectedWorkOrderId, manualPartNumber);
-    const heldByConcurrent = !!concurrent && !concurrentAck;
+    const concurrent = previewMode
+      ? null
+      : concurrentRun(jobs, selectedWorkOrderId, manualPartNumber, { operatorUserId, operatorName });
+    // Acknowledged is answered: the card stays on screen, but it stops holding.
+    const holding = concurrentAck ? null : concurrent;
+    const heldByConcurrent = !!holding;
     const startBlockedReason = !setupGate.ok
       ? setupGate.reason
-      : heldByConcurrent
-        ? 'Someone else already has this unit open — choose whether to join them.'
+      : holding
+        ? concurrentHoldReason(holding)
         : '';
 
     return (
@@ -2099,13 +2111,14 @@ export default function AppPlayer() {
                 <AlertTriangle size={17} className="flex-shrink-0 mt-0.5" style={{ color: 'var(--p-gold)' }} />
                 <div className="flex-1 min-w-0">
                   <p style={{ fontSize: 15, fontWeight: 650 }}>
-                    {concurrent.operatorName || 'Someone'} started this
+                    {concurrent.isMine ? 'You started this' : `${concurrent.operatorName || 'Someone'} started this`}
                     {concurrent.ageSeconds === null ? '' : ` ${fmtDuration(concurrent.ageSeconds)} ago`}
-                    {' '}— joining will share the run
+                    {concurrent.isMine ? ' — and it is still open' : ' — joining will share the run'}
                   </p>
                   <p style={{ fontSize: 13.5, marginTop: 3 }}>
-                    Resume it to carry on where they left off, or start a separate run to
-                    record this unit twice.
+                    {concurrent.isMine
+                      ? 'Resume it to carry on where you left off, or start a separate run to record this unit twice.'
+                      : 'Resume it to carry on where they left off, or start a separate run to record this unit twice.'}
                   </p>
                 </div>
               </div>
@@ -2116,7 +2129,7 @@ export default function AppPlayer() {
                   onClick={() => void resumeJob(concurrent.job)}
                   disabled={resumingId !== null}
                 >
-                  {resumingId === concurrent.job.id ? 'Resuming…' : 'Resume their run'}
+                  {resumingId === concurrent.job.id ? 'Resuming…' : concurrent.isMine ? 'Resume your run' : 'Resume their run'}
                 </button>
                 {!concurrentAck && (
                   <button
