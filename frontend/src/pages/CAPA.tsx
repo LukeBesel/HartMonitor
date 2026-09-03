@@ -7,6 +7,7 @@ import {
 import { api } from '../api/client';
 import { useDepartmentFilter } from '../hooks/useDepartmentFilter';
 import DepartmentFilter from '../components/shared/DepartmentFilter';
+import { timeAgo } from '../utils/time';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -63,17 +64,6 @@ interface DepartmentChoice {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function timeAgo(dateStr: string): string {
-  const diff = Date.now() - new Date(dateStr).getTime();
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 function formatDate(dateStr?: string): string {
   if (!dateStr) return '—';

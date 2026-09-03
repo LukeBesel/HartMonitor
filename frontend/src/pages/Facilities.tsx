@@ -270,11 +270,12 @@ export default function Facilities() {
                     <div className="font-medium text-gray-900 text-sm truncate">{op.app_name}</div>
                     <div className="text-xs text-gray-400 truncate">{op.operator_name} · {(op.status || 'unknown').replace('_', ' ')}</div>
                   </div>
+                  {/* No second parse of the stamp here: `timeAgo` states an
+                      unreadable one as "—" itself, and the guard this row
+                      used to carry did it with the very local-time parse that
+                      was wrong. */}
                   <div className="text-xs text-gray-400 flex-shrink-0">
-                    {(() => {
-                      const when = op.completed_at || op.started_at;
-                      return when && !isNaN(new Date(when).getTime()) ? timeAgo(when) : '—';
-                    })()}
+                    {timeAgo(op.completed_at || op.started_at)}
                   </div>
                   <ChevronRight size={15} className="text-gray-300 flex-shrink-0" />
                 </button>

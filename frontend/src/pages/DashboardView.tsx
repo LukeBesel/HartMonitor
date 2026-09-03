@@ -16,7 +16,7 @@ import { useAuth } from '../context/AuthContext';
 import { useAutoRefresh } from '../hooks/useAutoRefresh';
 import LastRefreshed from '../components/shared/LastRefreshed';
 import DashboardFilterBar, { FilterOption } from '../components/shared/DashboardFilterBar';
-import { fmtDuration, fmtMinutes } from '../components/apps/appModel';
+import { fmtDuration, fmtMinutes, parseServerTime } from '../components/apps/appModel';
 
 // ── Card palette config ───────────────────────────────────────────────────────
 
@@ -63,9 +63,16 @@ const CHART_COLORS = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#14b8a6
 
 // Not a duration — a wall-clock reading (e.g. "2:45 PM") for when a run
 // started. Named to stay clear of the fmt*/format* duration-formatter family.
-function clockReading(iso: string) {
-  const t = new Date(iso);
-  return isNaN(t.getTime()) ? '—' : t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+//
+// The stamp goes through `parseServerTime`, the one rule this app has for
+// reading what the server wrote, for the same reason every age on every other
+// screen does: `new Date()` takes SQLite's zone-less 'YYYY-MM-DD HH:MM:SS' for
+// LOCAL time, so a run that started at 14:45 UTC was printed as "02:45 PM" on
+// a shop-floor PC in Chicago instead of "09:45 AM". Exported so the test can
+// read it without a Recharts-sized render.
+export function clockReading(iso: string) {
+  const t = parseServerTime(iso);
+  return t ? t.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—';
 }
 
 /**

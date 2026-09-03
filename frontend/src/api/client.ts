@@ -869,10 +869,20 @@ export const api = {
   resetPermissions: () => request<RolePermissionMap>('/permissions/reset', { method: 'DELETE' }),
 
   // ── Integrations setup status (Stripe / SSO) — managers+
+  // Two halves, and only the first one is every manager's. Whether payments
+  // and SSO are live on this deployment is a fact about their own account;
+  // WHICH env vars to set, the Stripe webhook endpoint to register and each
+  // provider's OAuth redirect URI are instructions to whoever runs the
+  // servers, and GET /config/integrations returns them to HartMonitor's own
+  // staff alone (the is_platform_staff branch in backend/src/routes/config.js).
+  // So the setup half is optional here, every field of it: a manager's
+  // response genuinely does not carry those keys, and a type that promised
+  // them let a caller print `undefined` into a settings screen.
   getIntegrations: () => request<{
-    app_url: string; app_url_explicit: boolean;
-    payments: { configured: boolean; mode: string; webhook_url: string; events: string[]; env_vars: string[] };
-    sso: { id: string; name: string; configured: boolean; redirect_uri: string; env_vars: string[] }[];
+    payments: { configured: boolean; mode: string; webhook_url?: string; events?: string[]; env_vars?: string[] };
+    sso: { id: string; name: string; configured: boolean; redirect_uri?: string; env_vars?: string[] }[];
+    app_url?: string;
+    app_url_explicit?: boolean;
   }>('/config/integrations'),
 
   // ── Developer: API keys & webhooks (Enterprise)
