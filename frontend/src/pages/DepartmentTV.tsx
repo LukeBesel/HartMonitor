@@ -34,8 +34,8 @@ interface BehindGroup {
   work_order_number: string;
   operator_name: string;
   station: string;
-  takt_minutes: number;
-  over_by_minutes: number;
+  takt_seconds: number;
+  over_by_seconds: number;
   live: boolean;
   /** How many rows collapsed into this one. 1 = it was already unique. */
   count: number;
@@ -64,9 +64,9 @@ function groupBehind(rows: TVData['behind_takt']): BehindGroup[] {
       continue;
     }
     seen.count += 1;
-    if (r.over_by_minutes > seen.over_by_minutes) {
-      seen.takt_minutes = r.takt_minutes;
-      seen.over_by_minutes = r.over_by_minutes;
+    if (r.over_by_seconds > seen.over_by_seconds) {
+      seen.takt_seconds = r.takt_seconds;
+      seen.over_by_seconds = r.over_by_seconds;
     }
     seen.live = seen.live || r.live;
   }
@@ -115,19 +115,15 @@ interface TVData {
   // board renders the identical string the run's own detail page does,
   // rather than re-expanding an already-rounded minutes figure.
   leaderboard: { operator_name: string; app_name?: string; duration_minutes: number; duration_seconds?: number }[];
-  // takt_minutes/over_by_minutes have no seconds equivalent — sqdc.js
-  // pre-rounds each to a tenth of a minute before it ever reaches this
-  // payload (`Math.round(takt * 10) / 10`), so fmtMinutes(6.1) below prints
-  // "6m 6s" for a takt computed from the un-rounded work order value as
-  // "6m 5s". This is the honest rendering of the number the endpoint
-  // actually sends — the fix belongs on the backend
-  // (return takt_seconds/over_by_seconds instead of a pre-rounded minutes
-  // figure, the same shape the leaderboard's duration_seconds already took),
-  // which is outside this workstream's files (backend/src/routes/sqdc.js);
-  // reported as a wave-2 follow-up rather than edited here.
+  // Seconds, like duration_seconds above and like everything else this product
+  // measures. The endpoint used to pre-round both to a tenth of a MINUTE, so
+  // the board could only render a number that had already been rounded once:
+  // the demo work order's 365-second takt arrived as 6.1 and fmtMinutes(6.1)
+  // printed "6m 6s" for a takt that is 6m 5s, and every overrun moved six
+  // seconds at a time. There is no minutes twin to fall back to, on purpose.
   behind_takt?: {
     work_order_number: string; operator_name: string; station: string;
-    takt_minutes: number; over_by_minutes: number; live: boolean;
+    takt_seconds: number; over_by_seconds: number; live: boolean;
   }[];
   any_behind?: boolean;
 }
@@ -294,10 +290,10 @@ export default function DepartmentTV() {
                       ×{b.count}
                     </span>
                   )}
-                  <span className="font-bold tabular-nums ml-auto flex-shrink-0">+{fmtMinutes(b.over_by_minutes)}</span>
+                  <span className="font-bold tabular-nums ml-auto flex-shrink-0">+{fmtDuration(b.over_by_seconds)}</span>
                 </div>
                 <div className="text-sm text-white/85 truncate">
-                  {b.operator_name} @ {b.station} · over {fmtMinutes(b.takt_minutes)} takt{b.live ? ' (live)' : ''}
+                  {b.operator_name} @ {b.station} · over {fmtDuration(b.takt_seconds)} takt{b.live ? ' (live)' : ''}
                 </div>
               </div>
             ))}
